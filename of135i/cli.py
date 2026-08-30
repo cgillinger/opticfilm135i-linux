@@ -91,12 +91,33 @@ def _finish_ir_scan(args: argparse.Namespace, raw: bytes, width: int) -> int:
 
     Any orientation transform (the --positive mirror+rotate, and
     --rotate) is applied identically to both images so they stay
-    pixel-aligned -- useful for a future dust-removal pass that needs
-    to overlay the IR dust/scratch map onto the visible image.
+    pixel-aligned -- also what keeps them aligned for the dust-removal
+    pass below, which runs before either transform (it only needs the
+    two images on the same pixel grid, not any particular orientation).
+
+    By default, `visible` is cleaned of dust/scratches using the IR
+    channel's dust map (image.remove_dust) before any further
+    processing (including --positive); pass --no-clean to skip that and
+    write the raw split visible image unchanged. The `-ir.tiff` file
+    written at the end is always the raw (uncleaned) IR channel.
     """
     import numpy as _np
 
     visible, ir = image.split_ir(raw, width=width)
+
+    # Channel alignment BEFORE dust removal: the staggered R/G/B lines
+    # give every dust speck a colored halo wider than its dark core;
+    # cleaning on unaligned data leaves rainbow ghosts around the
+    # inpainted area (observed 2026-08-30). Half the plain-scan shift
+    # (visible lines are every other raw line in IR mode). Crop `ir`
+    # identically to keep the two images on the same pixel grid.
+    _shift = round(24 * (args.dpi // 2) / 7200)
+    visible = image.align_channels(visible, dpi=args.dpi // 2)
+    if _shift:
+        ir = ir[_shift:-_shift]
+
+    if not args.no_clean:
+        visible = image.remove_dust(visible, ir)
 
     if args.positive:
         # Channel alignment FIRST (same order as the non-IR path: it
@@ -115,10 +136,7 @@ def _finish_ir_scan(args: argparse.Namespace, raw: bytes, width: int) -> int:
         # `shift` rows off each end; crop `ir` by the same amount (no
         # channel stagger to correct there, just keeping the two images
         # pixel-aligned for a future dust-overlay pass).
-        shift = round(24 * (args.dpi // 2) / 7200)
-        visible = image.align_channels(visible, dpi=args.dpi // 2)
-        if shift:
-            ir = ir[shift:-shift]
+        # (Channel alignment already applied above, before cleaning.)
 
         # Same orientation fix as the non-IR path; rot90/[:, ::-1] work
         # unchanged on ir's 2D (lines, width) shape too.
@@ -187,6 +205,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--frame", type=int, required=True, help="frame number (1-based)")
     p_scan.add_argument("--dpi", type=int, default=3600, help="scan resolution (default 3600)")
     p_scan.add_argument("--ir", action="store_true", help="capture an IR (dust/scratch) pass")
+    p_scan.add_argument("--no-clean", action="store_true",
+        help="skip IR-based dust/scratch removal on the visible image (--ir only)")
     p_scan.add_argument("-o", "--output", required=True, help="output file path (.tiff or .pnm)")
     p_scan.set_defaults(func=_cmd_scan)
 

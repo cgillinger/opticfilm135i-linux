@@ -154,7 +154,7 @@ class UsbIo:
         remaining = length
         while remaining > 0:
             want = min(chunk, remaining)
-            data = self.dev.read(EP_BULK_IN, want, timeout=15000)
+            data = self.dev.read(EP_BULK_IN, want, timeout=60000)
             out.extend(data)
             remaining -= len(data)
             if len(data) == 0:

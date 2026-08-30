@@ -354,3 +354,33 @@ IR). Three findings on the way:
    (gain = T×0x4000/(white−offset), cv 0.034-0.043).
 3. IR mode scans at full sensor width (5184) with alternating
    visible/IR lines; frame-1 FEEDL=6746 (vs 6743 in plain mode).
+
+## Pass 13 (2026-08-30 evening): THE LOAD PROTOCOL — scan-refusal root cause
+
+Symptom: scans from a self-loaded magazine ran the motor but never
+streamed image data (bulk-in timeout), plain and IR alike, while the
+identical driver code worked on a vendor-loaded magazine.
+
+Root cause, established with a targeted capture of the vendor app's
+insert flow: loading is a three-stage, sensor-gated protocol, and a
+bare mode-0x18 feed (our first loader) establishes none of the state:
+
+1. **The user must push the cassette in** — the vendor driver idles
+   until the loader sensor fires (reg 0x32 flips 0x1f→0x5b in the
+   vendor session's register state; the driver acks with 0x32=0x1d).
+   At app start the vendor also probes with feed+eject (the "jog").
+2. **Then**: feed (0x18, FEEDL 0x1a22, speed regs 0x7d-0x7f + two
+   slope tables — a naked register poke without them stalls the motor
+   with a grinding noise), slow prescan traverse (0x1c, FEEDL 71490),
+   six loader pulses (0x78, FEEDL 1), and draining the ~16 MB preview
+   the traverse produced.
+3. Only after this does the scan engine stream data.
+
+Implemented as a verbatim replay (load_magazine.py, ops 790-3280 of
+the load-only capture trace) with user-confirmed start. OPEN: reading
+the loader sensor in OUR register state (0x32 reads 0x9d raw / 0x1d
+with sensor-prep writes, and never changes on insertion — the real
+sensor is likely 16-bit reg 0x101 bit 0x08 per the vendor config,
+i.e. open question 1). Verified end-to-end: full IR scan with all-own
+calibration and processing produced a clean final image immediately
+after this load.

@@ -201,6 +201,204 @@ def split_ir(raw: bytes, width: int = 5184) -> tuple[np.ndarray, np.ndarray]:
     return visible, ir
 
 
+def _box_blur(a: np.ndarray, box: int) -> np.ndarray:
+    """Box blur of a 2D array via a summed-area table (cumsum twice),
+    numpy-only (no scipy). Edge-padded so the output covers the full
+    input shape. The cumsum accumulator is float64 (precision matters:
+    box sums over ~4000 terms lose too much accuracy in float32 once
+    two nearby large partial sums are subtracted) but is a single
+    transient array, freed before returning a float32 result -- kept
+    off the memory budget for the caller's own full-frame arrays.
+    """
+    h, w = a.shape
+    pad_lo = box // 2
+    pad_hi = box - pad_lo
+    ap = np.pad(a, ((pad_lo, pad_hi), (pad_lo, pad_hi)), mode="edge").astype(np.float64)
+    np.cumsum(ap, axis=0, out=ap)
+    np.cumsum(ap, axis=1, out=ap)
+    csum = np.pad(ap, ((1, 0), (1, 0)))
+    del ap
+    y0 = np.arange(h)
+    x0 = np.arange(w)
+    y1 = y0 + box
+    x1 = x0 + box
+    total = csum[y1][:, x1] - csum[y0][:, x1] - csum[y1][:, x0] + csum[y0][:, x0]
+    del csum
+    return (total / (box * box)).astype(np.float32)
+
+
+def _dilate_bool(mask: np.ndarray, iterations: int = 2) -> np.ndarray:
+    """Binary dilation (4-neighborhood) via np.roll ORs, `iterations`
+    times -- each pass grows the mask by one pixel in each direction."""
+    out = mask
+    for _ in range(iterations):
+        out = (
+            out
+            | np.roll(out, 1, axis=0)
+            | np.roll(out, -1, axis=0)
+            | np.roll(out, 1, axis=1)
+            | np.roll(out, -1, axis=1)
+        )
+    return out
+
+
+# Calibrated on the real IR test pair (frame4-ir-test3*.tiff): at
+# sensitivity=1.0 this covers ~0.1% of pixels with dust/scratch specks
+# (see ../cal-data/ir/verify_dust.py), comfortably inside the
+# 0.05-0.5% target band.
+_DUST_BG_BOX = 64
+_DUST_T0 = 0.12
+_DUST_BORDER_FRAC = 0.3  # local bg below this fraction of the image's
+                          # typical (median) bg is film-holder border,
+                          # not scannable frame -- never masked as dust.
+
+
+def dust_mask(ir: np.ndarray, sensitivity: float = 1.0) -> np.ndarray:
+    """Detect dust/scratch specks in an IR channel image.
+
+    `ir` is a (lines, width) array (any integer/float dtype) from the
+    IR pass of an --ir scan: a near-uniform bright field where dust and
+    scratches on the film or platen show up as small, sharply darker
+    specks (IR light passes through the film's dye layers but is
+    blocked by opaque debris). Returns a boolean mask, True where a
+    pixel is judged part of a speck.
+
+    Method: estimate the local IR background with a coarse (~64 px) box
+    blur, then flag pixels significantly darker than that local
+    background (`ir < background * (1 - t)`, t scaled inversely by
+    `sensitivity` -- higher sensitivity masks more). The dark
+    film-holder borders (present in full-sensor-width IR-mode scans;
+    see ir-analysis.md) have a near-black local background themselves
+    and are excluded outright, including a halo around the border/frame
+    edge as wide as the blur box -- inside that halo the box blur mixes
+    border and frame content, which would otherwise register as bogus
+    "specks" right along the border. The mask is then dilated 2-3 px
+    since a speck's faint penumbra usually extends past where the
+    hard threshold first trips.
+    """
+    ir_f = np.asarray(ir, dtype=np.float32)
+    bg = _box_blur(ir_f, _DUST_BG_BOX)
+
+    border = bg < (_DUST_BORDER_FRAC * float(np.median(bg)))
+    # Dilate the border exclusion by the same box radius: _box_blur's
+    # boxcar average blends border and frame content within half the
+    # box width of the true edge, so bg is depressed there too, wide
+    # enough to otherwise register as a "speck" band along the border.
+    border = _box_blur(border.astype(np.float32), _DUST_BG_BOX + 1) > 0
+
+    t = min(_DUST_T0 / max(sensitivity, 1e-6), 0.9)
+    mask = (ir_f < bg * (1.0 - t)) & ~border
+    del ir_f, bg, border
+
+    # 6 px: wide enough that the inpaint rim sits in clean film beyond
+    # the stagger-colored halo around a speck (rainbow fill observed
+    # with 2 px, 2026-08-30).
+    return _dilate_bool(mask, iterations=6)
+
+
+_INPAINT_KERNELS = (5, 17, 49)  # increasing box sizes, numpy-only via
+                                 # the existing cumsum box filter
+_INPAINT_MIN_WEIGHT = 4.0        # a scale's fill only counts once its box
+                                  # holds at least this many valid pixels
+
+
+def _inpaint_channel(chan: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Fill `mask`-True pixels of a single 2D channel by multi-scale
+    normalized convolution: for a box of size k,
+
+        fill = boxblur(image * weight, k) / boxblur(weight, k)
+
+    with weight = 1 on unmasked pixels and 0 on masked ones -- a
+    weighted local average that only ever draws on real (unmasked)
+    values, however few or many fall in the box (the `boxblur(image *
+    weight)` and `boxblur(weight)` calls both divide by k*k internally;
+    that factor cancels in the ratio, leaving exactly the weighted
+    mean of the valid pixels in the box).
+
+    A single fixed kernel size forces a choice between over-blurring
+    flat areas (a box big enough to always find valid pixels even deep
+    inside a large speck) and leaving a speck's center under-supported
+    (a box small enough to stay local everywhere else). Instead each
+    masked pixel is filled from the SMALLEST of `_INPAINT_KERNELS`
+    whose box already contains at least `_INPAINT_MIN_WEIGHT` valid
+    pixels -- tight, local averaging near a speck's edge, widening only
+    as far as actually needed toward its center. This also removes the
+    prior flood-fill approach's directional bias (a pixel's fill value
+    depended on which edge of the speck a fill wave reached it from
+    first, leaving flat plateaus and color-banded smudges in larger
+    specks); normalized convolution instead averages every valid pixel
+    the box reaches, from every direction, in one step per scale.
+
+    Unmasked pixels are never read into a fill value and never
+    written -- only `filled[good]` assignments touch the output, always
+    restricted to (still-unresolved) masked positions.
+    """
+    img = chan.astype(np.float32, copy=True)
+    weight = (~mask).astype(np.float32)
+    masked_vals = img * weight  # zero at masked positions regardless of
+                                 # the speck's own (dust-darkened) value
+
+    filled = img.copy()
+    unresolved = mask.copy()
+
+    for k in _INPAINT_KERNELS:
+        if not unresolved.any():
+            break
+        num = _box_blur(masked_vals, k)
+        den = _box_blur(weight, k)
+        good = unresolved & (den * (k * k) > _INPAINT_MIN_WEIGHT)
+        if good.any():
+            with np.errstate(divide="ignore", invalid="ignore"):
+                filled[good] = num[good] / den[good]
+            unresolved &= ~good
+        del num, den, good
+
+    if unresolved.any():
+        # Only reachable for a masked region wider than the largest
+        # kernel with no valid pixel anywhere inside it -- well past the
+        # ~20 px specks this is calibrated for. Falls back to the
+        # frame's overall valid-pixel mean rather than leaving the raw
+        # dust-darkened value in place.
+        fallback = float(img[~mask].mean()) if (~mask).any() else 0.0
+        filled[unresolved] = fallback
+
+    return filled
+
+
+def remove_dust(visible: np.ndarray, ir: np.ndarray, sensitivity: float = 1.0) -> np.ndarray:
+    """Remove dust/scratches from `visible` using the IR channel's dust
+    map (see `dust_mask`). `visible` is (lines, width, 3), `ir` is the
+    same-shape-minus-channel (lines, width) IR image, pixel-aligned
+    (the alternating-line pair from image.split_ir; see that function
+    and cli.py's --ir path for how alignment is kept in sync through
+    orientation transforms). Returns a same-shape, same-dtype array
+    with masked pixels replaced per channel from unmasked neighbors
+    (`_inpaint_channel`); everything else is untouched.
+
+    Processes one channel at a time (rather than all three at once) to
+    keep peak memory to a few hundred MB instead of ~1 GB for a full
+    5184x5272x3 frame.
+    """
+    if visible.shape[:2] != ir.shape:
+        raise ValueError(
+            f"visible/ir line-grid mismatch: {visible.shape[:2]} vs {ir.shape}"
+        )
+    mask = dust_mask(ir, sensitivity=sensitivity)
+    if not mask.any():
+        return visible.copy()
+
+    dtype = visible.dtype
+    info = np.iinfo(dtype) if np.issubdtype(dtype, np.integer) else None
+    out = np.empty_like(visible)
+    for c in range(visible.shape[2]):
+        filled = _inpaint_channel(visible[..., c], mask)
+        if info is not None:
+            filled = np.clip(np.rint(filled), info.min, info.max)
+        out[..., c] = filled.astype(dtype)
+        del filled
+    return out
+
+
 def align_channels(arr, dpi: int = 3600):
     """Correct the staggered color-line offset of the sensor.
 

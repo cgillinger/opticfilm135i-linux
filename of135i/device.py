@@ -130,7 +130,7 @@ class Scanner:
             elif op.kind == "bo":
                 dev.write(EP_BULK_OUT, op.data, timeout=5000)
             elif op.kind == "bi":
-                data = dev.read(EP_BULK_IN, op.length, timeout=15000)
+                data = dev.read(EP_BULK_IN, op.length, timeout=60000)
                 if cur is not None:
                     cur.extend(data)
             else:

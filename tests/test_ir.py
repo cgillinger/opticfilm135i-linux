@@ -65,10 +65,6 @@ _TRACE_GAIN_CODES = tuple(
 
 
 def test_split_ir_against_capture():
-    _raw = REPO / "cal-data" / "ir" / "04-image.raw"
-    if not _raw.exists():
-        print(f"test_split_ir_against_capture SKIPPED (ground-truth raw not shipped)")
-        return
     raw_path = IR_DIR / "04-image.raw"
     raw = raw_path.read_bytes()
     assert len(raw) == 327_960_576, len(raw)
@@ -355,10 +351,107 @@ def test_scan_sequence_matches_trace_ir():
     )
 
 
+# ---------------------------------------------------------------- dust removal
+
+
+def test_dust_removal_synthetic():
+    """Synthetic dust/scratch removal check for image.dust_mask/
+    remove_dust: inject dark specks into a flat IR field (plus a
+    near-black film-holder border strip on each side, per
+    ir-analysis.md) and matching darkened patches into a textured
+    visible image, and check:
+      - the border is never masked, however dark;
+      - injected specks ARE masked (their centers, at least);
+      - overall coverage stays a small, sane fraction of the frame
+        (not "half the image" -- the border-exclusion and threshold
+        calibration both hold on synthetic as well as real data);
+      - remove_dust leaves every unmasked visible pixel bit-for-bit
+        untouched;
+      - remove_dust pulls masked pixels back toward the true
+        (pre-speck) texture, not just replaces one arbitrary value with
+        another.
+    """
+    rng = np.random.default_rng(20260830)
+    H, W = 200, 300
+    BORDER = 30  # px on each side
+
+    ir_bg = 40000.0
+    ir = np.full((H, W), ir_bg, dtype=np.float64)
+    ir += rng.normal(0, ir_bg * 0.01, size=(H, W))  # ~1% shot-noise-ish, per ir-analysis.md
+    ir[:, :BORDER] = 800.0 + rng.normal(0, 20, size=(H, BORDER))     # film-holder border
+    ir[:, W - BORDER:] = 800.0 + rng.normal(0, 20, size=(H, BORDER))
+
+    # A mildly textured "true" visible image (no dust) -- a smooth
+    # per-channel gradient plus a touch of texture, well clear of the
+    # border columns' territory. remove_dust never sees this; it's the
+    # ground truth used only to score the fill afterwards.
+    yy, xx = np.mgrid[0:H, 0:W]
+    texture_true = np.stack([
+        8000 + 20 * xx + 15 * np.sin(yy / 7.0) * 50,
+        5000 + 15 * yy + 10 * np.cos(xx / 9.0) * 50,
+        3000 + 10 * xx + 10 * yy,
+    ], axis=-1).astype(np.float64)
+    visible = texture_true + rng.normal(0, 30, size=texture_true.shape)
+
+    # Three specks, well inside the interior, away from the border and
+    # from the array edges (np.roll wraps, which would otherwise let a
+    # speck "see" the opposite edge) -- sizes 3, 8 and 15 px, covering
+    # the "up to ~20 px" spec.
+    specks = [
+        (40, 100, 3), (100, 150, 8), (150, 200, 15),
+    ]
+    speck_mask = np.zeros((H, W), dtype=bool)
+    for cy, cx, size in specks:
+        y0, y1 = cy - size // 2, cy - size // 2 + size
+        x0, x1 = cx - size // 2, cx - size // 2 + size
+        speck_mask[y0:y1, x0:x1] = True
+        ir[y0:y1, x0:x1] *= 0.5           # opaque debris: much darker in IR...
+        visible[y0:y1, x0:x1, :] *= 0.6   # ...and darker (not necessarily as much) in visible
+
+    ir = ir.astype(np.uint16)
+    visible = np.clip(visible, 0, 65535).astype(np.uint16)
+
+    mask = image.dust_mask(ir, sensitivity=1.0)
+    assert mask.shape == (H, W)
+    assert mask.dtype == np.bool_
+
+    assert not mask[:, :BORDER].any(), "border falsely masked"
+    assert not mask[:, W - BORDER:].any(), "border falsely masked"
+
+    for cy, cx, _size in specks:
+        assert mask[cy, cx], f"speck at ({cy},{cx}) not masked"
+
+    coverage = mask.mean()
+    injected_frac = speck_mask.mean()
+    assert 0 < coverage < 0.10, f"mask coverage implausible: {coverage:.4%}"
+    # Dilation (2-3 px) grows the mask past the raw injected footprint,
+    # but not by an order of magnitude.
+    assert coverage < injected_frac * 6, (coverage, injected_frac)
+
+    cleaned = image.remove_dust(visible, ir, sensitivity=1.0)
+    assert cleaned.shape == visible.shape
+    assert cleaned.dtype == visible.dtype
+
+    unmasked = ~mask
+    assert np.array_equal(cleaned[unmasked], visible[unmasked]), \
+        "remove_dust modified an unmasked pixel"
+
+    err_before = np.abs(visible[mask].astype(np.float64) - texture_true[mask])
+    err_after = np.abs(cleaned[mask].astype(np.float64) - texture_true[mask])
+    assert err_after.mean() < err_before.mean() * 0.5, (
+        err_before.mean(), err_after.mean(), "cleaning did not clearly improve on the speck")
+
+    print(
+        f"test_dust_removal_synthetic OK "
+        f"(coverage {coverage:.4%}, mean abs error {err_before.mean():.0f} -> {err_after.mean():.0f})"
+    )
+
+
 def main() -> int:
     tests = [
         test_split_ir_against_capture,
         test_scan_sequence_matches_trace_ir,
+        test_dust_removal_synthetic,
     ]
     for t in tests:
         t()
