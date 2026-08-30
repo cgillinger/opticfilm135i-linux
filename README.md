@@ -34,7 +34,7 @@ negative scanner Linux, SANE OpticFilm 135i, GL126, pyusb scanner driver*.
 
 - Linux, Python 3.10+
 - `pyusb`, `numpy`
-- The scanner attached via USB (release it from any VM passthrough first)
+- The scanner connected via USB
 
 ## Install
 
@@ -59,7 +59,13 @@ sudo .venv/bin/python -m of135i eject
 sudo .venv/bin/python -m of135i status
 ```
 
-A udev rule to avoid `sudo` is on the roadmap. Run the offline test suite
+A udev rule to avoid `sudo` is on the roadmap.
+
+Troubleshooting: if the device is not found, check that nothing else
+holds it (a virtual machine's USB passthrough, another scanning
+application) and that it has not entered standby — the scanner drops
+off the USB bus after ~5 minutes of inactivity and needs a physical
+power cycle to reappear. Run the offline test suite
 (no hardware needed):
 
 ```bash
