@@ -124,7 +124,7 @@ tshark -r SEG.pcap -Y "usb.bmRequestType == 0xc0 && usb.setup.bRequest == 4" \
 
 ## Pass 4 (2026-08-30): REPLAY PoC — VERIFIED AGAINST HARDWARE
 
-`of135i_poc.py` (pyusb, venv `.venv/`) run on the Linux host with the
+`of135i_poc.py` (pyusb, venv `.venv/`) run on the mintuu host with the
 scanner released from the VM. Results:
 
 - **Read format confirmed**: `0xc0/0x04/0x008e`, wIndex `(reg<<8)|0x22`
@@ -188,7 +188,7 @@ shading correction data to scanner RAM (bulk OUT, addr 0x10014000).
 
 ## Pass 6 (2026-08-30): FULL SCAN FLOW NATIVE ON LINUX — GOAL REACHED
 
-Hardware replay on the Linux host (scanner disconnected from the VM, power
+Hardware replay on mintuu (scanner disconnected from the VM, power
 cycled, magazine with negatives loaded):
 
 - `of135i_poc.py init` (base register table) replaces the 01-init
@@ -318,3 +318,39 @@ colored blobs. No even/odd pixel stagger at 3600 dpi (StaggeredLine
 applies at 7200). Implemented as image.align_channels(dpi), applied by
 the CLI after assemble. Remaining cosmetic gap vs vendor apps: IR
 dust removal (not yet implemented).
+
+## Pass 11 (2026-08-30): frame selection verified + IR data structure
+
+- **Frame selection VERIFIED on hardware**: `scan --frame 2` (FEEDL
+  17503) and `--frame 4` (FEEDL 39023) returned the correct motifs on
+  a 4-frame strip (user-confirmed against known frame contents). The
+  FEEDL formula 6743 + (n−1)×10760 holds across the strip.
+- **IR scan data structure** (analysis of segment 04, details in
+  cal-data/ir/ir-analysis.md): visible and IR are captured as
+  ALTERNATING LINES — even index IR (R≈G≈B, flat + dust specks), odd
+  index visible. Line width 5184 px (31104 B, raw sensor width; the
+  non-IR scan windows to 3762 px). 659 chunks × 497664 B = 16
+  lines/chunk = 10544 lines exactly (5272 + 5272). A 660th descriptor
+  is issued but cancelled by the vendor driver. Open question: why the
+  IR mode scans at full sensor width while plain mode windows.
+
+## Pass 12 (2026-08-30): IR MODE WORKING — dual-light scanning verified
+
+`scan --ir` verified on hardware: visible pass with correct orange-mask
+channel separation, IR pass at mean ~50k = a near-uniform bright field
+where ONLY dust and scratches are visible (image dyes transparent to
+IR). Three findings on the way:
+
+1. **IR-mode initialization matters**: trace 04's own PREP/AFE_BASE
+   phases carry the IR-LED setup. Running only the plain (trace 03)
+   prep gives an IR pass ~7x too dark with residual image structure.
+   `initialize(ir=True)` runs the IR phase set.
+2. **Dual shading tables**: IR mode calibrates BOTH light sources —
+   256-line alternating dark + white measurements, two uploads per
+   pass (0x10014000 = visible, 0x10034000 = IR), 63,192 B each
+   (15,552 pairs = full 5184-px sensor width × RGB). Upload-2 gain
+   targets derived from the vendor payloads:
+   visible T=(53928, 74096, 61728), IR T=(100287, 72574, 87480)
+   (gain = T×0x4000/(white−offset), cv 0.034-0.043).
+3. IR mode scans at full sensor width (5184) with alternating
+   visible/IR lines; frame-1 FEEDL=6746 (vs 6743 in plain mode).

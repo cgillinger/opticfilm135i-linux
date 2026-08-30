@@ -23,6 +23,9 @@ negative scanner Linux, SANE OpticFilm 135i, GL126, pyusb scanner driver*.
 - Output as 16-bit TIFF or PNM: raw negative, or a display-ready positive
   (`--positive`) via a learned tone-curve LUT that matches the vendor
   application's color rendering.
+- IR scanning (`--ir`): dual-light alternating capture — visible image plus an
+  IR channel where only dust and scratches are visible, with per-light
+  two-stage shading calibration.
 - Verified against hardware: calibration values reproduce the vendor
   driver's within ±1 gain code / 0.03 % shading gain on the same unit;
   rendered output judged on par with the vendor app.
@@ -84,7 +87,8 @@ interoperability constants and our own code.
 
 ## Roadmap
 
-- [ ] IR channel (dust/scratch removal pass — protocol already mapped)
+- [x] IR channel capture (`--ir`): separate visible + IR output, dual-light calibration
+- [ ] IR-based automatic dust/scratch removal (cleanup algorithm)
 - [ ] Resolution profiles beyond 3600 dpi
 - [ ] Whole-strip batch scanning; verified positioning for frames > 1
 - [ ] Loader/button event handling, udev rule, ICC-tagged output

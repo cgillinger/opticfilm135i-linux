@@ -59,4 +59,4 @@ profile tables.
 
 Never publish: vendor ini/plist/framework files, pcaps, decoded
 personal photos. Derived numeric constants in our own code are fine
-(interoperability). License: GPL-2.0-or-later (decided 2026-08-30).
+(interoperability). License decision: Christian's.

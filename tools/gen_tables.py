@@ -45,9 +45,14 @@ HERE = Path(__file__).resolve().parent
 TRACE = HERE.parent / "traces" / "03-singel-3600-IRav.trace.json.gz"
 OUT = HERE / "of135i" / "tables.py"
 
+# IR-enabled trace (see the module docstring addendum near main_ir() below,
+# and driver/gen_tables.py's __main__ block).
+TRACE_IR = HERE.parent / "traces" / "04-singel-3600-IRpa.trace.json.gz"
+OUT_IR = HERE / "of135i" / "tables_ir.py"
 
-def load_ops():
-    with gzip.open(TRACE, "rt") as fh:
+
+def load_ops(trace_path=TRACE):
+    with gzip.open(trace_path, "rt") as fh:
         return json.load(fh)
 
 
@@ -578,8 +583,605 @@ def main():
     print(f"  {'TOTAL':22s}                ops={total:5d}")
 
 
+# ============================================================================
+# IR-enabled trace (04) compilation -- of135i/tables_ir.py
+#
+# Added 2026-08-30 to generalize this script per the task spec: compile
+# traces/04-singel-3600-IRpa.trace.json.gz (23903 ops, see
+# ../cal-data/ir/ir-analysis.md) into a second generated module,
+# of135i/tables_ir.py, using the same phase-splitting/injection-point
+# methodology as main() above. main() itself is left untouched (same
+# PHASE_BOUNDS, same hand-rolled shading/image-block logic, same
+# assumption of exactly one shading-upload address) so tables.py keeps
+# regenerating byte-for-byte identical to before -- the generalization
+# lives entirely in the new code below, which reuses main()'s small
+# trace-agnostic helpers (pairs_of/val_offset/make_op/find_afe_batch/
+# build_phase/find_buf_descs/bo_indices/GAIN_INJECT/OFFSET_INJECT) but
+# adds its own image-block dedup (tolerant of the trace's cancelled
+# trailing descriptor) and shading-upload grouping (tolerant of more
+# than one upload address) instead of main()'s fixed-count asserts.
+# See main_ir()'s docstring for the full phase mapping.
+
+PHASE_BOUNDS_IR = [
+    ("prep", 0, 57),
+    ("afe_base", 58, 126),
+    ("cal_dark_a", 127, 155),
+    ("cal_dark_b", 156, 184),
+    ("cal_white", 185, 256),
+    ("cal_gain_check_a", 257, 293),
+    ("cal_gain_check_b", 294, 322),
+    ("cal_shading_measure", 323, 968),
+    ("cal_shading_upload", 969, 985),
+    ("cal_shading_verify", 986, 1647),
+    ("position", 1648, 1693),
+    ("scan", 1694, 23765),
+    ("park", 23766, 23902),
+]
+
+
+def group_bo_by_write_desc(phase_ops, write_descs, end):
+    """Group bulk-OUT ops by which buffer-write descriptor precedes them.
+
+    `write_descs` is a list of (local_index, 'write', addr, len, wi)
+    tuples (as returned by find_buf_descs, filtered to kind=='write'),
+    in trace order. Returns [(addr, (bo_local_idx, ...)), ...] in the
+    same order -- generalizes main()'s single-address assumption (the
+    IR trace uploads shading data to two addresses per upload)."""
+    groups = []
+    for k, (idx, _kind, addr, _ln) in enumerate(write_descs):
+        next_idx = write_descs[k + 1][0] if k + 1 < len(write_descs) else end
+        bos = tuple(i for i in range(idx, next_idx) if phase_ops[i]["kind"] == "bo")
+        groups.append((addr, bos))
+    return groups
+
+
+def dedup_image_reads(phase_ops):
+    """Find the repeating image-data buffer-read block in a scan phase's
+    op list, tolerating a final descriptor whose bulk-read pattern
+    doesn't match the rest (a cancelled/phantom trailing request -- see
+    ir-analysis.md's "660th descriptor" note: issued, then immediately
+    cancelled with zero bulk-IN data, rather than main()'s trace, whose
+    single trailing descriptor is a differently-*sized* but genuinely
+    completed drain).
+
+    Returns (image_descs, block_ops, trailing_start_index):
+      image_descs: the [(local_idx, 'read', addr, len, wi), ...] read
+        descriptors whose following op pattern matches the first one
+        (i.e. the real, uniform image chunks).
+      block_ops: the ops between the first two matching descriptors
+        (the reusable per-chunk interior pattern: status cr + bi runs).
+      trailing_start_index: local op index of the first non-matching
+        descriptor -- everything from there to the phase's end is
+        emitted literally as the phase's tail (read and discarded, for
+        wire fidelity, same philosophy as main()'s IMAGE_TRAILING_DRAIN).
+    """
+    descs = find_buf_descs(phase_ops)
+    reads = [d for d in descs if d[1] == "read"]
+    if not reads:
+        raise ValueError("dedup_image_reads: no buffer-read descriptors found")
+    ref_pattern = None
+    ref_block = None
+    n_match = 0
+    for k in range(len(reads)):
+        i0 = reads[k][0]
+        i1 = reads[k + 1][0] if k + 1 < len(reads) else len(phase_ops)
+        block = phase_ops[i0 + 1:i1]
+        pattern = tuple((o["kind"], o["length"]) for o in block)
+        if ref_pattern is None:
+            ref_pattern, ref_block = pattern, block
+            n_match = 1
+        elif pattern == ref_pattern:
+            n_match += 1
+        else:
+            break
+    if n_match == len(reads):
+        raise ValueError(
+            "dedup_image_reads: every read descriptor's pattern matched -- "
+            "expected a final non-matching (trailing/phantom) one"
+        )
+    image_descs = reads[:n_match]
+    trailing_i = reads[n_match][0]
+    return image_descs, ref_block, trailing_i
+
+
+def main_ir():
+    """Compile traces/04-singel-3600-IRpa.trace.json.gz (23903 ops) into
+    of135i/tables_ir.py, mirroring main()'s phase-splitting logic for
+    the plain 3600 dpi trace but generalized for two differences the IR
+    capture introduces (see ../cal-data/ir/ir-analysis.md):
+
+      - every calibration/measurement buffer is at the RAW sensor width
+        (5184 px, vs. 3762 for the windowed visible-only capture) and
+        covers alternating IR/visible lines, so line/pixel counts that
+        depend on width or line count are roughly doubled versus main().
+      - the shading table gets uploaded to TWO scanner-RAM addresses
+        instead of one (0x10014000 AND 0x10034000, 63192 B each instead
+        of one 45856 B table) -- the two payloads differ pixel-for-pixel
+        (checked directly against the trace), ruling out "same table
+        twice"; almost certainly one table per light source (visible,
+        IR).
+
+    PHASE MAPPING (op-index ranges into the 23903-op trace; found with
+    the *same* two mechanical anchors as main()'s trace -- buffer-read/
+    write descriptors (cw wv=0x82) and 0f=01 execute pulses -- refined
+    by locating each phase's characteristic AFE-indirect offset/gain
+    write, exactly as main()'s trace does (see find_afe_batch). The
+    resulting op-count-per-phase sums to exactly 23903, the trace's own
+    op count, confirming no gaps/overlaps between phases):
+
+      prep                    0- 57  ( 58 ops; cf. main()'s 0-38)
+      afe_base               58-126  ( 69 ops; cf. 39-109) -- the AFE
+                              reg-0..7 base write starts at op 66 (cf.
+                              op 47 in main()'s trace); the phase
+                              boundary is the same base-register-table
+                              batch ("0122027804020548...") that starts
+                              main()'s afe_base, located here by exact
+                              byte-prefix match against that same table.
+      cal_dark_a             127-155  ( 29 ops; cf. 110-138) -- AFE
+                              offset=0x80 bracket; buffer read now
+                              6144 B (2x main()'s 3072 B).
+      cal_dark_b             156-184  ( 29 ops; cf. 139-167) -- offset
+                              =0xff bracket, buffer read 6144 B.
+      cal_white              185-256  ( 72 ops; cf. 168-239) -- buffer
+                              read 62208 B = 2x 31104 B (one IR + one
+                              visible raw line, width 5184 each -- the
+                              SAME raw width main()'s cal_white already
+                              measures at, since neither trace windows
+                              this particular measurement).
+      cal_gain_check_a       257-293  ( 37 ops; cf. 240-276) -- computed
+                              gain (AFE regs 2/3/4) injected here, same
+                              mechanism/regs as main(); bracket read
+                              6144 B.
+      cal_gain_check_b       294-322  ( 29 ops; cf. 277-305) -- bracket
+                              read 6144 B, no injection (same as main()).
+      cal_shading_measure    323-968  (646 ops; cf. 306-755) -- buffer
+                              read 7962624 B = 256 lines x 5184 px x
+                              3ch x 2B (2x the *line count* of main()'s
+                              128-line measurement, at raw width 5184
+                              instead of the windowed 3762) -- alternating
+                              IR/visible lines, same convention as the
+                              final image. AFE offset (regs 5/6/7)
+                              injected at the LAST occurrence in this
+                              phase, same as main() (find_afe_batch
+                              last=True) -- there are two occurrences
+                              here (an intermediate one, then the final
+                              one right before the phase's own execute
+                              pulse), exactly as in main()'s trace.
+      cal_shading_upload     969-985  ( 17 ops; cf. 756-761) -- TWO
+                              buffer-write descriptors (0x10014000,
+                              0x10034000), 63192 B / 5 bo chunks each
+                              (cf. one address, 45856 B / 4 bo chunks,
+                              in main()).
+      cal_shading_verify     986-1647 (662 ops; cf. 762-1216) -- re-
+                              measures (same 7962624 B shape) then re-
+                              uploads to the SAME two addresses.
+      position              1648-1693 ( 46 ops; cf. 1217-1264) -- FEEDL
+                              batch unchanged in shape/mechanism; this
+                              trace's own FEEDL_FRAME1_IR = 6746 (cf.
+                              main()'s 6743 from a different capture
+                              session -- both plausible for "frame 1",
+                              not reconciled further; FEEDL_PITCH_IR is
+                              NOT independently observed here, this is
+                              a single-frame capture, and is inherited
+                              from main()'s tables.FEEDL_PITCH as a
+                              documented assumption -- open question for
+                              hardware validation). Motor slope table
+                              SLOPE_TABLE_POSITION_IR turns out to be
+                              byte-identical to main()'s SLOPE_TABLE_
+                              POSITION (motor curves don't depend on
+                              pixel width/IR mode).
+      scan                  1694-23765 (22072 ops; cf. 1265-9404) -- 660
+                              image-data buffer-read descriptors are
+                              issued (497664 B = 16 lines x 5184px x
+                              3ch x 2B each), of which only 659 actually
+                              complete; the 660th is issued then
+                              immediately cancelled with zero bulk-IN
+                              data (see ir-analysis.md) -- detected
+                              mechanically here (dedup_image_reads) as
+                              "the first read whose following op pattern
+                              doesn't match the reference block", not
+                              hardcoded. Motor slope table SLOPE_TABLE_
+                              SCAN_IR DIFFERS from main()'s SLOPE_TABLE_
+                              SCAN byte-for-byte (a different scan-speed
+                              profile for the alternating-light-source
+                              pass) -- kept as its own constant.
+      park                  23766-23902 (137 ops; cf. 9405-9539) -- starts
+                              at the SECOND of two consecutive end-access
+                              (cw wv=0x8d) writes; the first belongs to
+                              the cancelled 660th image descriptor above
+                              and is kept verbatim as scan's own tail
+                              (read/acked, then discarded -- same "wire
+                              fidelity over cleanliness" choice as
+                              main()'s IMAGE_TRAILING_DRAIN).
+
+    Injection points mirror main()'s exactly in mechanism (AFE gain regs
+    2/3/4 in cal_gain_check_a, AFE offset regs 5/6/7 in cal_shading_measure,
+    FEEDL in position, line-count regs 26/27 in scan -- register value
+    0x297e = 10622 here, per ir-analysis.md; NOT the same as the 10544
+    lines actually captured/completed, exactly analogous to main()'s
+    DEFAULT_LINES=5137 vs. the 5129 lines that evenly divide the
+    captured bytes there), PLUS two shading-table injection points per
+    upload phase (visible/IR) instead of main()'s one. cal_dark_a/b,
+    cal_white and cal_gain_check_b carry no injections, same as main().
+    """
+    ops = load_ops(TRACE_IR)
+    phases = [build_phase(ops, name, s, e) for name, s, e in PHASE_BOUNDS_IR]
+    by_name = {p["name"]: p for p in phases}
+    injections = {p["name"]: {} for p in phases}
+
+    gc = by_name["cal_gain_check_a"]["phase_ops"]
+    for inject_name, reg in GAIN_INJECT.items():
+        i = find_afe_batch(gc, reg)
+        injections["cal_gain_check_a"][inject_name] = ("byte", i, val_offset(gc[i]["data"], 0x5E))
+
+    sm = by_name["cal_shading_measure"]["phase_ops"]
+    for inject_name, reg in OFFSET_INJECT.items():
+        i = find_afe_batch(sm, reg, last=True)
+        injections["cal_shading_measure"][inject_name + "_hi"] = ("byte", i, val_offset(sm[i]["data"], 0x5D))
+        injections["cal_shading_measure"][inject_name + "_lo"] = ("byte", i, val_offset(sm[i]["data"], 0x5E))
+
+    pos = by_name["position"]["phase_ops"]
+    feedl_i = None
+    for i, op in enumerate(pos):
+        if op["kind"] == "cw" and op["wv"] == 0x83:
+            p = pairs_of(op["data"])
+            regs = {r for r, _ in p}
+            if 0x3D in regs and 0x3E in regs and 0x3F in regs and (0x02, 0x18) in p:
+                feedl_i = i
+                break
+    if feedl_i is None:
+        raise SystemExit("FEEDL batch not found in IR trace's position phase")
+    fb = pos[feedl_i]["data"]
+    injections["position"] = {
+        "feedl_hi": ("byte", feedl_i, val_offset(fb, 0x3D)),
+        "feedl_mid": ("byte", feedl_i, val_offset(fb, 0x3E)),
+        "feedl_lo": ("byte", feedl_i, val_offset(fb, 0x3F)),
+    }
+    pf = dict(pairs_of(fb))
+    feedl_frame1_ir = (pf[0x3D] << 16) | (pf[0x3E] << 8) | pf[0x3F]
+
+    sc = by_name["scan"]["phase_ops"]
+    lc_i = None
+    for i, op in enumerate(sc):
+        if op["kind"] == "cw" and op["wv"] == 0x83:
+            p = pairs_of(op["data"])
+            regs = {r for r, _ in p}
+            if 0x26 in regs and 0x27 in regs and len(p) > 10:
+                lc_i = i
+                break
+    if lc_i is None:
+        raise SystemExit("line-count batch not found in IR trace's scan phase")
+    lb = sc[lc_i]["data"]
+    injections["scan"] = {
+        "lines_hi": ("byte", lc_i, val_offset(lb, 0x26)),
+        "lines_lo": ("byte", lc_i, val_offset(lb, 0x27)),
+    }
+    lp = dict(pairs_of(lb))
+    default_lines_ir = (lp[0x26] << 8) | lp[0x27]
+    assert default_lines_ir == 10622, default_lines_ir  # cf. ir-analysis.md
+
+    # ---- shading upload / verify: TWO bo-payload groups (visible/IR) ---
+    SHADING_ADDR_NAMES = {
+        0x10014000: "shading_table_visible",   # same address main() uses
+        0x10034000: "shading_table_ir",        # new -- IR-channel table
+    }
+    SHADING2_ADDR_NAMES = {
+        0x10014000: "shading_table2_visible",
+        0x10034000: "shading_table2_ir",
+    }
+
+    up = by_name["cal_shading_upload"]["phase_ops"]
+    up_descs = [d for d in find_buf_descs(up) if d[1] == "write"]
+    assert len(up_descs) == 2, up_descs
+    for addr, bos in group_bo_by_write_desc(up, up_descs, len(up)):
+        name = SHADING_ADDR_NAMES.get(addr)
+        assert name is not None, f"unexpected shading-upload address {addr:#x}"
+        assert len(bos) == 5, bos
+        injections["cal_shading_upload"][name] = ("bo", bos)
+
+    sv = by_name["cal_shading_verify"]["phase_ops"]
+    sv_descs = find_buf_descs(sv)
+    sv_reads = [d for d in sv_descs if d[1] == "read"]
+    sv_writes = [d for d in sv_descs if d[1] == "write"]
+    assert len(sv_reads) == 1 and len(sv_writes) == 2, sv_descs
+    split_at = sv_writes[0][0]
+    for addr, bos in group_bo_by_write_desc(sv, sv_writes, len(sv)):
+        name = SHADING2_ADDR_NAMES.get(addr)
+        assert name is not None, f"unexpected shading-reupload address {addr:#x}"
+        assert len(bos) == 5, bos
+        injections["cal_shading_verify"][name] = ("bo", bos)
+    by_name["cal_shading_verify"]["split_at"] = split_at
+
+    # ---- scan-phase image-block dedup (tolerating the cancelled 660th) -
+    image_descs, image_block_ops, trailing_i = dedup_image_reads(sc)
+    assert len(image_descs) == 659, len(image_descs)
+    for _, _, addr, ln in image_descs:
+        assert addr == 0x10000000 and ln == 497664
+    image_desc_data = sc[image_descs[0][0]]["data"]
+    wi_first = sc[image_descs[0][0]]["wi"]
+    wi_rest = sc[image_descs[1][0]]["wi"] if len(image_descs) > 1 else 0
+    for idx, _, _, _ in image_descs[1:]:
+        wi = sc[idx]["wi"]
+        assert wi == wi_rest, "expected every non-first image descriptor to share one wIndex"
+    desc_dt = round(sc[image_descs[0][0]]["dt"], 4)
+    total_block_bytes = sum(o["length"] for o in image_block_ops if o["kind"] == "bi")
+    assert total_block_bytes == 497664, total_block_bytes
+
+    trailing_addr, trailing_len = struct.unpack("<II", sc[trailing_i]["data"])
+
+    scan_head = sc[:image_descs[0][0]]
+    scan_tail = sc[trailing_i:]
+    assert lc_i < image_descs[0][0], "line-count batch expected before image reads"
+
+    # ---- slope tables (position + scan phases) -- same mechanism as main()
+    pos_bo_i = bo_indices(pos)
+    assert len(pos_bo_i) == 2, pos_bo_i
+    pos_bo = [pos[i]["data"] for i in pos_bo_i]
+    assert pos_bo[0] == pos_bo[1], "expected position phase's 2 slope writes identical"
+    slope_position = pos_bo[0]
+
+    scan_bo_i = [i for i, op in enumerate(scan_head) if op["kind"] == "bo"]
+    assert len(scan_bo_i) == 3, scan_bo_i
+    scan_bo = [scan_head[i]["data"] for i in scan_bo_i]
+    assert scan_bo[0] == scan_bo[1] == scan_bo[2], "expected scan phase's 3 slope writes identical"
+    slope_scan = scan_bo[0]
+
+    # ---- render tables_ir.py -------------------------------------------
+    lines = []
+    w = lines.append
+    w('"""Derived scan-sequence constants for the of135i driver -- IR-enabled')
+    w("(alternating visible/IR line) scan mode.")
+    w("")
+    w("AUTO-GENERATED by driver/gen_tables.py's main_ir() from")
+    w(f"{TRACE_IR.relative_to(HERE.parent)} -- do not edit by hand.")
+    w("Regenerate with: .venv/bin/python driver/gen_tables.py")
+    w("")
+    w("Structures the IR-enabled 3600 dpi single-frame scan flow (see")
+    w("../cal-data/ir/ir-analysis.md and gen_tables.py's main_ir() for the")
+    w("full phase-boundary derivation) the same way of135i/tables.py")
+    w("structures the plain visible-only trace: an ordered list of PHASES,")
+    w("each holding its FULL verbatim op stream (control writes/reads,")
+    w("coalesced status polls, bulk-OUT and bulk-IN, in captured order")
+    w("with captured dt pacing) for its trace op-index range, replayed by")
+    w("device.py's executor exactly as tables.py's phases are. Two")
+    w("differences from tables.py: every calibration buffer here is at")
+    w("the raw sensor width (5184 px, alternating IR/visible lines) and")
+    w("the shading table uploads to TWO addresses instead of one --")
+    w("see Phase.injections' shading_table_visible/shading_table_ir")
+    w('(and shading_table2_visible/shading_table2_ir).')
+    w('"""')
+    w("")
+    w("from __future__ import annotations")
+    w("")
+    w("from dataclasses import dataclass, field, replace")
+    w("")
+    w("")
+    w("@dataclass(frozen=True)")
+    w("class Op:")
+    w('    """One verbatim operation from the captured trace, in order.')
+    w("")
+    w("    See of135i/tables.py's Op for the full field-by-field")
+    w("    description (kind/dt/bm/br/wv/wi/data/length/resp/dur) --")
+    w("    identical shape here, just sourced from trace 04 instead of 03.")
+    w('    """')
+    w("")
+    w("    kind: str")
+    w("    dt: float = 0.0")
+    w("    bm: int = 0")
+    w("    br: int = 0")
+    w("    wv: int = 0")
+    w("    wi: int = 0")
+    w("    data: bytes = b\"\"")
+    w("    length: int = 0")
+    w("    resp: bytes = b\"\"")
+    w("    dur: float = 0.0")
+    w("")
+    w("")
+    w("@dataclass")
+    w("class Phase:")
+    w('    """One named step of the IR scan sequence -- see of135i/tables.py\'s')
+    w("    Phase for the full description of ops/injections/split_at and")
+    w("    patched(). Injection specs and patched() semantics are identical;")
+    w("    only the *names* available differ per phase (see main_ir()'s")
+    w('    docstring in gen_tables.py -- most notably the shading-table')
+    w("    injections come in visible/IR pairs here instead of a single name).")
+    w('    """')
+    w("")
+    w("    name: str")
+    w("    op_range: tuple[int, int]   # trace op-index range this phase covers (provenance)")
+    w("    ops: list[Op] = field(default_factory=list)")
+    w("    injections: dict[str, tuple] = field(default_factory=dict)")
+    w("    split_at: int | None = None")
+    w("")
+    w("    def patched(self, **values: bytes) -> list[Op]:")
+    w('        """Return a copy of ops with named injection points')
+    w("        overwritten by the given values -- see of135i/tables.py's")
+    w('        Phase.patched() for the full semantics."""')
+    w("        out = list(self.ops)")
+    w("        for name, val in values.items():")
+    w("            spec = self.injections.get(name)")
+    w("            if spec is None:")
+    w("                continue")
+    w('            if spec[0] == "byte":')
+    w("                _, idx, off = spec")
+    w("                data = bytearray(out[idx].data)")
+    w("                data[off:off + len(val)] = val")
+    w("                out[idx] = replace(out[idx], data=bytes(data))")
+    w('            elif spec[0] == "bo":')
+    w("                _, idxs = spec")
+    w("                total = sum(len(out[idx].data) for idx in idxs)")
+    w("                if len(val) > total:")
+    w('                    raise ValueError(')
+    w('                        f"injection {name!r}: got {len(val)} B, "')
+    w('                        f"expected at most {total} B"')
+    w("                    )")
+    w("                padded = bytes(val) + bytes(total - len(val))")
+    w("                pos = 0")
+    w("                for idx in idxs:")
+    w("                    n = len(out[idx].data)")
+    w("                    out[idx] = replace(out[idx], data=padded[pos:pos + n])")
+    w("                    pos += n")
+    w("        return out")
+    w("")
+    w("")
+
+    def emit_bytes_const(name, data: bytes):
+        w(f"{name} = bytes.fromhex(")
+        w(f'    "{data.hex()}"')
+        w(")")
+        w("")
+
+    w("# ---------------------------------------------------------------- slope tables")
+    w("# SLOPE_TABLE_POSITION_IR is byte-identical to tables.SLOPE_TABLE_POSITION")
+    w("# (motor curves are independent of pixel width/IR mode); written to")
+    w("# 0x1000c000 and 0x10010000 in the 'position' phase. SLOPE_TABLE_SCAN_IR")
+    w("# DIFFERS from tables.SLOPE_TABLE_SCAN (a different scan-speed profile for")
+    w("# the alternating-light-source pass); written to 0x10000000, 0x10004000")
+    w("# and 0x10008000 (identical payload each time) in the 'scan' phase.")
+    emit_bytes_const("SLOPE_TABLE_POSITION_IR", slope_position)
+    emit_bytes_const("SLOPE_TABLE_SCAN_IR", slope_scan)
+
+    slope_names = {slope_position: "SLOPE_TABLE_POSITION_IR", slope_scan: "SLOPE_TABLE_SCAN_IR"}
+
+    def render_op(op, indent="    "):
+        args = [repr(op["kind"]), repr(round(op["dt"], 4))]
+        kw = []
+        if op["bm"]:
+            kw.append(f'bm={op["bm"]:#04x}')
+        if op["br"]:
+            kw.append(f'br={op["br"]:#04x}')
+        if op["wv"]:
+            kw.append(f'wv={op["wv"]:#06x}')
+        if op["wi"]:
+            kw.append(f'wi={op["wi"]:#06x}')
+        if op["data"]:
+            dname = slope_names.get(op["data"])
+            kw.append(f"data={dname}" if dname else f"data=bytes.fromhex({op['data'].hex()!r})")
+        if op["length"]:
+            kw.append(f'length={op["length"]}')
+        if op["resp"]:
+            kw.append(f"resp=bytes.fromhex({op['resp'].hex()!r})")
+        if op["dur"]:
+            kw.append(f'dur={round(op["dur"], 4)}')
+        return f"{indent}Op({', '.join(args + kw)}),"
+
+    w("# ----------------------------------------------------------- image block")
+    w("# The interior of every one of the 659 COMPLETED image-data buffer reads")
+    w("# in 'scan' (497664 B each -- 16 lines x 5184px x 3ch x 2B, alternating")
+    w("# IR/visible) -- byte-identical every repeat. A 660th descriptor is")
+    w("# issued but immediately cancelled with zero bulk-IN data (see")
+    w("# ir-analysis.md); kept verbatim as SCAN's tail (IMAGE_TRAILING_DRAIN_*")
+    w("# below) for wire fidelity, not looped like the 659 real ones.")
+    w("IMAGE_BLOCK_OPS: list[Op] = [")
+    for op in image_block_ops:
+        w(render_op(op))
+    w("]")
+    w("")
+    w("IMAGE_READ_ADDR = 0x10000000")
+    w(f"IMAGE_DESC_DATA = bytes.fromhex({image_desc_data.hex()!r})   # [addr u32][len u32] LE, addr=0x10000000 len=497664")
+    w("IMAGE_CHUNK_LEN = 497664          # one image-data bulk-read chunk (16 lines x 5184px x 3ch x 2B)")
+    w("IMAGE_CHUNK_COUNT = 659            # completed chunks only (a 660th is requested then cancelled -- see above)")
+    w("IMAGE_WIDTH = 5184                  # px/line, pixel-interleaved RGB16LE, ALTERNATING even=IR/odd=visible lines")
+    w(f"IMAGE_DESC_WI_FIRST = {wi_first:#06x}         # capture fidelity: the first image descriptor's wIndex")
+    w(f"IMAGE_DESC_WI_REST = {wi_rest:#06x}          # every subsequent image descriptor's wIndex")
+    w(f"IMAGE_TRAILING_DRAIN_ADDR = {trailing_addr:#010x}")
+    w(f"IMAGE_TRAILING_DRAIN_LEN = {trailing_len}    # the cancelled 660th descriptor's own [addr][len] fields")
+    w("# (same addr/len as a real image chunk -- it's cancelled via a cw wv=0x8d")
+    w("# end-access right after, not by requesting a different size); included")
+    w("# verbatim (as SCAN's tail ops) for wire fidelity, issued and discarded.")
+    w("")
+    w(f"DEFAULT_LINES = {default_lines_ir}        # reg 0x26:0x27 in this trace (frame 1 @ 3600 dpi, IR-enabled);")
+    w("# NOT the same as the 10544 lines that actually divide the captured bytes")
+    w("# evenly (5272 visible + 5272 IR) -- same kind of small register/capture")
+    w("# slack as tables.DEFAULT_LINES vs. its trace's actual usable line count.")
+    w("")
+    w("")
+
+    for p in phases:
+        var = p["name"].upper()
+        inj = injections.get(p["name"], {})
+        w(f"_{var}_INJECTIONS = {inj!r}")
+    w("")
+    w("")
+
+    w("PHASES: list[Phase] = []")
+    w("")
+
+    for p in phases:
+        var = p["name"].upper()
+        if p["name"] != "scan":
+            w(f"{var} = Phase(")
+            w(f'    name="{p["name"]}",')
+            w(f"    op_range=({p['start']}, {p['end']}),")
+            w("    ops=[")
+            for op in p["phase_ops"]:
+                w(render_op(op, indent="        "))
+            w("    ],")
+            w(f"    injections=_{var}_INJECTIONS,")
+            split = p.get("split_at")
+            if split is not None:
+                w(f"    split_at={split},")
+            w(")")
+            w(f"PHASES.append({var})")
+            w("")
+        else:
+            w("_scan_head: list[Op] = [")
+            for op in scan_head:
+                w(render_op(op, indent="    "))
+            w("]")
+            w("")
+            w("_scan_tail: list[Op] = [")
+            for op in scan_tail:
+                w(render_op(op, indent="    "))
+            w("]")
+            w("")
+            w("_scan_images: list[Op] = []")
+            w("for _i in range(IMAGE_CHUNK_COUNT):")
+            w("    _wi = IMAGE_DESC_WI_FIRST if _i == 0 else IMAGE_DESC_WI_REST")
+            w(f'    _scan_images.append(Op("cw", {desc_dt!r}, bm=0x40, br=0x04, wv=0x0082, wi=_wi, data=IMAGE_DESC_DATA))')
+            w("    _scan_images.extend(IMAGE_BLOCK_OPS)")
+            w("del _i, _wi")
+            w("")
+            w(f"{var} = Phase(")
+            w(f'    name="{p["name"]}",')
+            w(f"    op_range=({p['start']}, {p['end']}),")
+            w("    ops=_scan_head + _scan_images + _scan_tail,")
+            w(f"    injections=_{var}_INJECTIONS,")
+            w(")")
+            w(f"PHASES.append({var})")
+            w("")
+
+    w("")
+    w("# --------------------------------------------------------------------- FEEDL")
+    w("# FEEDL = target absolute position, counted in 1/7200 inch (HWDPI), from")
+    w("# home -- same convention as tables.py. FEEDL_FRAME1_IR is this trace's")
+    w("# own captured frame-1 value; FEEDL_PITCH_IR is NOT independently observed")
+    w("# here (a single-frame capture) and is carried over from tables.FEEDL_PITCH")
+    w("# as a documented assumption -- open question for hardware validation")
+    w("# once a multi-frame IR-mode capture exists.")
+    w(f"FEEDL_FRAME1 = {feedl_frame1_ir}")
+    w("FEEDL_PITCH = 10760")
+    w("")
+    w("")
+    w("def feedl_for_frame(frame: int) -> int:")
+    w('    """Absolute FEEDL target for `frame` (1-based), from home."""')
+    w("    return FEEDL_FRAME1 + (frame - 1) * FEEDL_PITCH")
+    w("")
+
+    OUT_IR.write_text("\n".join(lines) + "\n")
+    print(f"wrote {OUT_IR} ({len(lines)} lines)")
+    total = 0
+    for p in phases:
+        n = len(p["phase_ops"])
+        total += n
+        print(f"  {p['name']:22s} op[{p['start']:5d}:{p['end']:5d}]  ops={n:5d}"
+              + (f"  split_at={p['split_at']}" if p.get('split_at') is not None else ""))
+    print(f"  {'TOTAL':22s}                ops={total:5d}")
+
+
 if __name__ == "__main__":
     main()
+    main_ir()
 
 # --------------------------------------------------------------------- NOTES
 #

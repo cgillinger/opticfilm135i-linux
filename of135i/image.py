@@ -168,6 +168,39 @@ def to_positive(arr, gamma: float = 1.8):
     return (out ** (1.0 / gamma) * 65535.0).astype(np.uint16)
 
 
+# ----------------------------------------------------------------- IR split
+
+
+def split_ir(raw: bytes, width: int = 5184) -> tuple[np.ndarray, np.ndarray]:
+    """De-interleave an IR-enabled scan's raw buffer into (visible, ir).
+
+    The IR-enabled scan mode (--ir; see device.py's Scanner.scan(ir=True)
+    and ../cal-data/ir/ir-analysis.md) captures visible and IR light on
+    ALTERNATING physical lines at the raw sensor width (5184 px, not the
+    3762 the plain visible-only scan windows to): even line index (0, 2,
+    4, ...) = IR pass (R, G, B samples near-identical -- the raw pipe
+    broadcasts one photodiode reading into all three channel slots),
+    odd line index (1, 3, 5, ...) = visible pass (normal RGB negative,
+    clear R/G/B separation).
+
+    `raw` is the same pixel-interleaved RGB16LE buffer assemble() takes
+    (this calls assemble() itself). Returns (visible, ir):
+      visible: (lines // 2, width, 3) uint16 -- the odd lines, unchanged.
+      ir: (lines // 2, width) uint16 -- the even lines, reduced to a
+        single channel (round of the per-pixel R/G/B mean; the three
+        channels already carry the same broadcast value up to noise).
+    """
+    arr = assemble(raw, width)
+    n_lines = arr.shape[0]
+    if n_lines % 2:
+        log.warning("split_ir: dropping odd trailing line (%d total lines)", n_lines)
+        arr = arr[: n_lines - 1]
+    ir_rgb = arr[0::2]        # even lines: IR pass
+    visible = arr[1::2]       # odd lines: visible pass
+    ir = np.rint(ir_rgb.astype(np.float64).mean(axis=2)).astype(np.uint16)
+    return visible, ir
+
+
 def align_channels(arr, dpi: int = 3600):
     """Correct the staggered color-line offset of the sensor.
 

@@ -99,33 +99,70 @@ def offset_codes(
 # Per cal-data/cal-analysis.md "Resolution" section:
 #   - 512 B blocks of 128 (offset, gain) u16 LE pairs.
 #   - The LAST TWO pairs of every *full* block are zero trailer/filler.
-#   - After stripping trailers: 11286 payload pairs = 3762 px x 3 ch,
-#     pixel-interleaved RGB in the same order as the image line format.
-#   - offset field = per-pixel mean of the 128-line measurement.
+#   - After stripping trailers: width*3 payload pairs, pixel-interleaved
+#     RGB in the same order as the image line format (width=3762 for
+#     the plain visible-only scan -- 11286 payload pairs).
+#   - offset field = per-pixel mean of the measurement.
 #   - gain field = 0x4000 (1.0 in Q2.14) for every payload pixel.
-#   - 89 full blocks (126 payload + 2 trailer pairs each) + one 72-pair
-#     tail block, no header, payload contiguous. Total 45,856 B exactly.
+#   - Full blocks are 126 payload + 2 trailer pairs, no header, payload
+#     contiguous; the final block is a shorter unpadded tail.
+#
+# 2026-08-30: parameterized by `width` for the IR-enabled scan mode
+# (traces/04-singel-3600-IRpa.trace.json.gz), whose shading uploads are
+# at the raw sensor width 5184 (not the windowed 3762 the plain visible
+# scan uses) -- see driver/gen_tables.py's main_ir() and
+# ../cal-data/ir/ir-analysis.md. width=3762 (the default) reproduces
+# the exact previous behavior/output (45,856 B); width=5184 produces
+# the IR trace's own observed upload length (63,192 B per address --
+# verified against traces/04-singel-3600-IRpa.trace.json.gz directly).
 
 _SHADING_GAIN = 0x4000
 _PAIRS_PER_BLOCK = 128
 _PAYLOAD_PAIRS_PER_FULL_BLOCK = 126
 _TRAILER_PAIRS_PER_FULL_BLOCK = 2
-SHADING_UPLOAD_LEN = 45856
+SHADING_UPLOAD_LEN = 45856          # width=3762 (plain visible-only scan)
+SHADING_UPLOAD_LEN_IR = 63192       # width=5184 (IR-enabled scan), per address
 
 
-def shading_table(measurement: np.ndarray) -> bytes:
-    """Build the shading-correction upload payload from a 128-line
+def _shading_upload_len(width: int) -> int:
+    """Expected _pack_shading() output length for `width`, computed the
+    same way _pack_shading builds it (126 payload + 2 trailer pairs per
+    full 512 B block, final block unpadded)."""
+    n_pairs = width * 3
+    total = 0
+    i = 0
+    while i < n_pairs:
+        remaining = n_pairs - i
+        if remaining >= _PAYLOAD_PAIRS_PER_FULL_BLOCK:
+            n_payload, n_trailer = _PAYLOAD_PAIRS_PER_FULL_BLOCK, _TRAILER_PAIRS_PER_FULL_BLOCK
+        else:
+            n_payload, n_trailer = remaining, 0
+        total += (n_payload + n_trailer) * 4
+        i += n_payload
+    return total
+
+
+def shading_table(measurement: np.ndarray, width: int = 3762) -> bytes:
+    """Build the shading-correction upload payload from a multi-line
     measurement.
 
-    `measurement` is (128, 3762, 3) uint16, pixel-interleaved RGB
+    `measurement` is (lines, width, 3) uint16, pixel-interleaved RGB
     (the cal_shading_measure/cal_shading_verify bulk-read buffer,
-    reshaped). Returns exactly 45,856 bytes, ready for
-    UsbIo.buf_write(0x10014000, payload).
+    reshaped). `width` defaults to 3762 (the plain visible-only scan's
+    windowed width); pass 5184 for the IR-enabled scan's raw-width
+    measurement (see the module note above) -- and, for that mode,
+    pass only ONE light source's de-interleaved lines (e.g.
+    image.split_ir()'s visible or IR half), not the full alternating
+    buffer, or the two passes' very different signal levels would be
+    averaged together. Returns _shading_upload_len(width) bytes, ready
+    for UsbIo.buf_write(<address>, payload).
     """
     arr = np.asarray(measurement)
     if arr.ndim != 3 or arr.shape[2] != 3:
         raise ValueError(f"expected (lines, width, 3) array, got shape {arr.shape}")
-    lines, width, _ = arr.shape
+    lines, got_width, _ = arr.shape
+    if got_width != width:
+        raise ValueError(f"expected width {width}, got {got_width}")
 
     # Per-pixel mean over the measurement lines, rounded to u16,
     # flattened in native pixel-interleaved order (R,G,B,R,G,B,...) --
@@ -133,40 +170,64 @@ def shading_table(measurement: np.ndarray) -> bytes:
     mean = arr.astype(np.float64).mean(axis=0)          # (width, 3)
     offsets = np.rint(mean).astype(np.uint16).reshape(-1)  # (width*3,)
     gains = np.full_like(offsets, _SHADING_GAIN)
-    return _pack_shading(offsets, gains)
+    return _pack_shading(offsets, gains, width=width)
 
 
-# Per-channel white targets for the second (white-uniformity) upload.
-# Reversed from the captured upload #2: gain = T_c * 0x4000 / (white -
-# offset) reproduces the vendor table with cv 0.0003-0.0004 per channel.
+# Per-channel white targets for the second (white-uniformity) upload,
+# width=3762 (plain visible-only scan). Reversed from the captured
+# upload #2: gain = T_c * 0x4000 / (white - offset) reproduces the
+# vendor table with cv 0.0003-0.0004 per channel.
 SHADING2_TARGETS = (81752, 83490, 87083)
 
 
-def shading_table2(white_meas: np.ndarray, dark_meas: np.ndarray) -> bytes:
+def shading_table2(
+    white_meas: np.ndarray, dark_meas: np.ndarray, width: int = 3762,
+    targets: tuple[float, float, float] = SHADING2_TARGETS,
+) -> bytes:
     """Build the SECOND shading upload (white uniformity correction).
 
     The vendor flow uploads shading twice: first a dark map (per-pixel
     offset, gain fixed 1.0 -- shading_table()), then, after a white
-    128-line measurement, this table: the SAME offsets plus a varying
-    per-pixel gain gain = T_c * 0x4000 / (white_mean - offset), with
-    per-channel targets T_c (SHADING2_TARGETS). Getting this wrong by
-    uploading white means as offsets subtracts away the whole signal
-    (observed 2026-08-30: all-zero images).
+    measurement, this table: the SAME offsets plus a varying per-pixel
+    gain gain = T_c * 0x4000 / (white_mean - offset), with per-channel
+    targets T_c (`targets`, default SHADING2_TARGETS). Getting this
+    wrong by uploading white means as offsets subtracts away the whole
+    signal (observed 2026-08-30: all-zero images).
+
+    `width` follows shading_table()'s convention (default 3762; pass
+    5184 + one light source's de-interleaved lines for IR mode). No
+    IR-specific targets are known yet (v1: same SHADING2_TARGETS
+    formula/values applied to whichever channel's measurement is
+    passed in -- see calibrate.SHADING2_TARGETS_IR for the current
+    placeholder and device.py for how it's used).
     """
     w = np.asarray(white_meas).astype(np.float64).mean(axis=0)   # (width, 3)
     f0 = np.rint(np.asarray(dark_meas).astype(np.float64).mean(axis=0))
     denom = np.clip(w - f0, 1.0, None)
-    t = np.asarray(SHADING2_TARGETS, dtype=np.float64)
+    t = np.asarray(targets, dtype=np.float64)
     gains = np.clip(np.rint(t * 0x4000 / denom), 1, 65535)
     return _pack_shading(f0.astype(np.uint16).reshape(-1),
-                         gains.astype(np.uint16).reshape(-1))
+                         gains.astype(np.uint16).reshape(-1), width=width)
 
 
-def _pack_shading(offsets: np.ndarray, gains: np.ndarray) -> bytes:
+# Second-upload (white-uniformity) targets for IR MODE, per pass.
+# Derived 2026-08-30 from the vendor's own upload #2 payloads in trace
+# 04 vs the extracted 256-line dark/white shading measurements:
+# T_c = gain * (white - offset) / 0x4000, cv 0.034-0.043 per channel.
+# The IR pass gets ~1.8x gain (its target is far above the visible
+# pass's) -- without this the IR channel comes out ~7x too dark.
+SHADING2_TARGETS_IRMODE_VISIBLE = (53928.0, 74096.0, 61728.0)
+SHADING2_TARGETS_IRMODE_IR = (100287.0, 72574.0, 87480.0)
+
+
+def _pack_shading(offsets: np.ndarray, gains: np.ndarray, width: int = 3762) -> bytes:
     """Pack (offset, gain) u16 pairs into the wire block format:
     126 payload pairs + 2 zero trailer pairs per 512-byte block,
     final partial block unpadded."""
     n_pairs = offsets.shape[0]
+    expected_pairs = width * 3
+    if n_pairs != expected_pairs:
+        raise ValueError(f"expected {expected_pairs} pairs for width={width}, got {n_pairs}")
     out = bytearray()
     i = 0
     while i < n_pairs:
@@ -185,8 +246,9 @@ def _pack_shading(offsets: np.ndarray, gains: np.ndarray) -> bytes:
         i += n_payload
 
     payload = bytes(out)
-    assert len(payload) == SHADING_UPLOAD_LEN, (
+    expected_len = _shading_upload_len(width)
+    assert len(payload) == expected_len, (
         f"_pack_shading: built {len(payload)} B, expected "
-        f"{SHADING_UPLOAD_LEN} B (n_pairs={n_pairs})"
+        f"{expected_len} B (n_pairs={n_pairs}, width={width})"
     )
     return payload
