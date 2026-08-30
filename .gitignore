@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+*.tiff
+*.jpg
+*.png
+*.raw
+replay-out/

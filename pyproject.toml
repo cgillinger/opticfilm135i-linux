@@ -1,0 +1,14 @@
+[project]
+name = "of135i"
+version = "0.1.0"
+description = "Unofficial Linux userspace driver for the Plustek OpticFilm 135i film scanner (GL126)"
+readme = "README.md"
+license = { text = "GPL-2.0-or-later" }
+requires-python = ">=3.10"
+dependencies = ["pyusb", "numpy"]
+
+[project.scripts]
+of135i = "of135i.cli:main"
+
+[project.urls]
+Repository = "https://github.com/cgillinger/opticfilm135i-linux"
