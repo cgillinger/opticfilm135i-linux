@@ -99,7 +99,6 @@ interoperability constants and our own code.
 - [ ] Whole-strip batch scanning; verified positioning for frames > 1
 - [ ] Loader/button event handling, udev rule, ICC-tagged output
 - [ ] SANE genesys backend support for GL126 (upstream goal)
-- [ ] VueScan support via a protocol dossier to Hamrick
 
 ## Status & disclaimer
 
