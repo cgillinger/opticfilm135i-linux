@@ -6,3 +6,8 @@ __pycache__/
 *.png
 *.raw
 replay-out/
+
+# Local-only working files, not for publication
+private/
+*.pcap
+*-draft.txt
