@@ -3,6 +3,7 @@
 Layout per driver-design.md:
 
     of135i scan --frame N --dpi 3600 [--ir] -o out.tiff
+    of135i scan --frames 1-4 [--ir] [--eject] -o out.tiff   # batch
     of135i eject
     of135i preview
     of135i status
@@ -47,26 +48,84 @@ def _write_image(arr, out: str) -> None:
         image.write_tiff16(arr, out)
 
 
+def _parse_frames(spec: str) -> list[int]:
+    """Parse a --frames spec: comma-separated frame numbers and/or
+    inclusive ranges, e.g. "1-4", "2", "1,3-4". Order is preserved,
+    duplicates are not removed (scanning a frame twice is a valid,
+    if unusual, request)."""
+    frames: list[int] = []
+    for part in spec.split(","):
+        part = part.strip()
+        if "-" in part:
+            lo_s, hi_s = part.split("-", 1)
+            lo, hi = int(lo_s), int(hi_s)
+            if hi < lo:
+                raise ValueError(f"descending range {part!r}")
+            frames.extend(range(lo, hi + 1))
+        else:
+            frames.append(int(part))
+    if not frames or any(f < 1 for f in frames):
+        raise ValueError(f"invalid frame spec {spec!r}")
+    return frames
+
+
+def _frame_output(out: str, frame: int) -> str:
+    """Per-frame output path for a batch scan: insert -f<N> before the
+    suffix (out.tiff -> out-f2.tiff)."""
+    p = Path(out)
+    return str(p.with_name(f"{p.stem}-f{frame}{p.suffix}"))
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
     if args.dpi != 3600:
         print("error: only --dpi 3600 is implemented so far", file=sys.stderr)
         return 2
+    if (args.frame is None) == (args.frames is None):
+        print("error: give exactly one of --frame or --frames", file=sys.stderr)
+        return 2
+    if args.frames is not None:
+        try:
+            frames = _parse_frames(args.frames)
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+    else:
+        frames = [args.frame]
+    multi = args.frames is not None
+
+    # One device session for the whole batch, but a full initialize()
+    # per frame, not per session: every hardware-verified scan ran with
+    # a fresh initialize() (PREP turns the lamp on) right before it,
+    # and the post-scan PARK phase tears that state down again -- a
+    # frame scanned without re-init calibrates in the dark (maxed gain
+    # codes, black image; observed on frame 2 of the first batch run,
+    # 2026-09-01). Slower than sharing one init, but every frame runs
+    # the exact flow verified on hardware.
     try:
         with Scanner.open() as scanner:
-            scanner.initialize(ir=args.ir)
-            log.info("scanning frame %d @ %d dpi%s", args.frame, args.dpi,
-                      " (IR pass)" if args.ir else "")
-            if args.ir:
-                raw, width, _meta = scanner.scan(frame=args.frame, ir=True)
-            else:
-                raw, width = scanner.scan(frame=args.frame)
+            for frame in frames:
+                scanner.initialize(ir=args.ir)
+                out = _frame_output(args.output, frame) if multi else args.output
+                log.info("scanning frame %d @ %d dpi%s", frame, args.dpi,
+                          " (IR pass)" if args.ir else "")
+                if args.ir:
+                    raw, width, _meta = scanner.scan(frame=frame, ir=True)
+                    _finish_ir_scan(args, raw, width, out)
+                else:
+                    raw, width = scanner.scan(frame=frame)
+                    _finish_plain_scan(args, raw, width, out)
+                del raw
+            if args.eject:
+                scanner.eject()
+                print("ejected")
     except Of135iError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    return 0
 
-    if args.ir:
-        return _finish_ir_scan(args, raw, width)
 
+def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
+                       out: str) -> None:
     arr = image.assemble(raw, width)
     arr = image.align_channels(arr, dpi=args.dpi)
     if args.positive:
@@ -78,13 +137,12 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     if args.rotate:
         import numpy as _np
         arr = _np.ascontiguousarray(_np.rot90(arr, k=args.rotate // 90))
-    out = args.output
     _write_image(arr, out)
     print(f"wrote {out} ({arr.shape[1]}x{arr.shape[0]}, 16-bit RGB)")
-    return 0
 
 
-def _finish_ir_scan(args: argparse.Namespace, raw: bytes, width: int) -> int:
+def _finish_ir_scan(args: argparse.Namespace, raw: bytes, width: int,
+                    out: str) -> None:
     """Split an IR-enabled scan's raw buffer into visible/IR images and
     write both -- <out> (visible, color) and <out stem>-ir.tiff (the IR
     channel, replicated into R=G=B so it opens in any RGB viewer).
@@ -156,7 +214,6 @@ def _finish_ir_scan(args: argparse.Namespace, raw: bytes, width: int) -> int:
         visible = _np.ascontiguousarray(_np.rot90(visible, k=args.rotate // 90))
         ir = _np.ascontiguousarray(_np.rot90(ir, k=args.rotate // 90))
 
-    out = args.output
     _write_image(visible, out)
 
     ir_rgb = _np.stack([ir, ir, ir], axis=-1)
@@ -168,7 +225,6 @@ def _finish_ir_scan(args: argparse.Namespace, raw: bytes, width: int) -> int:
         f"wrote {out} ({visible.shape[1]}x{visible.shape[0]}, 16-bit RGB, visible)\n"
         f"wrote {ir_out} ({ir.shape[1]}x{ir.shape[0]}, 16-bit, IR channel)"
     )
-    return 0
 
 
 def _cmd_eject(args: argparse.Namespace) -> int:
@@ -202,7 +258,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--rotate", type=int, default=0,
         choices=(0, 90, 180, 270),
         help="rotate output counter-clockwise (degrees)")
-    p_scan.add_argument("--frame", type=int, required=True, help="frame number (1-based)")
+    p_scan.add_argument("--frame", type=int, help="frame number (1-based)")
+    p_scan.add_argument("--frames",
+        help="batch scan: comma/range spec of frames, e.g. '1-4' or '1,3'; "
+             "output files get a -f<N> suffix per frame")
+    p_scan.add_argument("--eject", action="store_true",
+        help="eject the film magazine after the last frame")
     p_scan.add_argument("--dpi", type=int, default=3600, help="scan resolution (default 3600)")
     p_scan.add_argument("--ir", action="store_true", help="capture an IR (dust/scratch) pass")
     p_scan.add_argument("--no-clean", action="store_true",

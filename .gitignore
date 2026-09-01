@@ -11,3 +11,5 @@ replay-out/
 private/
 *.pcap
 *-draft.txt
+CLAUDE.md
+.claude/

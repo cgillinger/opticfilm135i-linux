@@ -16,11 +16,14 @@ mechanically but leaves the loader state wrong -- the next scan then
 runs its motor without ever streaming data.
 """
 import gzip, json, sys, time
-sys.path.insert(0, "driver")
+from pathlib import Path
+
+_REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO))
 from of135i.device import Scanner
 from of135i.tables import Op
 
-raw = json.load(gzip.open("traces/load-only-fixed.trace.json.gz", "rt"))
+raw = json.load(gzip.open(_REPO / "traces" / "load-only-fixed.trace.json.gz", "rt"))
 
 def mkop(o):
     return Op(o["t"], o.get("dt", 0.0),

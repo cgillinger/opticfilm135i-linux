@@ -1,0 +1,8 @@
+# Plustek OpticFilm 135i (07b3:1436) — grant the logged-in console user
+# access to the scanner so of135i can run without root.
+#
+# Install:
+#   sudo cp udev/60-of135i.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger
+# then re-plug (or power-cycle) the scanner.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="07b3", ATTRS{idProduct}=="1436", MODE="0660", TAG+="uaccess"

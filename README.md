@@ -29,6 +29,33 @@ negative scanner Linux, SANE OpticFilm 135i, GL126, pyusb scanner driver*.
 - Verified against hardware: calibration values reproduce the vendor
   driver's within ±1 gain code / 0.03 % shading gain on the same unit;
   rendered output judged on par with the vendor app.
+- IR-based automatic dust/scratch removal (multi-scale inpainting), on by
+  default with `--ir`.
+- A udev rule for running without root (`udev/60-of135i.rules`).
+
+## Development status
+
+**Phase: working prototype, single-frame scanning is the verified path.**
+One frame per invocation — scan, calibration, IR and dust removal — is
+stable and hardware-verified. The rough edges you should know about:
+
+- **Batch scanning (`--frames`) is experimental and currently broken for
+  frames after the first.** The first frame scans perfectly; subsequent
+  frames calibrate in a torn-down device state (dark calibration, maxed
+  gain codes, black output). The vendor driver's inter-frame sequence is
+  being extracted from captures — until then, run one invocation per
+  frame, reloading the magazine as needed.
+- **Cold start is not handled.** After a bare power-on the device is in a
+  state our initialization does not fully establish (all verified runs
+  started from a state the vendor driver had initialized at least once
+  since power-on). If scans misbehave right after power-on, initialize
+  the scanner once with the vendor application (e.g. in a VM), then
+  release it.
+- **The magazine must be loaded through the driver**
+  (`tools/load_magazine.py`) — the autoloader is driver-managed and the
+  hardware buttons are dead without a driver process.
+- Only 3600 dpi is implemented; loader-sensor events and button polling
+  are not.
 
 ## Requirements
 
@@ -54,12 +81,17 @@ sudo .venv/bin/python -m of135i scan --frame 1 -o frame1.tiff
 # display-ready positive with vendor-like colors, correctly oriented
 sudo .venv/bin/python -m of135i scan --frame 1 --positive -o frame1-positive.tiff
 
+# batch (EXPERIMENTAL -- currently only the first frame comes out right,
+# see Development status): scan a whole strip, eject when done
+sudo .venv/bin/python -m of135i scan --frames 1-4 --ir --positive --rotate 90 --eject -o rulle.tiff
+
 # eject the film magazine / check device status
 sudo .venv/bin/python -m of135i eject
 sudo .venv/bin/python -m of135i status
 ```
 
-A udev rule to avoid `sudo` is on the roadmap.
+To run without `sudo`, install the udev rule (see the file for the
+commands): [`udev/60-of135i.rules`](udev/60-of135i.rules).
 
 Troubleshooting: if the device is not found, check that nothing else
 holds it (a virtual machine's USB passthrough, another scanning
@@ -94,10 +126,13 @@ interoperability constants and our own code.
 ## Roadmap
 
 - [x] IR channel capture (`--ir`): separate visible + IR output, dual-light calibration
-- [ ] IR-based automatic dust/scratch removal (cleanup algorithm)
+- [x] IR-based automatic dust/scratch removal (multi-scale inpainting, on by default with `--ir`)
 - [ ] Resolution profiles beyond 3600 dpi
-- [ ] Whole-strip batch scanning; verified positioning for frames > 1
-- [ ] Loader/button event handling, udev rule, ICC-tagged output
+- [ ] Whole-strip batch scanning (CLI and loop in place; inter-frame device
+      state under investigation — frames after the first miscalibrate)
+- [ ] Cold-start initialization from a bare power-on
+- [x] udev rule for rootless operation
+- [ ] Loader/button event handling, ICC-tagged output
 - [ ] SANE genesys backend support for GL126 (upstream goal)
 
 ## Status & disclaimer
