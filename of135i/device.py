@@ -142,12 +142,27 @@ class Scanner:
 
     def _poll_one(self, op: Op) -> None:
         want = op.resp
-        timeout = max(3 * op.dur, 10.0)
+        # Most captured polls settled in < 0.03 s; the previous 10 s
+        # floor added ~200 s of wasted timeouts per scan when dynamic
+        # register bits (magazine presence, sensor state) differed from
+        # the capture.  1 s is generous for state checks; real motor
+        # waits (POSITION dur ~1.6 s) still get 3× their captured time.
+        timeout = max(3 * op.dur, 1.0)
         deadline = time.monotonic() + timeout
         dev = self.io.dev
         while True:
             got = bytes(dev.ctrl_transfer(op.bm, op.br, op.wv, op.wi, op.length))
             if got == want:
+                return
+            # Status-word polls (0x018e): the upper nibble of the high
+            # byte encodes the state class (0x9=busy, 0xD=transitioning,
+            # 0xF=done); the lower nibble carries session-variable bits
+            # (magazine sensor, lamp state) that legitimately differ from
+            # the capture.  Accept an upper-nibble match so the poll
+            # completes when the hardware reaches the right state class
+            # instead of timing out on an irrelevant bit difference.
+            if (op.wv == 0x018E and len(got) >= 1 and len(want) >= 1
+                    and (got[0] & 0xF0) == (want[0] & 0xF0)):
                 return
             if time.monotonic() > deadline:
                 log.warning(
