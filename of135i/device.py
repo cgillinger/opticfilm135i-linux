@@ -411,6 +411,15 @@ class Scanner:
         except Of135iError as e:
             log.warning("engine-idle wait: %s -- continuing", e)
 
+    def is_magazine_loaded(self) -> bool:
+        """Check the loader sensor (vendor INI: LoaderSensorReg=0x101,0x08).
+
+        Bit 0x08 set = magazine physically in the slot (hardware-verified
+        2026-09-02: 0xe0 without magazine, 0xe8 with magazine inserted).
+        """
+        val = self.io.read_ext_reg(0x101)
+        return bool(val & 0x08)
+
     # -------------------------------------------------------------- motor
 
     def _motor_run(self, mode: int, feedl: int) -> None:

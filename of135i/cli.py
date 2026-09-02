@@ -27,6 +27,7 @@ from .usbio import Of135iError, UsbIo
 log = logging.getLogger("of135i")
 
 _STATUS_REGS = (0x01, 0x31, 0x32, 0x35)
+_BUTTON_NAMES = {0x48: "eject", 0x04: "sensor"}
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
@@ -35,6 +36,18 @@ def _cmd_status(args: argparse.Namespace) -> int:
             for reg in _STATUS_REGS:
                 val = io.read_reg(reg)
                 print(f"reg 0x{reg:02x} = 0x{val:02x}")
+            reg101 = io.read_ext_reg(0x101)
+            print(f"reg 0x101 = 0x{reg101:02x}")
+            if reg101 & 0x08:
+                print("magazine: loaded")
+            else:
+                print("magazine: not detected")
+            button = io.read_button()
+            if button is None:
+                print("button: idle")
+            else:
+                name = _BUTTON_NAMES.get(button, f"0x{button:02x}")
+                print(f"button: {name}")
     except Of135iError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

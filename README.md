@@ -52,17 +52,14 @@ one invocation. The rough edges you should know about:
   produced wrong calibration (see docs/protocol-notes.md). A 3600 dpi
   frame therefore takes noticeably longer than in the vendor software.
   Slow and correct first; trimming the stream is future work.
-- **Cold start is not handled.** After a bare power-on the device is in a
-  state our initialization does not fully establish (all verified runs
-  started from a state the vendor driver had initialized at least once
-  since power-on). If scans misbehave right after power-on, initialize
-  the scanner once with the vendor application (e.g. in a VM), then
-  release it.
+- **Cold start is handled.** The driver detects a freshly power-cycled
+  scanner (reg 0x01 = 0x00) and runs the vendor's cold-start homing
+  sequence automatically — no VM or vendor software needed.
 - **The magazine must be loaded through the driver**
   (`tools/load_magazine.py`) — the autoloader is driver-managed and the
   hardware buttons are dead without a driver process.
-- Only 3600 dpi is implemented; loader-sensor events and button polling
-  are not.
+- `of135i status` reports the loader sensor (magazine present/absent)
+  and button state; only 3600 dpi is implemented so far.
 
 ## Requirements
 
@@ -137,9 +134,10 @@ interoperability constants and our own code.
 - [x] Whole-strip batch scanning (`--frames 1-4`)
 - [x] Eject from a loaded magazine, before or after scanning
 - [ ] Speed tuning (trim the replayed command stream)
-- [ ] Cold-start initialization from a bare power-on
+- [x] Cold-start initialization from a bare power-on
 - [x] udev rule for rootless operation
-- [ ] Loader/button event handling, ICC-tagged output
+- [x] Loader sensor and button event reading
+- [ ] ICC-tagged output
 - [ ] SANE genesys backend support for GL126 (upstream goal)
 
 ## Status & disclaimer

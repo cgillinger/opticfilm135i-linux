@@ -22,6 +22,7 @@ PID = 0x1436
 
 EP_BULK_IN = 0x81
 EP_BULK_OUT = 0x02
+EP_INT_IN = 0x83
 
 _WRITE_CHUNK = 64          # bytes = 32 (reg, val) pairs
 _BUF_CHUNK = 16384         # bulk transfer chunk size
@@ -164,6 +165,48 @@ class UsbIo:
             time.sleep(interval)
             last = self.read_status_word()
         return last
+
+    def read_ext_reg(self, reg: int) -> int:
+        """Read a register using the GL124/GL126 extended addressing scheme.
+
+        SANE's GL124 backend addresses registers above 0xFF by setting
+        bit 0x100 in wValue and packing only the low 8 bits of the
+        register address into wIndex. This is the same wire shape
+        read_status() uses for its fixed wValue=0x018e/wIndex=0x0122
+        read of reg 0x101 (0x101 & 0xFF = 0x01, 0x01<<8|0x22 = 0x0122);
+        this method generalises that to any register, low or extended.
+        For reg <= 0xFF this is equivalent to read_reg() and delegates
+        to it directly.
+
+        Wire (reg > 0xFF): 0xc0/0x04/0x018e, wIndex=((reg&0xff)<<8)|0x22,
+        2 B reply [value, 0x55]. Same ack-byte handling as read_reg().
+        """
+        if reg <= 0xFF:
+            return self.read_reg(reg)
+        resp = self.dev.ctrl_transfer(0xC0, 0x04, 0x018E, ((reg & 0xFF) << 8) | 0x22, 2)
+        resp = bytes(resp)
+        if len(resp) != 2:
+            raise Of135iError(f"reg 0x{reg:03x} read: expected 2 B, got {resp!r}")
+        if resp[1] != 0x55:
+            log.warning(
+                "reg 0x%03x read: unexpected ack byte 0x%02x (expected 0x55)",
+                reg, resp[1],
+            )
+        return resp[0]
+
+    def read_button(self, timeout_ms: int = 100) -> int | None:
+        """Read one event byte from the interrupt endpoint (EP 0x83).
+
+        Known codes: 0x48 = eject button, 0x04 = loader sensor event.
+        Returns None on timeout (no event pending) rather than raising,
+        since the interrupt endpoint is expected to be idle most of
+        the time.
+        """
+        try:
+            data = self.dev.read(EP_INT_IN, 1, timeout=timeout_ms)
+        except usb.core.USBTimeoutError:
+            return None
+        return int(data[0]) if len(data) else None
 
     def wait_reg(self, reg: int, value: int, timeout: float, mask: int = 0xFF) -> int:
         """Poll read_reg(reg) until (val & mask) == value, or raise on timeout.
