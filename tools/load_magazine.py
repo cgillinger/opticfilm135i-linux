@@ -47,13 +47,14 @@ def mkop(o):
 LOAD = [mkop(o) for o in (raw[291:640] if LITE else raw[790:3280])]
 
 with Scanner.open() as sc:
-    sc.initialize()
-    # Check loader sensor before starting — the cassette must be
-    # physically pushed in to the stop before running this script.
+    # Check loader sensor BEFORE initialize() — the register table
+    # written by initialize() changes reg 0x101 state so the sensor
+    # bit is unreliable after it. Raw device reads work fine.
     if not sc.is_magazine_loaded():
         print("error: no magazine detected (push cassette in to the stop first)",
               file=sys.stderr)
         sys.exit(1)
+    sc.initialize()
     print("kör leverantörens laddsekvens%s..." % ("" if LITE else " (full)"))
     sc._exec_ops(LOAD)
     print("laddning klar — knappen ska vara blå")
