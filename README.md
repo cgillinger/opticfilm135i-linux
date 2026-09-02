@@ -91,6 +91,9 @@ sudo .venv/bin/python -m of135i scan --frames 1-4 --ir --positive --rotate 90 -o
 # eject the film magazine / check device status
 sudo .venv/bin/python -m of135i eject
 sudo .venv/bin/python -m of135i status
+
+# watch mode: ejects on hardware button press, reports magazine events
+sudo .venv/bin/python -m of135i watch
 ```
 
 To run without `sudo`, install the udev rule (see the file for the
