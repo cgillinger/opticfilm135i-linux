@@ -50,10 +50,17 @@ profile tables.
       measurement→result pairs (we hold two sessions' worth).
 - [ ] Motor-busy indicator (replace captured-poll targets with a real
       busy flag; candidates: reg 0x01 bits, interrupt EP).
-- [ ] Loader feed sequence extraction from segment 02 (driver-managed
-      magazine insertion) → `load()`.
+- [x] Loader feed sequence extraction from segment 02 (driver-managed
+      magazine insertion) → `load()`. Done: `tools/load_magazine.py`.
 - [ ] dpi profiles beyond 3600 (vendor table-driven).
 - [ ] IR pass (register deltas known from segment 03 vs 04).
+- [x] Cold-start init (power-on with no prior vendor-software
+      initialization). Done 2026-09-02 (pass 15): `Scanner.cold_init()`
+      reproduces the vendor's power-on homing sequence from
+      `01-init.pcap` and is auto-invoked by `initialize()` when reg
+      0x01==0x00. Hardware-verified end to end (power cycle → cold_init
+      → load → scan with IR → eject), no VM pre-init needed. See
+      docs/protocol-notes.md pass 15 for details.
 
 ## Publication rules (M3)
 

@@ -566,3 +566,64 @@ values the calibration polls wait for).
 
 load_magazine.py now defaults to the feed+traverse flow (`--full` keeps
 the old one for reference).
+
+### Pass 15 (2026-09-02, evening): cold-start init SOLVED — motor homing from power-on
+
+**Problem:** after a fresh power cycle (reg 0x01=0x00, 0x32=0xc2), our
+init assumed an already-homed scanner (0x01=0x22, 0x32=0x1f). Every
+successful run up to this point required vendor-software pre-init in a
+Windows VM.
+
+**Source:** vendor cold-start sequence from USB capture `01-init.pcap`
+(segment from session 1, captured directly after power-on).
+
+**Vendor's cold-start structure** (573 ops total):
+
+1. GL chip handshake: read 0x008a at wIndex=0x26fe (chip ID, returns
+   0x01), write 0x008b at same wIndex.
+2. Status word (0x018e) poll: initial 0x4855, settles to 0xf055.
+3. Cold register table: 125 pairs, same as BASE_INIT_PAIRS except 5
+   value differences (0x7e=0x75, 0x7f=0x30 = loader motor speed;
+   0x4f=0x63 vs 0x03; 0x3b=0x00, 0x3c=0x00 vs 0xff) plus 9 extra regs
+   0x8a-0x92 (motor slope params, 0x91=0x2a, 0x92=0xf8). Shipped as
+   `COLD_INIT_PAIRS` in tables_base.py.
+4. end_access(0x8c, 16), end_access(0x8c, 19).
+5. AFE access enable (0x0b=0x64, 0x13=0x0f, 0x0b=0x6c), EEPROM read
+   (3 B: c84013; 19 B: mostly ff), AFE reset (0x03 toggle 0x10->0x00),
+   AFE base values (regs 0-7 via SPI).
+6. Interrupt/sensor register toggle: reg 0x31 bit 0x80 clear then set.
+7. Motor homing: 3 rounds x 3 moves each (9 GO commands total; vendor
+   capture shows 10 -- an extra short move between rounds 2->3 which
+   we omit). Each round: pre-move sensor prep (0x32 bit manipulation,
+   0x36=0xfc, 0x33=0x8e), then:
+   - Move 1: feedl=8730 (0x3e=0x1a, 0x3f=0x22), loader slope table to
+     0x1000c000 + 0x10010000, GO, poll ~1.6 s
+   - Resync: 0x09=0x00, 0x35 bit 0x40 clear (0xfb->0xbb), 0x32 bit 1
+     dance
+   - Move 2: same feedl=8730, full 19-reg speed profile rewrite
+   - Move 3: feedl=4620 (0x3e=0x0c, 0x3f=0x12), poll ~0.9 s
+   - Settle: motor disable, poll 0x35/0x32 alternating until 0xbb/0x1f
+     (~30 iterations)
+   Between rounds: full register table + AFE sequence rewritten.
+8. End state: 0x01=0x22, 0x35=0xbb -- scanner homed, ready for
+   magazine load + scan.
+
+**Implementation:** `Scanner.cold_init()` in device.py. Auto-detected
+by `initialize()`: reads reg 0x01, calls `cold_init()` when value is
+0x00 (fresh power-on, never initialized).
+
+**Hardware-verified 2026-09-02:** power cycle -> cold_init() ->
+load_magazine -> scan frame 1 with IR + dust removal -> correct TIFF
+output -> eject. No VM init needed. Button went orange (ready) after
+eject.
+
+**Known deviations from vendor capture:**
+(a) 9 homing moves instead of 10 (missing extra short move between
+rounds 2-3 -- scanner homes correctly regardless);
+(b) LOADER_SPEED_PAIRS writes 0x91=0x00/0x92=0x00 in move 2's
+speed-profile rewrite where the vendor's rounds 1-2 use
+0x91=0x2a/0x92=0xf8 (COLD_INIT_PAIRS sets them at round start; no
+observed impact);
+(c) several poll timeouts on status word (0xf055 vs expected 0xf855)
+and settle register (0x32=0x5d vs 0x1f) during the no-magazine cold
+test -- the subsequent with-magazine scan succeeded regardless.

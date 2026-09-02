@@ -125,6 +125,46 @@ class UsbIo:
         resp = bytes(self.dev.ctrl_transfer(0xC0, 0x04, 0x018E, 0x0122, 2))
         return resp[0] if resp else 0
 
+    def read_status_word(self) -> int:
+        """Read the engine/motor status as a combined 16-bit word.
+
+        Same wire read as read_status() (0xc0/0x04/0x018e, wIndex
+        0x0122) but returns both bytes combined (high byte << 8 | low
+        byte) instead of just the high byte: the cold-start sequence
+        (01-init.pcap, Scanner.cold_init()) polls on the full word
+        (e.g. 0xf855) rather than the high byte alone.
+        """
+        resp = bytes(self.dev.ctrl_transfer(0xC0, 0x04, 0x018E, 0x0122, 2))
+        if len(resp) < 2:
+            return (resp[0] << 8) if resp else 0
+        return (resp[0] << 8) | resp[1]
+
+    def poll_status_word(self, mask: int, value: int, timeout: float = 30.0,
+                          interval: float = 0.02) -> int:
+        """Poll read_status_word() until (word & mask) == value.
+
+        Non-raising, like read_status()/eject()'s own completion poll:
+        logs a warning and returns the last value on timeout rather
+        than raising, so a cold-init call site can continue best-
+        effort through a stuck poll instead of aborting the whole
+        sequence. Returns the last word read either way.
+        """
+        import time
+
+        deadline = time.monotonic() + timeout
+        last = self.read_status_word()
+        while (last & mask) != value:
+            if time.monotonic() > deadline:
+                log.warning(
+                    "poll_status_word timed out after %.1fs: last %#06x, "
+                    "want %#06x (mask %#06x) -- continuing",
+                    timeout, last, value, mask,
+                )
+                return last
+            time.sleep(interval)
+            last = self.read_status_word()
+        return last
+
     def wait_reg(self, reg: int, value: int, timeout: float, mask: int = 0xFF) -> int:
         """Poll read_reg(reg) until (val & mask) == value, or raise on timeout.
 

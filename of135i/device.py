@@ -181,8 +181,24 @@ class Scanner:
         power-on table between frames -- only the PREP/AFE_BASE
         equivalent (protocol-notes.md pass 14) -- so the base table is
         written on the first call only.
+
+        Cold-start detection: a scanner that has just been power-cycled
+        has never been homed and reg 0x01 reads without bit 0x20 set
+        (the vendor's own "ready" bit, see _wait_engine_idle). Every
+        successful run to date has started from a vendor-initiated
+        state (0x01=0x22) -- see cold_init()'s docstring -- so this
+        runs the vendor's cold-start sequence first when that bit is
+        missing, exactly once per session.
         """
         if not self._base_initialized:
+            val01 = self.io.read_reg(0x01)
+            if val01 == 0x00:
+                log.info(
+                    "initialize: reg 0x01=%#04x lacks bit 0x20 -- cold-start "
+                    "state (fresh power-on), running cold_init() first",
+                    val01,
+                )
+                self.cold_init()
             self.io.write_regs(tables_base.BASE_INIT_PAIRS)
             for adr, val in tables_base.AFE_BASE_PAIRS:
                 self.io.write_regs([(0x51, adr), (0x5D, 0x00), (0x5E, val)])
@@ -193,6 +209,175 @@ class Scanner:
         t = tables_ir if ir else tables
         self._run_phase(t.PREP)
         self._run_phase(t.AFE_BASE)
+
+    # ---------------------------------------------------------- cold-start
+
+    def cold_init(self) -> None:
+        """Vendor cold-start sequence (USB capture 01-init.pcap).
+
+        A freshly power-cycled scanner has never been homed: reg 0x01
+        reads without the vendor's "ready" bit (0x20) set, and
+        initialize()'s usual power-on table assumes an already-homed
+        transport (0x01=0x22, 0x32=0x1f -- see driver-design.md/
+        protocol-notes.md). This reproduces the vendor's own recovery
+        from that state: a GL chip handshake, the cold-start register
+        table (COLD_INIT_PAIRS -- the loader motor speed profile,
+        not the scan one), an AFE bring-up (access enable, EEPROM
+        read, reset, base values), an interrupt/sensor toggle, and
+        three rounds of loader homing moves (3 moves each), with the
+        register table + AFE sequence rewritten between rounds.
+
+        Called automatically by initialize() when it detects a cold
+        scanner; can also be called directly. Leaves the scanner in
+        the same homed state initialize() otherwise assumes, but does
+        NOT itself write BASE_INIT_PAIRS -- COLD_INIT_PAIRS carries the
+        loader (not scan) motor profile, so initialize() still runs
+        its normal power-on table write afterwards.
+        """
+        log.info("cold_init: starting vendor cold-start sequence")
+
+        # ---- 1: GL chip handshake --------------------------------------
+        chip_id = bytes(self.io.dev.ctrl_transfer(0xC0, 0x0C, 0x008A, 0x26FE, 1))
+        log.info("cold_init: chip id %s", chip_id.hex())
+        self.io.dev.ctrl_transfer(0x40, 0x0C, 0x008B, 0x26FE, b"")
+
+        # ---- 2: status word, poll until ready ---------------------------
+        word = self.io.read_status_word()
+        log.info("cold_init: initial status word %#06x", word)
+        self.io.poll_status_word(mask=0xF000, value=0xF000, timeout=15.0)
+
+        # ---- 3-7: cold register table + end_access + AFE bring-up ------
+        self._cold_write_table_and_afe()
+
+        # ---- 8: interrupt/sensor setup -----------------------------------
+        val31 = self.io.read_reg(0x31)
+        self.io.write_regs([(0x31, val31 & 0x7F)])
+        val31 = self.io.read_reg(0x31)
+        self.io.write_regs([(0x31, (val31 | 0x80) & 0xFF)])
+
+        # ---- 9: three rounds of loader homing (3 moves each) -------------
+        for round_n in range(1, 4):
+            log.info("cold_init: homing round %d/3", round_n)
+            self._cold_homing_round()
+            if round_n < 3:
+                self._cold_write_table_and_afe()
+
+        log.info("cold_init: complete")
+
+    def _cold_write_table_and_afe(self) -> None:
+        """Steps 3-7 of cold_init(): the cold register table, end-of-
+        access acks, AFE access enable + EEPROM read (logged only, not
+        yet consumed), AFE reset, and AFE base values. Re-run between
+        each of the three homing rounds in cold_init()'s step 9, per
+        the capture."""
+        self.io.write_regs(tables_base.COLD_INIT_PAIRS)
+
+        self.io.end_access(0x8C, 16)
+        self.io.end_access(0x8C, 19)
+
+        # AFE access enable.
+        self.io.write_regs([(0x0B, 0x64)])
+        self.io.write_regs([(0x13, 0x0F)])
+        self.io.write_regs([(0x0B, 0x6C)])
+
+        # EEPROM read sequence -- logged for now, not yet used.
+        self.io.end_access(0x8B, 7)
+        self.io.dev.ctrl_transfer(0x40, 0x04, 0x008B, 0x0009, bytes(4))
+        eeprom1 = bytes(self.io.dev.ctrl_transfer(0xC0, 0x04, 0x008A, 0x0010, 3))
+        self.io.dev.ctrl_transfer(0x40, 0x04, 0x008B, 0x000B, b"\x00\x00\x01\x00")
+        eeprom2 = bytes(self.io.dev.ctrl_transfer(0xC0, 0x04, 0x008A, 0x000F, 19))
+        log.info("cold_init: EEPROM data: %s / %s", eeprom1.hex(), eeprom2.hex())
+
+        # AFE reset.
+        self.io.write_regs([(0x03, 0x10)])
+        self.io.write_regs([(0x03, 0x00)])
+
+        # AFE base values.
+        for adr, val in tables_base.AFE_BASE_PAIRS:
+            self.io.write_regs([(0x51, adr), (0x5D, 0x00), (0x5E, val)])
+
+    def _cold_motor_move(self, feedl: int, full_speed_regs: bool) -> None:
+        """One loader-profile motor move within a cold_init() homing
+        round: enable, feed-length + motor params (the full 19-register
+        loader speed profile when `full_speed_regs`, otherwise just the
+        6 move-specific registers -- COLD_INIT_PAIRS already primed the
+        speed profile at the top of the round), the loader slope table
+        uploaded to both scanner-RAM addresses (same table _motor_run/
+        eject() use), execute, poll to completion (target 0xf855, per
+        the capture)."""
+        self.io.write_regs([(0x09, 0x08)])
+        move_regs = [
+            (0x02, 0x18), (0xAE, 0x00), (0xAF, 0xFF),
+            (0x3D, 0x00), (0x3E, feedl & 0xFF), (0x3F, (feedl >> 8) & 0xFF),
+        ]
+        if full_speed_regs:
+            self.io.write_regs(list(tables_base.LOADER_SPEED_PAIRS) + move_regs)
+        else:
+            self.io.write_regs(move_regs)
+        for addr in (0x1000C000, 0x10010000):
+            self.io.buf_write(addr, tables_base.SLOPE_TABLE_LOADER)
+        self.io.write_regs([(0x0F, 0x01)])
+        self.io.poll_status_word(mask=0xFFFF, value=0xF855, timeout=30.0)
+
+    def _cold_homing_round(self) -> None:
+        """One of cold_init()'s three homing rounds: pre-move sensor/
+        int-ack prep, move 1 (feedl=8730, minimal regs), a resync
+        interstitial + move 2 (feedl=8730, full speed-profile rewrite),
+        move 3 (feedl=4620), then a settle poll on regs 0x35/0x32."""
+        FEEDL_1_2 = 8730
+        FEEDL_3 = 4620
+
+        # ---- pre-move setup -----------------------------------------
+        val32 = self.io.read_reg(0x32)
+        self.io.write_regs([(0x32, val32 & ~0x02 & 0xFF)])
+        self.io.read_status_word()
+        self.io.write_regs([(0x36, 0xFC)])
+        self.io.write_regs([(0x33, 0x8E)])
+        val32 = self.io.read_reg(0x32)
+        self.io.write_regs([(0x32, (val32 | 0x02) & 0xFF)])
+        self.io.read_status_word()
+
+        # ---- move 1 ----------------------------------------------------
+        self._cold_motor_move(FEEDL_1_2, full_speed_regs=False)
+
+        # ---- resync between move 1 and move 2 --------------------------
+        self.io.write_regs([(0x09, 0x00)])
+        val32 = self.io.read_reg(0x32)
+        self.io.write_regs([(0x32, val32)])
+        val35 = self.io.read_reg(0x35)
+        self.io.write_regs([(0x35, val35 & ~0x40 & 0xFF)])
+        self.io.read_reg(0x32)
+        self.io.poll_status_word(mask=0xF000, value=0xF000, timeout=15.0)
+        val32 = self.io.read_reg(0x32)
+        self.io.write_regs([(0x32, val32 & ~0x02 & 0xFF)])
+        w = self.io.read_status_word()
+        if w != 0xF055:
+            log.debug("cold_init: resync status word %#06x (want 0xf055)", w)
+        w = self.io.read_status_word()
+        if w != 0xF855:
+            log.debug("cold_init: resync status word %#06x (want 0xf855)", w)
+
+        # ---- move 2 (full speed-profile rewrite) ------------------------
+        self._cold_motor_move(FEEDL_1_2, full_speed_regs=True)
+
+        # ---- move 3 ------------------------------------------------------
+        self._cold_motor_move(FEEDL_3, full_speed_regs=False)
+
+        # ---- settle: motor disable, poll 0x35/0x32 until stable ---------
+        self.io.write_regs([(0x09, 0x00)])
+        val35 = val32 = None
+        for _ in range(30):
+            val35 = self.io.read_reg(0x35)
+            val32 = self.io.read_reg(0x32)
+            if val35 == 0xBB and val32 == 0x1F:
+                break
+            time.sleep(0.05)
+        else:
+            log.warning(
+                "cold_init: settle poll did not reach 0x35=0xbb/0x32=0x1f "
+                "(last 0x35=%#04x 0x32=%#04x) -- continuing",
+                val35, val32,
+            )
 
     def _wait_engine_idle(self, timeout: float = 90.0) -> None:
         """Wait until the scan/motor engine is idle again.

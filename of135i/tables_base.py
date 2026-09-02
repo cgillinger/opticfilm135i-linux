@@ -162,3 +162,31 @@ LOADER_SPEED_PAIRS = [
     (0x8a, 0x00), (0x8b, 0x00), (0x8c, 0x00), (0x8d, 0x00), (0x8e, 0x00),
     (0x8f, 0x00), (0x90, 0x00), (0x91, 0x00), (0x92, 0x00),
 ]
+
+# Cold-start register table (01-init.pcap, the vendor driver's very
+# first register write after a fresh power-on -- reg 0x01 reads 0x00
+# beforehand). Same as BASE_INIT_PAIRS with the loader motor speed
+# profile substituted for the scan-motor one (0x7e/0x7f) and the
+# accompanying slope params added (0x8a-0x92, absent from
+# BASE_INIT_PAIRS entirely): the cold sequence's first motor moves are
+# the loader homing rounds in Scanner.cold_init(), not a scan pass.
+# 0x4f/0x3b/0x3c also differ (cause not yet understood -- captured
+# byte-exact regardless). Built from BASE_INIT_PAIRS rather than
+# duplicated so the two tables can't drift apart silently.
+_COLD_INIT_OVERRIDES = {0x7E: 0x75, 0x7F: 0x30, 0x4F: 0x63, 0x3B: 0x00, 0x3C: 0x00}
+_COLD_INIT_EXTRA_AFTER_0X87 = [
+    (0x8A, 0x00), (0x8B, 0x00), (0x8C, 0x00), (0x8D, 0x00), (0x8E, 0x00),
+    (0x8F, 0x00), (0x90, 0x00), (0x91, 0x2A), (0x92, 0xF8),
+]
+
+
+def _build_cold_init_pairs():
+    pairs = []
+    for adr, val in BASE_INIT_PAIRS:
+        pairs.append((adr, _COLD_INIT_OVERRIDES.get(adr, val)))
+        if adr == 0x87:
+            pairs.extend(_COLD_INIT_EXTRA_AFTER_0X87)
+    return pairs
+
+
+COLD_INIT_PAIRS = _build_cold_init_pairs()
