@@ -48,10 +48,12 @@ LOAD = [mkop(o) for o in (raw[291:640] if LITE else raw[790:3280])]
 
 with Scanner.open() as sc:
     sc.initialize()
-    # Loader-sensor detection is an open question (reg 0x101 bit 0x08
-    # per the vendor config; reg 0x32 mirrors it only in the vendor's
-    # own configured state). v1: the user confirms insertion by
-    # starting this script with the cassette already pushed in.
+    # Check loader sensor before starting — the cassette must be
+    # physically pushed in to the stop before running this script.
+    if not sc.is_magazine_loaded():
+        print("error: no magazine detected (push cassette in to the stop first)",
+              file=sys.stderr)
+        sys.exit(1)
     print("kör leverantörens laddsekvens%s..." % ("" if LITE else " (full)"))
     sc._exec_ops(LOAD)
     print("laddning klar — knappen ska vara blå")

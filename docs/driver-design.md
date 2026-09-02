@@ -9,12 +9,12 @@ application's job — the driver is a data layer, SANE backend style.
 
 | Module | Responsibility |
 |---|---|
-| `usbio.py` | Transport primitives: `write_regs(pairs)`, `read_reg(reg)` (2 B `[value, 0x55]`), `read_reg_short(reg)`, `buf_read(addr, length)` (descriptor via 0x40/0x04/0x0082 wIndex 0, then bulk IN 16 KiB chunks), `buf_write(addr, data)` (descriptor wIndex 1, then bulk OUT), `end_access(which)` (0x40/0x0c/0x008c|d), device open/close, wake/standby detection |
+| `usbio.py` | Transport primitives: `write_regs(pairs)`, `read_reg(reg)` / `read_ext_reg(reg)` (2 B `[value, 0x55]`; extended regs use wValue 0x018E), `buf_read(addr, length)` (descriptor via 0x40/0x04/0x0082 wIndex 0, then bulk IN 16 KiB chunks), `buf_write(addr, data)` (descriptor wIndex 1, then bulk OUT), `read_button()` (interrupt EP 0x83), `end_access(which)` (0x40/0x0c/0x008c|d), device open/close, wake/standby detection |
 | `tables.py` | Derived constants: base init table (116 pairs), AFE base, exposure block 0xd1–0xf7, scan-config batches per phase, slope tables (embedded binary), FEEDL formula. Provenance: derived from vendor config tables + captures — never ship vendor files |
 | `device.py` | `Scanner` class: `initialize()`, `wait_ready()`, `home()`, `goto_frame(n)`, `eject()`, `load()` (loader feed), `scan(frame, dpi=3600, ir=False)` returning raw ndarray |
 | `calibrate.py` | M2a: dark/offset measurement (AFE gain 0 / offset 0xff), white line, gain/offset computation, shading measurement + correction-data synthesis, upload to scanner RAM (addr 0x10014000) |
 | `image.py` | Raw assembly (pixel-interleaved RGB16 LE, width 3762 @ 3600 dpi, lines = reg 0x26:0x27), 16-bit TIFF output |
-| `cli.py` | `of135i scan --frame N --dpi 3600 [--ir] -o out.tiff`, `of135i eject`, `of135i preview`, `of135i status` |
+| `cli.py` | `of135i scan --frame N --dpi 3600 [--ir] -o out.tiff`, `of135i eject`, `of135i preview`, `of135i status`, `of135i watch` |
 
 ## Scan sequence (from segment 03, frames → phases)
 
@@ -61,6 +61,12 @@ profile tables.
       0x01==0x00. Hardware-verified end to end (power cycle → cold_init
       → load → scan with IR → eject), no VM pre-init needed. See
       docs/protocol-notes.md pass 15 for details.
+- [x] Loader sensor and button events. Done 2026-09-02 (pass 16):
+      `read_ext_reg()` generalises extended register reads (GL124
+      addressing with wValue bit 0x100); `is_magazine_loaded()` checks
+      reg 0x101 bit 0x08; `read_button()` polls interrupt EP 0x83.
+      Hardware-verified: sensor polarity confirmed, eject button (0x48)
+      triggers `eject()` via `of135i watch`.
 
 ## Publication rules (M3)
 

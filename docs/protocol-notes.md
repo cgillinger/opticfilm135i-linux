@@ -101,17 +101,25 @@ With this, every operation a driver needs is mapped: init, calibration
 data readout, homing, eject, wake/release behavior.
 
 ### Remaining open questions
-1. 16-bit register addresses (0x101/0x107/0x108): are they read via
-   the bRequest 0x0c variant or AFE-indirect? (The AfeReadReg path
-   0x50/0x107/0x108 is likely AFE-internal, not ASIC registers.)
+1. ~~16-bit register addresses (0x101/0x107/0x108): are they read via
+   the bRequest 0x0c variant or AFE-indirect?~~ — **Resolved (pass 16):**
+   same wire format as normal registers but with wValue bit 0x100 set
+   (0x018E instead of 0x008E); wIndex uses only the low 8 bits of the
+   register address. This is the SANE GL124 extended register scheme
+   (`scanner_interface_usb.cpp:52`). Reg 0x101 = the "status word" our
+   `read_status()` has been reading all along (wValue=0x018E,
+   wIndex=0x0122). The AfeReadReg path (0x50/0x107/0x108) is separate
+   — AFE-internal, not ASIC registers.
 2. ~~The calibration phase's data flow in detail~~ — mapped in pass 5.
-3. The magazine sensor's insertion event in 02-preview (interrupt EP +
-   status bits in the reg 0x01/0x35 reads).
+3. ~~The magazine sensor's insertion event in 02-preview (interrupt EP +
+   status bits in the reg 0x01/0x35 reads).~~ — **Resolved (pass 16):**
+   see "Loader sensor and button events" section below.
 4. The descriptor format's target address field (0x10000000 vs the
    0x10010400 variant) — buffer address or type flag?
-5. Where is motor-busy visible? Candidates: other bits in the 0x01
-   response, interrupt EP 0x83, or a reg 0x40-ish (gl84x analogy).
-   Needed to poll for completion instead of fixed sleeps.
+5. ~~Where is motor-busy visible?~~ — **Partially resolved:** reg 0x01
+   bit 0x20 clears during engine execution (0x22→0x02) and sets on
+   completion (pass 4). Interrupt EP 0x83 delivers button and sensor
+   events but not a motor-done signal.
 
 ## Working method (repeatable)
 
@@ -627,3 +635,83 @@ observed impact);
 (c) several poll timeouts on status word (0xf055 vs expected 0xf855)
 and settle register (0x32=0x5d vs 0x1f) during the no-magazine cold
 test -- the subsequent with-magazine scan succeeded regardless.
+
+## Pass 16 (2026-09-02): LOADER SENSOR + BUTTON EVENTS — hardware-verified
+
+### Extended register addressing (GL124/GL126)
+
+Registers above 0xFF use the same control transfer as normal reads but
+with wValue bit 0x100 set. For reading reg N (N > 0xFF):
+
+    bmRequestType = 0xC0 (IN)
+    bRequest      = 0x04
+    wValue        = 0x018E (= 0x008E | 0x100)
+    wIndex        = ((N & 0xFF) << 8) | 0x22
+    wLength       = 2
+    reply         = [value, 0x55]
+
+For writing: wValue = 0x0183 (= 0x0083 | 0x100), data = [N & 0xFF, value].
+
+This is the same scheme SANE's GL124 backend uses
+(`scanner_interface_usb.cpp`). Our `read_status()` / `read_status_word()`
+already read reg 0x101 via this path (wValue=0x018E, wIndex=0x0122).
+Generalised as `read_ext_reg(reg)` in usbio.py.
+
+### Loader sensor (reg 0x101 bit 0x08)
+
+Vendor config: `LoaderSensorReg=0x101,0x08`.
+
+| State              | reg 0x101 | bit 0x08 |
+|--------------------|-----------|----------|
+| No magazine        | 0xe0      | 0        |
+| Magazine at stop   | 0xe8      | 1        |
+| After eject        | 0xe0      | 0        |
+
+Hardware-verified 2026-09-02. Polarity: bit set = magazine physically
+present in the slot.
+
+Reg 0x32 also reflects magazine state (0xdb without, 0x9f with magazine)
+but with many co-varying bits. The vendor config names it
+`LoaderInterruptReg=0x32,0x01` (bit 0). Bits 3-4 (0x18) of reg 0x32
+are sensor-dependent and must be masked in trace-replay polls to avoid
+timeouts.
+
+### Reg 0x101 bit map (GL126, partial)
+
+From SANE GL124 register definitions and hardware observation:
+
+| Bit  | Mask | Name (GL124)  | Observed role (GL126)        |
+|------|------|---------------|------------------------------|
+| 7    | 0x80 |               | set in idle states           |
+| 6    | 0x40 |               | set in idle states           |
+| 5    | 0x20 |               | set in idle/done states      |
+| 4    | 0x10 | CHKVER        | state-class marker           |
+| 3    | 0x08 | DOCJAM        | **loader sensor** (magazine) |
+| 2    | 0x04 | HISPDFLG      |                              |
+| 1    | 0x02 | MOTMFLG       | motor move in progress       |
+| 0    | 0x01 | DATAENB       | data ready                   |
+
+Upper nibble state classes (observed in status-word polls):
+- 0x9x: busy (scanning)
+- 0xDx: transitioning (motor starting/stopping)
+- 0xEx: transitioning (late phase)
+- 0xFx: done/idle
+
+### Button / interrupt endpoint (EP 0x83)
+
+The scanner has one interrupt IN endpoint (EP 0x83, 1 byte). The
+vendor driver polls it in a loop; when no event is pending, the read
+times out with 0 bytes. Known event codes:
+
+| Code | Event                         | Observed in          |
+|------|-------------------------------|----------------------|
+| 0x48 | Eject button pressed          | 06-eject, silverfast, vendor-eject captures |
+| 0x04 | Loader sensor state change    | 01-init (during homing with magazine)       |
+
+The eject button is DEAD without a driver process holding the USB
+interface — buttons are software-handled, not firmware-autonomous
+(confirmed pass 4). The `of135i watch` command polls EP 0x83 and
+performs an eject on 0x48 events.
+
+Stale events can accumulate in the endpoint's queue (e.g. a 0x04 left
+over from cold_init homing); the first `read_button()` drains them.
