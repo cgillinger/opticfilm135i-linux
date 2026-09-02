@@ -125,12 +125,34 @@ def test_pnm_roundtrip_via_pillow():
     print("test_pnm_roundtrip_via_pillow OK")
 
 
+def test_tiff_icc_profile_via_pillow():
+    from PIL import Image
+
+    arr = np.full((5, 7, 3), 12345, dtype="<u2")
+    icc = image.srgb_icc()
+    assert icc[36:40] == b"acsp", "srgb.icc is not an ICC profile"
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "positive.tiff"
+        image.write_tiff16(arr, path, icc=icc)
+        im = Image.open(path)
+        assert im.info.get("icc_profile") == icc, "ICC profile not round-tripped"
+        assert im.size == (7, 5) and im.tag_v2[258] == (16, 16, 16)
+        # Pixel data must be untouched by the extra tag.
+        raw = Path(path).read_bytes()
+        assert raw[8:8 + arr.nbytes] == arr.tobytes()
+
+        image.write_tiff16(arr, path)
+        assert "icc_profile" not in Image.open(path).info
+    print("test_tiff_icc_profile_via_pillow OK")
+
+
 def main() -> int:
     tests = [
         test_assemble_shape_and_endianness,
         test_assemble_trims_partial_trailing_line,
         test_assemble_single_pixel,
         test_tiff_roundtrip_via_pillow,
+        test_tiff_icc_profile_via_pillow,
         test_pnm_roundtrip_via_pillow,
     ]
     for t in tests:

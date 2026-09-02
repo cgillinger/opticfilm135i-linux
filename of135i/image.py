@@ -58,9 +58,24 @@ def _ifd_entry(tag: int, typ: int, count: int, value_bytes: bytes) -> bytes:
     return struct.pack("<HHI", tag, typ, count) + value_bytes
 
 
-def write_tiff16(arr: np.ndarray, path: str | Path) -> None:
+_TAG_TYPE_UNDEFINED = 7
+
+# A plain sRGB ICC profile (588 B, generated once with Little-CMS via
+# Pillow's ImageCms.createProfile("sRGB")), embedded in --positive
+# output: the positive rendering is fitted to the vendor app's sRGB
+# JPEGs, so that is the space the pixels are in. Raw negatives get no
+# profile -- they are linear scanner data, not a display colour space.
+SRGB_ICC_PATH = Path(__file__).parent / "data" / "srgb.icc"
+
+
+def srgb_icc() -> bytes:
+    return SRGB_ICC_PATH.read_bytes()
+
+
+def write_tiff16(arr: np.ndarray, path: str | Path, icc: bytes | None = None) -> None:
     """Write an (lines, width, 3) uint16 array as an uncompressed 16-bit
-    RGB TIFF, using only stdlib struct."""
+    RGB TIFF, using only stdlib struct. `icc`, if given, is embedded as
+    the ICCProfile tag (34675)."""
     if arr.ndim != 3 or arr.shape[2] != 3:
         raise ValueError(f"expected (lines, width, 3) array, got shape {arr.shape}")
     height, width, _ = arr.shape
@@ -78,7 +93,12 @@ def write_tiff16(arr: np.ndarray, path: str | Path) -> None:
     sample_format = struct.pack("<HHH", 1, 1, 1)
     sample_format_offset = bits_per_sample_offset + len(bits_per_sample)
 
-    ifd_offset = sample_format_offset + len(sample_format)
+    icc_data = bytes(icc) if icc else b""
+    icc_offset = sample_format_offset + len(sample_format)
+    if len(icc_data) % 2:
+        icc_data += b"\x00"  # keep the IFD word-aligned
+
+    ifd_offset = icc_offset + len(icc_data)
 
     def short1(v: int) -> bytes:
         return struct.pack("<HH", v, 0)
@@ -98,6 +118,8 @@ def write_tiff16(arr: np.ndarray, path: str | Path) -> None:
         _ifd_entry(279, _TAG_TYPE_LONG, 1, long1(len(pixel_data))),  # StripByteCounts
         _ifd_entry(339, _TAG_TYPE_SHORT, 3, long1(sample_format_offset)),  # SampleFormat = uint
     ]
+    if icc:
+        entries.append(_ifd_entry(34675, _TAG_TYPE_UNDEFINED, len(icc), long1(icc_offset)))  # ICCProfile
     entries.sort(key=lambda e: struct.unpack_from("<H", e)[0])  # tags must ascend
 
     ifd = struct.pack("<H", len(entries))
@@ -106,7 +128,7 @@ def write_tiff16(arr: np.ndarray, path: str | Path) -> None:
     ifd += struct.pack("<I", 0)  # no next IFD
 
     header = b"II" + struct.pack("<H", 42) + struct.pack("<I", ifd_offset)
-    blob = header + pixel_data + bits_per_sample + sample_format + ifd
+    blob = header + pixel_data + bits_per_sample + sample_format + icc_data + ifd
 
     Path(path).write_bytes(blob)
 

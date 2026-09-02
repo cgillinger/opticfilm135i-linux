@@ -61,7 +61,10 @@ profile tables.
       drives any of them, `--dpi` selects. Position phase is stitched
       from each capture's exposure block and trace 04's FEEDL move.
       First hardware test: 2400 dpi (same sensor mode as 3600).
-- [ ] IR pass (register deltas known from segment 03 vs 04).
+- [x] IR pass. Done 2026-08-30 (`--ir`, tables_ir.py); shading pairing
+      and stagger corrected 2026-09-02 (protocol-notes.md pass 18).
+- [x] ICC-tagged output: `--positive` TIFFs embed an sRGB profile
+      (`of135i/data/srgb.icc`, image.write_tiff16(icc=...)), 2026-09-02.
 - [x] Cold-start init (power-on with no prior vendor-software
       initialization). Done 2026-09-02 (pass 15): `Scanner.cold_init()`
       reproduces the vendor's power-on homing sequence from

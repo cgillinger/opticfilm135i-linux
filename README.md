@@ -21,8 +21,8 @@ negative scanner Linux, SANE OpticFilm 135i, GL126, pyusb scanner driver*.
   correction) and 3600 dpi 48-bit RGB scanning.
 - Color-line (staggered CCD) channel alignment — no RGB fringing.
 - Output as 16-bit TIFF or PNM: raw negative, or a display-ready positive
-  (`--positive`) via a learned tone-curve LUT that matches the vendor
-  application's color rendering.
+  (`--positive`, sRGB-tagged) via a learned tone-curve LUT that matches
+  the vendor application's color rendering.
 - IR scanning (`--ir`): dual-light alternating capture — visible image plus an
   IR channel where only dust and scratches are visible, with per-light
   two-stage shading calibration.
@@ -150,7 +150,7 @@ interoperability constants and our own code.
 - [x] Cold-start initialization from a bare power-on
 - [x] udev rule for rootless operation
 - [x] Loader sensor and button event reading
-- [ ] ICC-tagged output
+- [x] ICC-tagged output (`--positive` TIFFs carry an sRGB profile; raw negatives are untagged linear data)
 - [ ] SANE genesys backend support for GL126 (upstream goal)
 
 ## Status & disclaimer

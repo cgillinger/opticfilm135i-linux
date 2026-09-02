@@ -55,11 +55,14 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
-def _write_image(arr, out: str) -> None:
+def _write_image(arr, out: str, positive: bool = False) -> None:
+    """Write `arr`; a --positive TIFF gets an sRGB ICC profile embedded
+    (the positive rendering targets the vendor app's sRGB output), a
+    raw negative none (linear scanner data)."""
     if out.lower().endswith((".pnm", ".ppm")):
         image.write_pnm16(arr, out)
     else:
-        image.write_tiff16(arr, out)
+        image.write_tiff16(arr, out, icc=image.srgb_icc() if positive else None)
 
 
 def _parse_frames(spec: str) -> list[int]:
@@ -154,7 +157,7 @@ def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
     if args.rotate:
         import numpy as _np
         arr = _np.ascontiguousarray(_np.rot90(arr, k=args.rotate // 90))
-    _write_image(arr, out)
+    _write_image(arr, out, positive=args.positive)
     print(f"wrote {out} ({arr.shape[1]}x{arr.shape[0]}, 16-bit RGB)")
 
 
@@ -219,7 +222,7 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
         visible = _np.ascontiguousarray(_np.rot90(visible, k=args.rotate // 90))
         ir = _np.ascontiguousarray(_np.rot90(ir, k=args.rotate // 90))
 
-    _write_image(visible, out)
+    _write_image(visible, out, positive=args.positive)
     print(f"wrote {out} ({visible.shape[1]}x{visible.shape[0]}, 16-bit RGB, visible)")
 
     if write_ir:
