@@ -164,6 +164,16 @@ class Scanner:
             if (op.wv == 0x018E and len(got) >= 1 and len(want) >= 1
                     and (got[0] & 0xF0) == (want[0] & 0xF0)):
                 return
+            # Reg 0x32 polls (wIndex 0x3222): bits 3-4 (0x18) reflect
+            # loader-sensor and transport state that vary with magazine
+            # presence; mask them out so a poll doesn't time out just
+            # because the magazine is in a different position than the
+            # capture session had (hardware-verified 2026-09-02: bit 3
+            # is the loader sensor, bit 4 co-varies).
+            if (op.wv == 0x008E and op.wi == 0x3222
+                    and len(got) >= 1 and len(want) >= 1
+                    and (got[0] & ~0x18 & 0xFF) == (want[0] & ~0x18 & 0xFF)):
+                return
             if time.monotonic() > deadline:
                 log.warning(
                     "poll wv=%#06x wi=%#06x timed out after %.1fs "
