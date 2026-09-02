@@ -7,6 +7,7 @@ Layout per driver-design.md:
     of135i eject
     of135i preview
     of135i status
+    of135i watch
 
 `scan`, `status` and `eject` are wired to device.py (scan sequencing).
 `preview` has no captured trace to derive a phase list from yet
@@ -249,6 +250,38 @@ def _cmd_eject(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_watch(args: argparse.Namespace) -> int:
+    try:
+        with Scanner.open() as scanner:
+            print("watching for button events (Ctrl+C to stop)", flush=True)
+            try:
+                while True:
+                    button = scanner.io.read_button(timeout_ms=500)
+                    if button is None:
+                        continue
+                    if button == 0x48:
+                        print("eject button pressed", flush=True)
+                        if scanner.is_magazine_loaded():
+                            scanner.eject()
+                            print("ejected", flush=True)
+                        else:
+                            print("magazine not detected, ignoring", flush=True)
+                    elif button == 0x04:
+                        if scanner.is_magazine_loaded():
+                            print("magazine inserted", flush=True)
+                        else:
+                            print("magazine removed", flush=True)
+                    else:
+                        print(f"unknown event: 0x{button:02x}", flush=True)
+            except KeyboardInterrupt:
+                print("\nstopped")
+                return 0
+    except Of135iError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _not_wired_yet(args: argparse.Namespace) -> int:
     print(f"'{args.command}' is not wired yet (needs device.py).", file=sys.stderr)
     return 2
@@ -291,6 +324,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_status = sub.add_parser("status", help="read and print status registers")
     p_status.set_defaults(func=_cmd_status)
+
+    p_watch = sub.add_parser("watch", help="poll buttons and eject on button press")
+    p_watch.set_defaults(func=_cmd_watch)
 
     return parser
 
