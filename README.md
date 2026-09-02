@@ -59,7 +59,14 @@ one invocation. The rough edges you should know about:
   (`tools/load_magazine.py`) — the autoloader is driver-managed and the
   hardware buttons are dead without a driver process.
 - `of135i status` reports the loader sensor (magazine present/absent)
-  and button state; only 3600 dpi is implemented so far.
+  and button state.
+- **Resolutions other than 3600 dpi are implemented but not yet
+  hardware-verified.** `--dpi 600|1200|2400|7200` replays the vendor's
+  own command stream for that resolution (captured 2026-09-02); those
+  captures are all dual-light (IR + visible) passes, so a non-3600 scan
+  always runs the IR pass too (`--ir` decides whether it is written out
+  and used for dust removal). 7200 dpi produces a 10512 px wide, ~1.3 GB
+  raw frame — expect a long scan and a lot of RAM.
 
 ## Requirements
 
@@ -87,6 +94,9 @@ sudo .venv/bin/python -m of135i scan --frame 1 --positive -o frame1-positive.tif
 
 # batch: scan a whole strip in one go (rulle-f1.tiff ... rulle-f4.tiff)
 sudo .venv/bin/python -m of135i scan --frames 1-4 --ir --positive --rotate 90 -o rulle.tiff
+
+# other resolutions (not yet hardware-verified, see above)
+sudo .venv/bin/python -m of135i scan --frame 1 --dpi 2400 --positive -o frame1-2400.tiff
 
 # eject the film magazine / check device status
 sudo .venv/bin/python -m of135i eject
@@ -133,7 +143,7 @@ interoperability constants and our own code.
 
 - [x] IR channel capture (`--ir`): separate visible + IR output, dual-light calibration
 - [x] IR-based automatic dust/scratch removal (multi-scale inpainting, on by default with `--ir`)
-- [ ] Resolution profiles beyond 3600 dpi
+- [ ] Resolution profiles beyond 3600 dpi (600/1200/2400/7200 implemented from vendor captures; hardware verification pending)
 - [x] Whole-strip batch scanning (`--frames 1-4`)
 - [x] Eject from a loaded magazine, before or after scanning
 - [ ] Speed tuning (trim the replayed command stream)

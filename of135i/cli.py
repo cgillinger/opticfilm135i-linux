@@ -2,7 +2,7 @@
 
 Layout per driver-design.md:
 
-    of135i scan --frame N --dpi 3600 [--ir] -o out.tiff
+    of135i scan --frame N [--dpi 600|1200|2400|3600|7200] [--ir] -o out.tiff
     of135i scan --frames 1-4 [--ir] [--eject] -o out.tiff   # batch
     of135i eject
     of135i preview
@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 from . import image
-from .device import Scanner
+from .device import SUPPORTED_DPIS, Scanner
 from .usbio import Of135iError, UsbIo
 
 log = logging.getLogger("of135i")
@@ -91,9 +91,14 @@ def _frame_output(out: str, frame: int) -> str:
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
-    if args.dpi != 3600:
-        print("error: only --dpi 3600 is implemented so far", file=sys.stderr)
+    if args.dpi not in SUPPORTED_DPIS:
+        print(f"error: --dpi must be one of {', '.join(map(str, SUPPORTED_DPIS))}", file=sys.stderr)
         return 2
+    # Every resolution other than 3600 exists only as a dual-light
+    # (alternating IR/visible line) capture, so those always run the
+    # dual flow; --ir then only decides whether the IR channel is used
+    # (dust removal) and written out.
+    dual = args.ir or args.dpi != 3600
     if (args.frame is None) == (args.frames is None):
         print("error: give exactly one of --frame or --frames", file=sys.stderr)
         return 2
@@ -116,13 +121,13 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     try:
         with Scanner.open() as scanner:
             for frame in frames:
-                scanner.initialize(ir=args.ir)
+                scanner.initialize(ir=dual, dpi=args.dpi)
                 out = _frame_output(args.output, frame) if multi else args.output
                 log.info("scanning frame %d @ %d dpi%s", frame, args.dpi,
-                          " (IR pass)" if args.ir else "")
-                if args.ir:
-                    raw, width, _meta = scanner.scan(frame=frame, ir=True)
-                    _finish_ir_scan(args, raw, width, out)
+                          " (dual-light pass)" if dual else "")
+                if dual:
+                    raw, width, _meta = scanner.scan(frame=frame, ir=True, dpi=args.dpi)
+                    _finish_dual_scan(args, raw, width, out, write_ir=args.ir)
                 else:
                     raw, width = scanner.scan(frame=frame)
                     _finish_plain_scan(args, raw, width, out)
@@ -153,11 +158,12 @@ def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
     print(f"wrote {out} ({arr.shape[1]}x{arr.shape[0]}, 16-bit RGB)")
 
 
-def _finish_ir_scan(args: argparse.Namespace, raw: bytes, width: int,
-                    out: str) -> None:
-    """Split an IR-enabled scan's raw buffer into visible/IR images and
-    write both -- <out> (visible, color) and <out stem>-ir.tiff (the IR
-    channel, replicated into R=G=B so it opens in any RGB viewer).
+def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
+                      out: str, write_ir: bool = True) -> None:
+    """Split a dual-light scan's raw buffer into visible/IR images and
+    write <out> (visible, color) and, with write_ir, <out stem>-ir.tiff
+    (the IR channel, replicated into R=G=B so it opens in any RGB
+    viewer).
 
     Any orientation transform (the --positive mirror+rotate, and
     --rotate) is applied identically to both images so they stay
@@ -165,11 +171,12 @@ def _finish_ir_scan(args: argparse.Namespace, raw: bytes, width: int,
     pass below, which runs before either transform (it only needs the
     two images on the same pixel grid, not any particular orientation).
 
-    By default, `visible` is cleaned of dust/scratches using the IR
-    channel's dust map (image.remove_dust) before any further
-    processing (including --positive); pass --no-clean to skip that and
-    write the raw split visible image unchanged. The `-ir.tiff` file
-    written at the end is always the raw (uncleaned) IR channel.
+    With write_ir (i.e. --ir), `visible` is cleaned of dust/scratches
+    using the IR channel's dust map (image.remove_dust) before any
+    further processing (including --positive) unless --no-clean is
+    given. Without --ir (a non-3600 dpi scan, which is always a dual-
+    light pass on the wire) the IR channel is discarded and the
+    visible image written as-is.
     """
     import numpy as _np
 
@@ -178,65 +185,49 @@ def _finish_ir_scan(args: argparse.Namespace, raw: bytes, width: int,
     # Channel alignment BEFORE dust removal: the staggered R/G/B lines
     # give every dust speck a colored halo wider than its dark core;
     # cleaning on unaligned data leaves rainbow ghosts around the
-    # inpainted area (observed 2026-08-30). Half the plain-scan shift
-    # (visible lines are every other raw line in IR mode). Crop `ir`
-    # identically to keep the two images on the same pixel grid.
-    _shift = round(24 * (args.dpi // 2) / 7200)
-    visible = image.align_channels(visible, dpi=args.dpi // 2)
+    # inpainted area (observed 2026-08-30). The stagger in the de-
+    # interleaved visible array is the full 24*dpi/7200 lines, the same
+    # as in a plain scan: each physical line position yields one IR and
+    # one visible raw line, so the visible array has the nominal line
+    # density (measured on the 600/1200/2400 dpi captures: 2/4/8 lines,
+    # docs/protocol-notes.md pass 18; the earlier code halved it). Crop
+    # `ir` identically to keep the two images on the same pixel grid.
+    _shift = round(24 * args.dpi / 7200)
+    visible = image.align_channels(visible, dpi=args.dpi)
     if _shift:
         ir = ir[_shift:-_shift]
 
-    if not args.no_clean:
+    if write_ir and not args.no_clean:
         visible = image.remove_dust(visible, ir)
 
     if args.positive:
-        # Channel alignment FIRST (same order as the non-IR path: it
-        # operates in raw line-index space, before any display-
-        # orientation rotation). The R/G/B line-stagger correction
-        # (image.align_channels) was measured on the plain (non-
-        # alternating) scan, where every raw line is a color sample. In
-        # IR mode, consecutive VISIBLE lines are already every OTHER
-        # raw line (the alternating IR lines sit between them), so the
-        # de-interleaved visible array has half the physical line
-        # density of the plain scan -- halving the effective dpi given
-        # to align_channels halves its computed shift accordingly
-        # (12 -> 6 lines at 3600 dpi). NOT independently verified on
-        # hardware (inferred by symmetry, not measured) -- open
-        # question for hardware validation. align_channels() also crops
-        # `shift` rows off each end; crop `ir` by the same amount (no
-        # channel stagger to correct there, just keeping the two images
-        # pixel-aligned for a future dust-overlay pass).
-        # (Channel alignment already applied above, before cleaning.)
-
         # Same orientation fix as the non-IR path; rot90/[:, ::-1] work
         # unchanged on ir's 2D (lines, width) shape too.
         visible = _np.ascontiguousarray(_np.rot90(visible, 3)[:, ::-1])
         ir = _np.ascontiguousarray(_np.rot90(ir, 3)[:, ::-1])
 
         # LUT-based to_positive() was fitted at width 3762 (the plain
-        # scan's windowed width); this IR-mode image is 5184 px wide
-        # (the raw, unwindowed sensor width -- see ir-analysis.md), so
-        # the same per-channel u16->u8 mapping is applied to pixel
-        # VALUES it was never fitted against for this width -- colors
-        # here are an approximation, not the fitted vendor-matched
-        # rendering the plain --positive path gives. Good enough for a
-        # first look; real color work should use the raw negative.
+        # 3600 dpi scan's windowed width); dual-light images are at the
+        # raw sensor readout width (5184 px at 3600 dpi, 876..10512 at
+        # the other resolutions), so the same per-channel u16->u8
+        # mapping is applied to pixel VALUES it was never fitted against
+        # -- colors here are an approximation, not the fitted vendor-
+        # matched rendering the plain --positive path gives. Good enough
+        # for a first look; real color work should use the raw negative.
         visible = image.to_positive(visible)
     if args.rotate:
         visible = _np.ascontiguousarray(_np.rot90(visible, k=args.rotate // 90))
         ir = _np.ascontiguousarray(_np.rot90(ir, k=args.rotate // 90))
 
     _write_image(visible, out)
+    print(f"wrote {out} ({visible.shape[1]}x{visible.shape[0]}, 16-bit RGB, visible)")
 
-    ir_rgb = _np.stack([ir, ir, ir], axis=-1)
-    out_path = Path(out)
-    ir_out = str(out_path.with_name(out_path.stem + "-ir.tiff"))
-    image.write_tiff16(ir_rgb, ir_out)
-
-    print(
-        f"wrote {out} ({visible.shape[1]}x{visible.shape[0]}, 16-bit RGB, visible)\n"
-        f"wrote {ir_out} ({ir.shape[1]}x{ir.shape[0]}, 16-bit, IR channel)"
-    )
+    if write_ir:
+        ir_rgb = _np.stack([ir, ir, ir], axis=-1)
+        out_path = Path(out)
+        ir_out = str(out_path.with_name(out_path.stem + "-ir.tiff"))
+        image.write_tiff16(ir_rgb, ir_out)
+        print(f"wrote {ir_out} ({ir.shape[1]}x{ir.shape[0]}, 16-bit, IR channel)")
 
 
 def _cmd_eject(args: argparse.Namespace) -> int:
@@ -308,8 +299,12 @@ def build_parser() -> argparse.ArgumentParser:
              "output files get a -f<N> suffix per frame")
     p_scan.add_argument("--eject", action="store_true",
         help="eject the film magazine after the last frame")
-    p_scan.add_argument("--dpi", type=int, default=3600, help="scan resolution (default 3600)")
-    p_scan.add_argument("--ir", action="store_true", help="capture an IR (dust/scratch) pass")
+    p_scan.add_argument("--dpi", type=int, default=3600, choices=SUPPORTED_DPIS,
+        help="scan resolution (default 3600; resolutions other than 3600 "
+             "always run a dual-light pass and are not yet hardware-verified)")
+    p_scan.add_argument("--ir", action="store_true",
+        help="capture an IR (dust/scratch) pass: write the IR channel and "
+             "clean the visible image with it")
     p_scan.add_argument("--no-clean", action="store_true",
         help="skip IR-based dust/scratch removal on the visible image (--ir only)")
     p_scan.add_argument("-o", "--output", required=True, help="output file path (.tiff or .pnm)")

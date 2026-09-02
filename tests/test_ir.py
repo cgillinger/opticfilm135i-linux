@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Offline tests for the IR-enabled scan mode (of135i.tables_ir,
-Scanner._scan_ir, of135i.image.split_ir).
+Scanner._scan_dual, of135i.image.split_ir).
 
 Plain asserts, no pytest dependency. Run with:
     .venv/bin/python driver/tests/test_ir.py
@@ -16,7 +16,9 @@ Covers:
     measurements chosen so the computed injections are checkable --
     mirrors tests/test_calibrate.py's test_scan_sequence_matches_trace,
     generalized for tables_ir's doubled/alternating buffers and its two
-    shading-upload addresses (visible/IR) instead of one.
+    shading-upload addresses (A = even/IR lines, B = odd/visible lines)
+    instead of one. tests/test_dpi.py runs the same test against the
+    600/1200/2400/7200 dpi modules.
   - split_ir() statistics against the ground-truth raw capture
     cal-data/ir/04-image.raw (per cal-data/ir/ir-analysis.md: IR lines
     near-equal channel means, visible lines with clear R>G>B separation).
@@ -217,7 +219,7 @@ def _captured_shading_offsets(phase, injection_name) -> np.ndarray:
     `phase`'s own captured (pre-injection) bulk-OUT payload for
     `injection_name` bit-for-bit (stripping the wire-padding tail)."""
     _, idxs = phase.injections[injection_name]
-    payload = b"".join(phase.ops[i].data for i in idxs)[:calibrate.SHADING_UPLOAD_LEN_IR]
+    payload = b"".join(phase.ops[i].data for i in idxs)[:tables_ir.SHADING_UPLOAD_LEN]
     offsets = []
     i, n = 0, len(payload)
     while i < n:
@@ -231,16 +233,17 @@ def _captured_shading_offsets(phase, injection_name) -> np.ndarray:
     return np.array(offsets, dtype=np.uint16)
 
 
-def _synthetic_measurement_buffer(visible_offsets: np.ndarray, ir_offsets: np.ndarray) -> bytes:
-    """A synthetic 256-line (alternating) measurement whose visible/IR
-    halves each equal the given per-pixel offsets exactly (128 identical
-    integer samples average back to themselves exactly), so
-    calibrate.shading_table() reproduces each bit-for-bit."""
-    vis_px = visible_offsets.reshape(W, 3)
-    ir_px = ir_offsets.reshape(W, 3)
+def _synthetic_measurement_buffer(a_offsets: np.ndarray, b_offsets: np.ndarray) -> bytes:
+    """A synthetic 256-line (alternating) measurement whose even (table
+    A / IR) and odd (table B / visible) halves each equal the given per-
+    pixel offsets exactly (128 identical integer samples average back
+    to themselves exactly), so calibrate.shading_table() reproduces
+    each bit-for-bit."""
+    a_px = a_offsets.reshape(W, 3)
+    b_px = b_offsets.reshape(W, 3)
     arr = np.zeros((256, W, 3), dtype="<u2")
-    arr[0::2] = np.broadcast_to(ir_px, (128, W, 3))
-    arr[1::2] = np.broadcast_to(vis_px, (128, W, 3))
+    arr[0::2] = np.broadcast_to(a_px, (128, W, 3))
+    arr[1::2] = np.broadcast_to(b_px, (128, W, 3))
     raw = arr.tobytes()
     assert len(raw) == 7_962_624
     return raw
@@ -254,15 +257,14 @@ def _build_cal_buffers():
     reproduces cal_shading_upload's own captured payloads (both
     addresses) bit-for-bit. cal_shading_verify's re-measurement reuses
     the same synthetic buffer -- like test_calibrate.py, its re-upload
-    is only pinned to be self-consistent with what Scanner._scan_ir()
-    computes from this same canned buffer, not to the trace's own
-    captured re-upload bytes (the real device's second-upload gain
-    formula isn't modeled for the IR channel -- see device.py's
-    _scan_ir() and calibrate.py's SHADING2_TARGETS_IR discussion).
+    is only pinned to be self-consistent with what Scanner._scan_dual()
+    computes from this same canned buffer (calibrate.shading_table2_dual
+    with the vendor's targets), not to the trace's own captured
+    re-upload bytes.
     """
-    vis_off = _captured_shading_offsets(tables_ir.CAL_SHADING_UPLOAD, "shading_table_visible")
-    ir_off = _captured_shading_offsets(tables_ir.CAL_SHADING_UPLOAD, "shading_table_ir")
-    meas = _synthetic_measurement_buffer(vis_off, ir_off)
+    a_off = _captured_shading_offsets(tables_ir.CAL_SHADING_UPLOAD, "shading_table_a")
+    b_off = _captured_shading_offsets(tables_ir.CAL_SHADING_UPLOAD, "shading_table_b")
+    meas = _synthetic_measurement_buffer(a_off, b_off)
 
     return {
         62208: deque([_white_buffer_for_captured_gain()]),
@@ -274,7 +276,7 @@ def _build_cal_buffers():
 
 
 def _expected_stream():
-    """The exact control-write + bulk-OUT byte stream Scanner._scan_ir()
+    """The exact control-write + bulk-OUT byte stream Scanner._scan_dual()
     is expected to emit for PHASE_ORDER_IR, injections pinned to the
     values computed from _build_cal_buffers()'s canned data -- mirrors
     tests/test_calibrate.py's _expected_stream()."""
@@ -282,23 +284,21 @@ def _expected_stream():
     feedl = tables_ir.feedl_for_frame(1)
     n_lines = tables_ir.DEFAULT_LINES
 
-    vis_off = _captured_shading_offsets(tables_ir.CAL_SHADING_UPLOAD, "shading_table_visible")
-    ir_off = _captured_shading_offsets(tables_ir.CAL_SHADING_UPLOAD, "shading_table_ir")
-    meas = _synthetic_measurement_buffer(vis_off, ir_off)
+    a_off = _captured_shading_offsets(tables_ir.CAL_SHADING_UPLOAD, "shading_table_a")
+    b_off = _captured_shading_offsets(tables_ir.CAL_SHADING_UPLOAD, "shading_table_b")
+    meas = _synthetic_measurement_buffer(a_off, b_off)
     shading_meas = np.frombuffer(meas, dtype="<u2").reshape(256, W, 3)
-    shading_meas_ir = shading_meas[0::2]
-    shading_meas_visible = shading_meas[1::2]
-    shading_visible = calibrate.shading_table(shading_meas_visible, width=W)
-    shading_ir = calibrate.shading_table(shading_meas_ir, width=W)
+    shading_meas_a = shading_meas[0::2]
+    shading_meas_b = shading_meas[1::2]
+    shading_a = calibrate.shading_table(shading_meas_a, width=W)
+    shading_b = calibrate.shading_table(shading_meas_b, width=W)
 
     # The mock serves the SAME canned buffer for cal_shading_verify's
-    # own re-measurement, so verify_ir/visible == shading_meas_ir/visible.
-    shading2_visible = calibrate.shading_table2(
-        shading_meas_visible, shading_meas_visible, width=W,
-        targets=calibrate.SHADING2_TARGETS_IRMODE_VISIBLE)
-    shading2_ir = calibrate.shading_table2(
-        shading_meas_ir, shading_meas_ir, width=W,
-        targets=calibrate.SHADING2_TARGETS_IRMODE_IR)
+    # own re-measurement, so verify halves == shading_meas halves.
+    shading2_a = calibrate.shading_table2_dual(
+        shading_meas_a, shading_meas_a, width=W, target=calibrate.SHADING2_TARGET_A)
+    shading2_b = calibrate.shading_table2_dual(
+        shading_meas_b, shading_meas_b, width=W, target=calibrate.SHADING2_TARGET_B)
 
     injections = {
         "cal_gain_check_a": dict(
@@ -308,15 +308,14 @@ def _expected_stream():
             offset_r_hi=bytes([off_r >> 8]), offset_r_lo=bytes([off_r & 0xFF]),
             offset_g_hi=bytes([off_g >> 8]), offset_g_lo=bytes([off_g & 0xFF]),
             offset_b_hi=bytes([off_b >> 8]), offset_b_lo=bytes([off_b & 0xFF])),
-        "cal_shading_upload": dict(
-            shading_table_visible=shading_visible, shading_table_ir=shading_ir),
-        "cal_shading_verify": dict(
-            shading_table2_visible=shading2_visible, shading_table2_ir=shading2_ir),
+        "cal_shading_upload": dict(shading_table_a=shading_a, shading_table_b=shading_b),
+        "cal_shading_verify": dict(shading_table2_a=shading2_a, shading_table2_b=shading2_b),
         "position": dict(
             feedl_hi=bytes([(feedl >> 16) & 0xFF]),
             feedl_mid=bytes([(feedl >> 8) & 0xFF]),
             feedl_lo=bytes([feedl & 0xFF])),
         "scan": dict(
+            lines_top=bytes([(n_lines >> 16) & 0xFF]),
             lines_hi=bytes([(n_lines >> 8) & 0xFF]),
             lines_lo=bytes([n_lines & 0xFF])),
     }
@@ -335,7 +334,7 @@ def test_scan_sequence_matches_trace_ir():
     raw, width, meta = scanner.scan(frame=1, ir=True)
 
     assert width == tables_ir.IMAGE_WIDTH == 5184
-    assert meta == {"width": 5184, "alternating": True}
+    assert meta == {"width": 5184, "alternating": True, "dpi": 3600}
     assert len(raw) == tables_ir.IMAGE_CHUNK_COUNT * tables_ir.IMAGE_CHUNK_LEN
 
     expected = _expected_stream()

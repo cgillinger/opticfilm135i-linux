@@ -22,6 +22,7 @@ execute pulse.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import time
 
@@ -32,6 +33,32 @@ from .tables import Op, Phase
 from .usbio import EP_BULK_IN, EP_BULK_OUT, Of135iError, UsbIo
 
 log = logging.getLogger("of135i")
+
+# Resolutions with a compiled dual-light (alternating IR/visible line)
+# phase set: 3600 -> tables_ir (trace 04), the others -> tables_dpi<N>
+# (the 2026-09-02 QuickScan captures, see tools/gen_tables.py's
+# compile_dual). 3600 is the only resolution that also has a plain
+# (visible-only) phase set (tables.py).
+DUAL_DPIS = (600, 1200, 2400, 3600, 7200)
+SUPPORTED_DPIS = DUAL_DPIS
+
+
+def dual_tables(dpi: int):
+    """The dual-light table module for `dpi` (imported on first use --
+    the 7200 dpi module alone is a few thousand lines)."""
+    if dpi == 3600:
+        return tables_ir
+    if dpi not in DUAL_DPIS:
+        raise Of135iError(f"no scan profile for {dpi} dpi (have {', '.join(map(str, SUPPORTED_DPIS))})")
+    return importlib.import_module(f".tables_dpi{dpi}", __package__)
+
+
+def _tables_for(dpi: int, ir: bool):
+    """Phase-set module for a scan: the plain 3600 dpi set unless IR is
+    requested or the resolution only exists as a dual-light capture."""
+    if dpi == 3600 and not ir:
+        return tables
+    return dual_tables(dpi)
 
 # replay_trace.py's pacing: sleep a captured inter-op gap when it
 # exceeds this threshold, capped so a real outlier can't stall a run.
@@ -191,7 +218,7 @@ class Scanner:
 
     # -------------------------------------------------------------- init
 
-    def initialize(self, ir: bool = False) -> None:
+    def initialize(self, ir: bool = False, dpi: int = 3600) -> None:
         """Full device initialization.
 
         First (once per session) the power-on base register table + AFE
@@ -230,8 +257,10 @@ class Scanner:
             self._base_initialized = True
         # IR mode: trace 04's own prep carries IR-LED setup that the
         # plain prep lacks (a dim IR pass was observed without it,
-        # 2026-08-30) -- run the matching phase set.
-        t = tables_ir if ir else tables
+        # 2026-08-30) -- run the matching phase set. Other resolutions:
+        # their own prep/afe_base (the base register table is dpi-
+        # dependent: regs 0x3b/0x3c, and the sensor timing at 7200).
+        t = _tables_for(dpi, ir)
         self._run_phase(t.PREP)
         self._run_phase(t.AFE_BASE)
 
@@ -525,25 +554,28 @@ class Scanner:
     # -------------------------------------------------------------- scan
 
     def scan(
-        self, frame: int = 1, lines: int | None = None, ir: bool = False
+        self, frame: int = 1, lines: int | None = None, ir: bool = False,
+        dpi: int = 3600,
     ) -> tuple[bytes, int] | tuple[bytes, int, dict]:
         """Run the full calibration + scan sequence for one frame.
 
-        With ir=False (default): returns (raw_bytes, width) -- raw_bytes
-        is the pixel-interleaved RGB16LE image buffer (image.assemble()
-        turns it into an ndarray), width is tables.IMAGE_WIDTH. This
-        path is byte-identical to before ir was added (see
-        tests/test_calibrate.py's sequence test).
+        dpi=3600, ir=False (default): the plain visible-only flow;
+        returns (raw_bytes, width) -- raw_bytes is the pixel-interleaved
+        RGB16LE image buffer (image.assemble() turns it into an ndarray),
+        width is tables.IMAGE_WIDTH. This path is byte-identical to
+        before ir/dpi were added (tests/test_calibrate.py's sequence
+        test).
 
-        With ir=True: runs the IR-enabled phase set (tables_ir.py,
-        compiled from traces/04-singel-3600-IRpa.trace.json.gz -- see
-        gen_tables.py's main_ir() for the phase mapping) via _scan_ir(),
-        returning (raw_bytes, width, meta) -- meta is
-        {"width": 5184, "alternating": True} (see image.split_ir() for
-        turning raw_bytes into separate visible/IR arrays).
+        ir=True, or any other dpi: the dual-light (alternating IR/
+        visible line) flow of that resolution's table module
+        (dual_tables(dpi); every non-3600 capture is a dual-light one)
+        via _scan_dual(), returning (raw_bytes, width, meta) with meta
+        {"width": W, "alternating": True, "dpi": dpi} -- see
+        image.split_ir() for turning raw_bytes into separate visible/IR
+        arrays.
         """
-        if ir:
-            return self._scan_ir(frame=frame, lines=lines)
+        if ir or dpi != 3600:
+            return self._scan_dual(dual_tables(dpi), frame=frame, lines=lines)
 
         # No homing move here. The vendor flow has none (protocol-notes.md
         # pass 14): positioning below is an absolute mode-0x18 feed that
@@ -635,134 +667,130 @@ class Scanner:
 
     # ----------------------------------------------------------- scan (IR)
 
-    def _scan_ir(self, frame: int = 1, lines: int | None = None) -> tuple[bytes, int, dict]:
-        """IR-enabled counterpart of scan(): same structure, driven by
-        tables_ir.py's phases (compiled from traces/04-singel-3600-
-        IRpa.trace.json.gz -- see gen_tables.py's main_ir() for the full
-        phase mapping) instead of tables.py's.
+    def _scan_dual(self, t, frame: int = 1, lines: int | None = None) -> tuple[bytes, int, dict]:
+        """Dual-light (alternating IR/visible line) counterpart of scan(),
+        driven by the phases of table module `t` -- tables_ir (3600 dpi,
+        trace 04) or a tables_dpi<N> module (the 2026-09-02 captures);
+        all compiled by tools/gen_tables.py's compile_dual() to one
+        interface.
 
-        Every calibration buffer in this mode is at the RAW sensor width
-        (tables_ir.IMAGE_WIDTH = 5184, not the windowed 3762 the plain
-        scan uses) and covers ALTERNATING lines -- even index = IR pass,
-        odd index = visible pass (see ../cal-data/ir/ir-analysis.md and
-        image.split_ir(), which applies the same convention to the
-        final image). Measurements that feed a per-channel computation
-        (gain, shading) are de-interleaved into their visible/IR halves
-        BEFORE computing, so the IR pass's very different signal level
-        (bright/flat, R=G=B) never gets averaged into the visible
-        channel's numbers or vice versa. The shading table is uploaded
-        to TWO scanner-RAM addresses (one per light source); AFE gain/
-        offset (regs 2-7) and FEEDL/line-count injections are otherwise
-        the same single-register mechanism as the plain scan.
+        Every calibration buffer in this mode is at the RAW sensor
+        readout width (t.IMAGE_WIDTH: 5184 at 3600 dpi, not the windowed
+        3762 the plain scan uses) and covers ALTERNATING lines -- even
+        index = IR pass, odd index = visible pass (see ../cal-data/ir/
+        ir-analysis.md and image.split_ir(), which applies the same
+        convention to the final image). Measurements that feed a per-
+        channel computation (gain, shading) are de-interleaved into
+        their halves BEFORE computing. The shading table is uploaded to
+        TWO scanner-RAM addresses: A (0x10014000) is computed from the
+        even lines and applied by the scanner to the even (IR) lines, B
+        (0x10034000) from/to the odd (visible) lines -- established from
+        the vendor's own uploads on every capture (calibrate.SHADING2_
+        TARGET_A/_B). AFE gain/offset (regs 2-7) and FEEDL/line-count
+        injections are the same single-register mechanism as the plain
+        scan.
+
+        The line count is programmed as whole image chunks: `lines`
+        (alternating lines, default t.DEFAULT_LINES) rounded up to
+        t.LINES_PER_CHUNK, and that many chunks are read.
         """
         # No homing move -- see scan().
-        W = tables_ir.IMAGE_WIDTH
+        W = t.IMAGE_WIDTH
+        dpi = t.DPI
 
         # ---- dark pair (offset bracket, gain=0) ------------------------
         # Content unused by offset_codes() (same as the plain path); the
         # doubled buffer size (alternating IR/visible) doesn't matter --
         # flattened to (N, 3) either way.
-        dark_a_raw = self._run_phase_ir(tables_ir.CAL_DARK_A)[0]
-        dark_b_raw = self._run_phase_ir(tables_ir.CAL_DARK_B)[0]
+        dark_a_raw = self._run_phase(t.CAL_DARK_A)[0]
+        dark_b_raw = self._run_phase(t.CAL_DARK_B)[0]
         dark_a = np.frombuffer(dark_a_raw, dtype="<u2").reshape(-1, 3)
         dark_b = np.frombuffer(dark_b_raw, dtype="<u2").reshape(-1, 3)
 
         # ---- white line (gain=0) -> compute AFE gain -------------------
-        # 2 raw lines (alternating): index 0 = IR, index 1 = visible.
-        # Only ONE set of AFE gain registers exists (regs 2/3/4, same as
-        # the plain path) -- computed from the VISIBLE line only, since
-        # mixing in the IR line's near-flat/bright broadcast values
-        # would badly skew the 99.9th-percentile peak calculation.
-        white_raw = self._run_phase_ir(tables_ir.CAL_WHITE)[0]
-        white = np.frombuffer(white_raw, dtype="<u2").reshape(-1, W, 3)
-        white_visible = white[1::2].reshape(-1, 3)
+        # 2 raw lines (alternating): index 0 = IR, index 1 = visible --
+        # at the full sensor width (5184 px at every dpi below 7200, not
+        # W), hence the reshape by line count rather than by W. Only ONE
+        # set of AFE gain registers exists (regs 2/3/4, same as the plain
+        # path) -- computed from the VISIBLE line only, since mixing in
+        # the IR line's near-flat/bright broadcast values would badly
+        # skew the 99.9th-percentile peak calculation.
+        white_raw = self._run_phase(t.CAL_WHITE)[0]
+        white = np.frombuffer(white_raw, dtype="<u2").reshape(2, -1, 3)
+        white_visible = white[1]
         gain_r, gain_g, gain_b = calibrate.gain_codes(white_visible)
-        log.info("computed gain codes (ir mode): R=%#04x G=%#04x B=%#04x", gain_r, gain_g, gain_b)
+        log.info("computed gain codes (%d dpi dual): R=%#04x G=%#04x B=%#04x", dpi, gain_r, gain_g, gain_b)
 
         # ---- gain-check pair (offset bracket, gain=computed) -----------
-        self._run_phase_ir(
-            tables_ir.CAL_GAIN_CHECK_A,
+        self._run_phase(
+            t.CAL_GAIN_CHECK_A,
             gain_r=bytes([gain_r]), gain_g=bytes([gain_g]), gain_b=bytes([gain_b]),
         )
-        self._run_phase_ir(tables_ir.CAL_GAIN_CHECK_B)
+        self._run_phase(t.CAL_GAIN_CHECK_B)
 
         # ---- shading measurement (offset=computed final) ---------------
         off_r, off_g, off_b = calibrate.offset_codes(dark_a, dark_b)
-        log.info("offset codes (ir mode): R=%#06x G=%#06x B=%#06x", off_r, off_g, off_b)
-        shading_meas_raw = self._run_phase_ir(
-            tables_ir.CAL_SHADING_MEASURE,
+        log.info("offset codes (%d dpi dual): R=%#06x G=%#06x B=%#06x", dpi, off_r, off_g, off_b)
+        shading_meas_raw = self._run_phase(
+            t.CAL_SHADING_MEASURE,
             offset_r_hi=bytes([off_r >> 8]), offset_r_lo=bytes([off_r & 0xFF]),
             offset_g_hi=bytes([off_g >> 8]), offset_g_lo=bytes([off_g & 0xFF]),
             offset_b_hi=bytes([off_b >> 8]), offset_b_lo=bytes([off_b & 0xFF]),
         )[0]
-        shading_meas = np.frombuffer(shading_meas_raw, dtype="<u2").reshape(-1, W, 3)
-        shading_meas_ir = shading_meas[0::2]        # (lines, W, 3), IR pass
-        shading_meas_visible = shading_meas[1::2]   # (lines, W, 3), visible pass
-        shading_visible = calibrate.shading_table(shading_meas_visible, width=W)
-        # The IR channel's shading table follows the SAME wire format
-        # (width*3 pairs, per gen_tables.py's main_ir() -- the upload
-        # is 63192 B either way) even though R=G=B physically for IR;
-        # shading_table() doesn't need to know that.
-        shading_ir = calibrate.shading_table(shading_meas_ir, width=W)
+        shading_meas = np.frombuffer(shading_meas_raw, dtype="<u2").reshape(t.SHADING_LINES, W, 3)
+        shading_meas_a = shading_meas[0::2]        # even lines -> table A (IR pass)
+        shading_meas_b = shading_meas[1::2]        # odd lines  -> table B (visible pass)
+        shading_a = calibrate.shading_table(shading_meas_a, width=W)
+        shading_b = calibrate.shading_table(shading_meas_b, width=W)
 
         # ---- upload + verify (re-measure, re-upload once) ---------------
-        self._run_phase_ir(
-            tables_ir.CAL_SHADING_UPLOAD,
-            shading_table_visible=shading_visible, shading_table_ir=shading_ir,
-        )
+        self._run_phase(t.CAL_SHADING_UPLOAD, shading_table_a=shading_a, shading_table_b=shading_b)
 
-        verify_phase = tables_ir.CAL_SHADING_VERIFY
+        verify_phase = t.CAL_SHADING_VERIFY
         verify_raw = self._exec_ops(verify_phase.ops[:verify_phase.split_at])[0]
-        verify_meas = np.frombuffer(verify_raw, dtype="<u2").reshape(-1, W, 3)
-        verify_ir = verify_meas[0::2]
-        verify_visible = verify_meas[1::2]
-        shading2_visible = calibrate.shading_table2(
-            verify_visible, shading_meas_visible, width=W,
-            targets=calibrate.SHADING2_TARGETS_IRMODE_VISIBLE,
-        )
-        shading2_ir = calibrate.shading_table2(
-            verify_ir, shading_meas_ir, width=W,
-            targets=calibrate.SHADING2_TARGETS_IRMODE_IR,
-        )
+        verify_meas = np.frombuffer(verify_raw, dtype="<u2").reshape(t.SHADING_LINES, W, 3)
+        shading2_a = calibrate.shading_table2_dual(
+            verify_meas[0::2], shading_meas_a, width=W, target=calibrate.SHADING2_TARGET_A)
+        shading2_b = calibrate.shading_table2_dual(
+            verify_meas[1::2], shading_meas_b, width=W, target=calibrate.SHADING2_TARGET_B)
         remaining = verify_phase.patched(
-            shading_table2_visible=shading2_visible, shading_table2_ir=shading2_ir,
+            shading_table2_a=shading2_a, shading_table2_b=shading2_b,
         )[verify_phase.split_at:]
         self._exec_ops(remaining)
 
         # ---- position: absolute feed from home to `frame` ---------------
-        feedl = tables_ir.feedl_for_frame(frame)
-        log.info("positioning to frame %d (FEEDL=%d, ir mode)", frame, feedl)
-        self._run_phase_ir(
-            tables_ir.POSITION,
+        feedl = t.feedl_for_frame(frame)
+        log.info("positioning to frame %d (FEEDL=%d, %d dpi dual)", frame, feedl, dpi)
+        self._run_phase(
+            t.POSITION,
             feedl_hi=bytes([(feedl >> 16) & 0xFF]),
             feedl_mid=bytes([(feedl >> 8) & 0xFF]),
             feedl_lo=bytes([feedl & 0xFF]),
         )
 
         # ---- scan: 3 slope tables, line count, execute, image data ------
-        n_lines = lines if lines is not None else tables_ir.DEFAULT_LINES
-        buffers = self._run_phase_ir(
-            tables_ir.SCAN,
+        if lines is None:
+            n_chunks = t.IMAGE_CHUNK_COUNT
+            n_lines = t.DEFAULT_LINES
+        else:
+            n_chunks = max(1, -(-lines // t.LINES_PER_CHUNK))
+            n_lines = n_chunks * t.LINES_PER_CHUNK
+        if n_lines > 0xFFFFFF:
+            raise Of135iError(f"line count {n_lines} does not fit the 24-bit register")
+        buffers = self._run_phase(
+            t.scan_phase(n_chunks),
+            lines_top=bytes([(n_lines >> 16) & 0xFF]),
             lines_hi=bytes([(n_lines >> 8) & 0xFF]),
             lines_lo=bytes([n_lines & 0xFF]),
         )
-        # buffers[:IMAGE_CHUNK_COUNT] (659) are the real image data; the
-        # 660th descriptor is issued but cancelled with no data (see
-        # ir-analysis.md/gen_tables.py's main_ir()) and is not among the
-        # collected buffers at all (_exec_ops only appends a buffer on
-        # flush, and a cancelled read never gets any bi data to flush).
-        image = b"".join(buffers[:tables_ir.IMAGE_CHUNK_COUNT])
+        # buffers[:n_chunks] are the image data. tables_ir's tail issues
+        # a further descriptor that the vendor cancelled with no data
+        # (ir-analysis.md); it is not among the collected buffers at all
+        # (_exec_ops only appends a buffer on flush, and a cancelled
+        # read never gets any bi data to flush).
+        image = b"".join(buffers[:n_chunks])
 
         # ---- park ---------------------------------------------------------
-        self._run_phase_ir(tables_ir.PARK)
+        self._run_phase(t.PARK)
 
-        return image, tables_ir.IMAGE_WIDTH, {"width": tables_ir.IMAGE_WIDTH, "alternating": True}
-
-    def _run_phase_ir(self, phase, **inject) -> list[bytes]:
-        """Same as _run_phase(), for a tables_ir.py Phase (a distinct
-        but structurally identical class -- see tables_ir.py's Phase
-        docstring) -- kept as a separate method only for the type hint;
-        Phase.patched()/_exec_ops() work on either module's Phase/Op
-        unchanged (both are plain dataclasses with the same fields)."""
-        ops = phase.patched(**inject) if inject else phase.ops
-        return self._exec_ops(ops)
+        return image, W, {"width": W, "alternating": True, "dpi": dpi}

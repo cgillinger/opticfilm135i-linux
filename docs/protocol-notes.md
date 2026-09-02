@@ -719,14 +719,19 @@ over from cold_init homing); the first `read_button()` drains them.
 ## Pass 17 — DPI register analysis (2026-09-02)
 
 Captured four vendor scans (600, 1200, 2400, 7200 DPI) from
-QuickScan 6.0 via usbmon/tcpdump. Compiled traces in the analysis
-directory. Register diff against the existing 3600 DPI trace reveals
-which registers are DPI-dependent and which are constant.
+QuickScan 6.0 via usbmon/tcpdump. Compiled traces in `traces/`
+(`20260902-vendor-<dpi>dpi.trace.json.gz`). Register diff against the
+existing 3600 DPI trace reveals which registers are DPI-dependent and
+which are constant.
 
-**Observation: the 3600 DPI trace was captured in IR mode, so its
-exposure registers (0xe0–0xf7) differ from the others for IR-related
-reasons, not DPI reasons. All four non-IR captures share identical
-exposure register values.**
+**Correction (pass 18): the four captures are IR-mode (dual-light)
+captures too — QuickScan's IR dust removal was on — so the "non-IR"
+label below is wrong, and the exposure-block difference against trace
+04 is a QuickScan-session difference, not an IR one. The "hardware
+binning" and "2x vertical" readings below are superseded by pass 18:
+the vertical line count is doubled because every physical line is
+captured twice (IR pass + visible pass), and the per-dpi widths are
+the plain sensor readout widths.**
 
 ### DPI-dependent registers (image scan phase)
 
@@ -815,3 +820,117 @@ Higher resolution = more light needed per thinner scan line.
     20260902-vendor-1200dpi.trace.json.gz   — 22,281 ops
     20260902-vendor-2400dpi.trace.json.gz   — 111,715 ops
     20260902-vendor-7200dpi.trace.json.gz   — 675,895 ops
+
+## Pass 18 — Resolution profiles (2026-09-02, evening)
+
+Deeper analysis of the four DPI captures, using the bulk-IN payloads
+(image and calibration data) as well as the command stream. Result:
+`of135i/tables_dpi{600,1200,2400,7200}.py`, compiled by
+`tools/gen_tables.py`'s `compile_dual()`, and `Scanner._scan_dual()`.
+Not yet hardware-verified.
+
+### The captures are dual-light (IR) captures
+
+Every calibration buffer and the image consist of alternating lines:
+even = IR pass (on film: R≈G≈B, ~52500 after correction), odd =
+visible pass (a colour negative). Exactly the trace-04 structure
+(ir-analysis.md): 6144 B dark reads, a 2-line white read at the full
+sensor width (62208 B = 2 × 5184 px below 7200 dpi, 124416 B at 7200),
+256-line shading measurements, TWO shading uploads (0x10014000 and
+0x10034000), 2-line-per-position images. Whole-strip line counts:
+`374 + 12004·dpi/600` alternating lines = 20 in of nominal travel ×2,
+i.e. the ~254 mm magazine travel (FEEDL 71490 ≈ 252 mm) at the nominal
+dpi, twice.
+
+Measured on the image data (frame pitch by autocorrelation of the
+along-strip profile): 1790 / 3578 / 7158 lines per 38.0 mm at 600 /
+1200 / 2400 dpi → 2 × nominal, i.e. one IR + one visible line per
+1/dpi in. Frame-window width 572 px at 600 dpi = 24.1 mm → horizontal
+is nominal. So a single frame (trace 04: 10622 lines at 3600) scales
+as `2·round(5311·dpi/3600)` lines.
+
+### Widths and chunking (vendor)
+
+| dpi  | width px | chunk B  | lines/chunk | shading upload B |
+|------|----------|----------|-------------|------------------|
+|  600 |    876   |  515088  |     98      |     10672        |
+| 1200 |   1752   |  504576  |     48      |     21352        |
+| 2400 |   5256   |  504576  |     16      |     64072        |
+| 3600 |   5184   |  497664  |     16      |     63192        |
+| 7200 |  10512   |  504576  |      8      |    128144        |
+
+DPISET (0x2c:0x2d) is 200 / 400 / 1200 / 1200 / 1200: the sensor is
+read at 3600 dpi for both 2400 (the app resamples) and 7200 (2× — the
+sensor clock phases 0x52–0x57 rotate and 0x70–0x73 shift by 0x0a, see
+pass 17). The shading upload length is `calibrate._shading_upload_len
+(width)` in every case (126 payload + 2 filler pairs per 512 B block).
+In these captures the filler pairs hold stale offset-like values with
+gain 0 rather than zeros; no rule fits them, the 3600 flows write
+zeros and work, so we keep zeros.
+
+### Shading: which table is which, and the vendor's gain formula
+
+Comparing the vendor's uploads with its own measurements on all five
+dual-light captures (3600 included):
+
+- upload #1 offsets at 0x10014000 = per-pixel mean of the EVEN lines
+  of the shading measurement (mean |Δ| 1.4 counts); at 0x10034000 =
+  mean of the ODD lines (1.2 counts). Gain 0x4000 everywhere.
+- upload #2 (after the verify measurement, taken with #1 active):
+  `gain = T · 0x4000 / white_mean` with NO offset subtraction,
+  `T = 61440 (0xf000)` for 0x10014000 / even lines and `T = 90112
+  (0x16000)` for 0x10034000 / odd lines, identical for R, G, B and for
+  every dpi. Within the illuminated window this reproduces the vendor
+  tables with cv 0.0003 (residual 0.07 % at p99 = the 128-line mean's
+  noise); unlit pixels saturate at 0xffff.
+- consistent with the image data: the IR (even) lines in the open
+  area read ~60500 ≈ 61440 after correction, the visible (odd) lines
+  saturate (90112 > 65535).
+
+The driver's IR path had paired the tables the other way round
+(table at 0x10014000 built from the odd lines, and vice versa) with
+per-channel targets fitted under that pairing (cv 0.034–0.043). Fixed
+in `_scan_dual()`/`calibrate.shading_table2_dual()` for 3600 as well —
+mean levels are unchanged (the old targets encoded the even/odd white
+ratio), the per-pixel correction now uses the right line subset.
+Needs a hardware re-check of the 3600 dpi IR output.
+
+### Colour-line stagger in dual-light mode
+
+Cross-correlating the R/B vs G edge profiles of the de-interleaved
+visible lines: shift = 2 / 4 / 8 lines at 600 / 1200 / 2400 dpi, i.e.
+the full `24·dpi/7200` of a plain scan — the visible array has the
+nominal line density (one visible line per physical line). The CLI
+had halved the shift in IR mode (6 instead of 12 at 3600); fixed.
+
+### No positioning move in the strip captures
+
+QuickScan calibrates and then runs the scan pass (mode 0x30) straight
+from the loaded position over the whole strip. The single-frame flow
+therefore takes the positioning move from trace 04: the DPI position
+phase = the capture's own exposure block (0a=48, d0/d1, e0–f7) +
+trace 04's FEEDL batch (mode 0x18) + the capture's two position
+slope-table uploads (byte-identical to tables.SLOPE_TABLE_POSITION in
+every capture) + trace 04's execute/ack/poll. The DPI scan batch that
+follows rewrites every motor/exposure register the FEEDL batch set.
+The scan slope table is per-dpi.
+
+### Trace alignment (compile_dual)
+
+The DPI traces align landmark-for-landmark (control writes, bulk-OUT
+runs collapsed) with trace 04 from the first AFE base write through
+the end of cal_shading_verify, and again for park; the 1200 and 7200
+captures start without the idle-loop lead-in (app start / mid-loop),
+so their prep phase is just the two end-of-access pairs and the 0x03
+writes. The base register table is dpi-dependent (0x3b/0x3c; the
+sensor timing at 7200), so every profile carries its own prep/afe_base.
+
+### Single-frame geometry per profile
+
+`DEFAULT_LINES` = `round(2·5311·dpi/3600 / lines_per_chunk)` chunks:
+600: 18 × 98 = 1764 lines (882 physical); 1200: 74 × 48 = 3552; 2400:
+443 × 16 = 7088; 7200: 2656 × 8 = 21248 (1.34 GB raw). FEEDL for the
+positioning move is dpi-independent (1/7200 in units; frame 1 = 6746,
+pitch 10760). Lines are programmed as whole chunks and all chunks are
+read, so the engine completes (the vendor's strip scans abort with
+lines pending via the 0x8d end-of-access; the 3600 flows complete).

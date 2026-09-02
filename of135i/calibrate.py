@@ -194,12 +194,9 @@ def shading_table2(
     wrong by uploading white means as offsets subtracts away the whole
     signal (observed 2026-08-30: all-zero images).
 
-    `width` follows shading_table()'s convention (default 3762; pass
-    5184 + one light source's de-interleaved lines for IR mode). No
-    IR-specific targets are known yet (v1: same SHADING2_TARGETS
-    formula/values applied to whichever channel's measurement is
-    passed in -- see calibrate.SHADING2_TARGETS_IR for the current
-    placeholder and device.py for how it's used).
+    `width` follows shading_table()'s convention (default 3762). This
+    is the PLAIN (visible-only) scan's formula; the dual-light modes
+    use shading_table2_dual() below.
     """
     w = np.asarray(white_meas).astype(np.float64).mean(axis=0)   # (width, 3)
     f0 = np.rint(np.asarray(dark_meas).astype(np.float64).mean(axis=0))
@@ -210,14 +207,44 @@ def shading_table2(
                          gains.astype(np.uint16).reshape(-1), width=width)
 
 
-# Second-upload (white-uniformity) targets for IR MODE, per pass.
-# Derived 2026-08-30 from the vendor's own upload #2 payloads in trace
-# 04 vs the extracted 256-line dark/white shading measurements:
-# T_c = gain * (white - offset) / 0x4000, cv 0.034-0.043 per channel.
-# The IR pass gets ~1.8x gain (its target is far above the visible
-# pass's) -- without this the IR channel comes out ~7x too dark.
-SHADING2_TARGETS_IRMODE_VISIBLE = (53928.0, 74096.0, 61728.0)
-SHADING2_TARGETS_IRMODE_IR = (100287.0, 72574.0, 87480.0)
+# Second-upload (white-uniformity) targets for the DUAL-LIGHT (IR-
+# enabled) scan mode, one per shading table. Established 2026-09-02
+# against the vendor's own upload #2 payloads in ALL five dual-light
+# captures (3600 dpi trace 04 and the 600/1200/2400/7200 dpi strip
+# captures, docs/protocol-notes.md pass 18): the table uploaded to
+# 0x10014000 (A) is computed from the EVEN (IR-pass) lines of the
+# measurements, the one at 0x10034000 (B) from the ODD (visible) lines,
+# and the gain is gain = T * 0x4000 / white_mean with NO offset
+# subtraction (the verify measurement is taken with upload #1's dark
+# offsets already applied by the scanner) and a single target per
+# table, the same for all three channels and every dpi:
+#   A: 61440 = 0xf000,  B: 90112 = 0x16000
+# Within the illuminated window this reproduces the vendor tables with
+# cv 0.0003 (vs. 0.034-0.043 for the earlier per-channel, offset-
+# subtracting fit, which had paired each table with the WRONG line
+# subset). Outside the window (unlit pixels) the vendor's gain
+# saturates at 0xffff, as the clip below does.
+SHADING2_TARGET_A = 61440.0   # 0x10014000, applied to even (IR) lines
+SHADING2_TARGET_B = 90112.0   # 0x10034000, applied to odd (visible) lines
+
+
+def shading_table2_dual(
+    white_meas: np.ndarray, dark_meas: np.ndarray, width: int, target: float,
+) -> bytes:
+    """Second (white-uniformity) shading upload for one dual-light table.
+
+    `white_meas` / `dark_meas`: (lines, width, 3) uint16, ONE line
+    subset each (even lines for table A, odd for table B) of the
+    verify / shading measurement. offsets = per-pixel mean of
+    `dark_meas` (same as upload #1), gain = target * 0x4000 / mean of
+    `white_meas`, clipped to [1, 0xffff] -- the vendor formula, see
+    SHADING2_TARGET_A/_B.
+    """
+    w = np.asarray(white_meas).astype(np.float64).mean(axis=0)   # (width, 3)
+    f0 = np.rint(np.asarray(dark_meas).astype(np.float64).mean(axis=0))
+    gains = np.clip(np.rint(float(target) * 0x4000 / np.clip(w, 1.0, None)), 1, 65535)
+    return _pack_shading(f0.astype(np.uint16).reshape(-1),
+                         gains.astype(np.uint16).reshape(-1), width=width)
 
 
 def _pack_shading(offsets: np.ndarray, gains: np.ndarray, width: int = 3762) -> bytes:
