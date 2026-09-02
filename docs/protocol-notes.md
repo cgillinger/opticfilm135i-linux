@@ -715,3 +715,103 @@ performs an eject on 0x48 events.
 
 Stale events can accumulate in the endpoint's queue (e.g. a 0x04 left
 over from cold_init homing); the first `read_button()` drains them.
+
+## Pass 17 — DPI register analysis (2026-09-02)
+
+Captured four vendor scans (600, 1200, 2400, 7200 DPI) from
+QuickScan 6.0 via usbmon/tcpdump. Compiled traces in the analysis
+directory. Register diff against the existing 3600 DPI trace reveals
+which registers are DPI-dependent and which are constant.
+
+**Observation: the 3600 DPI trace was captured in IR mode, so its
+exposure registers (0xe0–0xf7) differ from the others for IR-related
+reasons, not DPI reasons. All four non-IR captures share identical
+exposure register values.**
+
+### DPI-dependent registers (image scan phase)
+
+| Register      | Role               | 600     | 1200    | 2400    | 3600*   | 7200    |
+|---------------|--------------------|---------|---------|---------|---------|---------|
+| 0x1d          | STEPSEL (step mode)| 0       | 0       | 1       | 1       | 2       |
+| 0x2a:0x2b     | DPISET / motor     | 12:06   | ed:02   | 7b:1f   | bc:17†  | bf:3e   |
+| 0x2c:0x2d     | FWD/BWD step       | 00:c8   | 01:90   | 04:b0   | 04:b0†  | 04:b0   |
+| 0x29          | LAMPPWM            | 0x2b    | 0x2b    | 0x34    | 0x31†   | 0x3e    |
+| 0x86:0x87     | (unknown)          | 14:ab   | 14:ab   | 14:ab   | 12:2f†  | 29:33   |
+| 0xa5:0xab     | STEPNO             | varies  | varies  | varies  | varies  | varies  |
+
+\* 3600 DPI values from the IR-mode capture; † may differ in non-IR.
+
+### Sensor timing: two modes
+
+Registers 0x52–0x57 (sensor clock phases), 0x5a–0x5b (sensor
+defaults), and 0x70–0x73 only change at 7200 DPI. Below 7200, the
+sensor clocking is constant.
+
+| Register | 600–2400 DPI | 7200 DPI | Note |
+|----------|-------------|----------|------|
+| 0x52–0x57 | 0f 02 05 08 0a 0d | 0a 0d 0f 02 05 08 | rotated +3 |
+| 0x5a, 0x5b | 0x62, 0x22 | 0x2a, 0x6a | nibble-swapped |
+| 0x70–0x73 | 00 01 01 02 | 0a 0b 0b 0c | offset +0x0a |
+| 0x18 (EXPDMY) | 0x00 | 0x10 | extra dummy lines |
+
+The 7200 DPI sensor clock sequence is the 600–2400 sequence rotated
+by 3 positions (0f,02,05,08,0a,0d → 0a,0d,0f,02,05,08). The 0x5a/0x5b
+pair has its nibbles swapped (0x62→0x2a, 0x22→0x6a). The 0x70–0x73
+group is the 600–2400 values plus a constant offset of 0x0a. These
+three changes together suggest a different CCD read-out phase at
+7200 DPI, consistent with a true hardware 2× oversampling of the
+native 3600 DPI sensor (as opposed to interpolation).
+
+### Pixel width per DPI (from buffer reads)
+
+The vendor reads image data in chunks of LINCNT = 256 lines from
+address 0x10000000. The large calibration-area reads (×2 each) give
+the per-DPI buffer line width:
+
+| DPI  | Buf read (bytes) | Buf read / 256 / 6 = px/line | Ratio to 600 |
+|------|------------------|------------------------------|---------------|
+|  600 |    1,345,536     |    876                       | 1×            |
+| 1200 |    2,691,072     |  1,752                       | 2×            |
+| 2400 |    8,073,216     |  5,256                       | 6×            |
+| 7200 |   16,146,432     | 10,512                       | 12×           |
+
+At 3600 DPI (existing driver) the unwindowed sensor width is 5184 px;
+windowed image is 3762 px. The 2400 DPI pixel count (5256) is close
+to 5184 — both read the full CCD array. The 600 and 1200 DPI counts
+(876, 1752) are not simple 1/6 and 1/3 reductions of 5184 but are
+exact multiples of 876, suggesting hardware pixel binning at lower
+DPIs rather than full-array readout with software decimation.
+
+### Exposure: DPI-independent (non-IR)
+
+All four non-IR captures write identical values to the exposure
+register block 0xe0–0xf7:
+
+    00a8 0b35 0b36 15c3 15c4 2051 2052 2adf 2ae0 356d 356e 3ffb
+
+These are the per-channel, per-segment exposure times. They do NOT
+change with resolution — only with the IR dual-light mode.
+
+### LAMPPWM scaling
+
+The lamp PWM duty cycle (reg 0x29) increases with DPI:
+
+    600/1200: 0x2b (43)   2400: 0x34 (52)   7200: 0x3e (62)
+
+Higher resolution = more light needed per thinner scan line.
+
+### Total image data per DPI (4-frame strip)
+
+| DPI  | Total bulk-in  | Repeating read size | ×count |
+|------|----------------|---------------------|--------|
+|  600 |     67 MB      | 515,088             |    125 |
+| 1200 |    261 MB      | 504,576             |    507 |
+| 2400 |  1,539 MB      | 504,576             |  3,019 |
+| 7200 |  9,130 MB      | 504,576             | 18,030 |
+
+### Trace file inventory
+
+    20260902-vendor-600dpi.trace.json.gz    — 8,190 ops
+    20260902-vendor-1200dpi.trace.json.gz   — 22,281 ops
+    20260902-vendor-2400dpi.trace.json.gz   — 111,715 ops
+    20260902-vendor-7200dpi.trace.json.gz   — 675,895 ops

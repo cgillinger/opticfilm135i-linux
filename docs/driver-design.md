@@ -52,7 +52,12 @@ profile tables.
       busy flag; candidates: reg 0x01 bits, interrupt EP).
 - [x] Loader feed sequence extraction from segment 02 (driver-managed
       magazine insertion) → `load()`. Done: `tools/load_magazine.py`.
-- [ ] dpi profiles beyond 3600 (vendor table-driven).
+- [ ] dpi profiles beyond 3600 (vendor table-driven). Pass 17
+      analysis complete: captures at 600/1200/2400/7200 DPI compiled,
+      DPI-dependent registers identified (STEPSEL, DPISET 0x2a:0x2b,
+      FWD/BWD step, LAMPPWM, sensor timing at 7200). Sensor CK regs
+      rotate phase at 7200 DPI; exposure is DPI-independent (non-IR).
+      See protocol-notes.md pass 17.
 - [ ] IR pass (register deltas known from segment 03 vs 04).
 - [x] Cold-start init (power-on with no prior vendor-software
       initialization). Done 2026-09-02 (pass 15): `Scanner.cold_init()`
