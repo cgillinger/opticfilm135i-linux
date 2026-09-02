@@ -80,7 +80,9 @@ quickscan-log.md).
 
 **The positioning model is absolute, from the home position:**
 
-- Homing after each scan: motor mode `02=0x30`, FEEDL=1, `0f=01`.
+- ~~Homing after each scan: motor mode `02=0x30`, FEEDL=1, `0f=01`.~~
+  CORRECTED in pass 14: mode 0x30 is the scan pass itself; there is
+  no homing command, positioning is absolute.
 - Positioning to frame n: `02=0x18`,
   **FEEDL = 6548 + (n−1) × 10760**, `0f=01`.
   Measured: frame 1=6548, frame 3=28052 (=6548+2×10752…10760),
@@ -384,3 +386,183 @@ sensor is likely 16-bit reg 0x101 bit 0x08 per the vendor config,
 i.e. open question 1). Verified end-to-end: full IR scan with all-own
 calibration and processing produced a clean final image immediately
 after this load.
+
+## Pass 14 (2026-09-02): INTER-FRAME SEQUENCE — batch root-cause analysis (offline)
+
+Source: `captures/20260829-silverfast-ramval.pcap` compiled with
+`tools/compile_trace.py` (28,086 ops). SilverFast scans frames 3, 4, 1
+IN SEQUENCE without ejecting — the vendor reference for what a driver
+must do between two frames. Pure offline analysis; no hardware touched.
+
+**Correction to pass 3/4: mode 0x30 is the SCAN PASS, not a homing
+command.** The batch `1c=00 02=30 3d/3e/3f=1 7d-7f 8a-92 ae/af ac/ad
+0d=07 28-2b 25-27=<line count> 05=40` + `01=23` + `0f=01` is exactly
+the batch that starts image streaming (tables.SCAN op 14, where the
+line count is injected). FEEDL=1 there means one motor step per line.
+"Homing after each scan" in pass 3 was this scan pass misread. The
+lone `02=30` inside PARK is a plain mode-register write with no
+execute pulse.
+
+**There is NO standalone homing command anywhere in the vendor flow.**
+Positioning is one mode-0x18 batch with the absolute FEEDL, issued from
+wherever the carriage currently is, forwards or backwards:
+
+| move | from | FEEDL | busy-poll duration |
+|---|---|---|---|
+| frame 3 | home (after load) | 28052 | 5.9 s |
+| frame 4 | end of frame 3 | 38828 | 8.1 s |
+| frame 1 | end of frame 4 (backwards) | 6548 | 1.6 s |
+
+The firmware resolves the move itself (home sensor and/or tracked
+position). Our POSITION phase is this batch verbatim (speed regs
+0x7d-0x7f, two slope tables, `0f=01`), so it is valid from any start
+position.
+
+**The vendor inter-frame sequence (identical between 3→4 and 4→1):**
+
+1. Scan pass ends → buffer drain (5 × 521,856 B + remainder) →
+   PARK: `wv=0x8d`, `03=30`, `03=20`, `01=22`, `15=80`, `02=30`,
+   `03=10`, `03=00` (lamp off), two `wv=0x8b` writes, `32=81`, `35=bb`.
+   Byte-for-byte our tables.PARK (the `0x8b` payloads vary per scan:
+   `16000100`/`80ff` here vs `0c000100`/`e0ff` in trace 03).
+2. Idle loop (`36=fc 3a=00 36=fc 33=0e 32=8d` + read 0x32) until the
+   user starts the next frame.
+3. Re-init: `32=8f`, read 0x01, ENDACCESS 16/19, `03=20`/`03=30`
+   twice, read 0x01, `31=fe`, ENDACCESS 16/19 (= our PREP, which has
+   the 03 toggle once) → the full base register table incl. `03=30`
+   (lamp on) + AFE base regs (= our AFE_BASE table; only 0x3b/0x3c
+   differ, 02/00 vs 00/01, a SilverFast-vs-QuickScan scan parameter,
+   not an inter-frame thing) → ~1.25 s of reads of 0x01 (0x22 → 0xdc,
+   as in our AFE_BASE poll) → `03=20`, `03=30` → exposure block
+   0xd0-0xf8.
+4. Calibration — frames 3 and 1 run the full dark/white/gain/shading
+   flow; **frame 4 skips it entirely** and just rewrites the AFE gain/
+   offset codes from frame 3 (`2e/22/29`) before positioning. Shading
+   data in scanner RAM survives PARK. Calibration per frame is a
+   driver policy, not a hardware requirement.
+5. Position (mode 0x18, absolute FEEDL) → scan pass (mode 0x30) →
+   drain → PARK. No motor command other than these two.
+
+The vendor does NOT rewrite the power-on table (tables_base.
+BASE_INIT_PAIRS) between frames; that table only appears at device
+open (01-init).
+
+**Diff against our `--frames` loop (cli.py + device.py.scan()):**
+
+1. **`Scanner.home()` before calibration has no vendor counterpart.**
+   It executes mode 0x30 with FEEDL=1 — i.e. a scan pass — with
+   whatever regs 0x25-0x27/0x0d hold at the time. After frame 1's
+   SCAN those are still the frame's line count (5137) and 0d=07, and
+   PARK does not reset them, so frame 2's "home" is a full-length
+   engine run that leaves undrained data in the buffer before the
+   dark/white calibration reads. On frame 1 the same call is harmless
+   only because the preceding load/preview flow leaves 0x25-0x27 = 1.
+   The observed frame-2 symptom (gain codes 0x3f = the white
+   measurement read as dark) is consistent with the calibration
+   reading that stale buffer, but this is the diff, not a hardware-
+   verified cause.
+2. `initialize()` per frame writes BASE_INIT_PAIRS (power-on table:
+   02=78, 3b/3c=ff, 7e/7f=15/7c, 32=1f, 33=8e ...) before PREP/
+   AFE_BASE. Every one of those registers is rewritten by the
+   AFE_BASE table 0.1 s later, so the end state matches the vendor's,
+   but the vendor never issues these transient values between frames.
+   Lower-ranked candidate for the grinding noise in the init-per-frame
+   attempt (2026-09-01); the extra 0x30 execute (item 1) ran in that
+   attempt too.
+3. Our PREP toggles `03=20/30` once, the vendor twice, and the vendor
+   precedes PREP with `32=8f` from its idle loop. Cosmetic.
+
+**Implication for the driver (next iteration, needs hardware):** drop
+the home() call from scan() (or reduce it to what the vendor does:
+nothing), keep initialize() per frame but without BASE_INIT_PAIRS, and
+let POSITION move the carriage from wherever the previous frame left
+it. Optionally reuse calibration across frames as SilverFast does.
+
+### Pass 14 addendum (2026-09-02): batch VERIFIED on hardware, eject fixed
+
+- `scan --frames 1-2` and then `--frames 1-4 --eject` with the pass-14
+  changes (no home() before calibration, power-on table once per
+  session): all frames calibrated normally (gain codes 0x2e-0x2f/0x21/
+  0x28 on every frame, vs 0x3f on frame 2 the day before), four clean,
+  distinct images. Batch scanning works.
+- **Eject stalled** with a grinding noise after the 4-frame batch and
+  left the magazine locked (power cycle recovered it: the firmware's
+  power-on transport init ejected the cassette). Cause, from the
+  capture: the vendor's eject is `33=8e`, `32=8f`, `09=08`, batch
+  `02=18 ae=00 af=ff 3d/3e/3f=3090`, **the positioning slope table
+  uploaded to 0x1000c000 and 0x10010000**, `0f=01`, busy-poll, `09=00`.
+  Our _motor_run() skipped the two table uploads. It worked on earlier
+  days only because a positioning move had left the same table in RAM;
+  after a scan pass (which uploads its own table to other addresses
+  and streams through the buffer) it was gone. _motor_run() now
+  uploads the tables.
+- **Re-test with the tables (load_magazine.py, then `eject`, same
+  session): STILL STALLS.** Feed-in, a short reverse move, then a
+  short harsh motor sound; the button went orange (firmware: ejected)
+  but the magazine was mechanically stuck. Registers read healthy
+  afterwards (0x01=0x22). Power cycle alone did not free it either
+  time; QuickScan's init in the VM did. So the slope tables were not
+  the (only) missing piece. Facts to work from: both stalls happened
+  with the carriage at a position the vendor never ejected from
+  (after a 4-frame batch at frame 4; right after a load at home),
+  while the ramval eject ran after a frame-1 scan + PARK, and the
+  06-eject segment after a single scan. Mode 0x18 is absolute (pass
+  14), so FEEDL 3090 is a target position, not a distance — from the
+  loaded/home position that may be a move INTO the film path.
+- **Resolution (offline, same day): the vendor has TWO eject variants
+  and we had copied the wrong one for our situation.**
+  - Post-scan eject (06-eject, ramval end): `09=08`, batch
+    `02=18 ae/af FEEDL=3090`, positioning slope table (f5d7...), fast
+    speed regs left over from the scan flow (7e/7f=36/b0), `0f=01`.
+  - Loaded-magazine eject — the vendor app's start-up "jog" (feed 6690,
+    then eject 3090; load-only capture ops 100-169, ramval ops 736-758,
+    26 identical occurrences): `32=<ack>`, `09=08`, batch
+    `1c=00 02=18 FEEDL=3090 7d=00 7e=75 7f=30 8a-92=00 ae=00 af=ff`, a
+    DIFFERENT 512 B slope table (c7e5ef43...) to 0x1000c000 and
+    0x10010000, `0f=01`, busy-poll (~0.9 s), `09=00`. Slower speed
+    profile, and the same table/profile the magazine feed itself uses.
+    This is what freed the stuck magazine three times today (vendor
+    init in the VM). Now shipped as tables_base.SLOPE_TABLE_LOADER +
+    LOADER_SPEED_PAIRS and Scanner.eject(); wire sequence verified
+    byte-identical against the capture offline.
+- Also corrected the positioning model: the busy-poll durations of the
+  three ramval positioning moves (28052: 5.9 s, 38828: 8.1 s,
+  6548: 1.6 s) scale linearly with FEEDL, i.e. every move starts from
+  the same place. Together with frame 1 being scanned after frame 4
+  with a plain forward feed, this means the transport is back at home
+  after each scan pass (firmware-side; no command for it in the
+  capture). "Absolute FEEDL" in practice = relative feed from home.
+
+### Pass 14 addendum 2 (2026-09-02, afternoon): EJECT SOLVED — it is the start state
+
+Targeted capture `20260902-vendor-eject-from-loaded.pcap` (usbmon on
+the Linux host while the vendor app ran in the VM): app init (jog:
+feed 6690, feed 6690, eject 3090), then a user insert -> the vendor's
+load = `32=1d` ack, feed 6690, prescan traverse 71490 (loader speed
+profile + loader slope table), then ONLY its idle loop (`32=05` acks),
+then the physical eject button -> the same 3090 eject batch as above.
+No loader pulses, no calibration pulses, no preview pass.
+
+So the 2026-08-30 "load-only" capture that load_magazine.py replayed
+(ops 790-3280) was the vendor's load PLUS its preview preparation (six
+mode-0x78 pulses, calibration pulses) minus the preview pass. All
+three stalled ejects were issued from that end state, which the vendor
+never ejects from. The eject batch itself was never the problem: the
+loaded-state variant is byte-identical to ours.
+
+Verified on hardware, same day:
+- load (feed + traverse only) -> eject: magazine out, orange button.
+- load -> `scan --frame 1 --eject`: correct frame, normal calibration
+  (gains 0x2f/0x21/0x28), eject completed in <1 s, registers healthy
+  (0x01=0x22) afterwards.
+
+Completion poll for the eject: the vendor reads a status word via
+wValue 0x018e / wIndex 0x0122 (NOT the 0x008e register read) and
+continues at 0xf8 after 0xd9 -> 0xf9 (~0.9 s). The 0x008e reg-0x01
+engine bit does not set after an eject (0x02 for 90 s on a successful
+eject), so eject() now polls the 0x018e word for (v & 0x21) == 0x20.
+Open: what the 0x018e read space is (it also carries the 0xdc/0xec
+values the calibration polls wait for).
+
+load_magazine.py now defaults to the feed+traverse flow (`--full` keeps
+the old one for reference).

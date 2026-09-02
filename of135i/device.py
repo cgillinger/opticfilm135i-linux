@@ -50,6 +50,7 @@ class Scanner:
 
     def __init__(self, io: UsbIo):
         self.io = io
+        self._base_initialized = False
 
     @classmethod
     def open(cls) -> "Scanner":
@@ -168,16 +169,24 @@ class Scanner:
     def initialize(self, ir: bool = False) -> None:
         """Full device initialization.
 
-        First the power-on base register table + AFE base values (what
-        the vendor driver programs at device open; without these the
-        scanner keeps whatever state the previous session left, which
-        breaks calibration -- observed 2026-08-30 as a saturated white
-        measurement after a VM session). Then the pre-scan phases from
-        the capture (tables.PREP + AFE_BASE), full op stream.
+        First (once per session) the power-on base register table + AFE
+        base values -- what the vendor driver programs at device open;
+        without these the scanner keeps whatever state the previous
+        session left, which breaks calibration (observed 2026-08-30 as
+        a saturated white measurement after a VM session). Then the
+        pre-scan phases from the capture (tables.PREP + AFE_BASE), full
+        op stream.
+
+        Called once per frame in a batch. The vendor never rewrites the
+        power-on table between frames -- only the PREP/AFE_BASE
+        equivalent (protocol-notes.md pass 14) -- so the base table is
+        written on the first call only.
         """
-        self.io.write_regs(tables_base.BASE_INIT_PAIRS)
-        for adr, val in tables_base.AFE_BASE_PAIRS:
-            self.io.write_regs([(0x51, adr), (0x5D, 0x00), (0x5E, val)])
+        if not self._base_initialized:
+            self.io.write_regs(tables_base.BASE_INIT_PAIRS)
+            for adr, val in tables_base.AFE_BASE_PAIRS:
+                self.io.write_regs([(0x51, adr), (0x5D, 0x00), (0x5E, val)])
+            self._base_initialized = True
         # IR mode: trace 04's own prep carries IR-LED setup that the
         # plain prep lacks (a dim IR pass was observed without it,
         # 2026-08-30) -- run the matching phase set.
@@ -205,12 +214,21 @@ class Scanner:
     # -------------------------------------------------------------- motor
 
     def _motor_run(self, mode: int, feedl: int) -> None:
-        """Decoded motor sequence (protocol-notes.md pass 2/3/4):
-        02=mode, 3d/3e/3f=FEEDL (24-bit, hi/mid/lo), 0f=01 executes.
+        """Stand-alone motor move, modelled on the vendor's eject in the
+        SilverFast capture (protocol-notes.md pass 14, eject addendum):
+        sensor/int-ack prep (33=8e, 32=8f), 09=08, batch 02=mode
+        ae/af 3d/3e/3f=FEEDL (24-bit, hi/mid/lo), the positioning slope
+        table uploaded to 0x1000c000 and 0x10010000, 0f=01 executes,
+        wait, 09=00.
 
-        Not trace-derived (home()/eject() move to targets the capture
-        never visited), so this stays hand-written rather than table-
-        driven."""
+        The slope-table uploads are NOT optional: without them the
+        motor runs against whatever curve happens to be in scanner RAM.
+        That worked while a positioning move had left the table there
+        and stalled with a grinding noise once a scan pass had
+        overwritten it (eject after a 4-frame batch, 2026-09-02;
+        cf. pass 13 on the naked load feed)."""
+        self.io.write_regs([(0x33, 0x8E)])
+        self.io.write_regs([(0x32, 0x8F)])
         self.io.write_regs([(0x09, 0x08)])
         self.io.write_regs([
             (0x02, mode), (0xAE, 0x00), (0xAF, 0xFF),
@@ -218,6 +236,8 @@ class Scanner:
             (0x3E, (feedl >> 8) & 0xFF),
             (0x3F, feedl & 0xFF),
         ])
+        for addr in (0x1000C000, 0x10010000):
+            self.io.buf_write(addr, tables.SLOPE_TABLE_POSITION)
         self.io.write_regs([(0x0F, 0x01)])
         # No motor-busy bit is confirmed yet (driver-design.md open
         # items / protocol-notes.md pass 4 "Motor/feed" note): reg 0x01
@@ -230,13 +250,58 @@ class Scanner:
         self.io.write_regs([(0x09, 0x00)])
 
     def home(self) -> None:
-        """Homing sequence: mode 0x30, FEEDL=1 (protocol-notes.md pass 4)."""
+        """Mode 0x30, FEEDL=1 execute -- historically taken for a homing
+        move (pass 3/4). Pass 14 showed mode 0x30 is the SCAN PASS: this
+        runs the engine for whatever line count regs 0x25-0x27 hold, and
+        the vendor flow has no homing command at all (positioning is an
+        absolute mode-0x18 feed from wherever the carriage is). Not used
+        by the scan flow any more; kept for the CLI/tools only."""
         self._motor_run(0x30, 1)
 
     def eject(self) -> None:
-        """Eject the film magazine: mode 0x18, FEEDL=3090 (06-eject,
-        protocol-notes.md pass 2/4)."""
-        self._motor_run(0x18, 3090)
+        """Eject the film magazine the way the vendor driver does it from
+        a LOADED magazine (its app-start "jog": feed 6690, eject 3090 --
+        load-only capture ops 151-169, ramval ops 736-760; protocol-
+        notes.md pass 14 eject addendum):
+
+            33=8e, 32=<read>|02, 09=08,
+            1c=00 02=18 3d/3e/3f=3090 7d=00 7e=75 7f=30 8a-92=00 ae=00 af=ff,
+            loader slope table -> 0x1000c000 and 0x10010000,
+            0f=01, busy-wait, 09=00
+
+        The post-scan eject variant (06-eject: positioning slope table,
+        fast speed regs left over from the scan flow) stalled twice on
+        2026-09-02 when issued from a loaded/parked transport; this
+        variant is the one that freed the magazine each time via the
+        vendor software.
+        """
+        feedl = 3090
+        self.io.write_regs([(0x33, 0x8E)])
+        self.io.write_regs([(0x32, (self.io.read_reg(0x32) | 0x02) & 0xFF)])
+        self.io.write_regs([(0x09, 0x08)])
+        self.io.write_regs(
+            [(0x1C, 0x00), (0x02, 0x18),
+             (0x3D, (feedl >> 16) & 0xFF), (0x3E, (feedl >> 8) & 0xFF), (0x3F, feedl & 0xFF)]
+            + [p for p in tables_base.LOADER_SPEED_PAIRS if p[0] != 0x1C]
+            + [(0xAE, 0x00), (0xAF, 0xFF)]
+        )
+        for addr in (0x1000C000, 0x10010000):
+            self.io.buf_write(addr, tables_base.SLOPE_TABLE_LOADER)
+        self.io.write_regs([(0x0F, 0x01)])
+        # Vendor completion poll: status word (wValue 0x018e) reads
+        # 0xd9 -> 0xf9 -> 0xf8 over ~0.9 s; done at 0xf8. The 0x008e
+        # reg-0x01 engine bit used elsewhere stays clear after an eject
+        # (observed 2026-09-02: 90 s timeout on a successful eject).
+        deadline = time.monotonic() + 10.0
+        last = None
+        while time.monotonic() < deadline:
+            last = self.io.read_status()
+            if (last & 0x21) == 0x20:
+                break
+            time.sleep(0.02)
+        else:
+            log.warning("eject: status word stuck at %#04x -- continuing", last)
+        self.io.write_regs([(0x09, 0x00)])
 
     # -------------------------------------------------------------- scan
 
@@ -261,18 +326,14 @@ class Scanner:
         if ir:
             return self._scan_ir(frame=frame, lines=lines)
 
-        # ---- establish the canonical start position --------------------
-        # The captured flow always begins from the HOME position (the
-        # preceding preview segment ends with a homing move). A
-        # firmware-side magazine feed parks the transport elsewhere,
-        # which shifts every absolute FEEDL below AND puts the wrong
-        # part of the film path in the light during calibration
-        # (observed 2026-08-30: saturated white measurement, striped
-        # image). Home first -- _wait_engine_idle() inside _motor_run
-        # already blocks until the move settles, so no extra sleep is
-        # needed here.
-        log.info("homing before scan")
-        self.home()
+        # No homing move here. The vendor flow has none (protocol-notes.md
+        # pass 14): positioning below is an absolute mode-0x18 feed that
+        # works from wherever the previous frame left the carriage. The
+        # home() call that used to sit here executed mode 0x30 -- the
+        # scan pass -- with the previous frame's line count still in
+        # regs 0x25-0x27, i.e. a full-length engine run before the
+        # calibration reads (frame 2+ of a batch calibrated dark,
+        # 2026-09-01).
 
         # ---- dark pair (offset bracket, gain=0) ------------------------
         dark_a_raw = self._run_phase(tables.CAL_DARK_A)[0]
@@ -375,9 +436,7 @@ class Scanner:
         offset (regs 2-7) and FEEDL/line-count injections are otherwise
         the same single-register mechanism as the plain scan.
         """
-        log.info("homing before scan (ir mode)")
-        self.home()
-
+        # No homing move -- see scan().
         W = tables_ir.IMAGE_WIDTH
 
         # ---- dark pair (offset bracket, gain=0) ------------------------

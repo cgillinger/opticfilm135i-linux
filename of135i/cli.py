@@ -93,14 +93,12 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         frames = [args.frame]
     multi = args.frames is not None
 
-    # One device session for the whole batch, but a full initialize()
-    # per frame, not per session: every hardware-verified scan ran with
-    # a fresh initialize() (PREP turns the lamp on) right before it,
-    # and the post-scan PARK phase tears that state down again -- a
-    # frame scanned without re-init calibrates in the dark (maxed gain
-    # codes, black image; observed on frame 2 of the first batch run,
-    # 2026-09-01). Slower than sharing one init, but every frame runs
-    # the exact flow verified on hardware.
+    # One device session for the whole batch, initialize() per frame:
+    # the post-scan PARK phase turns the lamp off and tears the scan
+    # state down, and the vendor re-runs the PREP/AFE_BASE equivalent
+    # before every frame (protocol-notes.md pass 14). initialize()
+    # writes the power-on base table only on its first call per
+    # session, matching the vendor.
     try:
         with Scanner.open() as scanner:
             for frame in frames:

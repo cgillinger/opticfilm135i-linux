@@ -114,6 +114,17 @@ class UsbIo:
             )
         return resp[0]
 
+    def read_status(self) -> int:
+        """Read the vendor driver's motor/engine status word.
+
+        Wire: 0xc0/0x04/0x018e, wIndex=0x0122 -- the read the vendor
+        polls after every stand-alone motor move (wValue 0x018e, not
+        the 0x008e register read). Observed sequence during an eject:
+        0xd9 -> 0xf9 -> 0xf8, the driver continues at 0xf8.
+        """
+        resp = bytes(self.dev.ctrl_transfer(0xC0, 0x04, 0x018E, 0x0122, 2))
+        return resp[0] if resp else 0
+
     def wait_reg(self, reg: int, value: int, timeout: float, mask: int = 0xFF) -> int:
         """Poll read_reg(reg) until (val & mask) == value, or raise on timeout.
 

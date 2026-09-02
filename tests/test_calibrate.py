@@ -390,12 +390,6 @@ def test_scan_sequence_matches_trace():
     expected = _expected_stream()
     actual = b"".join(mock.writes)
 
-    # scan() deliberately prepends a homing move (4 batches, 18 B)
-    # that the captured trace does not contain (the capture starts
-    # from an already-homed transport). Strip it before comparing.
-    HOME_PREFIX = bytes.fromhex('0908') + bytes.fromhex('0230ae00afff3d003e003f01') + bytes.fromhex('0f01') + bytes.fromhex('0900')
-    assert actual.startswith(HOME_PREFIX), 'expected home prefix first'
-    actual = actual[len(HOME_PREFIX):]
     assert actual == expected, (
         f"control-write stream mismatch: {len(actual)} B emitted, "
         f"{len(expected)} B expected (first divergence at byte "

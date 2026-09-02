@@ -35,16 +35,23 @@ negative scanner Linux, SANE OpticFilm 135i, GL126, pyusb scanner driver*.
 
 ## Development status
 
-**Phase: working prototype, single-frame scanning is the verified path.**
-One frame per invocation — scan, calibration, IR and dust removal — is
-stable and hardware-verified. The rough edges you should know about:
+**Phase: working prototype. Single-frame and whole-strip batch scanning
+are the verified paths.** Scan, calibration, IR and dust removal are
+stable and hardware-verified, per frame and across a 4-frame strip in
+one invocation. The rough edges you should know about:
 
-- **Batch scanning (`--frames`) is experimental and currently broken for
-  frames after the first.** The first frame scans perfectly; subsequent
-  frames calibrate in a torn-down device state (dark calibration, maxed
-  gain codes, black output). The vendor driver's inter-frame sequence is
-  being extracted from captures — until then, run one invocation per
-  frame, reloading the magazine as needed.
+- **Eject depends on how the magazine was loaded.** Load with
+  `tools/load_magazine.py` (the vendor's insert flow) and `eject` /
+  `--eject` works, before or after scanning. Ejecting from other
+  transport states (e.g. after the older `--full` load flow) stalled
+  the mechanism with the magazine stuck part-way; recovery was a power
+  cycle plus an initialization with the vendor software.
+- **Speed: not tuned yet.** The driver replays the vendor's complete
+  captured command stream, including every status read and the
+  captured pacing between commands, because slimmed-down variants
+  produced wrong calibration (see docs/protocol-notes.md). A 3600 dpi
+  frame therefore takes noticeably longer than in the vendor software.
+  Slow and correct first; trimming the stream is future work.
 - **Cold start is not handled.** After a bare power-on the device is in a
   state our initialization does not fully establish (all verified runs
   started from a state the vendor driver had initialized at least once
@@ -81,9 +88,8 @@ sudo .venv/bin/python -m of135i scan --frame 1 -o frame1.tiff
 # display-ready positive with vendor-like colors, correctly oriented
 sudo .venv/bin/python -m of135i scan --frame 1 --positive -o frame1-positive.tiff
 
-# batch (EXPERIMENTAL -- currently only the first frame comes out right,
-# see Development status): scan a whole strip, eject when done
-sudo .venv/bin/python -m of135i scan --frames 1-4 --ir --positive --rotate 90 --eject -o rulle.tiff
+# batch: scan a whole strip in one go (rulle-f1.tiff ... rulle-f4.tiff)
+sudo .venv/bin/python -m of135i scan --frames 1-4 --ir --positive --rotate 90 -o rulle.tiff
 
 # eject the film magazine / check device status
 sudo .venv/bin/python -m of135i eject
@@ -128,8 +134,9 @@ interoperability constants and our own code.
 - [x] IR channel capture (`--ir`): separate visible + IR output, dual-light calibration
 - [x] IR-based automatic dust/scratch removal (multi-scale inpainting, on by default with `--ir`)
 - [ ] Resolution profiles beyond 3600 dpi
-- [ ] Whole-strip batch scanning (CLI and loop in place; inter-frame device
-      state under investigation — frames after the first miscalibrate)
+- [x] Whole-strip batch scanning (`--frames 1-4`)
+- [x] Eject from a loaded magazine, before or after scanning
+- [ ] Speed tuning (trim the replayed command stream)
 - [ ] Cold-start initialization from a bare power-on
 - [x] udev rule for rootless operation
 - [ ] Loader/button event handling, ICC-tagged output
