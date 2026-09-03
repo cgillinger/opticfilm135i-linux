@@ -60,13 +60,12 @@ one invocation. The rough edges you should know about:
   hardware buttons are dead without a driver process.
 - `of135i status` reports the loader sensor (magazine present/absent)
   and button state.
-- **Resolutions other than 3600 dpi are implemented but not yet
-  hardware-verified.** `--dpi 600|1200|2400|7200` replays the vendor's
-  own command stream for that resolution (captured 2026-09-02); those
-  captures are all dual-light (IR + visible) passes, so a non-3600 scan
-  always runs the IR pass too (`--ir` decides whether it is written out
-  and used for dust removal). 7200 dpi produces a 10512 px wide, ~1.3 GB
-  raw frame — expect a long scan and a lot of RAM.
+- **Multiple resolutions:** `--dpi 600|1200|2400|3600|7200`. 2400 and
+  1200 dpi are hardware-verified; 600 dpi has a corrected profile
+  (awaiting re-test); 7200 dpi is implemented but untested (10512 px
+  wide, ~1.3 GB raw — expect a long scan and a lot of RAM). All non-3600
+  resolutions are dual-light (IR + visible) passes, so `--ir` decides
+  whether the IR channel is written out and used for dust removal.
 
 ## Requirements
 
@@ -126,8 +125,8 @@ power cycle to reappear. Run the offline test suite
 The GL126 speaks the Genesys vendor protocol over USB control transfers.
 The protocol was reverse-engineered from USB captures of the Windows
 driver and is documented in [`docs/protocol-notes.md`](docs/protocol-notes.md)
-— transport layer, register semantics, motor/positioning model (absolute
-FEEDL stepping, 38.0 mm frame pitch), calibration data flow, image format
+— transport layer, register semantics, motor/positioning model (relative
+FEEDL stepping from the carriage's current position, 38.0 mm frame pitch), calibration data flow, image format
 (pixel-interleaved RGB16, 3762 px/line @ 3600 dpi) and the two-stage
 shading correction. [`docs/driver-design.md`](docs/driver-design.md)
 describes the architecture; [`docs/cal-analysis.md`](docs/cal-analysis.md)
@@ -143,7 +142,7 @@ interoperability constants and our own code.
 
 - [x] IR channel capture (`--ir`): separate visible + IR output, dual-light calibration
 - [x] IR-based automatic dust/scratch removal (multi-scale inpainting, on by default with `--ir`)
-- [ ] Resolution profiles beyond 3600 dpi (600/1200/2400/7200 implemented from vendor captures; hardware verification pending)
+- [x] Resolution profiles: 1200 and 2400 dpi hardware-verified; 600 and 7200 dpi implemented, verification pending
 - [x] Whole-strip batch scanning (`--frames 1-4`)
 - [x] Eject from a loaded magazine, before or after scanning
 - [ ] Speed tuning (trim the replayed command stream)
