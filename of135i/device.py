@@ -522,7 +522,22 @@ class Scanner:
         2026-09-02 when issued from a loaded/parked transport; this
         variant is the one that freed the magazine each time via the
         vendor software.
+
+        Safety guards (2026-09-03):
+        - If no magazine is detected (loader sensor bit 0x08 clear),
+          log a notice and return immediately — no motor commands.
+        - If reg 0x01=0x00 (cold start, never homed), run cold_init()
+          first — ejecting from an unhomed state is undefined.
         """
+        if not self.is_magazine_loaded():
+            log.info("eject: no magazine detected — nothing to do")
+            return
+
+        val01 = self.io.read_reg(0x01)
+        if val01 == 0x00:
+            log.info("eject: reg 0x01=%#04x (cold state) — running cold_init() first", val01)
+            self.cold_init()
+
         feedl = 3090
         self.io.write_regs([(0x33, 0x8E)])
         self.io.write_regs([(0x32, (self.io.read_reg(0x32) | 0x02) & 0xFF)])
@@ -574,6 +589,12 @@ class Scanner:
         image.split_ir() for turning raw_bytes into separate visible/IR
         arrays.
         """
+        # Magazine presence: the CLI checks the loader sensor before
+        # initialize() (the only point where it's reliable). By the time
+        # scan() runs, the base-register writes have changed ext reg
+        # 0x101 so re-checking here would be unreliable. Callers that
+        # bypass the CLI should verify the magazine is loaded before
+        # calling scan().
         if ir or dpi != 3600:
             return self._scan_dual(dual_tables(dpi), frame=frame, lines=lines)
 

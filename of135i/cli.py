@@ -123,6 +123,13 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # session, matching the vendor.
     try:
         with Scanner.open() as scanner:
+            # Check the loader sensor BEFORE initialize() — the base
+            # register table written by initialize() changes ext reg
+            # 0x101 state, making the sensor bit unreliable after it.
+            if not scanner.is_magazine_loaded():
+                print("error: no magazine detected — insert the cassette "
+                      "and run load_magazine.py first", file=sys.stderr)
+                return 1
             for frame in frames:
                 scanner.initialize(ir=dual, dpi=args.dpi)
                 out = _frame_output(args.output, frame) if multi else args.output
