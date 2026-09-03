@@ -633,7 +633,7 @@ class Scanner:
         remaining = verify_phase.patched(shading_table2=shading2)[verify_phase.split_at:]
         self._exec_ops(remaining)
 
-        # ---- position: absolute feed from home to `frame` ---------------
+        # ---- position: relative feed from current carriage position ------
         feedl = tables.feedl_for_frame(frame)
         log.info("positioning to frame %d (FEEDL=%d)", frame, feedl)
         self._run_phase(
@@ -682,13 +682,19 @@ class Scanner:
         convention to the final image). Measurements that feed a per-
         channel computation (gain, shading) are de-interleaved into
         their halves BEFORE computing. The shading table is uploaded to
-        TWO scanner-RAM addresses: A (0x10014000) is computed from the
-        even lines and applied by the scanner to the even (IR) lines, B
-        (0x10034000) from/to the odd (visible) lines -- established from
-        the vendor's own uploads on every capture (calibrate.SHADING2_
-        TARGET_A/_B). AFE gain/offset (regs 2-7) and FEEDL/line-count
-        injections are the same single-register mechanism as the plain
-        scan.
+        TWO scanner-RAM addresses with a CROSS-CONNECTION: address A
+        (0x10014000) is computed from the ODD (visible) measurement
+        lines but applied by the scanner hardware to ODD (visible)
+        scan lines; address B (0x10034000) from EVEN (IR) measurement
+        lines, applied to EVEN (IR) scan lines. The vendor uploads
+        were analysed as "A from even, B from odd" (pass 18), which
+        correctly identified the SOURCE data but incorrectly assumed
+        same-source application; empirical testing (2026-09-03) proved
+        the scanner applies A→odd and B→even, matching the pre-pass-18
+        code that produced working images. See calibrate.SHADING2_
+        TARGET_A/_B for the per-address white-uniformity targets.
+        AFE gain/offset (regs 2-7) and FEEDL/line-count injections
+        are the same single-register mechanism as the plain scan.
 
         The line count is programmed as whole image chunks: `lines`
         (alternating lines, default t.DEFAULT_LINES) rounded up to
@@ -738,10 +744,20 @@ class Scanner:
             offset_b_hi=bytes([off_b >> 8]), offset_b_lo=bytes([off_b & 0xFF]),
         )[0]
         shading_meas = np.frombuffer(shading_meas_raw, dtype="<u2").reshape(t.SHADING_LINES, W, 3)
-        shading_meas_a = shading_meas[0::2]        # even lines -> table A (IR pass)
-        shading_meas_b = shading_meas[1::2]        # odd lines  -> table B (visible pass)
-        shading_a = calibrate.shading_table(shading_meas_a, width=W)
-        shading_b = calibrate.shading_table(shading_meas_b, width=W)
+        shading_meas_ir = shading_meas[0::2]       # even lines = IR pass
+        shading_meas_vis = shading_meas[1::2]      # odd lines  = visible pass
+        # Address A (0x10014000) is applied by the scanner to ODD
+        # (visible) scan lines; address B (0x10034000) to EVEN (IR).
+        # The vendor computes table A FROM even (IR) measurements and
+        # table B FROM odd (visible) — a cross-connection (see pass 18
+        # analysis, protocol-notes.md).  But the old code (pre pass-18)
+        # proved empirically that address A corrects VISIBLE and B
+        # corrects IR: uploading visible → A and IR → B produced images
+        # with 170% dynamic range; the swapped assignment (pass 18)
+        # produced flat noise.  So: visible measurement → table A,
+        # IR measurement → table B.
+        shading_a = calibrate.shading_table(shading_meas_vis, width=W)
+        shading_b = calibrate.shading_table(shading_meas_ir, width=W)
 
         # ---- upload + verify (re-measure, re-upload once) ---------------
         self._run_phase(t.CAL_SHADING_UPLOAD, shading_table_a=shading_a, shading_table_b=shading_b)
@@ -749,16 +765,28 @@ class Scanner:
         verify_phase = t.CAL_SHADING_VERIFY
         verify_raw = self._exec_ops(verify_phase.ops[:verify_phase.split_at])[0]
         verify_meas = np.frombuffer(verify_raw, dtype="<u2").reshape(t.SHADING_LINES, W, 3)
+        # Same cross-connection: table A (visible lines) uses TARGET_A,
+        # table B (IR lines) uses TARGET_B — matching the vendor's
+        # per-address targets, with the line subsets swapped to the
+        # empirically correct assignment.
         shading2_a = calibrate.shading_table2_dual(
-            verify_meas[0::2], shading_meas_a, width=W, target=calibrate.SHADING2_TARGET_A)
+            verify_meas[1::2], shading_meas_vis, width=W, target=calibrate.SHADING2_TARGET_A)
         shading2_b = calibrate.shading_table2_dual(
-            verify_meas[1::2], shading_meas_b, width=W, target=calibrate.SHADING2_TARGET_B)
+            verify_meas[0::2], shading_meas_ir, width=W, target=calibrate.SHADING2_TARGET_B)
         remaining = verify_phase.patched(
             shading_table2_a=shading2_a, shading_table2_b=shading2_b,
         )[verify_phase.split_at:]
         self._exec_ops(remaining)
 
-        # ---- position: absolute feed from home to `frame` ---------------
+        # ---- position: relative feed from current carriage position ------
+        # POSITION uses mode 0x18 (feed) which advances FEEDL steps from
+        # wherever the carriage is. In same-DPI sessions the preceding
+        # PARK always returns to the same offset, so the fixed FEEDL
+        # lands at the correct frame. After a DPI change the PARK end
+        # position differs (observed ~1060 rows / 7.5 mm shift at 3600
+        # dpi between 2400 and 3600); re-loading the magazine resets
+        # the carriage to the load-position reference. A proper homing
+        # command would fix this, but requires hardware testing.
         feedl = t.feedl_for_frame(frame)
         log.info("positioning to frame %d (FEEDL=%d, %d dpi dual)", frame, feedl, dpi)
         self._run_phase(

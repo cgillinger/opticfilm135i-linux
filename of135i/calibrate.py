@@ -224,8 +224,8 @@ def shading_table2(
 # subtracting fit, which had paired each table with the WRONG line
 # subset). Outside the window (unlit pixels) the vendor's gain
 # saturates at 0xffff, as the clip below does.
-SHADING2_TARGET_A = 61440.0   # 0x10014000, applied to even (IR) lines
-SHADING2_TARGET_B = 90112.0   # 0x10034000, applied to odd (visible) lines
+SHADING2_TARGET_A = 61440.0   # 0x10014000; scanner applies to ODD (visible) lines
+SHADING2_TARGET_B = 90112.0   # 0x10034000; scanner applies to EVEN (IR) lines
 
 
 def shading_table2_dual(
@@ -234,11 +234,13 @@ def shading_table2_dual(
     """Second (white-uniformity) shading upload for one dual-light table.
 
     `white_meas` / `dark_meas`: (lines, width, 3) uint16, ONE line
-    subset each (even lines for table A, odd for table B) of the
-    verify / shading measurement. offsets = per-pixel mean of
-    `dark_meas` (same as upload #1), gain = target * 0x4000 / mean of
-    `white_meas`, clipped to [1, 0xffff] -- the vendor formula, see
-    SHADING2_TARGET_A/_B.
+    subset each (odd/visible lines for table A, even/IR for table B)
+    of the verify / shading measurement.  Note the cross-connection:
+    address A is applied by the scanner to the ODD (visible) scan
+    lines, address B to the EVEN (IR) lines.  offsets = per-pixel
+    mean of `dark_meas` (same as upload #1), gain = target * 0x4000 /
+    mean of `white_meas`, clipped to [1, 0xffff] -- the vendor
+    formula, see SHADING2_TARGET_A/_B.
     """
     w = np.asarray(white_meas).astype(np.float64).mean(axis=0)   # (width, 3)
     f0 = np.rint(np.asarray(dark_meas).astype(np.float64).mean(axis=0))

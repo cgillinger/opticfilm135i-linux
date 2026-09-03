@@ -16,9 +16,12 @@ Covers:
     measurements chosen so the computed injections are checkable --
     mirrors tests/test_calibrate.py's test_scan_sequence_matches_trace,
     generalized for tables_ir's doubled/alternating buffers and its two
-    shading-upload addresses (A = even/IR lines, B = odd/visible lines)
-    instead of one. tests/test_dpi.py runs the same test against the
-    600/1200/2400/7200 dpi modules.
+    shading-upload addresses with cross-connection: table A (address
+    0x10014000) computed from ODD/visible measurement lines, applied by
+    the scanner to ODD/visible scan lines; table B (0x10034000) from
+    EVEN/IR lines, applied to EVEN/IR scan lines.
+    tests/test_dpi.py runs the same test against the 600/1200/2400/
+    7200 dpi modules.
   - split_ir() statistics against the ground-truth raw capture
     cal-data/ir/04-image.raw (per cal-data/ir/ir-analysis.md: IR lines
     near-equal channel means, visible lines with clear R>G>B separation).
@@ -288,17 +291,19 @@ def _expected_stream():
     b_off = _captured_shading_offsets(tables_ir.CAL_SHADING_UPLOAD, "shading_table_b")
     meas = _synthetic_measurement_buffer(a_off, b_off)
     shading_meas = np.frombuffer(meas, dtype="<u2").reshape(256, W, 3)
-    shading_meas_a = shading_meas[0::2]
-    shading_meas_b = shading_meas[1::2]
-    shading_a = calibrate.shading_table(shading_meas_a, width=W)
-    shading_b = calibrate.shading_table(shading_meas_b, width=W)
+    shading_meas_ir = shading_meas[0::2]    # even = IR pass
+    shading_meas_vis = shading_meas[1::2]   # odd  = visible pass
+    # Cross-connection (see device.py _scan_dual docstring): address A
+    # is computed from visible measurement, address B from IR.
+    shading_a = calibrate.shading_table(shading_meas_vis, width=W)
+    shading_b = calibrate.shading_table(shading_meas_ir, width=W)
 
     # The mock serves the SAME canned buffer for cal_shading_verify's
     # own re-measurement, so verify halves == shading_meas halves.
     shading2_a = calibrate.shading_table2_dual(
-        shading_meas_a, shading_meas_a, width=W, target=calibrate.SHADING2_TARGET_A)
+        shading_meas_vis, shading_meas_vis, width=W, target=calibrate.SHADING2_TARGET_A)
     shading2_b = calibrate.shading_table2_dual(
-        shading_meas_b, shading_meas_b, width=W, target=calibrate.SHADING2_TARGET_B)
+        shading_meas_ir, shading_meas_ir, width=W, target=calibrate.SHADING2_TARGET_B)
 
     injections = {
         "cal_gain_check_a": dict(

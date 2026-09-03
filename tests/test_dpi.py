@@ -246,7 +246,10 @@ def _run_sequence(dpi):
     codes = tuple(gc.ops[gc.injections[k][1]].data[gc.injections[k][2]] for k in ("gain_r", "gain_g", "gain_b"))
     a_off = _captured_shading_offsets(t, t.CAL_SHADING_UPLOAD, "shading_table_a")
     b_off = _captured_shading_offsets(t, t.CAL_SHADING_UPLOAD, "shading_table_b")
-    meas = _synthetic_measurement(t, a_off, b_off)
+    # Cross-connection: table A is built from ODD/visible measurement,
+    # table B from EVEN/IR — swap even/odd so each half reproduces its
+    # target vendor table (even=b_off→table B, odd=a_off→table A).
+    meas = _synthetic_measurement(t, b_off, a_off)
     white, white_len = _white_buffer(t, codes)
     cal_buffers = {white_len: deque([white]), len(meas): deque([meas, meas])}
 
@@ -259,18 +262,19 @@ def _run_sequence(dpi):
     off_r, off_g, off_b = calibrate.offset_codes(np.zeros((4, 3), np.uint16), np.zeros((4, 3), np.uint16))
     feedl = t.feedl_for_frame(1)
     sm = np.frombuffer(meas, dtype="<u2").reshape(t.SHADING_LINES, W, 3)
-    sa, sb = sm[0::2], sm[1::2]
+    sm_ir, sm_vis = sm[0::2], sm[1::2]   # even=IR (b_off), odd=visible (a_off)
+    # Cross-connection: table A from visible, table B from IR.
     inj = {
         "cal_gain_check_a": dict(gain_r=bytes([codes[0]]), gain_g=bytes([codes[1]]), gain_b=bytes([codes[2]])),
         "cal_shading_measure": dict(
             offset_r_hi=bytes([off_r >> 8]), offset_r_lo=bytes([off_r & 0xFF]),
             offset_g_hi=bytes([off_g >> 8]), offset_g_lo=bytes([off_g & 0xFF]),
             offset_b_hi=bytes([off_b >> 8]), offset_b_lo=bytes([off_b & 0xFF])),
-        "cal_shading_upload": dict(shading_table_a=calibrate.shading_table(sa, width=W),
-                                   shading_table_b=calibrate.shading_table(sb, width=W)),
+        "cal_shading_upload": dict(shading_table_a=calibrate.shading_table(sm_vis, width=W),
+                                   shading_table_b=calibrate.shading_table(sm_ir, width=W)),
         "cal_shading_verify": dict(
-            shading_table2_a=calibrate.shading_table2_dual(sa, sa, width=W, target=calibrate.SHADING2_TARGET_A),
-            shading_table2_b=calibrate.shading_table2_dual(sb, sb, width=W, target=calibrate.SHADING2_TARGET_B)),
+            shading_table2_a=calibrate.shading_table2_dual(sm_vis, sm_vis, width=W, target=calibrate.SHADING2_TARGET_A),
+            shading_table2_b=calibrate.shading_table2_dual(sm_ir, sm_ir, width=W, target=calibrate.SHADING2_TARGET_B)),
         "position": dict(feedl_hi=bytes([(feedl >> 16) & 0xFF]), feedl_mid=bytes([(feedl >> 8) & 0xFF]),
                          feedl_lo=bytes([feedl & 0xFF])),
         "scan": dict(lines_top=bytes([(n_lines >> 16) & 0xFF]), lines_hi=bytes([(n_lines >> 8) & 0xFF]),
