@@ -151,8 +151,8 @@ no modifications, abort on anomaly per safety rules).
 | 3600 | **VERIFIED** (reference) | 5184×5248 | Dozens of successful scans |
 | 2400 | **VERIFIED** ✅ | 5256×3528 | Correct dimensions, real image content, same FEEDL as 3600 |
 | 1200 | **VERIFIED** ✅ | 1752×1768 | Correct dimensions, real image content |
-| 600 | **FIX APPLIED** 🔧 | — | White calibration crashed (all-zero R channel). Root cause: stale register 0x2b=0x1f in CAL_WHITE (see Test 8). Fix applied, needs hardware re-test. |
-| 7200 | NOT TESTED | — | Deferred (1.3 GB raw, last in priority per safety rules) |
+| 600 | **VERIFIED** ✅ | 876×878 | Profile fix confirmed (see Test 8). Correct dimensions, real image content (41–51% dynamic range). |
+| 7200 | **VERIFIED** ✅ | 10512×10576 | Correct dimensions, real image content (40–50% dynamic range). 637 MB TIFF output. |
 
 **⚠️ CRITICAL FINDING — all DPI results above are DIMENSIONALLY correct
 but contain NO IMAGE CONTENT.** See Test 6 below.
@@ -357,3 +357,58 @@ replay is fragile — the driver faithfully replayed a capture artifact
 intentional configuration. Understanding what each register does and
 setting values from first principles makes the driver robust against
 this class of bug.
+
+### Test 9: A3 reproducibility retest — corrected shading pipeline
+
+**Goal:** Re-run the A3 reproducibility test (Test 2) now that the
+shading A/B swap (Test 6) is fixed, to confirm the *corrected*
+image pipeline's stability rather than just the USB/calibration layer.
+
+**Method:** 10 consecutive scans of frame 1 at 3600 dpi, dual-light
+(IR) mode. Scans 0–5 ran in a warm session (scanner already active
+from prior 600/7200 dpi testing); scans 6–9 ran after a power cycle
+(cold start, cold_init auto-triggered).
+
+**Results (scans 0–5, warm start):**
+
+| Metric | Value | Assessment |
+|---|---|---|
+| Dynamic range (std/mean) | R=81%, G=75%, B=67% | ✅ Real image content |
+| Channel mean spread (R) | 0.37 DN / 0.83% | Excellent |
+| Channel mean spread (G) | 0.24 DN / 0.82% | Excellent |
+| Channel mean spread (B) | 0.23 DN / 1.13% | Excellent |
+| Drift scan 0→5 | R=+0.83%, G=+0.82%, B=+1.14% | Lamp warmup, normal |
+| Pair-to-pair pixel RMS | 1.6 DN (all pairs identical) | Extremely stable |
+| Gain codes (all 6 scans) | R=0x2D, G=0x21, B=0x27 | Consistent, not clipped |
+
+**Scans 6–9 (cold start): ❌ FLAT IMAGES.**
+After a power cycle (caused by USB timeout during scan 6 in the first
+batch), cold_init ran and all four scans produced gain codes R=G=B=0x3F
+(clipped maximum) and flat output (std/mean ~6%, no spatial structure).
+The lamp was insufficiently warmed after cold_init — the white
+calibration measured very low light levels, maxing the AFE gain.
+Identical behaviour across all four cold-start scans confirms it is
+systematic, not random.
+
+**Comparison with original A3 (Test 2):**
+
+| | Test 2 (broken shading) | Test 9 (corrected) |
+|---|---|---|
+| Image content | ❌ None (6% dynamic range) | ✅ Real (67–81%) |
+| Channel spread | 0.15–0.43% | 0.82–1.13% |
+| Pair RMS | 912–917 DN (16-bit) | 1.6 DN (8-bit = ~410 DN at 16-bit) |
+| Gain codes | R=0x3F, G=0x3F, B=0x3F | R=0x2D, G=0x21, B=0x27 |
+
+The original A3 measured the stability of a *broken* pipeline where the
+shading correction flattened the signal — very reproducible because there
+was nothing to modulate. The retest confirms the corrected pipeline is
+equally stable but now produces actual images.
+
+**New finding — cold-start lamp warmup:** Immediate scanning after
+cold_init produces maxed gain (0x3F) and flat images. The vendor's
+workflow likely includes a warm-up period (preview pass, loading
+animation). A warm-up delay or gain-level retry loop after cold_init
+is needed.
+
+**Status:** ✅ A3 VERIFIED (warm start), ❌ cold-start scanning needs
+lamp warmup mitigation.
