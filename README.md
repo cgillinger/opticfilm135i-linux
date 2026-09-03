@@ -60,12 +60,11 @@ one invocation. The rough edges you should know about:
   hardware buttons are dead without a driver process.
 - `of135i status` reports the loader sensor (magazine present/absent)
   and button state.
-- **Multiple resolutions:** `--dpi 600|1200|2400|3600|7200`. 2400 and
-  1200 dpi are hardware-verified; 600 dpi has a corrected profile
-  (awaiting re-test); 7200 dpi is implemented but untested (10512 px
-  wide, ~1.3 GB raw — expect a long scan and a lot of RAM). All non-3600
-  resolutions are dual-light (IR + visible) passes, so `--ir` decides
-  whether the IR channel is written out and used for dust removal.
+- **Multiple resolutions:** `--dpi 600|1200|2400|3600|7200` — all five
+  hardware-verified. All non-3600 resolutions are dual-light (IR +
+  visible) passes, so `--ir` decides whether the IR channel is written
+  out and used for dust removal. 7200 dpi produces a 10512 px wide,
+  ~1.3 GB raw frame — expect a long scan and a lot of RAM.
 
 ## Requirements
 
@@ -142,7 +141,7 @@ interoperability constants and our own code.
 
 - [x] IR channel capture (`--ir`): separate visible + IR output, dual-light calibration
 - [x] IR-based automatic dust/scratch removal (multi-scale inpainting, on by default with `--ir`)
-- [x] Resolution profiles: 1200 and 2400 dpi hardware-verified; 600 and 7200 dpi implemented, verification pending
+- [x] Resolution profiles: all five DPIs (600/1200/2400/3600/7200) hardware-verified
 - [x] Whole-strip batch scanning (`--frames 1-4`)
 - [x] Eject from a loaded magazine, before or after scanning
 - [ ] Speed tuning (trim the replayed command stream)

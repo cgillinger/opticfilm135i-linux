@@ -154,8 +154,11 @@ no modifications, abort on anomaly per safety rules).
 | 600 | **VERIFIED** ✅ | 876×878 | Profile fix confirmed (see Test 8). Correct dimensions, real image content (41–51% dynamic range). |
 | 7200 | **VERIFIED** ✅ | 10512×10576 | Correct dimensions, real image content (40–50% dynamic range). 637 MB TIFF output. |
 
-**⚠️ CRITICAL FINDING — all DPI results above are DIMENSIONALLY correct
-but contain NO IMAGE CONTENT.** See Test 6 below.
+**Note:** The initial DPI tests (2400, 1200) in this session ran while
+the shading A/B swap regression (Test 6) was active — those scans had
+correct dimensions but no image content. After the shading fix, all five
+DPIs were re-tested and verified with real image content (Test 5 table
+updated, Tests 8–9 below).
 
 **2400 dpi detail:** Init + calibration completed normally. Gain codes
 R=G=B=0x3F (same as 3600). Numerous benign poll timeouts on reg 0x32
