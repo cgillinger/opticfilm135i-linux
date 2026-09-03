@@ -375,7 +375,10 @@ CAL_WHITE = Phase(
         Op('cr', 0.0043, bm=0xc0, br=0x0c, wv=0x008e, wi=0x0020, length=1, resp=bytes.fromhex('55')),
         Op('cw', 0.0042, bm=0x40, br=0x04, wv=0x0083, data=bytes.fromhex('0102044205403d003e003f01a600a701a800a9012c042db00200a200a3001d00a400a501ac00ad01800081238200830084238500861487632500260027022800')),
         Op('cr', 0.0043, bm=0xc0, br=0x0c, wv=0x008e, wi=0x0020, length=1, resp=bytes.fromhex('55')),
-        Op('cw', 0.0043, bm=0x40, br=0x04, wv=0x0083, data=bytes.fromhex('292f2a472b1f')),
+        # reg 0x2b: vendor capture had 0x1f (stale from a prior 2400/3600
+        # session); 0x04 matches 1200 dpi which shares 0x29/0x2a = 0x2f/0x47.
+        # The 0x1f value caused all-zero R channel in white calibration.
+        Op('cw', 0.0043, bm=0x40, br=0x04, wv=0x0083, data=bytes.fromhex('292f2a472b04')),
         Op('cr', 0.0043, bm=0xc0, br=0x0c, wv=0x008e, wi=0x0020, length=1, resp=bytes.fromhex('55')),
         Op('cw', 0.0042, bm=0x40, br=0x04, wv=0x0083, data=bytes.fromhex('51025d005e00')),
         Op('cr', 0.0043, bm=0xc0, br=0x0c, wv=0x008e, wi=0x0020, length=1, resp=bytes.fromhex('55')),

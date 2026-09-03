@@ -151,7 +151,7 @@ no modifications, abort on anomaly per safety rules).
 | 3600 | **VERIFIED** (reference) | 5184×5248 | Dozens of successful scans |
 | 2400 | **VERIFIED** ✅ | 5256×3528 | Correct dimensions, real image content, same FEEDL as 3600 |
 | 1200 | **VERIFIED** ✅ | 1752×1768 | Correct dimensions, real image content |
-| 600 | **FAILED** ❌ | — | White calibration returned all-zero R channel: `gain_codes() channel 0: non-positive peak level (0.0)`. Offline investigation in progress. |
+| 600 | **FIX APPLIED** 🔧 | — | White calibration crashed (all-zero R channel). Root cause: stale register 0x2b=0x1f in CAL_WHITE (see Test 8). Fix applied, needs hardware re-test. |
 | 7200 | NOT TESTED | — | Deferred (1.3 GB raw, last in priority per safety rules) |
 
 **⚠️ CRITICAL FINDING — all DPI results above are DIMENSIONALLY correct
@@ -169,9 +169,8 @@ R=G=B=0x3F. Same poll timeout pattern. Scan and PARK completed normally.
 CAL_WHITE phase ran but the bulk-in data contained all zeros in channel 0,
 causing `gain_codes()` to raise ValueError. No motor commands had been
 issued yet (failure was in the calibration phase, before POSITION).
-Scanner left in safe state (no mechanical risk). Root cause under
-investigation — likely a profile-generation issue (sensor/window
-configuration for 600 dpi), not a hardware problem.
+Scanner left in safe state (no mechanical risk). Root cause found — see
+Test 8 below. Fix applied, awaiting hardware verification.
 
 ### Test 6: Image content diagnostic — shading table A/B swap regression
 
@@ -307,3 +306,54 @@ detailed protocol analysis.)*
 - Recovery: power cycle + vendor QuickScan in VM.
 - **Lesson:** Never issue motor commands without verified mechanical state.
   This incident led to the creation of the hardware safety rules document.
+
+---
+
+## 2026-09-03 (session 2) — 600 dpi CAL_WHITE fix, design review
+
+### Test 8: 600 dpi CAL_WHITE crash — root cause analysis and fix
+
+**Goal:** Find and fix why 600 dpi white calibration returns all-zero R
+channel data.
+
+**Method:** Cross-DPI register comparison of all vendor captures
+(600/1200/2400/3600/7200 dpi).
+
+**Root cause:** Register 0x2b in the CAL_WHITE phase. The five DPI
+profiles group into three sensor-mode families by registers 0x29/0x2a:
+
+| Group | 0x29/0x2a | DPIs | 0x2b (vendor capture) |
+|---|---|---|---|
+| A | 0x2f / 0x47 | 600, 1200 | 600: **0x1f** ❌, 1200: 0x04 ✅ |
+| B | 0x34 / 0x57 | 2400, 3600 | 0x1f |
+| C | 0x3e / 0x77 | 7200 | 0x3d |
+
+600 dpi's 0x2b=0x1f is the Group B value (2400/3600 dpi), not the Group A
+value used by 1200 dpi (0x04). The vendor captures were recorded
+sequentially (likely 3600→2400→1200→600→7200); the 0x1f was a stale
+register value left over from the preceding 2400/3600 session that the
+vendor software didn't explicitly reset.
+
+With 0x29=0x2f and 0x2a=0x47 (Group A sensor mode), 0x2b=0x1f
+misconfigures the sensor timing, resulting in all-zero readout on
+channel 0 (R). The same 0x2b=0x1f works correctly with Group B's
+0x29=0x34 / 0x2a=0x57.
+
+**Fix:** Changed `tables_dpi600.py` CAL_WHITE register 0x2b from 0x1f
+to 0x04 (matching 1200 dpi, which shares the same Group A sensor mode
+and works correctly).
+
+**Additional finding:** AFE_BASE also has a 0x2b discrepancy (600:
+0x03, 1200: 0x01) with the same 0x29/0x2a=0x2a/0xb7. This doesn't
+cause a crash (AFE_BASE runs before CAL_WHITE reconfigures), but may
+affect calibration quality. Noted for hardware testing.
+
+**Status:** 🔧 FIX APPLIED, awaiting hardware verification. All 16
+offline tests pass.
+
+**Design note:** This bug is a textbook example of why verbatim vendor
+replay is fragile — the driver faithfully replayed a capture artifact
+(a stale register from a different DPI session) as if it were an
+intentional configuration. Understanding what each register does and
+setting values from first principles makes the driver robust against
+this class of bug.
