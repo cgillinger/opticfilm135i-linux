@@ -961,3 +961,60 @@ the stop") before the load. Driver: both LOAD completion polls are
 now strict (flow stops after an unengaged feed, session FAILED, power
 cycle); `tools/sensor_probe.py` added (read-only, zero writes proven).
 Next hardware step in load-analysis.md §4. 40 safety tests green.
+
+## 2026-09-05 — Test 13: load from the sensor trigger point (guard worked, table suspect)
+
+### Setup
+Power-cycled, magazine fully out. `tools/sensor_probe.py` (read-only,
+0 writes) run twice: the loader sensor trips (reg 0x101 0x40→0x48,
+reg 0x32 0xc2→0xc6, orange LED) partway in, roughly a cm short of the
+mechanical stop, with NO driver activity — presence sensor confirmed
+independent of the driver. Magazine left at the trigger point.
+
+### Test 13: `load_magazine.py` from the trigger point — FAILED (as designed)
+cold_init (3 homing rounds) → base table → the LOAD feed. The first
+strict completion poll refused: status word **0xec55** after the feed,
+capture wants **0xf055**. `StrictPollTimeoutError`, session FAILED, 224
+writes / 10 pulses, no traverse, power-cycle demanded, tool exit 1.
+`doctor` afterwards: reg 0x01 = 0x02, status word 0xec55, reg 0x101 =
+0xec, reg 0x02 = 0x18. Blue LED came on and there was motor noise, but
+Christian saw no magazine movement and confirmed it sat loose, exactly
+where he left it. So the blue LED is set by the feed op, not by the
+magazine being drawn in — and the feed does NOT engage the cassette.
+
+Bit reading holds: after our feed 0xec55 has loader-sensor bit 0x08
+**set** (cassette still at the sensor); the vendor's f055 has it
+**clear** (cassette pulled past). Position was not the variable —
+11b/12b (to the stop) and 13 (trigger point) all give the unengaged
+result. The new strict-poll guard caught it cleanly and stopped before
+the traverse.
+
+### Finding: the LOAD table was regenerated from the wrong context
+`of135i/tables_load.py` is AUTO-GENERATED at commit 3dd825e (the safety
+pass, 2026-09-05) from `20260902-vendor-eject-from-loaded` ops 291-640
+— a capture whose purpose was *eject*, where the load ran after the
+app-start jog with the session's registers already programmed. The
+2026-09-02 hardware-verified load used the *old* load_magazine.py off a
+different source (the load-only capture). In the `load-only` capture
+the feed is programmed with the FULL register block right at the feed
+(op 794: 32 regs incl. 0x03=0x30, 0x15=0x90, 0x35=0xbb, plus op 796's
+32 more), whereas our LOAD (from eject-from-loaded) writes only the
+FEEDL + slope regs (19), relying on prior session state. Our
+`initialize()` (BASE_INIT_PAIRS) does set all those registers, but a
+few VALUES differ from what load-only programs at feed time —
+0x03 (0x20 vs 0x30), 0x15 (0x80 vs 0x90), 0x35 (0xfb vs 0xbb). 0x35 is
+motor-related (the cold_init settle poll waits on 0x35=0xbb). Whether
+those deltas are why the feed does not engage is unproven, but the
+table's provenance matches the review's "wrong context" suspicion: the
+currently-shipped LOAD has NEVER been hardware-verified as a load —
+only the eject cut from the same capture has.
+
+### Decision / next step
+No more Linux motor runs from this table. The authoritative fix is a
+fresh Win11/QuickScan capture of a clean standalone load (magazine
+fully OUT → reinsert → load → confirm latched → stop), usbmon on the
+Linux host, then regenerate LOAD from THAT and diff. That capture also
+records the working status word (f055 after feed, sensor bit going
+clear) and settles d855-vs-dc55 (Test 12 addendum) from a known-good
+load. Scanner read 0x00 cold, magazine out, after the Test 13 power
+cycle.
