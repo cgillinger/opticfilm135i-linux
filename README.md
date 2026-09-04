@@ -17,9 +17,10 @@ negative scanner Linux, SANE OpticFilm 135i, GL126, pyusb scanner driver*.
 
 - Full scan flow over raw USB (pyusb): initialization, magazine handling,
   homing, per-frame positioning, **self-computed calibration** (AFE gain from
-  live dark/white measurements, two-stage per-pixel shading correction;
-  AFE offset is currently a hardcoded empirical value) and 3600 dpi
-  48-bit RGB scanning.
+  live white measurements, AFE offset from a two-point dark bracket,
+  two-stage per-pixel shading correction) and 3600 dpi 48-bit RGB
+  scanning. The dark-bracket offset reproduces the vendor's codes on the
+  reference unit; it is implemented but not yet hardware-verified.
 - Color-line (staggered CCD) channel alignment — no RGB fringing.
 - Output as 16-bit TIFF or PNM: raw negative, or a display-ready positive
   (`--positive`, sRGB-tagged) via a learned tone-curve LUT that matches
@@ -56,9 +57,10 @@ one invocation. The rough edges you should know about:
 - **Cold-start initialization is handled.** The driver detects a freshly
   power-cycled scanner (reg 0x01 = 0x00) and runs the vendor's cold-start
   homing sequence automatically — no VM or vendor software needed.
-  However, scanning immediately after a cold start may produce flat images
-  (lamp not yet warmed up); a warm-up delay is planned but not yet
-  implemented.
+  Scanning immediately after a cold start used to produce flat images
+  (lamp not yet warmed up, AFE gain clipped at maximum); the driver now
+  re-measures the white line up to three times with a short delay when
+  that happens. Implemented, not yet hardware-verified.
 - **The magazine must be loaded through the driver**
   (`tools/load_magazine.py`) — the autoloader is driver-managed and the
   hardware buttons are dead without a driver process.

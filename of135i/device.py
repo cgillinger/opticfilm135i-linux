@@ -775,9 +775,10 @@ class Scanner:
         dpi = t.DPI
 
         # ---- dark pair (offset bracket, gain=0) ------------------------
-        # Content unused by offset_codes() (same as the plain path); the
-        # doubled buffer size (alternating IR/visible) doesn't matter --
-        # flattened to (N, 3) either way.
+        # Both reads feed offset_codes() (per-channel means, same as the
+        # plain path); the doubled buffer size (alternating IR/visible)
+        # doesn't matter -- flattened to (N, 3) either way, and the IR
+        # and visible dark lines are both dark.
         dark_a_raw = self._run_phase(t.CAL_DARK_A)[0]
         dark_b_raw = self._run_phase(t.CAL_DARK_B)[0]
         dark_a = np.frombuffer(dark_a_raw, dtype="<u2").reshape(-1, 3)
