@@ -101,7 +101,11 @@ sudo .venv/bin/python -m of135i scan --frames 1-4 --ir --positive --rotate 90 -o
 
 # other resolutions
 sudo .venv/bin/python -m of135i scan --frame 1 --dpi 2400 --positive -o frame1-2400.tiff
+```
 
+Add `--park semantic` to any of the above for an experimental faster park phase (see docs/replay-analysis.md); the default remains the captured replay.
+
+```bash
 # eject the film magazine / check device status
 sudo .venv/bin/python -m of135i eject
 sudo .venv/bin/python -m of135i status

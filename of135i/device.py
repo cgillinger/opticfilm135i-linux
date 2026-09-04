@@ -124,6 +124,12 @@ def _shading_stats(payload: bytes) -> dict:
 _WARMUP_MAX_RETRIES = 3
 _WARMUP_RETRY_DELAY = 5.0   # seconds between retries
 
+# Semantic PARK (see park_semantic() and docs/replay-analysis.md's
+# "Conversion order" step 1): timeout and poll interval for the two
+# condition waits that replace the captured trace's pacing.
+_PARK_WAIT_TIMEOUT = 15.0
+_PARK_POLL_INTERVAL = 0.02
+
 
 class Scanner:
     """Drives the of135i scan sequence over a UsbIo transport."""
@@ -145,6 +151,14 @@ class Scanner:
         self._diag_cr_mismatches: int = 0
         self._diag_poll_timeout_details: list[dict] = []
         self._diag_warmup: dict | None = None
+        self._diag_park_waits: dict | None = None
+
+        # PARK phase implementation switch (see park_semantic() and
+        # docs/replay-analysis.md): "verbatim" (default) replays the
+        # captured op stream exactly, byte for byte; "semantic" issues
+        # the same register writes with real read-modify-write and
+        # condition waits instead of captured pacing. See _park().
+        self.park_mode: str = "verbatim"
 
     @classmethod
     def open(cls) -> "Scanner":
@@ -299,6 +313,172 @@ class Scanner:
         finally:
             dt = time.monotonic() - t0
             self._diag_phase_seconds[phase.name] = self._diag_phase_seconds.get(phase.name, 0.0) + dt
+
+    # -------------------------------------------------------------- park
+
+    def _park(self, t, ir: bool = False) -> None:
+        """Dispatch on self.park_mode: "verbatim" replays `t.PARK`'s
+        captured op stream exactly as before (byte-identical, see
+        test_scan_sequence_matches_trace/test_dpi.py's
+        test_scan_sequences -- every dpi's own table module has its
+        own PARK data, hence `t` is the caller's actual table module);
+        "semantic" runs park_semantic(t), which takes its table-
+        specific constants (the two 0x8b control-write payloads and
+        the optional 0x19=0x00 write) from that same `t.PARK`. Called
+        at the end of scan()/_scan_dual() in place of the former bare
+        self._run_phase(<tables>.PARK)."""
+        if self.park_mode == "verbatim":
+            self._run_phase(t.PARK)
+        elif self.park_mode == "semantic":
+            self.park_semantic(t, ir=ir)
+        else:
+            raise ValueError(f"unknown park_mode {self.park_mode!r} (want 'verbatim' or 'semantic')")
+
+    def park_semantic(self, t=None, ir: bool = False) -> None:
+        """Semantic replacement for the captured PARK phase (see
+        docs/replay-analysis.md's "Conversion order" step 1 and PARK's
+        row in the phase-by-phase table).
+
+        The captured PARK op stream is a real park/teardown sequence
+        followed by five identical repetitions of the vendor app's
+        idle-loop heartbeat (36=fc, 3a=00, 36=fc, 33=0e, read/write-
+        back reg 0x32, a 2 s pause, read reg 0x35, poll reg 0x32) --
+        the repetitions are the vendor polling for completion, not a
+        hardware requirement. This reproduces the same writes with:
+
+          - real read-modify-write on regs 0x15 (clear bit 0x10),
+            0x32 (write back what was read, unchanged) and 0x35
+            (clear bit 0x40) instead of the captured constants, which
+            are only correct on the capture unit/session;
+          - Wait A: poll reg 0x35 until bit 0x40 is set (replaces the
+            captured 0.74 + 2.06 s pacing before the RMW clear);
+          - Wait B: poll reg 0x32 until (v & ~0x18) == (0x95 & ~0x18)
+            -- bits 0x18 are loader-sensor/transport bits that
+            legitimately differ between sessions, same mask
+            _poll_one() already applies to 0x32 polls elsewhere
+            (replaces the captured poll + 2.07 s pause + poll);
+          - exactly ONE idle-loop round afterwards (heartbeat only,
+            no 2 s pause), instead of five.
+
+        Both waits are logged at DEBUG with what they waited for and
+        how long it took, and never raise on timeout (15 s each,
+        _PARK_WAIT_TIMEOUT) -- a WARNING is logged and the method
+        continues, since everything left after Wait A/B is a status/
+        heartbeat write, not a motor command.
+
+        The table-specific constants come from `t.PARK` itself (`t`
+        defaults to tables_ir when `ir` else tables): the 0x8b
+        control-write payloads (wIndex 0x0b: 0c000100 in the 3600 dpi
+        captures, 22000100 in the 600-7200 dpi captures; wIndex 0x0f:
+        e0ff/c0ff/f8ff/feff/fcff/f0ff -- varies per dpi and IR, meaning
+        unknown, kept verbatim per table) and whether a 0x19=0x00 write
+        follows the 0x32 write-back (every dual-light table has it, the
+        plain 3600 table does not). Everything else in PARK is
+        identical across all six tables.
+
+        Records total elapsed time into self._diag_phase_seconds
+        ["park"] and wait details into self._diag_park_waits (see
+        scan()/_scan_dual()'s last_diag "park_waits" key).
+        """
+        if t is None:
+            t = tables_ir if ir else tables
+        park_ops = t.PARK.ops
+        ctrl_8b = [(op.wi, bytes(op.data)) for op in park_ops
+                   if op.kind == "cw" and op.wv == 0x008B]
+        has_0x19 = any(
+            op.kind == "cw" and op.wv == 0x0083
+            and any(op.data[i] == 0x19 for i in range(0, len(op.data), 2))
+            for op in park_ops
+        )
+        if len(ctrl_8b) != 2:
+            raise Of135iError(
+                f"park_semantic: expected 2 control writes with wValue 0x8b in "
+                f"{t.__name__}.PARK, found {len(ctrl_8b)}"
+            )
+
+        t0 = time.monotonic()
+        dev = self.io.dev
+        waits = {
+            "a_seconds": None, "a_timed_out": False,
+            "b_seconds": None, "b_timed_out": False,
+        }
+
+        # ---- real park/teardown sequence (captured ops 0-55) -----------
+        dev.ctrl_transfer(0x40, 0x0C, 0x8D, 0, b"\x00")
+        self.io.write_regs([(0x03, 0x30)])
+        self.io.write_regs([(0x03, 0x20)])
+        self.io.write_regs([(0x01, 0x22)])
+        self.io.write_regs([(0x3A, 0x00)])
+
+        v15 = self.io.read_reg(0x15)
+        self.io.write_regs([(0x15, v15 & ~0x10 & 0xFF)])
+
+        self.io.write_regs([(0x02, 0x30)])
+        self.io.write_regs([(0x36, 0xFC), (0x3A, 0x00), (0x36, 0xFC), (0x33, 0x0E)])
+        self.io.write_regs([(0x03, 0x10)])
+        self.io.write_regs([(0x03, 0x00)])
+
+        for wi, payload in ctrl_8b:
+            dev.ctrl_transfer(0x40, 0x04, 0x8B, wi, payload)
+
+        v32 = self.io.read_reg(0x32)
+        self.io.write_regs([(0x32, v32)])
+        if has_0x19:
+            self.io.write_regs([(0x19, 0x00)])
+
+        # ---- Wait A: reg 0x35 bit 0x40 set, then clear it (RMW) ---------
+        _t = time.monotonic()
+        deadline = _t + _PARK_WAIT_TIMEOUT
+        v35 = self.io.read_reg(0x35)
+        while not (v35 & 0x40):
+            if time.monotonic() > deadline:
+                waits["a_timed_out"] = True
+                log.warning(
+                    "park_semantic: wait A (reg 0x35 bit 0x40) timed out "
+                    "after %.1fs (last 0x%02x) -- continuing",
+                    _PARK_WAIT_TIMEOUT, v35,
+                )
+                break
+            time.sleep(_PARK_POLL_INTERVAL)
+            v35 = self.io.read_reg(0x35)
+        waits["a_seconds"] = time.monotonic() - _t
+        log.debug(
+            "park_semantic: wait A (reg 0x35 bit 0x40) done in %.3fs (last 0x%02x, timed_out=%s)",
+            waits["a_seconds"], v35, waits["a_timed_out"],
+        )
+        self.io.write_regs([(0x35, v35 & ~0x40 & 0xFF)])
+
+        # ---- Wait B: reg 0x32 reaches state 0x95 (masked 0x18) ----------
+        _t = time.monotonic()
+        deadline = _t + _PARK_WAIT_TIMEOUT
+        target = 0x95 & ~0x18 & 0xFF
+        v32 = self.io.read_reg(0x32)
+        while (v32 & ~0x18 & 0xFF) != target:
+            if time.monotonic() > deadline:
+                waits["b_timed_out"] = True
+                log.warning(
+                    "park_semantic: wait B (reg 0x32 -> 0x95 masked 0x18) "
+                    "timed out after %.1fs (last 0x%02x) -- continuing",
+                    _PARK_WAIT_TIMEOUT, v32,
+                )
+                break
+            time.sleep(_PARK_POLL_INTERVAL)
+            v32 = self.io.read_reg(0x32)
+        waits["b_seconds"] = time.monotonic() - _t
+        log.debug(
+            "park_semantic: wait B (reg 0x32 -> 0x95 masked 0x18) done in "
+            "%.3fs (last 0x%02x, timed_out=%s)",
+            waits["b_seconds"], v32, waits["b_timed_out"],
+        )
+
+        # ---- one idle-loop round (heartbeat), no captured 2 s pause -----
+        self.io.write_regs([(0x36, 0xFC), (0x3A, 0x00), (0x36, 0xFC), (0x33, 0x0E)])
+        v32b = self.io.read_reg(0x32)
+        self.io.write_regs([(0x32, v32b)])
+
+        self._diag_park_waits = waits
+        dt = time.monotonic() - t0
+        self._diag_phase_seconds["park"] = self._diag_phase_seconds.get("park", 0.0) + dt
 
     # -------------------------------------------------------------- init
 
@@ -755,6 +935,7 @@ class Scanner:
         self._diag_cr_mismatches = 0
         self._diag_poll_timeout_details = []
         self._diag_warmup = None
+        self._diag_park_waits = None
         started_utc = datetime.now(timezone.utc).isoformat()
         t_start = time.monotonic()
 
@@ -838,7 +1019,7 @@ class Scanner:
         # ---- park ---------------------------------------------------------
         # PARK's own first op is the captured end-of-access control
         # write (cw wv=0x8d) -- no separate call needed here.
-        self._run_phase(tables.PARK)
+        self._park(tables, ir=False)
 
         warmup = self._diag_warmup or {}
         self.last_diag = {
@@ -866,6 +1047,8 @@ class Scanner:
             "poll_timeouts": self._diag_poll_timeouts,
             "cr_mismatches": self._diag_cr_mismatches,
             "poll_timeout_details": list(self._diag_poll_timeout_details),
+            "park_mode": self.park_mode,
+            "park_waits": dict(self._diag_park_waits) if self._diag_park_waits is not None else None,
             "started_utc": started_utc,
             "finished_utc": datetime.now(timezone.utc).isoformat(),
         }
@@ -917,6 +1100,7 @@ class Scanner:
         self._diag_cr_mismatches = 0
         self._diag_poll_timeout_details = []
         self._diag_warmup = None
+        self._diag_park_waits = None
         started_utc = datetime.now(timezone.utc).isoformat()
         t_start = time.monotonic()
 
@@ -1040,7 +1224,7 @@ class Scanner:
         image = b"".join(buffers[:n_chunks])
 
         # ---- park ---------------------------------------------------------
-        self._run_phase(t.PARK)
+        self._park(t, ir=True)
 
         warmup = self._diag_warmup or {}
         self.last_diag = {
@@ -1068,6 +1252,8 @@ class Scanner:
             "poll_timeouts": self._diag_poll_timeouts,
             "cr_mismatches": self._diag_cr_mismatches,
             "poll_timeout_details": list(self._diag_poll_timeout_details),
+            "park_mode": self.park_mode,
+            "park_waits": dict(self._diag_park_waits) if self._diag_park_waits is not None else None,
             "started_utc": started_utc,
             "finished_utc": datetime.now(timezone.utc).isoformat(),
         }

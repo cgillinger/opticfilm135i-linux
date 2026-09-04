@@ -65,7 +65,28 @@ chunks) but the control skeleton is identical.
 1. **PARK** → semantic (writes + RMW + condition wait). Largest pacing,
    most RMW, runs at the end of every scan so a regression is visible
    immediately and recoverable (a failed park leaves the lamp on, not
-   the motor moving).
+   the motor moving). **Implemented** behind `--park semantic`
+   (device.py `Scanner.park_semantic()`; default stays `verbatim`,
+   the byte-exact replay) -- A/B on hardware pending. The two condition
+   waits it replaces the captured pacing with:
+     - Wait A: poll reg 0x35 until bit `0x40` is set (replaces a
+       captured 0.74 + 2.06 s pause before the RMW clear of that bit).
+     - Wait B: poll reg 0x32 until `(v & ~0x18) == (0x95 & ~0x18)`
+       -- bits `0x18` are loader-sensor/transport bits that legitimately
+       differ between sessions, the same mask `_poll_one()` already
+       applies to 0x32 polls elsewhere (replaces a captured poll + a
+       2.07 s pause + a second poll).
+     The table-specific constants are read from each table module's own
+     `PARK` at run time: the two `0x8b` control-write payloads (wIndex
+     0x0b: `0c000100` in the 3600 dpi captures, `22000100` in the
+     600–7200 dpi ones; wIndex 0x0f: `e0ff`/`c0ff`/`f8ff`/`feff`/`fcff`/
+     `f0ff` — per dpi and IR, meaning unknown, kept verbatim) and the
+     `0x19=0x00` write present in every dual-light table. The 7200 dpi
+     capture wrote 0x32 back as `0x01` where the others wrote `0x81` —
+     direct evidence that this register must be read live, not replayed.
+     `tests/test_park.py` proves pair-for-pair equivalence against all
+     six tables' captured PARK, truncated after the first idle-loop
+     round.
 2. **PREP** → semantic (RMW 0x31/0x32, waits on 0x101/0x32).
 3. **Calibration skeleton** → one helper
    `measure(afe_writes, extra_regs, read_len)` used by dark A/B, white,

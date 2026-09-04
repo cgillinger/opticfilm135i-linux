@@ -138,6 +138,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # session, matching the vendor.
     try:
         with Scanner.open() as scanner:
+            scanner.park_mode = args.park
             # Check the loader sensor BEFORE initialize() — the base
             # register table written by initialize() changes ext reg
             # 0x101 state, making the sensor bit unreliable after it.
@@ -366,6 +367,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip IR-based dust/scratch removal on the visible image (--ir only)")
     p_scan.add_argument("--no-diag", action="store_true",
         help="skip writing the <output>.diag.json calibration/timing sidecar")
+    p_scan.add_argument("--park", choices=("verbatim", "semantic"), default="verbatim",
+        help="PARK phase implementation: verbatim replays the captured stream "
+             "(default); semantic issues the same writes with real "
+             "read-modify-write and condition waits instead of captured "
+             "pacing (A/B test in progress, see docs/replay-analysis.md)")
     p_scan.add_argument("-o", "--output", required=True, help="output file path (.tiff or .pnm)")
     p_scan.set_defaults(func=_cmd_scan)
 

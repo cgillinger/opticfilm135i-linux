@@ -468,6 +468,7 @@ def run_warm(args: argparse.Namespace, out_dir: Path) -> int:
     repro_stats: list = []
     try:
         with Scanner.open() as scanner:
+            scanner.park_mode = args.park
             # ---- W0: precheck (read-only + is_magazine_loaded) --------
             doctor = diag.collect_doctor(scanner.io)
             print(diag.format_doctor(doctor))
@@ -578,6 +579,7 @@ def run_warm(args: argparse.Namespace, out_dir: Path) -> int:
         if not args.skip_dpi_change:
             step = "W6"
             with Scanner.open() as scanner:
+                scanner.park_mode = args.park
                 scanner.initialize(ir=True, dpi=2400)
                 raw, width, _meta = scanner.scan(frame=args.frame, ir=True, dpi=2400)
                 visible_2400, _ir = image.split_ir(raw, width=width)
@@ -697,6 +699,7 @@ def run_cold(args: argparse.Namespace, out_dir: Path) -> int:
             return 1
 
         with Scanner.open() as scanner:
+            scanner.park_mode = args.park
             # ---- C1: doctor (read-only) -----------------------------------
             step = "C1"
             doctor = diag.collect_doctor(scanner.io)
@@ -828,6 +831,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_warm.add_argument("--eject", action="store_true", help="eject the magazine at the very end")
     p_warm.add_argument("--skip-dpi-change", action="store_true",
                          help="skip the 2400->3600 dpi position-shift test (W6)")
+    p_warm.add_argument("--park", choices=("verbatim", "semantic"), default="verbatim",
+                         help="PARK phase implementation (default verbatim; see "
+                              "of135i scan --park's help / docs/replay-analysis.md)")
 
     p_cold = sub.add_parser(
         "cold",
@@ -836,6 +842,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_cold.add_argument("--out", required=True, metavar="DIR", help="output directory (required)")
     p_cold.add_argument("--frame", type=int, default=1, help="frame number to scan (default 1)")
     p_cold.add_argument("--eject", action="store_true", help="eject the magazine at the very end")
+    p_cold.add_argument("--park", choices=("verbatim", "semantic"), default="verbatim",
+                         help="PARK phase implementation (default verbatim; see "
+                              "of135i scan --park's help / docs/replay-analysis.md)")
 
     return parser
 
