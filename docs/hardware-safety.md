@@ -259,14 +259,20 @@ So distinguish, and do not conflate:
 | **sensor after `initialize()`** | unreliable — do not use as a safety signal |
 | **current transport state** | register 0x01 / status word, not the sensor |
 
-**Load completion is verified, not assumed.** The LOAD replay ends with
-a wait the capture settled at status word 0xd855; `load_magazine()`
-reads the status word after the replay and fails the operation —
-session FAILED, no further command, power cycle required — on any other
-value. On the real scanner the replay has answered 0xcc55 twice (Test
-12) with a loose magazine; that is now reported as a failed load, not
-as success. Why the replay ends differently from the capture is the
-open load analysis (docs/test-log.md, Test 12 addendum).
+**Load completion is verified, not assumed.** The two motor-completion
+polls of the LOAD replay (after the feed: 0xf055; after the traverse:
+0xd855) are strict — exact match, and a timeout stops the flow right
+there (`StrictPollTimeoutError`): a feed that did not engage the
+cassette never gets a traverse. After the replay the status word must
+equal the table's completion value (0xd855) or `LoadIncompleteError` is
+raised. Either way the session is FAILED, nothing further is sent, and
+a power cycle is required. On the real scanner the replay has answered
+0xec55 after the feed and 0xcc55 after the traverse twice (Test 12)
+with a loose magazine; that is now a failed load, not success. The
+analysis of why — the cassette is not engaged by the feed when it has
+been pushed past the sensor-trigger point — is in
+[`load-analysis.md`](load-analysis.md), with the read-only
+`tools/sensor_probe.py` for the next hardware step.
 
 `--assume-locked` (in `tools/hwblock.py`) is for controlled development
 use only, when a person has physically confirmed the magazine is seated

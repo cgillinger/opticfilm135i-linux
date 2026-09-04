@@ -943,3 +943,21 @@ vendor loads contain six mode-0x78 loader pulses (FEEDL 1, with
 only; our LOAD (eject-from-loaded ops 291-640) has none. Pass 13
 called them loading, Pass 14 preview preparation. Whether they latch
 the magazine is the question the op-by-op comparison must answer.
+
+### Addendum 2 (same night): load analysis done offline — docs/load-analysis.md
+
+Op-by-op comparison of eject-from-loaded, load-only and coldload:
+the mechanical load is exactly feed 6690 + traverse 71490, our LOAD is
+byte-identical and **not truncated**; the "six loader pulses" are the
+preview preparation's six line reads (FEEDL 1, bulk-IN data, no
+movement) and `vendor-coldload` contains no load at all. d855 vs dc55
+are both vendor loaded-idle values (session-stable, bit 0x04); the
+table's own completion value d855 is what is required, not a range.
+Decisive bit: after the vendor's feed the loader-sensor bit 0x08 is
+**clear** (cassette pulled past the sensor); after ours it stays
+**set** — the transport ran, the cassette did not follow. Consistent
+with the cassette having been pushed past the engagement point ("to
+the stop") before the load. Driver: both LOAD completion polls are
+now strict (flow stops after an unengaged feed, session FAILED, power
+cycle); `tools/sensor_probe.py` added (read-only, zero writes proven).
+Next hardware step in load-analysis.md §4. 40 safety tests green.

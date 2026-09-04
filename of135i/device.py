@@ -268,7 +268,7 @@ class Scanner:
 
     # ------------------------------------------------------- op execution
 
-    def _exec_ops(self, ops: list[Op]) -> list[bytes]:
+    def _exec_ops(self, ops: list[Op], strict_polls: frozenset[int] = frozenset()) -> list[bytes]:
         """Execute a verbatim op list with replay_trace.py semantics:
 
           - cw: ctrl_transfer verbatim; if it's a wv=0x82 buffer
@@ -312,7 +312,7 @@ class Scanner:
                 collected.append(bytes(cur))
                 cur = None
 
-        for op in ops:
+        for idx, op in enumerate(ops):
             if op.dt > _PACE_THRESHOLD:
                 time.sleep(min(op.dt, _PACE_CAP))
 
@@ -339,7 +339,7 @@ class Scanner:
                         op.wv, op.wi, got.hex(), op.resp.hex(),
                     )
             elif op.kind == "poll":
-                self._poll_one(op)
+                self._poll_one(op, strict=idx in strict_polls)
             elif op.kind == "bo":
                 dev.write(EP_BULK_OUT, op.data, timeout=5000)
             elif op.kind == "bi":
@@ -352,7 +352,12 @@ class Scanner:
         flush()
         return collected
 
-    def _poll_one(self, op: Op) -> None:
+    def _poll_one(self, op: Op, strict: bool = False) -> None:
+        """Poll until the captured settled value (with the documented
+        leniencies) or the deadline. ``strict``: exact match only, and a
+        timeout raises safety.StrictPollTimeoutError instead of logging
+        -- for completion waits an operation must not continue past
+        (load_magazine's two motor-completion polls)."""
         want = op.resp
         # Most captured polls settled in < 0.03 s; the previous 10 s
         # floor added ~200 s of wasted timeouts per scan when dynamic
@@ -366,6 +371,18 @@ class Scanner:
             got = bytes(dev.ctrl_transfer(op.bm, op.br, op.wv, op.wi, op.length))
             if got == want:
                 return
+            if strict:
+                if time.monotonic() > deadline:
+                    self._diag_poll_timeouts += 1
+                    raise safety.StrictPollTimeoutError(
+                        f"completion poll wv={op.wv:#06x} wi={op.wi:#06x} did not reach the "
+                        f"captured value: last {got.hex()}, want {want.hex()} after {timeout:.1f}s. "
+                        f"The hardware did not complete this step; the operation stops here. "
+                        f"{safety.NO_RECOVERY_ATTEMPTED} {safety.POWER_CYCLE_INSTRUCTION}",
+                        last=got, want=want, observed=self.session.start_reg01,
+                        session=self.session.snapshot())
+                time.sleep(0.004)
+                continue
             # Status-word polls (0x018e): the upper nibble of the high
             # byte encodes the state class (0x9=busy, 0xD=transitioning,
             # 0xF=done); the lower nibble carries session-variable bits
@@ -401,7 +418,8 @@ class Scanner:
                 return
             time.sleep(0.004)
 
-    def _run_phase(self, phase: Phase, **inject) -> list[bytes]:
+    def _run_phase(self, phase: Phase, strict_polls: frozenset[int] = frozenset(),
+                   **inject) -> list[bytes]:
         """Execute a phase's full op stream (with injections applied),
         returning its collected read buffers.
 
@@ -413,7 +431,7 @@ class Scanner:
         self.session.phase = phase.name
         t0 = time.monotonic()
         try:
-            return self._exec_ops(ops)
+            return self._exec_ops(ops, strict_polls=strict_polls)
         finally:
             dt = time.monotonic() - t0
             self._diag_phase_seconds[phase.name] = self._diag_phase_seconds.get(phase.name, 0.0) + dt
@@ -936,15 +954,19 @@ class Scanner:
         Requires initialize() first in this session, as the vendor
         flow does (the tool tools/load_magazine.py does both).
 
-        Completion is verified, not assumed: after the replay the
-        status word (reg 0x101, wValue 0x018e) must read exactly the
-        value the capture settled on after its final wait
-        (``load_completion_target()``, 0xd855). Anything else raises
-        LoadIncompleteError inside the operation, which marks the
+        Completion is verified, not assumed, at three points: the two
+        motor-completion polls of the flow (after the feed: 0xf055;
+        after the traverse: 0xd855) are STRICT -- exact match, and a
+        timeout stops the flow right there (safety.StrictPollTimeout
+        Error; a feed that did not engage the cassette never gets a
+        traverse) -- and after the replay the status word (reg 0x101,
+        wValue 0x018e) must read exactly ``load_completion_target()``
+        (0xd855), else LoadIncompleteError. Either failure marks the
         session FAILED: the transport state is then unknown and the
         magazine may not be latched (Test 12: the real scanner
-        answered 0xcc55 twice, with a loose magazine and a blue LED).
-        No recovery is attempted; a power cycle is required.
+        answered 0xec55 then 0xcc55 twice, with a loose magazine and a
+        blue LED -- docs/load-analysis.md). No recovery is attempted; a
+        power cycle is required.
 
         Even a completed load only sets the vendor's "loaded"
         indication (blue LED); the loader sensor reports presence,
@@ -957,8 +979,10 @@ class Scanner:
                 "load_magazine() requires initialize() first in this session. "
                 f"{safety.NO_COMMANDS_SENT}", session=self.session.snapshot())
         expected = load_completion_target()
+        strict = frozenset(i for i, op in enumerate(tables_load.LOAD.ops)
+                           if op.kind == "poll" and op.wv == 0x018E)
         with self._operation("load_magazine"):
-            self._run_phase(tables_load.LOAD)
+            self._run_phase(tables_load.LOAD, strict_polls=strict)
             self.session.phase = "load_verify"
             word = self.io.read_status_word()
             if word != expected:

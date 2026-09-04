@@ -170,11 +170,12 @@ class FakeUsbDevice:
         self.blocked_calls: list[str] = []
         self.events: list[str] = []
         self.kernel_driver_active = False
-        # High byte of the status word (reg 0x101). None = the Pass-16
-        # idle values 0xE8/0xE0 by magazine presence. Load tests set
-        # 0xD8 (the capture's post-load completion value) or 0xCC (what
-        # the real scanner answered in Test 12: incomplete).
-        self.status_high: int | None = None
+        # High byte of the status word (reg 0x101): an int, or a callable
+        # (fake) -> int. None = the Pass-16 idle values 0xE8/0xE0 by
+        # magazine presence. Load tests use vendor_like_load_status()
+        # (0xF0 after the feed, 0xD8 after the traverse, as captured) or
+        # 0xEC/0xCC (what the real scanner answered in Test 12).
+        self.status_high = None
         self.status_word_raises: BaseException | None = None
         self.set_configuration_raises: BaseException | None = None
         self.detach_raises: BaseException | None = None
@@ -263,7 +264,11 @@ class FakeUsbDevice:
             if reg == 0x101:
                 if self.status_word_raises is not None:
                     raise self.status_word_raises
-                hi = self.status_high if self.status_high is not None else (0xE8 if self.magazine else 0xE0)
+                hi = self.status_high
+                if callable(hi):
+                    hi = hi(self)
+                if hi is None:
+                    hi = 0xE8 if self.magazine else 0xE0
                 return bytes([hi, 0x55])
             return bytes([0xF8, 0x55])
         return bytes(length or 0)
@@ -335,6 +340,27 @@ class FakeUsbDevice:
     def detach_kernel_driver(self, intf):
         self._state_call("detach_kernel_driver", self.detach_raises)
         self.kernel_driver_active = False
+
+
+def vendor_like_load_status(fake: FakeUsbDevice, after_traverse: int = 0xD8,
+                            after_feed: int = 0xF0, later: int | None = None) -> None:
+    """Make the fake answer the LOAD flow's status-word polls like the
+    capture: `after_feed` once the first GO (feed 6690) has completed,
+    `after_traverse` after the second (traverse 71490); `later`, if
+    given, replaces after_traverse from the second status read on
+    (models a value that settles differently after the poll)."""
+    state = {"reads_after_traverse": 0}
+
+    def high(f):
+        if f.pulses == 0:
+            return 0xE8
+        if f.pulses == 1:
+            return after_feed
+        state["reads_after_traverse"] += 1
+        if later is not None and state["reads_after_traverse"] > 1:
+            return later
+        return after_traverse
+    fake.status_high = high
 
 
 # ================================================================ helpers
@@ -864,7 +890,7 @@ def test_fault_during_eject():
 
 def test_fault_during_magazine_load():
     fake = FakeUsbDevice(reg01=0x22)
-    fake.status_high = 0xD8
+    vendor_like_load_status(fake)
     scanner = make_scanner(fake)
     fake.fault = lambda ev: _usb_timeout() if ev["kind"] == "bulk_in" and scanner.session.phase == "load" else None
     exc = None
@@ -877,7 +903,7 @@ def test_fault_during_magazine_load():
     if exc is None:
         # LOAD has no bulk IN; fail on its second execute pulse instead.
         fake = FakeUsbDevice(reg01=0x22)
-        fake.status_high = 0xD8
+        vendor_like_load_status(fake)
         scanner = make_scanner(fake)
         fake.fault = lambda ev: _usb_timeout() if ev.get("pulse") and scanner.session.phase == "load" and ev["pulses_so_far"] >= 1 else None
         with fast_time():
@@ -902,7 +928,7 @@ def test_keyboard_interrupt_marks_session_failed_without_recovery():
 
 def test_load_magazine_requires_initialize_and_matches_trace():
     fake = FakeUsbDevice(reg01=0x22)
-    fake.status_high = 0xD8          # a load that completes like the capture
+    vendor_like_load_status(fake)    # a load that completes like the capture
     scanner = make_scanner(fake)
     with fast_time():
         expect(OperationNotAllowedError, scanner.load_magazine)
@@ -1021,7 +1047,7 @@ def test_short_bulk_out_before_and_after_execute_pulse():
     )
     for when, run, cond, operation, phase, pulses in cases:
         fake = FakeUsbDevice(reg01=0x22)
-        fake.status_high = 0xD8
+        vendor_like_load_status(fake)
         scanner = make_scanner(fake)
         fake.fault = lambda ev, c=cond: 100 if ev["kind"] == "bulk_out" and c(ev) else None
         exc = None
@@ -1126,47 +1152,98 @@ def test_short_transfer_leaving_engine_running_blocks_driver_restart():
 
 
 def test_load_completion_is_verified_not_assumed():
-    """Test 12: the real scanner answered status word 0xcc55 after the
-    LOAD replay where the capture settled on 0xd855, and the tool
-    reported success. Now: the load FAILS, the session is FAILED with
+    """Test 12: the real scanner answered 0xec55 after the feed (capture:
+    0xf055) and 0xcc55 after the traverse (capture: 0xd855), and the
+    tool reported success. Now: both completion polls are strict, the
+    flow stops at the first one that fails (a feed that did not engage
+    the cassette never gets a traverse), the session is FAILED with
     phase/history recorded, nothing further is sent, the operator is
-    told to power-cycle, and the tool exits non-zero."""
+    told to power-cycle, and the tool exits non-zero. The final status
+    read is checked too."""
     import load_magazine as tool
     assert device.load_completion_target() == 0xD855
+    n_full = None
 
-    for high in (0xCC, 0xE8, 0xDC):
+    # Reference: a vendor-like load completes; remember its write count.
+    fake = FakeUsbDevice(reg01=0x22)
+    vendor_like_load_status(fake)
+    scanner = make_scanner(fake)
+    with fast_time():
+        scanner.initialize(); n_init = fake.out_count
+        scanner.load_magazine()
+    n_full = fake.out_count - n_init
+    assert fake.pulses == 2 and scanner.session.state is SessionState.ARMED
+
+    cases = [
+        # (label, status model, expected exception, pulses sent, phase)
+        ("feed did not engage (0xec after feed, as on hardware)",
+         lambda f: vendor_like_load_status(f, after_feed=0xEC), safety.StrictPollTimeoutError, 1),
+        ("traverse did not settle (0xcc after traverse, as on hardware)",
+         lambda f: vendor_like_load_status(f, after_traverse=0xCC), safety.StrictPollTimeoutError, 2),
+        ("polls matched but the final read differs (0xdc)",
+         lambda f: vendor_like_load_status(f, later=0xDC), safety.LoadIncompleteError, 2),
+        ("state-class leniency is OFF for strict polls (0xd9 vs 0xd8)",
+         lambda f: vendor_like_load_status(f, after_traverse=0xD9), safety.StrictPollTimeoutError, 2),
+    ]
+    for label, model, exc_type, pulses in cases:
         fake = FakeUsbDevice(reg01=0x22)
-        fake.status_high = high
+        model(fake)
         scanner = make_scanner(fake)
         with fast_time():
-            scanner.initialize()
-            n_init = fake.out_count
-            e = expect(safety.LoadIncompleteError, scanner.load_magazine)
-        assert e.status_word == (high << 8) | 0x55 and e.expected == 0xD855
+            scanner.initialize(); n_init = fake.out_count
+            e = expect(exc_type, scanner.load_magazine)
+        assert fake.pulses == pulses, (label, fake.pulses)
+        sent = fake.out_count - n_init
+        assert 0 < sent < n_full if pulses < 2 or exc_type is safety.StrictPollTimeoutError else sent == n_full, (label, sent, n_full)
         msg = str(e)
-        assert "did NOT complete" in msg and f"{e.status_word:#06x}" in msg and "0xd855" in msg
-        assert "may not be latched" in msg and "No recovery commands" in msg
+        assert "No recovery commands" in msg, label
         _assert_power_cycle_message(msg)
-        assert fake.out_count > n_init          # the replay itself ran
-        _assert_failed_and_frozen(fake, scanner, e, operation="load_magazine", phase_prefix="load_verify")
+        if exc_type is safety.StrictPollTimeoutError:
+            assert "did not reach the captured value" in msg and e.want.hex() in msg and e.last.hex() in msg, (label, msg)
+        else:
+            assert "did NOT complete" in msg and "may not be latched" in msg and e.status_word == 0xDC55, (label, msg)
+        _assert_failed_and_frozen(fake, scanner, e, operation="load_magazine",
+                                  phase_prefix="load")
 
-    # The tool: exit 1, FAILED text with the power-cycle instruction,
-    # never the completion message.
-    for high, want_code in ((0xCC, 1), (0xD8, 0)):
+    # The tool: exit 1 with FAILED text and the power-cycle instruction
+    # on the hardware-observed sequence; exit 0 with an honest message
+    # on a vendor-like one.
+    for label, model, want_code in (("hardware", lambda f: vendor_like_load_status(f, after_feed=0xEC), 1),
+                                    ("vendor-like", vendor_like_load_status, 0)):
         fake = FakeUsbDevice(reg01=0x22)
-        fake.status_high = high
+        model(fake)
         with cli_over(fake):
             with quiet():
                 code = tool.main()
             so, se = _STDOUT.getvalue(), _STDERR.getvalue()
-        assert code == want_code, (hex(high), code, se)
+        assert code == want_code, (label, code, se)
         if want_code:
-            assert "FAILED" in se and "did NOT complete" in se, se
+            assert "FAILED" in se and "did not reach" in se, se
             _assert_power_cycle_message(se)
             assert "completed" not in so, so
+            assert fake.pulses == 1
         else:
             assert "load sequence completed" in so and "presence, not latching" in so, so
     print("test_load_completion_is_verified_not_assumed OK")
+
+
+def test_sensor_probe_is_strictly_read_only():
+    import sensor_probe
+    for reg01 in (0x22, 0x00, 0x23, 0x02):
+        fake = FakeUsbDevice(reg01=reg01)
+        fake.kernel_driver_active = True
+        fake.button_events.extend([0x04, 0x48])
+        with real_open(fake) as path:
+            with quiet():
+                code = sensor_probe.main(["--seconds", "0.05", "--hz", "200"])
+            so = _STDOUT.getvalue()
+        assert code == 0, (hex(reg01), so)
+        assert fake.touched == 0 and fake.events.count("ctrl_out") == 0, fake.events[:5]
+        assert fake.kernel_driver_active and fake.disposed
+        assert "present=True" in so and "sensor-event" in so and "eject-button" in so, so
+        assert "session state readonly" in so and "writes 0" in so, so
+        _assert_lock_free(path)
+    print("test_sensor_probe_is_strictly_read_only OK")
 
 
 # ================================================================== CLI
@@ -1714,6 +1791,7 @@ def main() -> int:
         test_short_transfer_leaving_engine_running_blocks_driver_restart,
         test_load_magazine_requires_initialize_and_matches_trace,
         test_load_completion_is_verified_not_assumed,
+        test_sensor_probe_is_strictly_read_only,
         test_cli_scan_eject_watch_refuse_unsafe_states_with_zero_writes,
         test_cli_scan_normal_path_and_failure_reporting,
         test_cli_eject_and_watch_paths,

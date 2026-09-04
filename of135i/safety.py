@@ -173,6 +173,19 @@ class LoadIncompleteError(SafetyError):
         self.expected = expected
 
 
+class StrictPollTimeoutError(SafetyError):
+    """A completion poll that the operation declared strict (exact match
+    with the captured settled value, no state-class leniency) timed out.
+    The hardware did not reach the captured state; the operation stops
+    there, the session is FAILED, a power cycle is required. ``last`` is
+    the final value read, ``want`` the captured one (both raw bytes)."""
+
+    def __init__(self, message: str, *, last: bytes, want: bytes, **kw):
+        super().__init__(message, **kw)
+        self.last = last
+        self.want = want
+
+
 class ShortTransferError(SafetyError):
     """An OUT transfer (control OUT or bulk OUT) completed with fewer
     bytes than were requested. Some or all of the payload may have
