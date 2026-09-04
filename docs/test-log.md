@@ -5,6 +5,52 @@ Each entry records the date, what was tested, outcome, and any follow-up.
 
 ---
 
+## Hardware test coverage at a glance
+
+Summary of actual hardware testing performed, as documented in this log.
+All testing has been performed on a single OpticFilm 135i unit by a
+single developer on one Linux host.
+
+**Cross-unit verified: NO — all hardware testing has been performed on a single OpticFilm 135i unit.**
+
+### Status term definitions
+
+| Term | Meaning |
+|---|---|
+| **IMPLEMENTED** | Code exists, but physical function is not verified. |
+| **OFFLINE VERIFIED** | Code, tables, captures or calculations verified without a physical scanner. |
+| **HARDWARE VERIFIED** | At least one successful physical run on the existing OpticFilm 135i unit. |
+| **REPEATED** | Same function has been run multiple times with consistent results. |
+| **STRESS-TESTED** | Function has been subjected to repeated runs, longer sequences, or multiple relevant states. |
+| **ROBUSTNESS-TESTED** | Function tested under variations such as cold/warm state, different prior scanner states, recovery, or similar. |
+| **CROSS-UNIT VERIFIED** | Verified on more than one physical scanner unit. |
+
+### Test volume summary
+
+Total hardware scan count has not been systematically tracked.
+
+| Test area | Volume | Status |
+|---|---|---|
+| Physical OpticFilm 135i units | 1 | Single-unit only |
+| 3600 dpi scans | >=25 (10+10 reproducibility, cold-start, DPI reference, numerous development scans) | Stress-tested |
+| 2400 dpi scans | At least 2 | Hardware-verified |
+| 1200 dpi scans | At least 2 | Hardware-verified |
+| 600 dpi scans | At least 1 (after 0x2b fix) | Hardware-verified |
+| 7200 dpi scans | At least 1 | Hardware-verified |
+| A3 reproducibility | 2 rounds × 10 scans (6 warm + 4 cold) | Repeated |
+| Whole-strip batches (4 frames) | At least 1 documented | Hardware-verified |
+| Cold-start cycles | >=5 (Test 1 + Test 9 scans 6–9) | Partial — lamp warmup issue open |
+| Eject cycles | Multiple | Hardware-verified |
+| Magazine load cycles | Multiple | Hardware-verified |
+| IR scans (dual-light) | Standard mode in nearly all scans | Repeated |
+| Dust removal (IR inpainting) | Used in most scans with `--ir` | Repeated |
+| USB hosts / controllers | 1 | Limited |
+| Linux hosts | 1 | Limited |
+| Film strips / film types | Not systematically counted | Limited |
+| Cross-unit testing | 0 additional units | **NOT VERIFIED** |
+
+---
+
 ## 2026-09-03 — Cold-start scan + reproducibility + offline audit
 
 ### Context
@@ -271,8 +317,9 @@ detailed protocol analysis.)*
 - `of135i watch` polls loader sensor and eject button.
 - Sensor: ext reg 0x101 bit 0x08 (0xE0 = empty, 0xE8 = loaded).
 
-### DPI profiles — IMPLEMENTED, NOT YET HARDWARE-VERIFIED
+### DPI profiles — IMPLEMENTED (hardware-verified 2026-09-03, see above)
 - Profiles for 600, 1200, 2400, 7200 dpi generated from vendor captures.
+  *(All five DPIs subsequently hardware-verified — see 2026-09-03 Tests 5, 8–9.)*
 - All captures turned out to be IR-mode (dual-light) — every non-3600
   resolution always runs dual-light; `--ir` flag controls only whether
   the IR channel is used/output.

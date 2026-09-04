@@ -93,7 +93,7 @@ sudo .venv/bin/python -m of135i scan --frame 1 --positive -o frame1-positive.tif
 # batch: scan a whole strip in one go (rulle-f1.tiff ... rulle-f4.tiff)
 sudo .venv/bin/python -m of135i scan --frames 1-4 --ir --positive --rotate 90 -o rulle.tiff
 
-# other resolutions (not yet hardware-verified, see above)
+# other resolutions
 sudo .venv/bin/python -m of135i scan --frame 1 --dpi 2400 --positive -o frame1-2400.tiff
 
 # eject the film magazine / check device status
