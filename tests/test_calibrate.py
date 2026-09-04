@@ -412,6 +412,88 @@ def _expected_stream():
     return bytes(out)
 
 
+# ------------------------------------------------------ _gain_with_warmup
+
+
+class _WarmupHarness:
+    """Drives Scanner._gain_with_warmup() with a scripted sequence of
+    white-line peak levels (one per CAL_WHITE run) and a recording
+    time.sleep stub, so the retry loop can be exercised without
+    hardware or real delays."""
+
+    def __init__(self, peaks_per_attempt):
+        self.peaks = deque(peaks_per_attempt)
+        self.runs = 0
+        self.sleeps: list[float] = []
+        self.scanner = Scanner(MockUsbIo({}))
+        self.scanner._run_phase = self._fake_run_phase  # type: ignore[method-assign]
+
+    def _fake_run_phase(self, phase, **inject):
+        self.runs += 1
+        peak = self.peaks.popleft()
+        white = np.full((5184, 3), peak, dtype="<u2")
+        return [white.tobytes()]
+
+    def run(self):
+        from of135i import device as devmod
+        parse = lambda raw: np.frombuffer(raw, dtype="<u2").reshape(-1, 3)
+        real_sleep = devmod.time.sleep
+        devmod.time.sleep = lambda s: self.sleeps.append(s)
+        try:
+            return self.scanner._gain_with_warmup(tables.CAL_WHITE, parse)
+        finally:
+            devmod.time.sleep = real_sleep
+
+
+def _dim_peak_that_maxes_gain() -> int:
+    """A white level so low that gain_codes() clips every channel to
+    _GAIN_MAX_CODE -- what a cold lamp looks like."""
+    peak = 1
+    white = np.full((4, 3), peak, dtype=np.uint16)
+    assert calibrate.gain_codes(white) == (calibrate._GAIN_MAX_CODE,) * 3
+    return peak
+
+
+def test_warmup_no_retry_when_gain_normal():
+    """A warm lamp on the first measurement: one CAL_WHITE run, no sleep."""
+    good = _peak_for_gain_code(0x21)
+    h = _WarmupHarness([good])
+    codes = h.run()
+    assert codes == (0x21, 0x21, 0x21), codes
+    assert h.runs == 1, h.runs
+    assert h.sleeps == [], h.sleeps
+    print("test_warmup_no_retry_when_gain_normal OK")
+
+
+def test_warmup_retries_until_gain_stabilizes():
+    """Cold lamp for two measurements, then warm: three runs, two
+    delays of _WARMUP_RETRY_DELAY, and the *warm* codes are returned."""
+    from of135i import device as devmod
+    dim = _dim_peak_that_maxes_gain()
+    good = _peak_for_gain_code(0x2E)
+    h = _WarmupHarness([dim, dim, good])
+    codes = h.run()
+    assert codes == (0x2E, 0x2E, 0x2E), codes
+    assert h.runs == 3, h.runs
+    assert h.sleeps == [devmod._WARMUP_RETRY_DELAY] * 2, h.sleeps
+    print("test_warmup_retries_until_gain_stabilizes OK")
+
+
+def test_warmup_gives_up_after_max_retries():
+    """Lamp never warms: exactly 1 + _WARMUP_MAX_RETRIES runs, one
+    delay per retry, and the maxed codes are returned rather than
+    raising (the scan proceeds, possibly flat)."""
+    from of135i import device as devmod
+    dim = _dim_peak_that_maxes_gain()
+    n = devmod._WARMUP_MAX_RETRIES
+    h = _WarmupHarness([dim] * (n + 1))
+    codes = h.run()
+    assert codes == (calibrate._GAIN_MAX_CODE,) * 3, codes
+    assert h.runs == n + 1, h.runs
+    assert len(h.sleeps) == n, h.sleeps
+    print(f"test_warmup_gives_up_after_max_retries OK ({h.runs} runs)")
+
+
 def test_scan_sequence_matches_trace():
     mock = MockUsbIo(_build_cal_buffers())
     scanner = Scanner(mock)
@@ -441,6 +523,9 @@ def main() -> int:
         test_offset_codes_from_reference_bracket,
         test_offset_codes_adapts_to_different_slope,
         test_shading_table_against_capture,
+        test_warmup_no_retry_when_gain_normal,
+        test_warmup_retries_until_gain_stabilizes,
+        test_warmup_gives_up_after_max_retries,
         test_scan_sequence_matches_trace,
     ]
     for t in tests:
