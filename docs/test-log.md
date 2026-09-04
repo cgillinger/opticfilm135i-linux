@@ -798,3 +798,90 @@ injections); the whole offline suite passes (38 + 10 + 14 + 6 + 6 + 4 +
 hardware-side caveat: reading reg 0x01 before `SET_CONFIGURATION` has
 never been exercised on this scanner; if it fails, the driver refuses
 rather than configuring first (see docs/hardware-safety.md).
+
+## 2026-09-04 (late evening) — First hardware run after the safety pass: guard holds, load ends unsafe
+
+### Context
+
+Driver at 9ddfa08 (safety pass + review fixes). Plan: the single
+permitted normal-path scan (doctor → 0x00/0x22 → magazine locked by
+hand → one scan → doctor). Scanner power-cycled before start.
+
+### Test 12a: `doctor` before `SET_CONFIGURATION` — PASSED (read-only)
+
+Fresh power-on, magazine inserted loose (orange LED). `doctor` read
+everything through the read-only open (no `SET_CONFIGURATION`, no
+kernel-driver detach): reg 0x01 = 0x00 (cold), status word 0x4855,
+chip id 01, reg 0x101 = 0x48, sensor "loaded". First hardware
+evidence that a device-recipient control-IN works before
+configuration. The writing open (`load_magazine.py`, next test) also
+verified 0x00 through the proxy before configuring — the reordered
+open sequence works on hardware.
+
+**Sensor finding (TODO 9b):** the loader sensor reports "loaded" for
+a magazine that is merely inserted (orange LED, not fed, not locked)
+— before any register table has been written. It is a presence
+sensor, nothing more. Confirmed again after the second power cycle
+(`doctor-3`: 0x00, 0x101 = 0x48, "loaded", magazine loose).
+
+### Test 12b: `load_magazine.py` from 0x00 — completes, end state 0x02 (×2)
+
+cold_init (three audible homing rounds, same benign settle warnings
+as Tests 1/11b) then the vendor insert flow. LED: orange off/on/off
+in step with motor sounds, then steady blue, power LED blinking then
+steady. Exit 0. `doctor` afterwards: reg 0x01 = **0x02**, status
+word **0xcc55** (the load's last poll wanted 0xd855 and timed out at
+0xcc55, as on 2026-09-04), 0x32 = 0x15, 0x35 = 0xfb, 0x101 = 0xcc.
+Unchanged minutes later (`doctor-2`). Repeated in full after a power
+cycle (Test 12d): byte-identical register dump except 0x2e (0x0b vs
+0x07). So 0x02 is the deterministic end state of our LOAD replay, not
+a transient, and the guard refuses every writing operation from it.
+
+**Offline analysis of 0x02 (done during the session):**
+- Our LOAD = ops 291-640 of `20260902-vendor-eject-from-loaded`. In
+  that capture the vendor never reads reg 0x01 at all; it writes
+  0x01=0x22 in its base table at session start and proceeds. Its
+  status word after the load is 0xd855; ours is 0xcc55 (bits 0x10 and
+  0x04 differ in the high byte, reg 0x101).
+- In `20260830-184448-vendor-load-only` the vendor polls reg 0x01 and
+  sees 0x22 (×100) after its (longer) load flow; 0x02 appears only
+  while the engine executes a pass (12 631 fast reads during the
+  traverse), consistent with Pass 8 (bit 0x20 clears while the engine
+  runs, sets on completion).
+- So our replay leaves the engine with bit 0x20 clear and a status
+  word the capture never shows at that point: an op whose completion
+  we time out on and skip. Every earlier verified scan from a
+  driver-loaded magazine started from exactly this 0x02, via
+  `initialize()`'s base table (0x01=0x22) — it worked, but was never
+  explained. **No override was added.** Decision deferred to the
+  offline analysis of which LOAD op is left incomplete.
+
+### Test 12c: magazine does NOT lock by hand after the load — STOPPED
+
+After the second load (blue LED) Christian pushed the magazine to the
+stop: it does not latch. On 2026-09-04 (Test 11b) it did. New
+observation; cause unknown (mechanical, or the load end state). With
+an unlocked magazine no scan was attempted. Session ended with a
+power cycle (0x02 state left behind, no writes after the refusal).
+
+### Result
+
+- Safety guard hardware-verified on the normal path: read-only doctor
+  before configuration, verify-before-configure on the writing open,
+  cold path (0x00 → cold_init → armed) — all as designed. Refusal on
+  0x02 exercised read-only via `doctor` (no writing entry point was
+  invoked against it).
+- The one planned normal-path scan was **not** performed: no
+  accepted state with a locked magazine was reachable (load ends in
+  0x02; cold path needs a loaded magazine; magazine would not lock).
+- Artefacts: `hw-2026-09-04-verify/doctor-{0..4}.json` (analysis
+  area).
+
+### Next (offline, before any hardware)
+
+1. Find which LOAD op's completion poll fails (want 0xd855, last
+   0xcc55) and what the vendor does right after op 640 that we do
+   not; decide whether the LOAD replay is incomplete or the hardware
+   differs. Only then decide how the loaded state is reached safely.
+2. Magazine latch: compare 12c with 11b (what differed: hand-seating
+   before load? the second load on the same insertion?).
