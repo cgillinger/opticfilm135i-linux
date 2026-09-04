@@ -153,7 +153,7 @@ interoperability constants and our own code.
 - [x] udev rule for rootless operation
 - [x] Loader sensor and button event reading
 - [x] ICC-tagged output (`--positive` TIFFs carry an sRGB profile; raw negatives are untagged linear data)
-- [ ] SANE genesys backend support for GL126 (upstream goal)
+- [ ] SANE genesys backend support for GL126 (upstream goal) — plan and hook mapping in [`docs/sane-port.md`](docs/sane-port.md); skeleton in progress
 
 ## Status & disclaimer
 
