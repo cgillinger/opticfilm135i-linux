@@ -647,3 +647,40 @@ first-scan calibration reached hardware; W1–W6 NOT RUN. Warmup retry
 observed triggering on hardware (gain 0x3F, retry 1/3 logged) but the
 scan never completed, so its effect is still UNVERIFIED. AFE offset
 codes: no completed scan, UNVERIFIED. Semantic PARK: not exercised.
+
+### Test 11e: cold block — warmup insufficient, crash on zero white line
+
+After the power cycle, `doctor` confirmed a clean cold state (reg 0x01
+= 0x00, sensor loaded). `hwblock.py cold` ran cold_init to completion
+(no abnormal sound reported), then the first scan's warmup retry
+triggered as designed: attempt 1 and 2 both read maxed gain
+(R=G=B=0x3F, lamp dim), 5 s apart. Attempt 3 read an **all-zero**
+white line, and `calibrate.gain_codes()` raised `ValueError` on the
+zero peak, crashing the scan at C3.
+
+**Two findings:**
+
+1. **Crash bug (fixed, commit 7bbbf95):** a zero white line is a
+   valid cold-lamp reading, not an error. `gain_codes(clamp_nonpositive=
+   True)` now maps a non-positive peak to the max gain code, so the
+   warmup loop treats it as "not ready", retries, and gives up
+   gracefully. Regression test added.
+
+2. **Warmup budget too short (open):** 15 s (3 x 5 s) is not enough
+   for the lamp after a cold start — gain stayed maxed/zero across all
+   three attempts. The vendor's preview pass gives the lamp much
+   longer. Re-running as-is would give up after 15 s and produce a
+   flat image, so cold-start scanning is still NOT verified. Next step
+   is a read-only warmup-timing probe (re-read CAL_WHITE every few
+   seconds, log the white level until it stabilises) to measure the
+   real warmup time before choosing a budget — not blind tuning.
+
+**Scanner state:** responsive throughout (control reads worked after
+the crash: reg 0x01 = 0x02, 0x35 = 0xfb). NOT hung — unlike Test 11d,
+the crash was in a calibration read before any scan motor command, so
+no motor event. Left powered on, lamp likely on (reg 0x03 = 0x30);
+a power cycle before the next session is cleanest.
+
+**Status:** warmup retry MECHANISM hardware-verified (it triggered and
+looped correctly); cold-start image UNVERIFIED (lamp not warm within
+budget); crash fixed offline.
