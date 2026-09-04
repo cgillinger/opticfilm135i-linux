@@ -54,23 +54,24 @@ def main() -> int:
             # Loader sensor BEFORE initialize() -- the register table
             # written by initialize() changes reg 0x101 so the sensor
             # bit is unreliable after it. Reads only.
-            if not scanner.is_magazine_loaded():
-                print("error: no magazine detected (push cassette in to the stop first)",
+            if not scanner.is_magazine_present():
+                print("error: no magazine present in the slot (loader sensor clear)",
                       file=sys.stderr)
                 return 1
             scanner.initialize()
             print("running the vendor load sequence...")
-            scanner.load_magazine()
-            print("load sequence done -- the button should be blue. Check by hand that the "
-                  "magazine is seated and locked before scanning (a loose magazine has been "
-                  "observed with a blue LED).")
+            scanner.load_magazine()      # raises LoadIncompleteError -> exit 1 below
+            print("load sequence completed (status word matched the capture). This sets "
+                  "the vendor's 'loaded' indication only: check by hand that the magazine "
+                  "is latched before scanning -- the sensor reports presence, not latching.")
             return 0
     except KeyboardInterrupt:
         print("\ninterrupted.", file=sys.stderr)
         _report(scanner)
         return 130
     except SafetyError as e:
-        print(f"refused: {e}", file=sys.stderr)
+        print(f"FAILED: {e}", file=sys.stderr)
+        _report(scanner)
         return 1
     except Of135iError as e:
         print(f"error: {e}", file=sys.stderr)

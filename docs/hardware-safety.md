@@ -233,13 +233,14 @@ it too, and the hardware may still need a power cycle.
 
 ## Magazine state is a separate, unresolved issue
 
-The loader sensor (`is_magazine_loaded()`, register 0x101 bit 0x08) is
-**not** a proof that the magazine is safe to move. The 2026-09-04 tests
-showed:
+The loader sensor (`is_magazine_present()`, register 0x101 bit 0x08) is
+a **presence** sensor and nothing more — the API, `doctor` and this
+document say "present", never "loaded". The 2026-09-04 tests showed:
 
-- the sensor can report a magazine that is loose and not mechanically
-  latched (Test 11b: sensor "loaded", blue LED, magazine physically
-  loose);
+- the sensor reports a magazine that is merely inserted, loose and
+  unlatched, with the orange LED, read on a cold, unwritten register
+  (Test 12a) — and one that is loose after a load with a blue LED
+  (Test 11b);
 - the sensor bit becomes unreliable once a session has written the base
   register table (Test 11d), so it is only trustworthy **before the
   first `initialize()`** of the scanner's power cycle;
@@ -250,14 +251,24 @@ So distinguish, and do not conflate:
 
 | state | how it is known |
 |---|---|
-| **detected** | loader sensor bit set (before first `initialize()` only) |
-| **physically inserted** | a person pushed the cassette in to the stop |
-| **fully seated / locked** | a person confirmed it by hand and by LED colour |
+| **present** | loader sensor bit set (before first `initialize()` only) — inserted, nothing more |
+| **physically inserted** | a person pushed the cassette in |
+| **fed / load completed** | `load_magazine()` ran AND the status word matched the capture's completion value (0xd855); otherwise the load has failed and the session with it |
+| **fully seated / latched** | a person confirmed it by hand — no register signal is known for this |
 | **sensor before `initialize()`** | the only point the sensor bit is trusted |
 | **sensor after `initialize()`** | unreliable — do not use as a safety signal |
 | **current transport state** | register 0x01 / status word, not the sensor |
 
-`--assume-loaded` (in `tools/hwblock.py`) is for controlled development
+**Load completion is verified, not assumed.** The LOAD replay ends with
+a wait the capture settled at status word 0xd855; `load_magazine()`
+reads the status word after the replay and fails the operation —
+session FAILED, no further command, power cycle required — on any other
+value. On the real scanner the replay has answered 0xcc55 twice (Test
+12) with a loose magazine; that is now reported as a failed load, not
+as success. Why the replay ends differently from the capture is the
+open load analysis (docs/test-log.md, Test 12 addendum).
+
+`--assume-locked` (in `tools/hwblock.py`) is for controlled development
 use only, when a person has physically confirmed the magazine is seated
 and locked. It skips the sensor precheck; it is **not** a recovery
 mechanism and does **not** bypass the start-state guard. No new motor
@@ -303,7 +314,9 @@ program is not recovery.
   the first write, after the first register write, immediately before
   and after an execute pulse, during calibration bulk-in, during image
   bulk-in, during PARK (verbatim and semantic), between batch frames,
-  during eject and during magazine load, plus `KeyboardInterrupt` —
+  during eject and during magazine load, a load whose completion
+  status word does not match the capture (0xcc55, 0xe855, 0xdc55:
+  failed operation, failed session, tool exit 1), plus `KeyboardInterrupt` —
   each asserting the session fails, records phase and write/execute
   history, sends no recovery command, refuses every further operation
   with zero writes, and rejects a new session over the left-behind

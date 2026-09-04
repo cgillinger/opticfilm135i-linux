@@ -83,7 +83,7 @@ def test_collect_doctor_and_format():
     report = diag.collect_doctor(_FakeIo())
 
     assert report["state"]["name"] == "idle-homed", report["state"]
-    assert report["magazine_loaded"] is True, report["magazine_loaded"]
+    assert report["magazine_present"] is True, report["magazine_present"]
     assert report["button"] == "idle", report["button"]
 
     text = diag.format_doctor(report)
@@ -96,7 +96,7 @@ def test_collect_doctor_and_format():
         with open(path) as f:
             loaded = json.load(f)
         assert loaded["state"]["name"] == "idle-homed"
-        assert loaded["magazine_loaded"] is True
+        assert loaded["magazine_present"] is True
 
     print("test_collect_doctor_and_format OK")
 

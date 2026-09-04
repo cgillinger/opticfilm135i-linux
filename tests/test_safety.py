@@ -170,6 +170,12 @@ class FakeUsbDevice:
         self.blocked_calls: list[str] = []
         self.events: list[str] = []
         self.kernel_driver_active = False
+        # High byte of the status word (reg 0x101). None = the Pass-16
+        # idle values 0xE8/0xE0 by magazine presence. Load tests set
+        # 0xD8 (the capture's post-load completion value) or 0xCC (what
+        # the real scanner answered in Test 12: incomplete).
+        self.status_high: int | None = None
+        self.status_word_raises: BaseException | None = None
         self.set_configuration_raises: BaseException | None = None
         self.detach_raises: BaseException | None = None
         self.button_events: deque = deque()
@@ -255,7 +261,10 @@ class FakeUsbDevice:
         if br == 0x04 and wv == 0x018E:
             reg = 0x100 | (wi >> 8)
             if reg == 0x101:
-                return bytes([0xE8 if self.magazine else 0xE0, 0x55])
+                if self.status_word_raises is not None:
+                    raise self.status_word_raises
+                hi = self.status_high if self.status_high is not None else (0xE8 if self.magazine else 0xE0)
+                return bytes([hi, 0x55])
             return bytes([0xF8, 0x55])
         return bytes(length or 0)
 
@@ -855,6 +864,7 @@ def test_fault_during_eject():
 
 def test_fault_during_magazine_load():
     fake = FakeUsbDevice(reg01=0x22)
+    fake.status_high = 0xD8
     scanner = make_scanner(fake)
     fake.fault = lambda ev: _usb_timeout() if ev["kind"] == "bulk_in" and scanner.session.phase == "load" else None
     exc = None
@@ -867,6 +877,7 @@ def test_fault_during_magazine_load():
     if exc is None:
         # LOAD has no bulk IN; fail on its second execute pulse instead.
         fake = FakeUsbDevice(reg01=0x22)
+        fake.status_high = 0xD8
         scanner = make_scanner(fake)
         fake.fault = lambda ev: _usb_timeout() if ev.get("pulse") and scanner.session.phase == "load" and ev["pulses_so_far"] >= 1 else None
         with fast_time():
@@ -891,6 +902,7 @@ def test_keyboard_interrupt_marks_session_failed_without_recovery():
 
 def test_load_magazine_requires_initialize_and_matches_trace():
     fake = FakeUsbDevice(reg01=0x22)
+    fake.status_high = 0xD8          # a load that completes like the capture
     scanner = make_scanner(fake)
     with fast_time():
         expect(OperationNotAllowedError, scanner.load_magazine)
@@ -1009,6 +1021,7 @@ def test_short_bulk_out_before_and_after_execute_pulse():
     )
     for when, run, cond, operation, phase, pulses in cases:
         fake = FakeUsbDevice(reg01=0x22)
+        fake.status_high = 0xD8
         scanner = make_scanner(fake)
         fake.fault = lambda ev, c=cond: 100 if ev["kind"] == "bulk_out" and c(ev) else None
         exc = None
@@ -1110,6 +1123,50 @@ def test_short_transfer_leaving_engine_running_blocks_driver_restart():
         _assert_lock_free(path)
     _assert_new_session_rejected_unless_safe(fake)
     print("test_short_transfer_leaving_engine_running_blocks_driver_restart OK")
+
+
+def test_load_completion_is_verified_not_assumed():
+    """Test 12: the real scanner answered status word 0xcc55 after the
+    LOAD replay where the capture settled on 0xd855, and the tool
+    reported success. Now: the load FAILS, the session is FAILED with
+    phase/history recorded, nothing further is sent, the operator is
+    told to power-cycle, and the tool exits non-zero."""
+    import load_magazine as tool
+    assert device.load_completion_target() == 0xD855
+
+    for high in (0xCC, 0xE8, 0xDC):
+        fake = FakeUsbDevice(reg01=0x22)
+        fake.status_high = high
+        scanner = make_scanner(fake)
+        with fast_time():
+            scanner.initialize()
+            n_init = fake.out_count
+            e = expect(safety.LoadIncompleteError, scanner.load_magazine)
+        assert e.status_word == (high << 8) | 0x55 and e.expected == 0xD855
+        msg = str(e)
+        assert "did NOT complete" in msg and f"{e.status_word:#06x}" in msg and "0xd855" in msg
+        assert "may not be latched" in msg and "No recovery commands" in msg
+        _assert_power_cycle_message(msg)
+        assert fake.out_count > n_init          # the replay itself ran
+        _assert_failed_and_frozen(fake, scanner, e, operation="load_magazine", phase_prefix="load_verify")
+
+    # The tool: exit 1, FAILED text with the power-cycle instruction,
+    # never the completion message.
+    for high, want_code in ((0xCC, 1), (0xD8, 0)):
+        fake = FakeUsbDevice(reg01=0x22)
+        fake.status_high = high
+        with cli_over(fake):
+            with quiet():
+                code = tool.main()
+            so, se = _STDOUT.getvalue(), _STDERR.getvalue()
+        assert code == want_code, (hex(high), code, se)
+        if want_code:
+            assert "FAILED" in se and "did NOT complete" in se, se
+            _assert_power_cycle_message(se)
+            assert "completed" not in so, so
+        else:
+            assert "load sequence completed" in so and "presence, not latching" in so, so
+    print("test_load_completion_is_verified_not_assumed OK")
 
 
 # ================================================================== CLI
@@ -1656,6 +1713,7 @@ def main() -> int:
         test_full_length_and_legitimate_zero_length_out_succeed,
         test_short_transfer_leaving_engine_running_blocks_driver_restart,
         test_load_magazine_requires_initialize_and_matches_trace,
+        test_load_completion_is_verified_not_assumed,
         test_cli_scan_eject_watch_refuse_unsafe_states_with_zero_writes,
         test_cli_scan_normal_path_and_failure_reporting,
         test_cli_eject_and_watch_paths,

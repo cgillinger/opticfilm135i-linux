@@ -160,6 +160,19 @@ class ScannerBusyError(SafetyError):
     """Another process holds the scanner lock."""
 
 
+class LoadIncompleteError(SafetyError):
+    """The magazine load sequence ran to its end but the scanner did not
+    report the captured completion value (status word). The transport
+    state is unknown and the magazine may not be latched; the session
+    is FAILED and a power cycle is required. ``status_word`` is what
+    was read, ``expected`` the vendor capture's completion value."""
+
+    def __init__(self, message: str, *, status_word: int | None, expected: int, **kw):
+        super().__init__(message, **kw)
+        self.status_word = status_word
+        self.expected = expected
+
+
 class ShortTransferError(SafetyError):
     """An OUT transfer (control OUT or bulk OUT) completed with fewer
     bytes than were requested. Some or all of the payload may have

@@ -92,7 +92,10 @@ one invocation. The rough edges you should know about:
   restarting the program is not sufficient. See
   [`docs/hardware-safety.md`](docs/hardware-safety.md).
 - **The magazine must be loaded through the driver**
-  (`tools/load_magazine.py`) — the autoloader is driver-managed and the
+  (`tools/load_magazine.py`; the tool now verifies the load's completion
+  value and fails, requiring a power cycle, if the scanner answers
+  anything else — as it currently does, see the test log) — the
+  autoloader is driver-managed and the
   hardware buttons are dead without a driver process. The loader sensor
   reports magazine *presence*, not that it is mechanically locked — see
   [`docs/hardware-safety.md`](docs/hardware-safety.md).

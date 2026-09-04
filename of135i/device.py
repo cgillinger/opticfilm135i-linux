@@ -29,7 +29,7 @@ escaping any operation, KeyboardInterrupt included, marks the
 session failed and no recovery command of any kind is sent
 afterwards. The low-level executor `_exec_ops()` refuses to run
 outside an operation, so nothing can bypass this by calling it
-directly. Read-only methods (is_magazine_loaded, check_start_state)
+directly. Read-only methods (is_magazine_present, check_start_state)
 never write.
 """
 
@@ -143,6 +143,18 @@ _WARMUP_RETRY_DELAY = 5.0   # seconds between retries
 # condition waits that replace the captured trace's pacing.
 _PARK_WAIT_TIMEOUT = 15.0
 _PARK_POLL_INTERVAL = 0.02
+
+
+def load_completion_target() -> int:
+    """The status word the vendor capture settled on after the LOAD
+    flow's final wait: the last coalesced status-word poll in
+    tables_load.LOAD (op 321 of the source trace, 0xd855). Derived from
+    the table so it cannot drift from it."""
+    from . import tables_load
+    polls = [op for op in tables_load.LOAD.ops if op.kind == "poll" and op.wv == 0x018E]
+    if not polls or len(polls[-1].resp) != 2:
+        raise RuntimeError("tables_load.LOAD has no final status-word poll")
+    return int.from_bytes(polls[-1].resp, "big")
 
 
 class Scanner:
@@ -855,11 +867,15 @@ class Scanner:
         except Of135iError as e:
             log.warning("engine-idle wait: %s -- continuing", e)
 
-    def is_magazine_loaded(self) -> bool:
+    def is_magazine_present(self) -> bool:
         """Check the loader sensor (vendor INI: LoaderSensorReg=0x101,0x08).
 
-        Bit 0x08 set = magazine physically in the slot (hardware-verified
-        2026-09-02: 0xe0 without magazine, 0xe8 with magazine inserted).
+        Bit 0x08 set = a magazine is physically PRESENT in the slot
+        (hardware-verified 2026-09-02: 0xe0 without, 0xe8 with; Test 12
+        2026-09-04: also set for a loose, unlatched magazine with the
+        orange LED, read on a cold, unwritten register). It says nothing
+        about the magazine being fed in or latched, and is unreliable
+        after the base register table has been written.
         """
         val = self.io.read_ext_reg(0x101)
         return bool(val & 0x08)
@@ -916,13 +932,23 @@ class Scanner:
     def load_magazine(self) -> None:
         """Run the vendor's magazine insert flow (tables_load.LOAD: the
         2026-09-02 capture's loader-sensor ack, feed and prescan
-        traverse -- hardware-verified load -> scan -> eject that day).
-        The cassette must already be pushed in to the stop by hand.
+        traverse). The cassette must already be pushed in by hand.
         Requires initialize() first in this session, as the vendor
         flow does (the tool tools/load_magazine.py does both).
 
-        This sets the vendor's "loaded" indication; it does not prove
-        the magazine is mechanically latched (docs/hardware-safety.md).
+        Completion is verified, not assumed: after the replay the
+        status word (reg 0x101, wValue 0x018e) must read exactly the
+        value the capture settled on after its final wait
+        (``load_completion_target()``, 0xd855). Anything else raises
+        LoadIncompleteError inside the operation, which marks the
+        session FAILED: the transport state is then unknown and the
+        magazine may not be latched (Test 12: the real scanner
+        answered 0xcc55 twice, with a loose magazine and a blue LED).
+        No recovery is attempted; a power cycle is required.
+
+        Even a completed load only sets the vendor's "loaded"
+        indication (blue LED); the loader sensor reports presence,
+        not latching (docs/hardware-safety.md).
         """
         from . import tables_load
         self.session.write_allowed_or_final()
@@ -930,8 +956,20 @@ class Scanner:
             raise OperationNotAllowedError(
                 "load_magazine() requires initialize() first in this session. "
                 f"{safety.NO_COMMANDS_SENT}", session=self.session.snapshot())
+        expected = load_completion_target()
         with self._operation("load_magazine"):
             self._run_phase(tables_load.LOAD)
+            self.session.phase = "load_verify"
+            word = self.io.read_status_word()
+            if word != expected:
+                raise safety.LoadIncompleteError(
+                    f"magazine load did NOT complete: status word {word:#06x}, expected "
+                    f"{expected:#06x} (the vendor capture's completion value). The transport "
+                    f"state is unknown and the magazine may not be latched. "
+                    f"{safety.NO_RECOVERY_ATTEMPTED} {safety.POWER_CYCLE_INSTRUCTION}",
+                    status_word=word, expected=expected, observed=self.session.start_reg01,
+                    session=self.session.snapshot())
+            log.info("load_magazine: complete, status word %#06x", word)
 
     def eject(self) -> None:
         """Eject the film magazine the way the vendor driver does it from
@@ -953,7 +991,7 @@ class Scanner:
         Safety guards:
         - Start-state guard (safety.py): a session that reads anything
           but 0x22/0x00 in reg 0x01 is refused before any write.
-        - If no magazine is detected (loader sensor bit 0x08 clear),
+        - If no magazine is present (loader sensor bit 0x08 clear),
           log a notice and return immediately — no motor commands.
           (The sensor is only trustworthy before the first initialize()
           of the scanner's power cycle -- docs/hardware-safety.md.)
@@ -961,7 +999,7 @@ class Scanner:
           ejecting from an unhomed state is undefined.
         """
         with self._operation("eject", cold_ok=True):
-            if not self.is_magazine_loaded():
+            if not self.is_magazine_present():
                 log.info("eject: no magazine detected — nothing to do")
                 return
             if self.session.state is SessionState.COLD:

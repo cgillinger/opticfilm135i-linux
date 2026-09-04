@@ -147,7 +147,7 @@ def test_dpi_shift():
 
 
 def test_render_report_partial_never_raises():
-    partial = {"block": "warm", "steps": {"W0": {"state": "idle-homed", "magazine_loaded": True}},
+    partial = {"block": "warm", "steps": {"W0": {"state": "idle-homed", "magazine_present": True}},
                "status": "RUNNING"}
     text = hwblock.render_report(partial)
     assert isinstance(text, str) and text
@@ -167,7 +167,7 @@ def test_render_report_full_includes_findings():
         "args": {"out": "/tmp/x", "frame": 1, "repeat": 10},
         "driver_revision": "abc1234",
         "steps": {
-            "W0": {"state": "idle-homed", "magazine_loaded": True},
+            "W0": {"state": "idle-homed", "magazine_present": True},
             "W2": {"n_scans": 10, "channels": [{"channel": "R", "flags": ["unstable"]}]},
         },
         "status": "COMPLETED",

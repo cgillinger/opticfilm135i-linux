@@ -9,7 +9,7 @@ everything (images, .diag.json sidecars, summary.json, report.md), and
 stops on the first anomaly. It never invents a new hardware sequence.
 
 HARD SAFETY RULES (see the module's own code, not just this comment):
-  - The only hardware operations used are Scanner.is_magazine_loaded(),
+  - The only hardware operations used are Scanner.is_magazine_present(),
     Scanner.initialize(), Scanner.scan(), Scanner.eject(),
     diag.collect_doctor() (read-only) and UsbIo.open()/close(). Nothing
     else -- no home(), no cold_init() (initialize() triggers that
@@ -323,7 +323,7 @@ def _collect_findings(summary: dict) -> list:
             for key, word in bool_flags:
                 if obj.get(key) is True:
                     findings.append(f"{path}: {word}")
-            if obj.get("magazine_loaded") is False:
+            if obj.get("magazine_present") is False:
                 findings.append(f"{path}: no magazine detected")
             if obj.get("enumerated") is False:
                 findings.append(f"{path}: scanner did not re-enumerate")
@@ -515,24 +515,24 @@ def run_warm(args: argparse.Namespace, out_dir: Path) -> int:
                 summary["status"] = f"FAILED at step W0 (unsafe start state, reg 0x01 = {e.observed!r}; power-cycle first)"
                 _save(out_dir, summary)
                 return 1
-            loaded = scanner.is_magazine_loaded()
-            summary["steps"]["W0"] = {"state": verdict.value, "magazine_loaded": loaded}
+            present = scanner.is_magazine_present()
+            summary["steps"]["W0"] = {"state": verdict.value, "magazine_present": present}
             _save(out_dir, summary)
 
-            if not loaded and not args.assume_loaded:
+            if not present and not args.assume_locked:
                 print("error: no magazine detected -- insert the cassette and "
-                      "run tools/load_magazine.py first. (--assume-loaded exists for "
+                      "run tools/load_magazine.py first. (--assume-locked exists for "
                       "controlled development use only, when a person has physically "
                       "confirmed the magazine is seated and locked.)",
                       file=sys.stderr)
                 summary["status"] = "FAILED at step W0 (no magazine detected)"
                 _save(out_dir, summary)
                 return 1
-            if not loaded:
-                print("WARNING: loader sensor reads 'not loaded' but --assume-loaded "
+            if not present:
+                print("WARNING: loader sensor reads 'not present' but --assume-locked "
                       "given (a person has physically confirmed the magazine is seated "
                       "and locked); continuing")
-                summary["steps"]["W0"]["assume_loaded"] = True
+                summary["steps"]["W0"]["assume_locked"] = True
                 _save(out_dir, summary)
             if verdict is safety.StartState.COLD:
                 print("error: scanner reports cold-never-homed -- the warm "
@@ -772,10 +772,10 @@ def run_cold(args: argparse.Namespace, out_dir: Path) -> int:
 
             # ---- C2: magazine check -----------------------------------------
             step = "C2"
-            loaded = scanner.is_magazine_loaded()
-            summary["steps"]["C2"] = {"magazine_loaded": loaded}
+            present = scanner.is_magazine_present()
+            summary["steps"]["C2"] = {"magazine_present": present}
             _save(out_dir, summary)
-            if not loaded:
+            if not present:
                 summary["status"] = "FAILED at step C2 (no magazine detected)"
                 summary["finished_utc"] = datetime.now(timezone.utc).isoformat()
                 _save(out_dir, summary)
@@ -879,7 +879,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_warm.add_argument("--repeat", type=int, default=10,
                          help="number of reproducibility scans (default 10, minimum 2)")
     p_warm.add_argument("--eject", action="store_true", help="eject the magazine at the very end")
-    p_warm.add_argument("--assume-loaded", action="store_true",
+    p_warm.add_argument("--assume-locked", action="store_true",
                         help="CONTROLLED DEVELOPMENT USE ONLY: skip the loader-sensor "
                              "precheck when a person has PHYSICALLY confirmed the magazine "
                              "is seated and locked. The sensor bit is unreliable once a "

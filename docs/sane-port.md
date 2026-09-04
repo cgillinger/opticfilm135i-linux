@@ -55,7 +55,7 @@ registers from generated tables and does the same computation.
 | `eject()` (loaded-magazine jog, FEEDL 3090, loader slope tables) | `eject_document()` | Guards: loader sensor bit 0x08 on reg 0x101, cold state → `asic_boot(cold)` first. Exposed only through the sheetfed path or a backend option — see open questions. |
 | `tools/load_magazine.py` (ack sensor, mode 0x18 feed 0x1a22, mode 0x1c traverse 71490) | `load_document()` | Called by the core only for `is_sheetfed` models. |
 | `home()` (mode 0x30, FEEDL=1) | `move_back_home()` | **Do not** use for the scan flow (it is the scan pass, pass 14). Only meaningful after `cold_init`. |
-| `is_magazine_loaded()` | `update_hardware_sensors()` / `load_document()` precheck | Reliable only before the base table is written. |
+| `is_magazine_present()` | `update_hardware_sensors()` / `load_document()` precheck | Reliable only before the base table is written. |
 
 ## Geometry model (`calculate_scan_session`)
 

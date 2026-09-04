@@ -885,3 +885,61 @@ power cycle (0x02 state left behind, no writes after the refusal).
    differs. Only then decide how the loaded state is reached safely.
 2. Magazine latch: compare 12c with 11b (what differed: hand-seating
    before load? the second load on the same insertion?).
+
+### Addendum (same night): analysis, review, decisions
+
+**0x02 analysed offline.** Reg 0x01 is a driver-written register; the
+hardware clears bit 0x20 while the engine runs (Pass 8) and the load
+flow never rewrites 0x22. Both complete vendor load flows end with reg
+0x01 = 0x02 written by the vendor itself (`vendor-coldload` op 3189,
+`load-only-fixed` op 2353) and a status word of 0xd855 → 0xdc55; the
+vendor's next action from the loaded state is always its eject batch
+or a scan session starting with the base table (0x01=0x22). So 0x02
+is a normal possible end state — **but only together with the rest of
+the vendor's end signature**. Our post-load state (0x02 + 0xcc55, no
+loader pulses) is known-incomplete.
+
+**Review outcome (Christian + external review):** a rule accepting
+0x02 on the motor flag alone would also accept the incomplete state
+and is therefore not merged. It is parked, inactive, on branch
+`wip/loaded-idle-start-state`. Future acceptance must be a named
+composite classification (e.g. `LOADED_READY`) from several
+independent register values, coded only after the exact end signature
+is established from the captures (0xd855 vs 0xdc55 to be settled, no
+convenience range) and the load flow itself is complete and verified.
+
+**Done tonight (offline, tests green: 39 in test_safety.py):**
+- False success fixed: `load_magazine()` reads the status word after
+  the replay and fails — `LoadIncompleteError`, session FAILED, power-
+  cycle instruction, tool exit 1 — unless it equals the capture's
+  completion value (0xd855, derived from the table's final poll). Both
+  of tonight's loads would have failed.
+- Sensor semantics: `is_magazine_loaded()` → `is_magazine_present()`,
+  doctor key `magazine_present`, `--assume-loaded` → `--assume-locked`.
+
+**Register note:** the vendor's post-load status word is 0xd855 in
+the eject-from-loaded loop and 0xd855→0xdc55 in both complete loads;
+0x32 reads 0x05 for the vendor, 0x15 for us; our 0xcc55 differs in
+0x101 bits 0x10 and 0x04. These bits were identical on 2026-09-04 when
+the magazine *could* be latched by hand, so they do not track the
+latch.
+
+**Christian's QuickScan observation (TODO 9b):** the vendor app does
+not accept a magazine that is already partly inserted at start
+("Please insert the film holder"); it must be taken COMPLETELY out of
+the slot and inserted afresh, and only that insertion triggers the
+full load that pulls the magazine in and latches it (blue LED). The
+vendor's load therefore runs from the sensor-trigger position of a
+fresh insertion; `load_magazine.py` asks for the cassette "to the
+stop" first and then feeds the same distance — a plausible cause of
+the loose-magazine-with-blue-LED result. Next hardware check, no
+motor: read reg 0x101 bit 0x08 (and the interrupt endpoint's 0x04
+event) while inserting slowly; note where the sensor trips relative
+to the stop.
+
+**Load-flow finding for the offline comparison:** both complete
+vendor loads contain six mode-0x78 loader pulses (FEEDL 1, with
+0x01=0x03/0x02 toggles); `vendor-coldload` consists of those pulses
+only; our LOAD (eject-from-loaded ops 291-640) has none. Pass 13
+called them loading, Pass 14 preview preparation. Whether they latch
+the magazine is the question the op-by-op comparison must answer.

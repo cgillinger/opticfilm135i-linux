@@ -222,7 +222,7 @@ def collect_doctor(io) -> dict:
     guarded("chip_id", lambda: bytes(io.dev.ctrl_transfer(0xC0, 0x0C, 0x008A, 0x26FE, 1)).hex())
     guarded("status_word", lambda: f"0x{io.read_status_word():04x}")
     guarded("regs", lambda: _collect_regs(io))
-    guarded("magazine_loaded", lambda: bool(io.read_ext_reg(0x101) & 0x08))
+    guarded("magazine_present", lambda: bool(io.read_ext_reg(0x101) & 0x08))
     guarded("button", lambda: _button_name(io.read_button()))
     guarded("state", lambda: _collect_state(io))
     guarded("host", _collect_host)
@@ -303,11 +303,11 @@ def format_doctor(report: dict) -> str:
 
     lines.append("")
     lines.append("== Magazine ==")
-    magazine = report.get("magazine_loaded")
+    magazine = report.get("magazine_present")
     if is_error(magazine):
         lines.append(f"  <unavailable: {magazine.get('error')}>")
     else:
-        lines.append(f"  loaded: {magazine}")
+        lines.append(f"  present: {magazine}   (presence only: not fed, not latched)")
 
     lines.append("")
     lines.append("== Button ==")

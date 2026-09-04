@@ -203,7 +203,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         # Check the loader sensor BEFORE initialize() — the base
         # register table written by initialize() changes ext reg
         # 0x101 state, making the sensor bit unreliable after it.
-        if not scanner.is_magazine_loaded():
+        if not scanner.is_magazine_present():
             print("error: no magazine detected — insert the cassette "
                   "and run load_magazine.py first", file=sys.stderr)
             return 1
@@ -377,13 +377,13 @@ def _cmd_watch(args: argparse.Namespace) -> int:
                 continue
             if button == 0x48:
                 print("eject button pressed", flush=True)
-                if scanner.is_magazine_loaded():
+                if scanner.is_magazine_present():
                     scanner.eject()
                     print("ejected", flush=True)
                 else:
                     print("magazine not detected, ignoring", flush=True)
             elif button == 0x04:
-                if scanner.is_magazine_loaded():
+                if scanner.is_magazine_present():
                     print("magazine inserted", flush=True)
                 else:
                     print("magazine removed", flush=True)
