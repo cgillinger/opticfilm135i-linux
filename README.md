@@ -128,6 +128,22 @@ mismatch counters for that frame — disable it with `--no-diag`.
 To run without `sudo`, install the udev rule (see the file for the
 commands): [`udev/60-of135i.rules`](udev/60-of135i.rules).
 
+### Autonomous hardware test block
+
+```bash
+# magazine already loaded, scanner idle/homed
+sudo .venv/bin/python tools/hwblock.py warm --out results/warm-01
+
+# after a power cycle (verifies cold-start lamp warmup + AFE offset)
+sudo .venv/bin/python tools/hwblock.py cold --out results/cold-01
+```
+
+`tools/hwblock.py` runs a long, unattended block of already-verified
+`scan`/`eject` operations (reproducibility, batch, DPI-change, and
+cold-start checks) behind a single human confirmation, recording every
+image, `.diag.json` sidecar, and a `summary.json`/`report.md` report —
+and stops immediately on the first anomaly.
+
 Troubleshooting: if the device is not found, check that nothing else
 holds it (a virtual machine's USB passthrough, another scanning
 application) and that it has not entered standby — the scanner drops
