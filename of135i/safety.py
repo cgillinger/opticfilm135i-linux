@@ -31,11 +31,18 @@ Three mechanisms, all in this module:
    inside every ``UsbIo``. Every control transfer is classified by
    its direction bit; every OUT transfer (control OUT and bulk OUT)
    asks the session for permission BEFORE it is issued and is counted
-   afterwards, execute pulses (register 0x0f = 0x01) included. pyusb's
-   own state-changing standard requests (``clear_halt``, ``reset``,
+   afterwards, execute pulses (register 0x0f = 0x01) included. A
+   transfer that reports fewer bytes than requested (a SHORT OUT
+   transfer) is not a completed write: it fails the session, because
+   part of the payload may have reached the scanner. pyusb's own
+   state-changing standard requests (``clear_halt``, ``reset``,
    ``set_configuration``, ...) are blocked on the proxy so that no
-   "recovery" can slip past it. This is the chokepoint: the driver
-   has no other path to the USB bus.
+   "recovery" can slip past it. The proxy keeps the only reference to
+   the raw handle; the driver stores no other. The single exception
+   is ``UsbIo.open()``, which issues the verified open sequence
+   (kernel-driver detach, SET_CONFIGURATION) on its local raw handle
+   -- and only AFTER ``verify_start_state()`` has accepted the start
+   state through the proxy.
 
 3. ``ProcessLock`` -- an ``flock`` on a well-known lock file, taken by
    ``UsbIo.open()`` before the first USB access and released by
@@ -153,6 +160,21 @@ class ScannerBusyError(SafetyError):
     """Another process holds the scanner lock."""
 
 
+class ShortTransferError(SafetyError):
+    """An OUT transfer (control OUT or bulk OUT) completed with fewer
+    bytes than were requested. Some or all of the payload may have
+    reached the scanner: the hardware outcome is unknown, the session
+    is FAILED, and nothing further is sent. ``expected`` / ``completed``
+    are the requested and reported byte counts."""
+
+    def __init__(self, message: str, *, expected: int, completed: int,
+                 pulse: bool = False, **kw):
+        super().__init__(message, **kw)
+        self.expected = expected
+        self.completed = completed
+        self.pulse = pulse
+
+
 # ------------------------------------------------------------------ session
 
 
@@ -235,9 +257,12 @@ class HardwareSession:
             self.start_state = StartState.UNSAFE
             self.state = SessionState.REFUSED
 
-    def fail(self, exc: BaseException, where: str | None = None) -> None:
+    def fail(self, exc: BaseException, where: str | None = None,
+             extra: dict | None = None) -> None:
         """Final: an operation failed or was interrupted. Records the
-        first failure only; later ones are consequences."""
+        first failure only; later ones are consequences. ``extra`` is
+        merged into the failure record (e.g. the short-transfer detail
+        GuardedDevice supplies)."""
         with self._lock:
             if self.failure is not None:
                 return
@@ -253,6 +278,8 @@ class HardwareSession:
                 "execute_pulses_attempted": self.execute_pulses_attempted,
                 "utc": _now(),
             }
+            if extra:
+                self.failure.update(extra)
             if self.state is not SessionState.REFUSED:
                 self.state = SessionState.FAILED
             log.error(
@@ -392,9 +419,17 @@ class HardwareSession:
             sent = (f"{f['writes']} write(s) and {f['execute_pulses']} execute pulse(s) had "
                     f"been sent by this session" if f["writes"] else
                     "no write had been sent by this session")
+            short = f.get("short_transfer")
+            ambiguity = ""
+            if short:
+                ambiguity = (
+                    f" The last transfer was SHORT ({short['kind']} OUT, {short['completed']} of "
+                    f"{short['expected']} bytes reported"
+                    f"{', containing an execute pulse' if short['pulse'] else ''}): some or all "
+                    f"of its bytes may have reached the scanner.")
             return (
                 f"Operation {f['operation']} failed in phase {f['phase']}: "
-                f"{f['exception']}. {sent}; the hardware state is now UNKNOWN. "
+                f"{f['exception']}. {sent}; the hardware state is now UNKNOWN.{ambiguity} "
                 f"{NO_RECOVERY_ATTEMPTED} {POWER_CYCLE_INSTRUCTION}"
             )
         return f"session state {snap['state']}"
@@ -413,19 +448,34 @@ class GuardedDevice:
     transfers are passed through untouched (their errors are the
     operation's business, see HardwareSession.operation). A failing
     OUT transfer marks the session FAILED immediately -- a write whose
-    outcome is unknown IS an unknown hardware state.
+    outcome is unknown IS an unknown hardware state. So does a SHORT
+    OUT transfer: pyusb reports the number of bytes transferred, and
+    fewer than requested means the scanner may have received part of
+    the payload (part of a register batch, part of a buffer) -- the
+    session fails, the transfer is counted as attempted but not
+    completed, and ShortTransferError is raised. Nothing is retried.
+
+    The raw handle is kept only here (name-mangled ``__raw``), not on
+    ``UsbIo``: driver and tool code has no attribute to reach the bus
+    around the proxy. The one legitimate raw use -- the verified open
+    sequence (kernel-driver detach + set_configuration), issued by
+    ``UsbIo.open()`` AFTER the start state has been verified through
+    this proxy -- runs on the local variable in ``open()`` and is never
+    stored. ``dispose()`` releases the handle on close.
     """
 
     #: pyusb methods that issue standard control requests or reset the
     #: device. None of them is part of any verified sequence, and each
-    #: is exactly the kind of "recovery" the safety model forbids.
+    #: is exactly the kind of "recovery" the safety model forbids. The
+    #: open sequence uses two of them (detach_kernel_driver,
+    #: set_configuration) on the raw device, only after verification.
     BLOCKED = frozenset({
         "clear_halt", "reset", "set_configuration", "set_interface_altsetting",
         "attach_kernel_driver", "detach_kernel_driver",
     })
 
     def __init__(self, raw, session: HardwareSession):
-        object.__setattr__(self, "_raw", raw)
+        object.__setattr__(self, "_GuardedDevice__raw", raw)
         object.__setattr__(self, "_session", session)
 
     # pyusb signature, kept positional-compatible with every call site.
@@ -433,37 +483,76 @@ class GuardedDevice:
                       data_or_wLength=None, timeout=None):
         extra = {} if timeout is None else {"timeout": timeout}
         if bmRequestType & 0x80:
-            return self._raw.ctrl_transfer(bmRequestType, bRequest, wValue, wIndex,
-                                           data_or_wLength, **extra)
+            return self.__raw.ctrl_transfer(bmRequestType, bRequest, wValue, wIndex,
+                                            data_or_wLength, **extra)
         session = self._session
         session.write_allowed()
         data = bytes(data_or_wLength) if data_or_wLength is not None else b""
         pulse = session.note_write_attempt("ctrl", wValue, data)
+        where = f"control OUT wValue={wValue:#06x} wIndex={wIndex:#06x}"
         try:
-            n = self._raw.ctrl_transfer(bmRequestType, bRequest, wValue, wIndex,
-                                        data_or_wLength, **extra)
+            n = self.__raw.ctrl_transfer(bmRequestType, bRequest, wValue, wIndex,
+                                         data_or_wLength, **extra)
         except BaseException as e:
-            session.fail(e, where=f"control OUT wValue={wValue:#06x} wIndex={wIndex:#06x}")
+            session.fail(e, where=where)
             raise
+        self._check_complete("control", where, len(data), n, pulse)
         session.note_write_done(pulse)
         return n
 
     def write(self, endpoint, data, timeout=None):
         session = self._session
         session.write_allowed()
+        data = bytes(data)
         pulse = session.note_write_attempt("bulk", 0, b"")
         extra = {} if timeout is None else {"timeout": timeout}
+        where = f"bulk OUT ep={endpoint:#04x}"
         try:
-            n = self._raw.write(endpoint, data, **extra)
+            n = self.__raw.write(endpoint, data, **extra)
         except BaseException as e:
-            session.fail(e, where=f"bulk OUT ep={endpoint:#04x}")
+            session.fail(e, where=where)
             raise
+        self._check_complete("bulk", where, len(data), n, pulse)
         session.note_write_done(pulse)
         return n
 
+    def _check_complete(self, kind: str, where: str, expected: int, n, pulse: bool) -> None:
+        """A non-exception return is complete only if it reports exactly
+        the requested length. ``expected`` is the actual payload length
+        (0 for the verified zero-length control requests, which pyusb
+        reports as 0). Anything else fails the session with the
+        ambiguity on record and raises ShortTransferError."""
+        try:
+            completed = int(n)
+        except (TypeError, ValueError):
+            completed = -1
+        if completed == expected:
+            return
+        session = self._session
+        msg = (
+            f"short {kind} OUT transfer ({where}): {completed} of {expected} bytes "
+            f"reported{' -- the payload carried an execute pulse' if pulse else ''}. "
+            f"Some or all of the bytes may have reached the scanner; the hardware state "
+            f"is UNKNOWN. No further command was sent. {NO_RECOVERY_ATTEMPTED} "
+            f"{POWER_CYCLE_INSTRUCTION}"
+        )
+        exc = ShortTransferError(msg, expected=expected, completed=completed, pulse=pulse,
+                                 observed=session.start_reg01)
+        session.fail(exc, where=where, extra={"short_transfer": {
+            "kind": kind, "where": where, "expected": expected, "completed": completed,
+            "pulse": pulse}})
+        exc.session = session.snapshot()
+        raise exc
+
     def read(self, endpoint, size_or_buffer, timeout=None):
         extra = {} if timeout is None else {"timeout": timeout}
-        return self._raw.read(endpoint, size_or_buffer, **extra)
+        return self.__raw.read(endpoint, size_or_buffer, **extra)
+
+    def dispose(self) -> None:
+        """Release the pyusb handle (usb.util.dispose_resources): a
+        handle release, never a transfer or a standard request."""
+        import usb.util
+        usb.util.dispose_resources(self.__raw)
 
     def __getattr__(self, name):
         if name in self.BLOCKED:
@@ -471,13 +560,13 @@ class GuardedDevice:
                 f"usb device method {name}() is blocked by the safety layer: it issues a "
                 f"standard request that is not part of any verified sequence.",
                 session=self._session.snapshot())
-        return getattr(self._raw, name)
+        return getattr(self.__raw, name)
 
     def __setattr__(self, name, value):
         raise AttributeError("GuardedDevice is read-only")
 
     def __repr__(self) -> str:
-        return f"GuardedDevice({self._raw!r}, state={self._session.state.value})"
+        return f"GuardedDevice({self.__raw!r}, state={self._session.state.value})"
 
 
 # ------------------------------------------------------------ start check

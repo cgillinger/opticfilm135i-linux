@@ -35,9 +35,12 @@ negative scanner Linux, SANE OpticFilm 135i, GL126, pyusb scanner driver*.
   default with `--ir`.
 - A udev rule for running without root (`udev/60-of135i.rules`).
 - A fail-closed hardware-safety layer (`of135i/safety.py`) that refuses
-  every writing operation unless the scanner is in a known start state,
-  prevents two processes from driving the scanner at once (a Linux
-  process lock), and keeps `doctor`/`status` strictly read-only. See
+  every writing operation unless the scanner is in a known start state
+  — verified before the USB open sequence, so a refusal sends nothing
+  at all, not even `SET_CONFIGURATION` — treats a short OUT transfer as
+  an unknown hardware state, prevents two processes from driving the
+  scanner at once (a Linux process lock), and keeps `doctor`/`status`
+  strictly read-only. Offline-verified only. See
   [`docs/hardware-safety.md`](docs/hardware-safety.md).
 
 ## Development status
@@ -81,9 +84,12 @@ one invocation. The rough edges you should know about:
   scanner stayed on the bus but answered nothing until power was cut.
   Every command — not just `hwblock.py` — now refuses to write to a
   scanner that is not in a known start state (idle-homed `0x22`, or
-  `0x00` for the cold-init path only): zero USB writes, and no
-  automatic recovery is ever attempted. The only fix is a physical
-  power cycle; restarting the program is not sufficient. See
+  `0x00` for the cold-init path only): the state is read before the
+  device is even configured, so a refusal means zero USB writes and
+  zero state-changing requests, and no automatic recovery is ever
+  attempted. A USB transfer that completes short is treated the same
+  way as a failed one. The only fix is a physical power cycle;
+  restarting the program is not sufficient. See
   [`docs/hardware-safety.md`](docs/hardware-safety.md).
 - **The magazine must be loaded through the driver**
   (`tools/load_magazine.py`) — the autoloader is driver-managed and the

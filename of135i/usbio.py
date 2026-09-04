@@ -9,9 +9,13 @@ Hardware safety (see safety.py / docs/hardware-safety.md): every
 ``UsbIo`` carries a ``HardwareSession`` and exposes the pyusb device
 only through a ``GuardedDevice`` proxy, so every OUT transfer -- from
 this module's own helpers or from device.py's verbatim op executor --
-is gated and counted in one place. ``open()`` takes the process lock
-before the first USB access; ``open(readonly=True)`` (doctor/status)
-additionally never configures the device and can never be armed.
+is gated and counted in one place, and a short OUT transfer fails the
+session. ``open()`` takes the process lock before the first USB access
+and, for a writing session, verifies the start state (one control-IN
+read of reg 0x01) BEFORE the only state-changing standard requests the
+driver ever issues (kernel-driver detach, SET_CONFIGURATION);
+``open(readonly=True)`` (doctor/status) never issues those at all and
+can never be armed.
 """
 
 from __future__ import annotations
@@ -21,7 +25,6 @@ import struct
 from typing import Iterable, Sequence, Tuple
 
 import usb.core
-import usb.util
 
 from . import safety
 from .errors import Of135iError
@@ -39,17 +42,34 @@ _WRITE_CHUNK = 64          # bytes = 32 (reg, val) pairs
 _BUF_CHUNK = 16384         # bulk transfer chunk size
 
 
+def _configure_for_writing(dev: "usb.core.Device") -> None:
+    """The verified open sequence for a writing session: detach a bound
+    kernel driver (if any) and SET_CONFIGURATION. Both are standard
+    requests that change device state, so UsbIo.open() calls this on
+    the raw handle ONLY after safety.verify_start_state() has accepted
+    the start state; nowhere else in the driver may they be issued
+    (GuardedDevice blocks them)."""
+    try:
+        if dev.is_kernel_driver_active(0):
+            log.info("detaching kernel driver from interface 0")
+            dev.detach_kernel_driver(0)
+    except NotImplementedError:
+        # Platforms without kernel-driver introspection (e.g. Windows).
+        pass
+    dev.set_configuration()
+
+
 class UsbIo:
     """Thin wrapper around a pyusb device handle for the 07b3:1436 scanner.
 
     ``dev`` is a safety.GuardedDevice around the real handle; ``session``
     the safety.HardwareSession that decides whether writes may go out.
+    The raw handle is not stored on this object (see GuardedDevice).
     """
 
     def __init__(self, dev: "usb.core.Device", readonly: bool = False,
                  lock: "safety.ProcessLock | None" = None):
         self.session = safety.HardwareSession(readonly=readonly)
-        self._raw_dev = dev
         self.dev = safety.GuardedDevice(dev, self.session)
         self._lock = lock
 
@@ -59,21 +79,53 @@ class UsbIo:
     def open(cls, readonly: bool = False) -> "UsbIo":
         """Find and claim the scanner on the host USB bus.
 
-        Takes the process lock first (safety.ProcessLock -- raises
-        ScannerBusyError if another of135i process, writing or read-
-        only, holds the scanner). Raises Of135iError with likely-cause
-        hints if the device is not present (commonly: still attached
-        to a VM, or in USB standby — see protocol-notes.md pass 4).
+        Order, for a writing session (docs/hardware-safety.md):
 
-        readonly=True (doctor/status): the session can never be armed,
-        and SET_CONFIGURATION is not issued -- the kernel configured
-        the device at enumeration and pyusb never configures on its
-        own, so the read paths (control IN, interrupt IN) work without
-        it. A writing session keeps the verified open sequence
-        (detach kernel driver if any, set_configuration).
+        1. take the process lock (safety.ProcessLock -- raises
+           ScannerBusyError if another of135i process, writing or
+           read-only, holds the scanner);
+        2. find the device (usb.core.find: descriptor lookup only);
+        3. construct this UsbIo with the ONE HardwareSession that owns
+           the whole session, and the GuardedDevice proxy around the
+           handle;
+        4. verify the start state through that proxy: one strict
+           control-IN read of reg 0x01 (a device-recipient vendor
+           request; pyusb neither configures the device nor claims
+           the interface for it) -- with NO set_configuration, NO
+           kernel-driver detach, NO reset/clear_halt/altsetting change
+           before it. The kernel configured the device at enumeration,
+           which is all a control-IN on endpoint 0 needs; this is the
+           same read path ``doctor``/``status`` use;
+        5. if the state is anything but 0x22/0x00, or the read fails,
+           times out, is short or malformed, or is interrupted: the
+           session is REFUSED, the handle is released and the lock
+           dropped, and UnsafeStartStateError (or KeyboardInterrupt)
+           propagates. Zero vendor OUT transfers and zero pyusb
+           state-changing calls have happened;
+        6. only after the verdict is IDLE or COLD: the verified open
+           sequence on the raw handle -- detach the kernel driver if
+           one is bound, then set_configuration. A failure here marks
+           the SAME session FAILED (the device may now be half
+           configured: power cycle), releases everything and raises
+           SessionFailedError.
+
+        The session object and its verdict survive step 6 unchanged;
+        Scanner._operation()'s own check_start_state() then just
+        returns the recorded verdict without a second read.
+
+        If a kernel driver were bound and the device-recipient read
+        failed because of it, step 5 refuses: the driver never
+        detaches first merely to make the check possible.
+
+        readonly=True (doctor/status): steps 4-6 are skipped entirely;
+        the session can never be armed, and no standard request is
+        ever issued. Raises Of135iError with likely-cause hints if the
+        device is not present (commonly: still attached to a VM, or
+        in USB standby -- see protocol-notes.md pass 4).
         """
         lock = safety.ProcessLock()
         lock.acquire()
+        io: "UsbIo | None" = None
         try:
             dev = usb.core.find(idVendor=VID, idProduct=PID)
             if dev is None:
@@ -84,20 +136,34 @@ class UsbIo:
                     "menu first); (2) the scanner is in USB standby after "
                     "inactivity — unplug/replug or power-cycle to wake it."
                 )
+            io = cls(dev, readonly=readonly, lock=lock)
             if not readonly:
+                # Step 4/5: verify BEFORE any state-changing call. Raises
+                # (session REFUSED, nothing sent) on anything but 0x22/0x00.
+                verdict = safety.verify_start_state(io)
+                # Step 6: the verified open sequence, on the local raw
+                # handle only, after the verdict.
                 try:
-                    if dev.is_kernel_driver_active(0):
-                        log.info("detaching kernel driver from interface 0")
-                        dev.detach_kernel_driver(0)
-                except NotImplementedError:
-                    # Platforms without kernel-driver introspection (e.g. Windows).
-                    pass
-                dev.set_configuration()
+                    _configure_for_writing(dev)
+                except KeyboardInterrupt as e:
+                    io.session.fail(e, where="open: configure_for_writing")
+                    raise
+                except Exception as e:
+                    io.session.fail(e, where="open: configure_for_writing")
+                    raise safety.SessionFailedError(
+                        f"the USB open sequence (set_configuration) failed after the start "
+                        f"state had been verified as {verdict.value}: {type(e).__name__}: {e}. "
+                        f"The device may be partly configured; its state is UNKNOWN. "
+                        f"{safety.NO_RECOVERY_ATTEMPTED} {safety.POWER_CYCLE_INSTRUCTION}",
+                        observed=io.session.start_reg01, session=io.session.snapshot()) from e
             log.info("opened device bus=%d addr=%d%s", dev.bus, dev.address,
                      " (read-only session)" if readonly else "")
-            return cls(dev, readonly=readonly, lock=lock)
+            return io
         except BaseException:
-            lock.release()
+            if io is not None:
+                io.close()        # releases the handle and the lock, sends nothing
+            else:
+                lock.release()
             raise
 
     def close(self) -> None:
@@ -105,9 +171,8 @@ class UsbIo:
         the scanner: a session that failed stays failed on the wire --
         releasing the lock does not make the hardware safe."""
         try:
-            if self._raw_dev is not None:
-                usb.util.dispose_resources(self._raw_dev)
-                self._raw_dev = None
+            if self.dev is not None:
+                self.dev.dispose()
                 self.dev = None
         finally:
             if self._lock is not None:

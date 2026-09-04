@@ -10,9 +10,10 @@ answered nothing until the power was cut.
 
 The safety pass (2026-09-05) generalised the ad-hoc check that
 `tools/hwblock.py` had grown into one authoritative mechanism enforced
-for every operation that can write to the scanner. This document
-states what the model guarantees, where those guarantees are enforced,
-and what is verified.
+for every operation that can write to the scanner. A follow-up review
+closed two gaps in it (verification before the USB open sequence, and
+short OUT transfers; see below). This document states what the model
+guarantees, where those guarantees are enforced, and what is verified.
 
 ## Accepted start states
 
@@ -42,7 +43,10 @@ When the start state is not accepted, or a read fails, or a write fails
 mid-operation, or the operation is interrupted (Ctrl-C):
 
 - **zero USB writes after the failed check** — no `initialize()`, no
-  execute pulse;
+  execute pulse — **and zero state-changing standard requests**: no
+  `SET_CONFIGURATION`, no kernel-driver detach, no reset, no
+  `clear_halt`, no alternate-setting change. "Nothing was sent" means
+  nothing at all, not merely no vendor command;
 - **no recovery sequence of any kind** — no PARK, no home, no eject, no
   re-initialization, nothing in a `finally`;
 - a dedicated exception (`of135i.safety.SafetyError` and its
@@ -68,8 +72,14 @@ not in any one frontend:
   the transfer and counts it (execute pulses included) after. pyusb's
   own state-changing standard requests (`clear_halt`, `reset`,
   `set_configuration`, altsetting/kernel-driver changes) are blocked on
-  the proxy, so no "recovery" can slip past it. This is the chokepoint:
-  the driver has no other path to the bus.
+  the proxy, so no "recovery" can slip past it. The proxy also holds
+  the **only** reference to the raw pyusb handle (`UsbIo` stores none),
+  so driver and tool code has no attribute through which to reach the
+  bus around it. The one exception is the USB open sequence itself,
+  issued by `UsbIo.open()` on its local handle *after* the start state
+  has been verified (next section). A short OUT transfer — pyusb
+  reporting fewer bytes than were requested — is not a completed write:
+  it fails the session on the spot (see "Short OUT transfers").
 - **`HardwareSession`** is the per-process state machine
   (`unverified → armed | cold | refused`, plus the final `failed` and
   the read-only `readonly`). It records the start verdict, the write
@@ -90,6 +100,66 @@ transient engine states inside the session (0x02/0x03/0x23 between
 phases) are expected, not re-checked. A new process, or an
 independently invoked operation after a failure, is a new session and
 is validated again.
+
+## Opening a session: verification before configuration
+
+A writing session (`UsbIo.open()`, hence `Scanner.open()` and every
+CLI command and tool) proceeds strictly in this order:
+
+1. take the process lock;
+2. find the device (`usb.core.find` — a descriptor lookup, no request
+   to the device);
+3. create the single `HardwareSession` that owns the whole session,
+   with the `GuardedDevice` proxy around the handle;
+4. read register 0x01 once, strictly, through that proxy — a
+   device-recipient vendor control-IN on endpoint 0, the same read
+   `doctor`/`status` use. Nothing state-changing precedes it: no
+   `SET_CONFIGURATION`, no kernel-driver detach, no reset, no
+   `clear_halt`, no altsetting change;
+5. classify with the one central rule. Anything but `0x22`/`0x00`, a
+   USB error, a timeout, a short or malformed reply, or an interrupt
+   during the read: the session is **refused**, the handle and the
+   lock are released, and the error says that nothing was sent and
+   that a power cycle is required. Zero vendor OUT transfers and zero
+   state-changing pyusb calls have happened;
+6. only then the verified open sequence on the raw handle: detach a
+   bound kernel driver if there is one, then `SET_CONFIGURATION`. If
+   that fails, the **same** session is marked failed (the device may
+   be half configured), everything is released, and the error again
+   requires a power cycle.
+
+The session and its verdict survive step 6 unchanged; the operation
+layer's own start check just returns the recorded verdict without a
+second read. If a kernel driver were bound and the read failed
+because of it, the driver refuses at step 5 — it never detaches first
+merely to make the check possible. A kernel-driver detach is treated
+as state-changing even though it need not produce an on-wire packet.
+
+`open(readonly=True)` (`doctor`, `status`) stops after step 3: no
+verification (a read-only session is never armed) and no standard
+request of any kind.
+
+## Short OUT transfers
+
+pyusb reports the number of bytes a control-OUT or bulk-OUT transfer
+moved. The proxy compares that with the length of the payload it was
+given (zero for the verified zero-length control requests, which pyusb
+reports as 0). Any other value means part of a register batch or
+buffer may have reached the scanner and part may not — a hardware
+state the driver cannot know. Therefore a short transfer:
+
+- marks the session **failed** at once and raises
+  `of135i.safety.ShortTransferError`, whose message and the session's
+  failure record carry the requested and reported lengths, the
+  operation and phase, and whether the payload contained an execute
+  pulse;
+- is counted as **attempted** but never as **completed**
+  (`writes_attempted` includes it, `writes` does not; likewise
+  `execute_pulses_attempted` vs `execute_pulses`);
+- is followed by nothing: no retry, no further command, no PARK, home,
+  eject, initialize, `clear_halt` or reset;
+- requires a power cycle, and the operator text says explicitly that
+  some or all of the bytes may have reached the scanner.
 
 ## Protected entry points
 
@@ -114,11 +184,33 @@ never parks, homes, ejects or initializes — leaving a block by an
 exception means the hardware state is unknown, and the only valid
 recovery is a power cycle.
 
+### Raw pyusb access audit
+
+Every `ctrl_transfer`/`write` in `of135i/` and `tools/` goes through
+`io.dev`, the `GuardedDevice` proxy (`usbio.py` helpers, `device.py`'s
+op executor and its inline chip-id/EEPROM reads, `diag.py`'s read-only
+collectors, `tools/replay_trace.py`'s replayer, which is handed
+`io.dev`). `usb.core.find` occurs once, in `UsbIo.open()`, after the
+lock. `set_configuration`/`detach_kernel_driver` occur once, in
+`usbio._configure_for_writing()`, called only from `UsbIo.open()` after
+verification; `clear_halt`/`reset`/altsetting/attach occur nowhere in
+production code and are blocked on the proxy. No `_raw_dev` attribute
+exists; the raw handle lives only as a name-mangled attribute of the
+proxy, used for the transfers themselves and for releasing the handle
+on close. Tests use fake devices deliberately, isolated in `tests/`.
+
+What the proxy cannot prevent is deliberate circumvention: Python
+allows reaching the mangled attribute, or the pyusb context object
+that the proxy passes through by name. Nothing in the driver or tools
+does either; a future contributor who does is bypassing the safety
+model on purpose, and review must catch it.
+
 ## `doctor` and `status` are strictly read-only
 
 Both open a read-only session (`UsbIo.open(readonly=True)`) that can
-never be armed and never issues a write; `set_configuration` is not
-even sent (the kernel configured the device at enumeration). Offline
+never be armed and never issues a write; `set_configuration` and the
+kernel-driver detach are not even sent (the kernel configured the
+device at enumeration). Offline
 tests prove that a `doctor`/`status` run performs zero OUT transfers,
 triggers no pyusb state-changing call, runs no `initialize()`/
 `cold_init()`, and attempts no recovery — even against an interrupted
@@ -191,11 +283,22 @@ program is not recovery.
 
 ## Verification status
 
-- **Offline verified** (`tests/test_safety.py`, 27 tests, run with the
+- **Offline verified** (`tests/test_safety.py`, 38 tests, run with the
   full existing offline suite): the start-state matrix (0x22 / 0x00 /
   0x02 / 0x23 / unknown / read timeout / USB error / malformed reply)
   for every public writing entry point, counted at the pyusb boundary
-  as **zero OUT transfers** on every refusal; the cold path (0x00
+  as **zero OUT transfers and zero state-changing pyusb calls** on
+  every refusal; the real `UsbIo.open()`/`Scanner.open()` path over a
+  fake device (unsafe/unreadable/interrupted start-state read: refused
+  with nothing sent, kernel driver left bound, lock and handle
+  released; 0x22/0x00: the reg 0x01 read precedes detach and
+  `SET_CONFIGURATION`, one session survives, no second read; a
+  configuration failure marks that session failed); short control-OUT
+  and bulk-OUT transfers before, containing and after an execute
+  pulse, a 0-byte report for a non-empty payload, the legitimate
+  zero-length requests of the cold path (complete), and a short
+  transfer that leaves the engine running blocking a driver-level
+  restart; the cold path (0x00
   permits cold-init only, once, post-verified); fault injection before
   the first write, after the first register write, immediately before
   and after an execute pulse, during calibration bulk-in, during image
@@ -214,7 +317,15 @@ program is not recovery.
   register values only. The one permitted hardware check for this pass
   is a single conservative normal-path scan from a power-cycled, known-
   good scanner — not a repeat run, DPI sweep, or full `hwblock`.
-- **Still requires hardware or cross-unit verification**: the accepted
+- **Still requires hardware or cross-unit verification**: that a
+  device-recipient control-IN read of reg 0x01 succeeds on this scanner
+  *before* `SET_CONFIGURATION` (Linux configures the device at
+  enumeration and pyusb neither configures nor claims an interface for
+  such a request, but the driver has only ever read after configuring;
+  the read-only `doctor` of Test 11a also ran before the read-only open
+  existed). If the read fails on hardware, the driver refuses — it does
+  not configure first — and the cause must be investigated offline
+  before anything is changed; the accepted
   start-state values (0x22 / 0x00) and the post-cold-init `0x22`
   expectation are this unit's observed constants; the meaning of `0x02`
   after a load (Test 11b) is still unexplained, so the load→new-session

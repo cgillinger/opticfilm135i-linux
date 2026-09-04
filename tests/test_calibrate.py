@@ -244,6 +244,7 @@ class _FakeDev:
 
     def write(self, ep, data, timeout=0):
         self._writes.append(bytes(data))
+        return len(data)   # pyusb reports the transferred length; the guard checks it
 
 
 def _build_queues(phase_order):

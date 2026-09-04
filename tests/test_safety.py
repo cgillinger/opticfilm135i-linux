@@ -27,6 +27,17 @@ Covers (docs/hardware-safety.md):
     recovery command, and refuses any further operation with zero
     writes; a new session over the left-behind state is rejected
     unless the state is an accepted start state again;
+  - the REAL UsbIo.open()/Scanner.open() path over the fake (lock,
+    find, verify, configure): unsafe/unreadable/interrupted start
+    states refuse with zero OUT transfers AND zero state-changing
+    pyusb calls (set_configuration, kernel-driver detach, ...), the
+    kernel driver left bound, lock and handle released; 0x22/0x00 read
+    reg 0x01 BEFORE detach/set_configuration and keep one session; a
+    configuration failure marks that session failed;
+  - short OUT transfers (control before/containing/after an execute
+    pulse, bulk before/after, 0 bytes reported): session FAILED,
+    attempted-vs-completed bookkeeping, nothing sent afterwards, a
+    driver-level restart over the left-behind state refused;
   - process lock (a second process, writing or read-only, is refused
     before touching the device; lock released on close/exception);
   - doctor/status strictly read-only: zero OUT transfers, no pyusb
@@ -102,7 +113,19 @@ class FakeUsbDevice:
     Faults: `fault(event)` is called before every transfer with a dict
     describing it (kind, wv/wi/data or length, out_index, pulse,
     pulses_so_far, ...); returning an exception raises it instead of
-    performing the transfer.
+    performing the transfer; returning an int N (for an OUT transfer)
+    performs a SHORT transfer: only the first N bytes "reach" the
+    device (register side effects for the whole pairs among them),
+    the transfer is logged in short_log (not out_log, not out_count)
+    and N is returned -- what pyusb reports for a partial transfer.
+
+    State-changing pyusb methods (set_configuration, clear_halt, reset,
+    set_interface_altsetting, attach/detach_kernel_driver) are recorded
+    in `blocked_calls`; `events` is the ordered log of everything the
+    device saw (transfers and those calls) so a test can prove what
+    happened BEFORE the start-state read. `touched` is the single
+    "nothing changed" number: OUT transfers (complete or short) plus
+    state-changing calls.
 
     reg01: an int is the initial register value; an Exception instance
     is raised on every read of reg 0x01; bytes are returned raw
@@ -141,19 +164,37 @@ class FakeUsbDevice:
         self.in_count = 0
         self.bulk_in_count = 0
         self.pulses = 0
+        self.short_count = 0
         self.out_log: list[dict] = []
+        self.short_log: list[dict] = []
         self.blocked_calls: list[str] = []
+        self.events: list[str] = []
+        self.kernel_driver_active = False
+        self.set_configuration_raises: BaseException | None = None
+        self.detach_raises: BaseException | None = None
         self.button_events: deque = deque()
         self._pending: list | None = None
 
+    @property
+    def touched(self) -> int:
+        """OUT transfers (complete or short) + pyusb state-changing calls."""
+        return self.out_count + self.short_count + len(self.blocked_calls)
+
+    def events_before(self, marker: str) -> list[str]:
+        """Events logged before the first occurrence of `marker`."""
+        return self.events[:self.events.index(marker)] if marker in self.events else list(self.events)
+
     # ------------------------------------------------------------ faults
 
-    def _maybe_fail(self, ev: dict) -> None:
+    def _maybe_fail(self, ev: dict):
+        """Raise the injected exception, or return the injected short
+        length (int) -- None means "perform the transfer normally"."""
         if self.fault is None:
-            return
+            return None
         exc = self.fault(ev)
-        if exc is not None:
+        if isinstance(exc, BaseException):
             raise exc
+        return exc
 
     # ------------------------------------------------------- transfers
 
@@ -163,9 +204,19 @@ class FakeUsbDevice:
             pulse = (wv == 0x0083 and safety.has_execute_pulse(data))
             ev = {"kind": "ctrl_out", "bm": bm, "br": br, "wv": wv, "wi": wi, "data": data,
                   "out_index": self.out_count + 1, "pulse": pulse, "pulses_so_far": self.pulses}
-            self._maybe_fail(ev)
+            short = self._maybe_fail(ev)
+            if short is not None:
+                # Partial transfer: the first `short` bytes reach the device.
+                self.short_count += 1
+                self.short_log.append({**ev, "completed": short})
+                self.events.append(f"ctrl_out short {short}/{len(data)}")
+                if wv == 0x0083:
+                    for i in range(0, (short // 2) * 2 - 1, 2):
+                        self.regs[data[i]] = data[i + 1]
+                return short
             self.out_count += 1
             self.out_log.append(ev)
+            self.events.append("ctrl_out")
             if wv == 0x0083:
                 for i in range(0, len(data) - 1, 2):
                     self.regs[data[i]] = data[i + 1]
@@ -185,6 +236,10 @@ class FakeUsbDevice:
               "pulses_so_far": self.pulses}
         self._maybe_fail(ev)
         self.in_count += 1
+        if br == 0x04 and wv == 0x008E and (wi >> 8) == 0x01:
+            self.events.append("ctrl_in reg01")
+        else:
+            self.events.append("ctrl_in")
         if br == 0x04 and wv == 0x008E:
             reg = wi >> 8
             if reg == 0x01 and self.reg01_reply is not None:
@@ -230,27 +285,47 @@ class FakeUsbDevice:
         data = bytes(data)
         ev = {"kind": "bulk_out", "ep": endpoint, "length": len(data),
               "out_index": self.out_count + 1, "pulse": False, "pulses_so_far": self.pulses}
-        self._maybe_fail(ev)
+        short = self._maybe_fail(ev)
+        if short is not None:
+            self.short_count += 1
+            self.short_log.append({**ev, "completed": short})
+            self.events.append(f"bulk_out short {short}/{len(data)}")
+            return short
         self.out_count += 1
         self.out_log.append(ev)
+        self.events.append("bulk_out")
         return len(data)
 
     # ------------------------------------ pyusb state-changing methods
 
+    def _state_call(self, name: str, raises: BaseException | None = None) -> None:
+        self.blocked_calls.append(name)
+        self.events.append(name)
+        if raises is not None:
+            raise raises
+
     def set_configuration(self, *a, **k):
-        self.blocked_calls.append("set_configuration")
+        self._state_call("set_configuration", self.set_configuration_raises)
 
     def clear_halt(self, *a, **k):
-        self.blocked_calls.append("clear_halt")
+        self._state_call("clear_halt")
 
     def reset(self, *a, **k):
-        self.blocked_calls.append("reset")
+        self._state_call("reset")
+
+    def set_interface_altsetting(self, *a, **k):
+        self._state_call("set_interface_altsetting")
+
+    def attach_kernel_driver(self, intf):
+        self._state_call("attach_kernel_driver")
 
     def is_kernel_driver_active(self, intf):
-        return False
+        self.events.append("is_kernel_driver_active")     # a query, not a change
+        return self.kernel_driver_active
 
     def detach_kernel_driver(self, intf):
-        self.blocked_calls.append("detach_kernel_driver")
+        self._state_call("detach_kernel_driver", self.detach_raises)
+        self.kernel_driver_active = False
 
 
 # ================================================================ helpers
@@ -852,6 +927,191 @@ def test_load_magazine_requires_initialize_and_matches_trace():
     print(f"test_load_magazine_requires_initialize_and_matches_trace OK ({note})")
 
 
+# ======================================================= short transfers
+
+
+def _assert_short_failure(fake, scanner, exc, *, kind, pulse, completed_writes, completed_pulses,
+                          operation=None, phase_prefix=None):
+    """A short OUT transfer: session FAILED, attempted > completed, the
+    short transfer on record with lengths/pulse/operation/phase, no
+    later OUT reaches the device, no recovery, power-cycle advice."""
+    assert isinstance(exc, safety.ShortTransferError), exc
+    session = scanner.session
+    assert session.state is SessionState.FAILED
+    assert fake.short_count == 1, fake.short_count
+    sh = fake.short_log[0]
+    assert session.writes == completed_writes == fake.out_count, (session.writes, fake.out_count)
+    assert session.writes_attempted == completed_writes + 1
+    assert session.execute_pulses == completed_pulses == fake.pulses
+    assert session.execute_pulses_attempted == completed_pulses + (1 if pulse else 0)
+    assert exc.expected == (len(sh["data"]) if kind == "control" else sh["length"])
+    assert exc.completed == sh["completed"] and exc.pulse is pulse
+    rec = session.failure["short_transfer"]
+    assert rec == {"kind": kind, "where": session.failure["where"], "expected": exc.expected,
+                   "completed": exc.completed, "pulse": pulse}, rec
+    assert session.failure["operation"] == (operation or session.failure["operation"])
+    if operation:
+        assert session.failure["operation"] == operation, session.failure
+    if phase_prefix:
+        assert (session.failure["phase"] or "").startswith(phase_prefix), session.failure["phase"]
+    msg = str(exc)
+    assert f"{exc.completed} of {exc.expected} bytes" in msg, msg
+    assert "may have reached the scanner" in msg and "No further command was sent" in msg
+    _assert_power_cycle_message(msg)
+    text = session.describe_failure()
+    assert "SHORT" in text and "may have reached the scanner" in text, text
+    if pulse:
+        assert "execute pulse" in msg and "execute pulse" in text
+    # No OUT after the short one, no recovery, further operations refused.
+    _assert_failed_and_frozen(fake, scanner, exc, operation=operation, phase_prefix=phase_prefix,
+                              expect_writes_gt_zero=completed_writes > 0)
+    assert fake.short_count == 1
+    # Nothing OUT-bound after the short transfer, not even a short one.
+    after = fake.events[fake.events.index(next(e for e in fake.events if "short" in e)) + 1:]
+    assert not any(ev.startswith(("ctrl_out", "bulk_out")) for ev in after), after[:5]
+
+
+def test_short_control_out_before_execute_pulse():
+    fake, scanner, exc = _run_scan_with_fault(
+        lambda ev, s: 10 if ev["kind"] == "ctrl_out" and ev["out_index"] == 2 else None)
+    _assert_short_failure(fake, scanner, exc, kind="control", pulse=False, completed_writes=1,
+                          completed_pulses=0, operation="initialize", phase_prefix="base_init")
+    _assert_new_session_rejected_unless_safe(fake)
+    print("test_short_control_out_before_execute_pulse OK")
+
+
+def test_short_control_out_containing_execute_pulse():
+    fake, scanner, exc = _run_scan_with_fault(
+        lambda ev, s: len(ev["data"]) // 2 if ev.get("pulse") else None)
+    _assert_short_failure(fake, scanner, exc, kind="control", pulse=True,
+                          completed_writes=fake.out_count, completed_pulses=0, operation="scan")
+    assert scanner.session.execute_pulses_attempted == 1 and scanner.session.execute_pulses == 0
+    _assert_new_session_rejected_unless_safe(fake)
+    print("test_short_control_out_containing_execute_pulse OK")
+
+
+def test_short_control_out_after_completed_execute_pulse():
+    fake, scanner, exc = _run_scan_with_fault(
+        lambda ev, s: 2 if ev["kind"] == "ctrl_out" and ev["pulses_so_far"] >= 1 and not ev["pulse"] else None)
+    _assert_short_failure(fake, scanner, exc, kind="control", pulse=False,
+                          completed_writes=fake.out_count, completed_pulses=1, operation="scan")
+    _assert_new_session_rejected_unless_safe(fake)
+    print("test_short_control_out_after_completed_execute_pulse OK")
+
+
+def test_short_bulk_out_before_and_after_execute_pulse():
+    # eject: bulk OUT before its execute pulse; load_magazine: bulk OUT
+    # after its first execute pulse (both run outside a scan).
+    cases = (
+        ("before", lambda s: s.eject(), lambda ev: ev["pulses_so_far"] == 0, "eject", "eject", 0),
+        ("after", lambda s: (s.initialize(), s.load_magazine()),
+         lambda ev, : ev["pulses_so_far"] >= 1, "load_magazine", "load", None),
+    )
+    for when, run, cond, operation, phase, pulses in cases:
+        fake = FakeUsbDevice(reg01=0x22)
+        scanner = make_scanner(fake)
+        fake.fault = lambda ev, c=cond: 100 if ev["kind"] == "bulk_out" and c(ev) else None
+        exc = None
+        with fast_time():
+            try:
+                run(scanner)
+            except BaseException as e:   # noqa: BLE001
+                exc = e
+        _assert_short_failure(fake, scanner, exc, kind="bulk", pulse=False,
+                              completed_writes=fake.out_count,
+                              completed_pulses=fake.pulses if pulses is None else pulses,
+                              operation=operation, phase_prefix=phase)
+        if when == "after":
+            assert fake.pulses >= 1
+    # ... and in a scan's shading upload (after several pulses), reported as 0 bytes.
+    fake, scanner, exc = _run_scan_with_fault(
+        lambda ev, s: 0 if ev["kind"] == "bulk_out" else None)
+    _assert_short_failure(fake, scanner, exc, kind="bulk", pulse=False,
+                          completed_writes=fake.out_count, completed_pulses=fake.pulses,
+                          operation="scan")
+    assert fake.pulses >= 1
+    _assert_new_session_rejected_unless_safe(fake)
+    print("test_short_bulk_out_before_and_after_execute_pulse OK")
+
+
+def test_zero_bytes_returned_for_nonempty_payload():
+    fake, scanner, exc = _run_scan_with_fault(
+        lambda ev, s: 0 if ev["kind"] == "ctrl_out" and ev["out_index"] == 1 else None)
+    _assert_short_failure(fake, scanner, exc, kind="control", pulse=False, completed_writes=0,
+                          completed_pulses=0, operation="initialize")
+    assert exc.completed == 0 and exc.expected == 64
+    assert scanner.session.writes == 0 and scanner.session.writes_attempted == 1
+    assert "no write had been sent" in scanner.session.describe_failure()
+    print("test_zero_bytes_returned_for_nonempty_payload OK")
+
+
+def test_full_length_and_legitimate_zero_length_out_succeed():
+    # The cold path issues zero-length control OUTs (0x8b end-of-access
+    # style requests); pyusb reports 0 for them, which is complete.
+    fake = FakeUsbDevice(reg01=0x00, cal_buffers=_cal_buffers())
+    scanner = make_scanner(fake)
+    with fast_time():
+        scanner.initialize()
+        scanner.scan(frame=1)
+    zero = [ev for ev in fake.out_log if ev["kind"] == "ctrl_out" and len(ev["data"]) == 0]
+    assert zero, "expected zero-length control OUTs in the cold path"
+    assert fake.short_count == 0
+    assert scanner.session.state is SessionState.ARMED
+    assert scanner.session.writes == scanner.session.writes_attempted == fake.out_count
+    assert scanner.session.execute_pulses == scanner.session.execute_pulses_attempted == fake.pulses
+    assert scanner.session.failure is None
+    # A short zero-length request cannot exist; a wrong report for it is
+    # still detected (the proxy compares against the actual payload).
+    fake2 = FakeUsbDevice(reg01=0x22)
+    io2 = UsbIo(fake2)
+    io2.session.arm(0x22)
+    fake2.fault = lambda ev: 1 if ev["kind"] == "ctrl_out" and len(ev["data"]) == 0 else None
+    e = expect(safety.ShortTransferError, io2.end_access)
+    assert e.expected == 0 and e.completed == 1 and io2.session.state is SessionState.FAILED
+    print("test_full_length_and_legitimate_zero_length_out_succeed OK")
+
+
+def test_short_transfer_leaving_engine_running_blocks_driver_restart():
+    """The SCAN batch (0x01=0x23, engine running) completes, and the very
+    next control OUT is short (0 bytes reported). The fake, like the
+    real scanner, stays at 0x23, so a new driver-level session over it
+    -- Scanner over the same transport, or the real open path of a new
+    process -- is refused with zero writes and zero state changes; only
+    a power cycle (0x00 again) lets the cold path proceed."""
+    armed = {"scan_batch_sent": False}
+
+    def fault(ev, s):
+        if ev["kind"] != "ctrl_out":
+            return None
+        if armed["scan_batch_sent"]:
+            return 0
+        d = ev["data"]
+        if ev["wv"] == 0x83 and any(d[i] == 0x01 and d[i + 1] == 0x23 for i in range(0, len(d) - 1, 2)):
+            armed["scan_batch_sent"] = True
+        return None
+    fake, scanner, exc = _run_scan_with_fault(fault)
+    # (the transfer after the SCAN batch is its execute pulse: a short
+    # pulse is attempted, never completed)
+    _assert_short_failure(fake, scanner, exc, kind="control", pulse=fake.short_log[0]["pulse"],
+                          completed_writes=fake.out_count, completed_pulses=fake.pulses,
+                          operation="scan")
+    assert scanner.session.failure["phase"], "phase must be recorded"
+    assert fake.regs[0x01] == 0x23
+    n, touched = fake.out_count, fake.touched
+    fake.fault = None
+    s2 = make_scanner(fake)
+    with fast_time():
+        e = expect(UnsafeStartStateError, s2.initialize)
+    assert e.observed == 0x23 and fake.out_count == n and fake.touched == touched
+    # ... also through the real open path (new process).
+    with real_open(fake) as path:
+        e = expect(UnsafeStartStateError, Scanner.open)
+        assert e.observed == 0x23 and fake.touched == touched
+        _assert_lock_free(path)
+    _assert_new_session_rejected_unless_safe(fake)
+    print("test_short_transfer_leaving_engine_running_blocks_driver_restart OK")
+
+
 # ================================================================== CLI
 
 
@@ -1052,26 +1312,206 @@ def test_doctor_and_status_are_strictly_read_only():
     print("test_doctor_and_status_are_strictly_read_only OK")
 
 
-def test_readonly_open_skips_set_configuration_and_writing_open_keeps_it():
-    fake = FakeUsbDevice(reg01=0x22)
+@contextmanager
+def real_open(fake: FakeUsbDevice):
+    """Route the REAL UsbIo.open()/Scanner.open() (lock, find, verify,
+    configure) to the fake device and a private lock file."""
+    path = str(Path(tempfile.gettempdir()) / f"of135i-test-{os.getpid()}.lock")
     with patched(usb.core, "find", lambda **k: fake), \
-            patched(safety, "lock_path", lambda: str(Path(tempfile.gettempdir()) / f"of135i-test-{os.getpid()}.lock")):
-        io_ = UsbIo.open(readonly=True)
-        assert fake.blocked_calls == [] and io_.session.state is SessionState.READONLY
-        assert io_._lock.held
-        io_.close()
-        assert not io_._lock.held
+            patched(safety, "lock_path", lambda: path):
+        yield path
+
+
+def _assert_lock_free(path: str) -> None:
+    lock = safety.ProcessLock(path)
+    lock.acquire()          # raises ScannerBusyError if the open leaked it
+    lock.release()
+
+
+OPEN_UNSAFE_CASES = [
+    ("0x02", 0x02),
+    ("0x23", 0x23),
+    ("unknown 0x77", 0x77),
+    ("usb timeout", _usb_timeout()),
+    ("usb error", _usb_error()),
+    ("short reply", b"\x22"),
+    ("malformed reply", b"\x22\x00"),
+    ("interrupted read", KeyboardInterrupt()),
+]
+
+_STATE_CHANGING = ("set_configuration", "detach_kernel_driver", "clear_halt", "reset",
+                   "set_interface_altsetting", "attach_kernel_driver")
+
+
+def _assert_nothing_changed(fake: FakeUsbDevice, label: str) -> None:
+    assert fake.out_count == 0, (label, fake.out_count)
+    assert fake.short_count == 0, (label, fake.short_count)
+    assert fake.pulses == 0, label
+    assert fake.blocked_calls == [], (label, fake.blocked_calls)
+    assert fake.touched == 0, (label, fake.touched)
+    for name in _STATE_CHANGING:
+        assert name not in fake.events, (label, name, fake.events)
+    assert all(ev.startswith("ctrl_in") or ev == "is_kernel_driver_active" for ev in fake.events), \
+        (label, fake.events)
+
+
+def test_open_refuses_unsafe_states_before_any_state_change():
+    """The real UsbIo.open()/Scanner.open() over a fake device: an
+    unsafe or unreadable reg 0x01 refuses the session with zero OUT
+    transfers AND zero pyusb state-changing calls (set_configuration,
+    kernel-driver detach, ...), releases the lock and the handle, and
+    says so. With a kernel driver bound the driver does NOT detach it
+    to make the check possible."""
+    n = 0
+    for opener_name, opener in (("UsbIo.open", UsbIo.open), ("Scanner.open", Scanner.open)):
+        for kernel_driver in (False, True):
+            for label, reg01 in OPEN_UNSAFE_CASES:
+                fake = FakeUsbDevice(reg01=reg01)
+                fake.kernel_driver_active = kernel_driver
+                tag = f"{opener_name}/{label}/kdrv={kernel_driver}"
+                with real_open(fake) as path:
+                    try:
+                        opener()
+                    except KeyboardInterrupt:
+                        e = None
+                        assert isinstance(reg01, KeyboardInterrupt), tag
+                    except UnsafeStartStateError as exc:
+                        e = exc
+                    else:
+                        raise AssertionError(f"{tag}: open() succeeded on an unsafe state")
+                    _assert_nothing_changed(fake, tag)
+                    assert fake.events.count("ctrl_in reg01") == 1, (tag, fake.events)
+                    assert fake.disposed, tag
+                    assert fake.kernel_driver_active == kernel_driver, tag   # never detached
+                    _assert_lock_free(path)
+                    if e is not None:
+                        msg = str(e)
+                        _assert_power_cycle_message(msg)
+                        assert "No commands were sent" in msg, msg
+                        assert e.session["state"] == "refused", e.session
+                        assert e.session["writes"] == 0 and e.session["writes_attempted"] == 0
+                        if isinstance(reg01, int):
+                            assert e.observed == reg01 and f"{reg01:#04x}" in msg, (tag, msg)
+                        else:
+                            assert e.observed is None, tag
+                n += 1
+    print(f"test_open_refuses_unsafe_states_before_any_state_change OK ({n} cases)")
+
+
+def test_open_verifies_before_configuring_and_keeps_one_session():
+    """0x22: the start state is read FIRST; only then the verified open
+    sequence (detach if bound, set_configuration). The session and its
+    verdict survive; Scanner reuses them without a second read."""
+    for kernel_driver in (False, True):
+        fake = FakeUsbDevice(reg01=0x22)
+        fake.kernel_driver_active = kernel_driver
+        with real_open(fake) as path:
+            io_ = UsbIo.open()
+            expected = (["detach_kernel_driver"] if kernel_driver else []) + ["set_configuration"]
+            assert fake.blocked_calls == expected, fake.blocked_calls
+            # Order on the device: the reg 0x01 read precedes every state change.
+            before = fake.events_before(expected[0])
+            # (is_kernel_driver_active is a query, not a change; it too
+            # comes after the read)
+            assert before == ["ctrl_in reg01", "is_kernel_driver_active"], (before, fake.events)
+            assert fake.events.index("ctrl_in reg01") < fake.events.index("set_configuration")
+            assert fake.out_count == 0
+            assert io_.session.state is SessionState.ARMED
+            assert io_.session.start_reg01 == 0x22 and io_.session.start_state is StartState.IDLE
+            assert io_.session.verified_utc is not None
+            assert io_._lock.held
+            session = io_.session
+            scanner = Scanner(io_)
+            assert scanner.session is session
+            reads = fake.in_count
+            assert scanner.check_start_state() is StartState.IDLE
+            assert fake.in_count == reads, "verdict re-read instead of reused"
+            with fast_time():
+                scanner.initialize()
+            assert scanner.session is session and session.state is SessionState.ARMED
+            assert fake.out_count > 0
+            scanner.close()
+            assert not io_._lock.held and fake.disposed
+            _assert_lock_free(path)
+
+    # Scanner.open() is the same path.
+    fake = FakeUsbDevice(reg01=0x22)
+    with real_open(fake) as path:
+        with Scanner.open() as scanner:
+            assert scanner.session.state is SessionState.ARMED
+            assert fake.blocked_calls == ["set_configuration"]
+            assert fake.events_before("set_configuration") == ["ctrl_in reg01", "is_kernel_driver_active"]
+        _assert_lock_free(path)
+    # No raw handle is stored on UsbIo; the proxy blocks the standard requests.
+    assert not hasattr(io_, "_raw_dev")
+    print("test_open_verifies_before_configuring_and_keeps_one_session OK")
+
+
+def test_open_accepts_cold_for_cold_init_only():
+    fake = FakeUsbDevice(reg01=0x00)
+    with real_open(fake) as path:
         io_ = UsbIo.open()
-        assert fake.blocked_calls == ["set_configuration"]     # the verified open sequence
-        assert io_.session.state is SessionState.UNVERIFIED
-        io_.close()
-        assert not io_._lock.held
-        # Device absent: the lock is released again (no leak on error).
-        with patched(usb.core, "find", lambda **k: None):
-            expect(Exception, UsbIo.open)
-        io_ = UsbIo.open()
-        io_.close()
-    print("test_readonly_open_skips_set_configuration_and_writing_open_keeps_it OK")
+        assert fake.events_before("set_configuration") == ["ctrl_in reg01", "is_kernel_driver_active"]
+        assert fake.blocked_calls == ["set_configuration"] and fake.out_count == 0
+        assert io_.session.state is SessionState.COLD and io_.session.start_reg01 == 0x00
+        # Nothing but the cold-init path may write.
+        expect(OperationNotAllowedError, io_.write_regs, [(0x01, 0x22)])
+        scanner = Scanner(io_)
+        with fast_time():
+            for name, fn in _driver_entry_points():
+                if name.startswith(("initialize", "eject", "cold_init")):
+                    continue
+                expect(safety.SafetyError, fn, scanner)
+        assert fake.out_count == 0 and fake.blocked_calls == ["set_configuration"]
+        session = scanner.session
+        with fast_time():
+            scanner.initialize()          # cold_init first, then the base table
+        assert scanner.session is session and session.state is SessionState.ARMED
+        assert session.cold_init_done and fake.out_count > 0
+        scanner.close()
+        _assert_lock_free(path)
+    print("test_open_accepts_cold_for_cold_init_only OK")
+
+
+def test_open_configuration_failure_marks_session_failed():
+    for which in ("set_configuration", "detach"):
+        fake = FakeUsbDevice(reg01=0x22)
+        if which == "set_configuration":
+            fake.set_configuration_raises = _usb_error()
+        else:
+            fake.kernel_driver_active = True
+            fake.detach_raises = _usb_error()
+        with real_open(fake) as path:
+            e = expect(SessionFailedError, UsbIo.open)
+            assert e.session["state"] == "failed", e.session
+            assert "configure_for_writing" in e.session["failure"]["where"]
+            assert e.session["writes"] == 0
+            _assert_power_cycle_message(str(e))
+            assert "No recovery commands" in str(e)
+            assert fake.out_count == 0 and fake.disposed
+            assert fake.events[0] == "ctrl_in reg01"
+            _assert_lock_free(path)
+    print("test_open_configuration_failure_marks_session_failed OK")
+
+
+def test_readonly_open_never_configures():
+    for reg01 in (0x22, 0x00, 0x23):
+        fake = FakeUsbDevice(reg01=reg01)
+        fake.kernel_driver_active = True
+        with real_open(fake) as path:
+            io_ = UsbIo.open(readonly=True)
+            assert fake.touched == 0 and fake.events == [], fake.events
+            assert io_.session.state is SessionState.READONLY
+            assert fake.kernel_driver_active
+            io_.close()
+            assert not io_._lock.held and fake.disposed
+            _assert_lock_free(path)
+            # Device absent: the lock is released again (no leak on error).
+            with patched(usb.core, "find", lambda **k: None):
+                expect(Exception, UsbIo.open)
+                expect(Exception, UsbIo.open, readonly=True)
+            _assert_lock_free(path)
+    print("test_readonly_open_never_configures OK")
 
 
 # ================================================================ lock
@@ -1208,12 +1648,23 @@ def main() -> int:
         test_fault_during_eject,
         test_fault_during_magazine_load,
         test_keyboard_interrupt_marks_session_failed_without_recovery,
+        test_short_control_out_before_execute_pulse,
+        test_short_control_out_containing_execute_pulse,
+        test_short_control_out_after_completed_execute_pulse,
+        test_short_bulk_out_before_and_after_execute_pulse,
+        test_zero_bytes_returned_for_nonempty_payload,
+        test_full_length_and_legitimate_zero_length_out_succeed,
+        test_short_transfer_leaving_engine_running_blocks_driver_restart,
         test_load_magazine_requires_initialize_and_matches_trace,
         test_cli_scan_eject_watch_refuse_unsafe_states_with_zero_writes,
         test_cli_scan_normal_path_and_failure_reporting,
         test_cli_eject_and_watch_paths,
         test_doctor_and_status_are_strictly_read_only,
-        test_readonly_open_skips_set_configuration_and_writing_open_keeps_it,
+        test_open_refuses_unsafe_states_before_any_state_change,
+        test_open_verifies_before_configuring_and_keeps_one_session,
+        test_open_accepts_cold_for_cold_init_only,
+        test_open_configuration_failure_marks_session_failed,
+        test_readonly_open_never_configures,
         test_process_lock_excludes_second_process,
         test_hwblock_uses_central_guard_and_writes_nothing_when_unsafe,
         test_verify_start_state_on_raw_io_for_tools,

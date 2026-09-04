@@ -755,3 +755,46 @@ sweep, or a full `hwblock` run.
 
 See docs/hardware-safety.md for the full model, the accepted
 start-state table, and what remains unverified.
+
+## 2026-09-04 — Safety follow-up: verify before configure, short OUT transfers (offline)
+
+### Context
+
+Code review of the safety pass found two violations of its fail-closed
+claims: (1) `UsbIo.open()` issued kernel-driver detach and
+`SET_CONFIGURATION` on the raw pyusb handle *before* the start state
+was read, i.e. state-changing requests reached an unverified scanner
+and bypassed `GuardedDevice`; (2) `GuardedDevice` treated any
+non-exception return from an OUT transfer as complete, so a short
+transfer (pyusb reporting fewer bytes than requested) was counted as
+a successful write and the sequence continued.
+
+### What changed
+
+- **Open order.** lock → find → one `HardwareSession` + proxy →
+  strict reg 0x01 read through the proxy → classify → *only then*
+  detach/`SET_CONFIGURATION` on the local raw handle. A refusal
+  releases handle and lock with zero OUT transfers and zero
+  state-changing calls; a configuration failure after acceptance
+  marks the same session failed. The kernel driver is never detached
+  to make the check possible. `UsbIo` no longer stores the raw handle.
+- **Short transfers.** The proxy compares the reported length with the
+  actual payload length (0 for the verified zero-length requests).
+  A mismatch fails the session, raises `ShortTransferError` with the
+  lengths, operation, phase and execute-pulse flag on record, counts
+  the transfer as attempted but not completed, sends nothing further,
+  and requires a power cycle.
+- **Three functional-test fakes** (`test_calibrate`, `test_dpi`,
+  `test_ir`) returned nothing from `write()`; they now return the
+  length, as pyusb does — the guard had correctly flagged them.
+
+### Verification status
+
+**OFFLINE VERIFIED ONLY.** `tests/test_safety.py` grew from 27 to 38
+tests (5 exercising the real `UsbIo.open()`/`Scanner.open()` over a
+fake device with ordered event logging, 7 short-transfer fault
+injections); the whole offline suite passes (38 + 10 + 14 + 6 + 6 + 4 +
+3 + 3). **No physical scanner operation was performed.** New
+hardware-side caveat: reading reg 0x01 before `SET_CONFIGURATION` has
+never been exercised on this scanner; if it fails, the driver refuses
+rather than configuring first (see docs/hardware-safety.md).
