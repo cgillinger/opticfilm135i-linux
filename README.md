@@ -34,6 +34,11 @@ negative scanner Linux, SANE OpticFilm 135i, GL126, pyusb scanner driver*.
 - IR-based automatic dust/scratch removal (multi-scale inpainting), on by
   default with `--ir`.
 - A udev rule for running without root (`udev/60-of135i.rules`).
+- A fail-closed hardware-safety layer (`of135i/safety.py`) that refuses
+  every writing operation unless the scanner is in a known start state,
+  prevents two processes from driving the scanner at once (a Linux
+  process lock), and keeps `doctor`/`status` strictly read-only. See
+  [`docs/hardware-safety.md`](docs/hardware-safety.md).
 
 ## Development status
 
@@ -74,11 +79,17 @@ one invocation. The rough edges you should know about:
   rather than the idle 0x22). Starting a new session on top of that
   state produced a motor event and a firmware hang on 2026-09-04; the
   scanner stayed on the bus but answered nothing until power was cut.
-  `tools/hwblock.py` refuses to start unless the scanner is idle (0x22)
-  or cold (0x00); the plain `scan` command does not check this yet.
+  Every command — not just `hwblock.py` — now refuses to write to a
+  scanner that is not in a known start state (idle-homed `0x22`, or
+  `0x00` for the cold-init path only): zero USB writes, and no
+  automatic recovery is ever attempted. The only fix is a physical
+  power cycle; restarting the program is not sufficient. See
+  [`docs/hardware-safety.md`](docs/hardware-safety.md).
 - **The magazine must be loaded through the driver**
   (`tools/load_magazine.py`) — the autoloader is driver-managed and the
-  hardware buttons are dead without a driver process.
+  hardware buttons are dead without a driver process. The loader sensor
+  reports magazine *presence*, not that it is mechanically locked — see
+  [`docs/hardware-safety.md`](docs/hardware-safety.md).
 - `of135i status` reports the loader sensor (magazine present/absent)
   and button state.
 - **Multiple resolutions:** `--dpi 600|1200|2400|3600|7200` — all five

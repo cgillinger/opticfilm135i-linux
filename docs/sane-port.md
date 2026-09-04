@@ -111,6 +111,14 @@ buffers. From `tables_dpi*.py`:
 5. **Stagger, dust removal, positive inversion stay out of the backend.**
    Dust removal (`image.remove_dust`) is a frontend feature; SANE
    delivers the IR channel as a separate gray scan the way gl843 does.
+6. **Reuse the safety guard, don't reimplement it.** A SANE backend
+   must route every write through the same `of135i.safety` start-state
+   guard (`GuardedDevice`, process lock) rather than duplicating the
+   check — the guarantee lives in the shared driver layer precisely so
+   every frontend, SANE included, inherits it unchanged. No automatic
+   recovery from an unknown start state is attempted there either;
+   that stays a power-cycle-only failure. See
+   [`docs/hardware-safety.md`](hardware-safety.md).
 
 ## Risks and open questions
 

@@ -684,3 +684,74 @@ a power cycle before the next session is cleanest.
 **Status:** warmup retry MECHANISM hardware-verified (it triggered and
 looped correctly); cold-start image UNVERIFIED (lamp not warm within
 budget); crash fixed offline.
+
+
+## 2026-09-05 — Hardware-safety pass (offline)
+
+### Context
+
+Following the 2026-09-04 firmware hang (Test 11d) and the still-open
+warmup-budget question (Test 11e), the ad-hoc start-state check that
+`hwblock.py` had grown into was generalised into one authoritative
+mechanism: `of135i/safety.py`. Full model in docs/hardware-safety.md.
+
+### What changed
+
+- **Centralized start-state guard.** Every writing entry point —
+  `scan`, `eject`, `initialize`, `cold_init`, `load_magazine`, `home`,
+  `park_semantic`, `watch`, and `hwblock.py`/`replay_trace.py` — now
+  goes through the same guard, not just `hwblock.py` as before.
+  Accepted start states: reg 0x01 == 0x22 (idle-homed, normal
+  operations) and reg 0x01 == 0x00 (cold, cold-init path only). Every
+  other value, and every failure to read the register (USB error,
+  timeout, short/malformed reply), is refused with zero USB writes and
+  no automatic recovery — a dedicated exception tells the user to
+  power-cycle.
+- **`GuardedDevice`** wraps the pyusb device so every control-OUT and
+  bulk-OUT transfer, from anywhere in the driver or tools, passes
+  through one gate that is asked permission before the transfer and
+  counted afterwards.
+- **Per-session model**, not per-write: the check runs once, before a
+  session's first write. A batch scan is one session; the transient
+  engine states between phases inside it (0x02/0x03/0x23) are expected
+  and not re-checked. A new process is a new session and is validated
+  again.
+- **No automatic recovery, ever.** No PARK, home, eject, or
+  re-initialization runs in any `finally`, on `KeyboardInterrupt`, or
+  on any other failure. The only recovery is a physical power cycle;
+  restarting the process is explicitly not sufficient.
+- **Process lock.** An exclusive `flock` on
+  `/tmp/of135i-07b3-1436.lock` (override `OF135I_LOCK_FILE`) refuses a
+  second of135i process — writing or read-only `doctor` — before it
+  touches USB.
+- **`doctor`/`status` proven strictly read-only.** Offline tests show
+  zero OUT transfers, no `set_configuration`, no `initialize()`/
+  `cold_init()`, and no recovery attempt, even against an interrupted
+  scanner reading 0x23.
+- **Magazine sensor explicitly not treated as lock proof.** The loader
+  sensor bit is documented as presence-only, unreliable after the
+  first `initialize()`, and not a substitute for a person confirming
+  the magazine is seated and locked (Test 11b). `--assume-loaded`
+  remains controlled-development-only and does not bypass the guard.
+- **Unguarded motor-write paths removed.** `tools/load_magazine.py`'s
+  `--full` flow was removed (its end state stalled the transport);
+  `tools/of135i_poc.py` (raw home/eject writes, no guard) was deleted.
+  `tools/replay_trace.py` now runs over the guarded transport and
+  aborts on the first USB error instead of clearing stalls.
+- **New modules:** `of135i/safety.py`, `of135i/errors.py` (shared
+  `Of135iError` base), `of135i/tables_load.py` (vendor magazine-load
+  sequence compiled from a trace, driven by `Scanner.load_magazine()`),
+  `tools/gen_load_table.py` (generator for the above).
+
+### Verification status
+
+**OFFLINE VERIFIED ONLY.** `tests/test_safety.py` (27 new tests) plus
+the existing offline suite all pass. NOTHING new is hardware-verified —
+the guard was deliberately not tested by recreating an unsafe physical
+state (that is what bricked the scanner on 2026-09-04, Test 11d). The
+only permitted next hardware step is a single conservative normal-path
+scan from a power-cycled, known-good scanner — not a repeat run, a DPI
+sweep, or a full `hwblock` run.
+
+See docs/hardware-safety.md for the full model, the accepted
+start-state table, and what remains unverified.

@@ -1,60 +1,89 @@
 #!/usr/bin/env python3
 """Load the film magazine the way the vendor driver does.
 
-Default (verified end-to-end 2026-09-02: load -> scan -> eject): the
-vendor's plain insert flow as captured that day -- the user pushes the
-cassette in to the stop, the driver acks the loader sensor (reg 0x32),
-then feed (mode 0x18, FEEDL 0x1a22, loader speed regs + loader slope
-tables) and the slow prescan traverse (mode 0x1c, FEEDL 71490). Nothing
-else. Ejecting from this state works; scanning from it works.
+Thin command-line wrapper around Scanner.load_magazine() (the vendor's
+plain insert flow, compiled into of135i/tables_load.py from the
+2026-09-02 capture and hardware-verified end to end that day: load ->
+scan -> eject). The user pushes the cassette in to the stop, the driver
+acks the loader sensor (reg 0x32), then feed (mode 0x18, FEEDL 0x1a22,
+loader speed regs + loader slope tables) and the slow prescan traverse
+(mode 0x1c, FEEDL 71490). Nothing else.
 
---full: the 2026-08-30 capture's longer flow (feed, traverse, six mode-
-0x78 loader pulses, calibration pulses). That turned out to be the
-vendor app's PREVIEW preparation, and its end state -- preparation done
-but no preview pass run -- is one the vendor never ejects from: three
-ejects from it stalled the transport (protocol-notes.md pass 14, eject
-addendum). Kept for reference only.
+Safety (docs/hardware-safety.md): the start-state guard in the driver
+refuses to send anything unless reg 0x01 reads 0x22 (idle-homed) or
+0x00 (cold, never homed -- initialize() then runs cold_init first).
+Any failure or Ctrl-C leaves the hardware state unknown; the only
+recovery is a power cycle. The loader sensor is checked BEFORE
+initialize() because the base register table makes it unreliable
+afterwards -- and a "loaded" sensor does not prove the magazine is
+mechanically latched (observed 2026-09-04): check the magazine by hand
+and the LED colour before scanning.
 
-A bare 0x18 feed alone (our first attempt) drags the film in
-mechanically but leaves the loader state wrong -- the next scan then
-runs its motor without ever streaming data.
+The former --full flow (the 2026-08-30 preview-preparation capture)
+was removed in the 2026-09-05 safety pass: its end state is one the
+vendor never ejects from, and three ejects from it stalled the
+transport (protocol-notes.md pass 14, eject addendum).
+
+Usage:
+    .venv/bin/python tools/load_magazine.py
 """
-import gzip, json, sys, time
+
+from __future__ import annotations
+
+import logging
+import sys
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO))
-from of135i.device import Scanner
-from of135i.tables import Op
 
-# Default: the 2026-09-02 capture (feed + traverse). --full: the 2026-08-30
-# preview-preparation flow. See the module docstring.
-LITE = "--full" not in sys.argv
-if LITE:
-    raw = json.load(gzip.open(_REPO / "traces" / "20260902-vendor-eject-from-loaded.trace.json.gz", "rt"))
-else:
-    raw = json.load(gzip.open(_REPO / "traces" / "load-only-fixed.trace.json.gz", "rt"))
+from of135i.device import Scanner  # noqa: E402
+from of135i.safety import POWER_CYCLE_INSTRUCTION, SafetyError  # noqa: E402
+from of135i.usbio import Of135iError  # noqa: E402
 
-def mkop(o):
-    return Op(o["t"], o.get("dt", 0.0),
-              bm=o.get("bm") or 0, br=o.get("br") or 0,
-              wv=o.get("wv") or 0, wi=o.get("wi") or 0,
-              data=bytes.fromhex(o["data"]) if o.get("data") else b"",
-              length=o.get("len") or 0,
-              resp=bytes.fromhex(o["resps"][-1] if o.get("resps") else o.get("resp", "") or ""),
-              dur=o.get("dur") or 0.0)
 
-LOAD = [mkop(o) for o in (raw[291:640] if LITE else raw[790:3280])]
+def main() -> int:
+    if len(sys.argv) > 1:
+        print(f"usage: {sys.argv[0]} (no arguments; --full was removed, see the "
+              "module docstring)", file=sys.stderr)
+        return 2
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    scanner = None
+    try:
+        with Scanner.open() as scanner:
+            # Loader sensor BEFORE initialize() -- the register table
+            # written by initialize() changes reg 0x101 so the sensor
+            # bit is unreliable after it. Reads only.
+            if not scanner.is_magazine_loaded():
+                print("error: no magazine detected (push cassette in to the stop first)",
+                      file=sys.stderr)
+                return 1
+            scanner.initialize()
+            print("running the vendor load sequence...")
+            scanner.load_magazine()
+            print("load sequence done -- the button should be blue. Check by hand that the "
+                  "magazine is seated and locked before scanning (a loose magazine has been "
+                  "observed with a blue LED).")
+            return 0
+    except KeyboardInterrupt:
+        print("\ninterrupted.", file=sys.stderr)
+        _report(scanner)
+        return 130
+    except SafetyError as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 1
+    except Of135iError as e:
+        print(f"error: {e}", file=sys.stderr)
+        _report(scanner)
+        return 1
 
-with Scanner.open() as sc:
-    # Check loader sensor BEFORE initialize() — the register table
-    # written by initialize() changes reg 0x101 state so the sensor
-    # bit is unreliable after it. Raw device reads work fine.
-    if not sc.is_magazine_loaded():
-        print("error: no magazine detected (push cassette in to the stop first)",
-              file=sys.stderr)
-        sys.exit(1)
-    sc.initialize()
-    print("kör leverantörens laddsekvens%s..." % ("" if LITE else " (full)"))
-    sc._exec_ops(LOAD)
-    print("laddning klar — knappen ska vara blå")
+
+def _report(scanner) -> None:
+    if scanner is not None:
+        print(scanner.session.describe_failure(), file=sys.stderr)
+    else:
+        print(POWER_CYCLE_INSTRUCTION, file=sys.stderr)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

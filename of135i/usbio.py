@@ -4,6 +4,14 @@ Implements the Genesys vendor protocol over control endpoint 0, as
 documented in protocol-notes.md (transport table + pass 4/5). This
 module knows nothing about scanner semantics (registers, tables,
 sequences) — it only speaks the wire protocol.
+
+Hardware safety (see safety.py / docs/hardware-safety.md): every
+``UsbIo`` carries a ``HardwareSession`` and exposes the pyusb device
+only through a ``GuardedDevice`` proxy, so every OUT transfer -- from
+this module's own helpers or from device.py's verbatim op executor --
+is gated and counted in one place. ``open()`` takes the process lock
+before the first USB access; ``open(readonly=True)`` (doctor/status)
+additionally never configures the device and can never be armed.
 """
 
 from __future__ import annotations
@@ -14,6 +22,9 @@ from typing import Iterable, Sequence, Tuple
 
 import usb.core
 import usb.util
+
+from . import safety
+from .errors import Of135iError
 
 log = logging.getLogger("of135i")
 
@@ -28,50 +39,79 @@ _WRITE_CHUNK = 64          # bytes = 32 (reg, val) pairs
 _BUF_CHUNK = 16384         # bulk transfer chunk size
 
 
-class Of135iError(RuntimeError):
-    """Raised for transport-level failures specific to this driver."""
-
-
 class UsbIo:
-    """Thin wrapper around a pyusb device handle for the 07b3:1436 scanner."""
+    """Thin wrapper around a pyusb device handle for the 07b3:1436 scanner.
 
-    def __init__(self, dev: "usb.core.Device"):
-        self.dev = dev
+    ``dev`` is a safety.GuardedDevice around the real handle; ``session``
+    the safety.HardwareSession that decides whether writes may go out.
+    """
+
+    def __init__(self, dev: "usb.core.Device", readonly: bool = False,
+                 lock: "safety.ProcessLock | None" = None):
+        self.session = safety.HardwareSession(readonly=readonly)
+        self._raw_dev = dev
+        self.dev = safety.GuardedDevice(dev, self.session)
+        self._lock = lock
 
     # ------------------------------------------------------------ lifecycle
 
     @classmethod
-    def open(cls) -> "UsbIo":
+    def open(cls, readonly: bool = False) -> "UsbIo":
         """Find and claim the scanner on the host USB bus.
 
-        Raises Of135iError with likely-cause hints if the device is not
-        present (commonly: still attached to a VM, or in USB standby —
-        see protocol-notes.md pass 4).
+        Takes the process lock first (safety.ProcessLock -- raises
+        ScannerBusyError if another of135i process, writing or read-
+        only, holds the scanner). Raises Of135iError with likely-cause
+        hints if the device is not present (commonly: still attached
+        to a VM, or in USB standby — see protocol-notes.md pass 4).
+
+        readonly=True (doctor/status): the session can never be armed,
+        and SET_CONFIGURATION is not issued -- the kernel configured
+        the device at enumeration and pyusb never configures on its
+        own, so the read paths (control IN, interrupt IN) work without
+        it. A writing session keeps the verified open sequence
+        (detach kernel driver if any, set_configuration).
         """
-        dev = usb.core.find(idVendor=VID, idProduct=PID)
-        if dev is None:
-            raise Of135iError(
-                "Scanner 07b3:1436 not found on the host USB bus. "
-                "Likely causes: (1) the device is still attached to a VM "
-                "(release it via the hypervisor's USB/removable-devices "
-                "menu first); (2) the scanner is in USB standby after "
-                "inactivity — unplug/replug or power-cycle to wake it."
-            )
+        lock = safety.ProcessLock()
+        lock.acquire()
         try:
-            if dev.is_kernel_driver_active(0):
-                log.info("detaching kernel driver from interface 0")
-                dev.detach_kernel_driver(0)
-        except NotImplementedError:
-            # Platforms without kernel-driver introspection (e.g. Windows).
-            pass
-        dev.set_configuration()
-        log.info("opened device bus=%d addr=%d", dev.bus, dev.address)
-        return cls(dev)
+            dev = usb.core.find(idVendor=VID, idProduct=PID)
+            if dev is None:
+                raise Of135iError(
+                    "Scanner 07b3:1436 not found on the host USB bus. "
+                    "Likely causes: (1) the device is still attached to a VM "
+                    "(release it via the hypervisor's USB/removable-devices "
+                    "menu first); (2) the scanner is in USB standby after "
+                    "inactivity — unplug/replug or power-cycle to wake it."
+                )
+            if not readonly:
+                try:
+                    if dev.is_kernel_driver_active(0):
+                        log.info("detaching kernel driver from interface 0")
+                        dev.detach_kernel_driver(0)
+                except NotImplementedError:
+                    # Platforms without kernel-driver introspection (e.g. Windows).
+                    pass
+                dev.set_configuration()
+            log.info("opened device bus=%d addr=%d%s", dev.bus, dev.address,
+                     " (read-only session)" if readonly else "")
+            return cls(dev, readonly=readonly, lock=lock)
+        except BaseException:
+            lock.release()
+            raise
 
     def close(self) -> None:
-        if self.dev is not None:
-            usb.util.dispose_resources(self.dev)
-            self.dev = None
+        """Release the USB handle and the process lock. Sends nothing to
+        the scanner: a session that failed stays failed on the wire --
+        releasing the lock does not make the hardware safe."""
+        try:
+            if self._raw_dev is not None:
+                usb.util.dispose_resources(self._raw_dev)
+                self._raw_dev = None
+                self.dev = None
+        finally:
+            if self._lock is not None:
+                self._lock.release()
 
     def __enter__(self) -> "UsbIo":
         return self
@@ -96,19 +136,27 @@ class UsbIo:
                     f"wrote {n} of {len(chunk)} bytes"
                 )
 
-    def read_reg(self, reg: int) -> int:
+    def read_reg(self, reg: int, strict: bool = False) -> int:
         """Read one register.
 
         Wire: 0xc0/0x04/0x008e, wIndex=(reg<<8)|0x22, 2 B reply
         [value, 0x55]. The second byte is a constant ack; log (don't
         raise) if it deviates — captured hardware sometimes returns
         driver/hardware-managed low bits (see protocol-notes.md pass 4).
+        With strict=True a deviating ack byte is a malformed reply and
+        raises instead (the start-state check uses this: an unreadable
+        or malformed state is an unsafe state, see safety.py).
         """
         resp = self.dev.ctrl_transfer(0xC0, 0x04, 0x008E, (reg << 8) | 0x22, 2)
         resp = bytes(resp)
         if len(resp) != 2:
             raise Of135iError(f"reg 0x{reg:02x} read: expected 2 B, got {resp!r}")
         if resp[1] != 0x55:
+            if strict:
+                raise Of135iError(
+                    f"reg 0x{reg:02x} read: malformed reply {resp.hex()} "
+                    f"(ack byte 0x{resp[1]:02x}, expected 0x55)"
+                )
             log.warning(
                 "reg 0x%02x read: unexpected ack byte 0x%02x (expected 0x55)",
                 reg, resp[1],

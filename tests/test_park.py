@@ -72,7 +72,9 @@ class _FakeIo:
         for reg, val in pairs:
             self.events.append(("reg", reg, val))
 
-    def read_reg(self, reg: int) -> int:
+    def read_reg(self, reg: int, strict: bool = False) -> int:
+        if reg == 0x01:
+            return 0x22   # start-state guard (of135i.safety): idle-homed
         if reg == 0x15:
             return self._reg15
         if reg == 0x35:

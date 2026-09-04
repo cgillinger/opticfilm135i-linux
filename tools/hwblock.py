@@ -15,9 +15,16 @@ HARD SAFETY RULES (see the module's own code, not just this comment):
     else -- no home(), no cold_init() (initialize() triggers that
     itself when needed), no _motor_run, no register writes.
   - The first exception anywhere in a running block (including a USB
-    timeout) stops the block immediately: no retries of anything that
-    moves the motor. The report is written with status FAILED and the
-    traceback, and the process exits non-zero.
+    timeout and Ctrl-C) stops the block immediately: no retries of
+    anything that moves the motor, no recovery command. The report is
+    written with status FAILED, the traceback and the driver's
+    hardware-session record, and the process exits non-zero. The only
+    recovery is a power cycle (docs/hardware-safety.md).
+  - The start-state rule is NOT this script's own: the driver's guard
+    (of135i.safety) refuses the session unless reg 0x01 reads 0x22 or
+    0x00 before the first write. W0/C1 only ask the driver for that
+    verdict (Scanner.check_start_state(), read-only) so the block can
+    stop with a clear report instead of at the first write.
   - Nothing touches USB until argument parsing has validated the
     command line AND --out has been created on disk.
 
@@ -48,7 +55,7 @@ import numpy as np
 _REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO))
 
-from of135i import diag, image  # noqa: E402
+from of135i import diag, image, safety  # noqa: E402
 from of135i.device import Scanner  # noqa: E402
 from of135i.usbio import Of135iError, UsbIo  # noqa: E402
 
@@ -406,9 +413,28 @@ def _save(out_dir: Path, summary: dict) -> None:
 _SAFETY_STOP_MESSAGE = (
     "\n*** BLOCK FAILED -- STOPPED. ***\n"
     "Check the scanner visually and LISTEN for abnormal sounds before "
-    "doing anything else. Do not run any further scan/eject/motor "
-    "commands until you have confirmed the transport is not stalled.\n"
+    "doing anything else. No recovery command was sent; do not run any "
+    "further scan/eject/motor command and do NOT start a new session on "
+    "top of this one. " + safety.POWER_CYCLE_INSTRUCTION + "\n"
 )
+
+
+def _fail(summary: dict, out_dir: Path, step: str, scanner) -> int:
+    """Record a failed/interrupted block: status, traceback and the
+    driver's hardware-session record (writes, execute pulses, phase,
+    failure). Sends nothing to the scanner."""
+    summary["status"] = f"FAILED at step {step}"
+    summary["traceback"] = traceback.format_exc()
+    if scanner is not None:
+        summary["session"] = scanner.session_report()
+        summary["session_text"] = scanner.session.describe_failure()
+    summary["finished_utc"] = datetime.now(timezone.utc).isoformat()
+    _save(out_dir, summary)
+    print(_SAFETY_STOP_MESSAGE, file=sys.stderr)
+    if scanner is not None:
+        print(scanner.session.describe_failure(), file=sys.stderr)
+    print(render_report(summary))
+    return 1
 
 
 # =====================================================================
@@ -442,10 +468,13 @@ def _print_warm_steps(args: argparse.Namespace) -> None:
              abnormal sounds.
 
         STOP RULE: a scraping or grinding noise means cut the power
-        immediately. Do not wait to see what happens next.
+        immediately. Do not wait to see what happens next. If the block
+        stops for ANY reason, the only recovery is a power cycle -- never
+        start another session on top of a stopped one.
 
         This block will then run, WITHOUT further prompts:
-          - Read a baseline health report (no motor movement).
+          - Read a baseline health report (no motor movement) and ask
+            the driver's safety guard for the start-state verdict.
           - Scan frame {args.frame} at 3600 dpi {args.repeat} times in a
             row (reproducibility check).
           - Scan frames 1-4 as a batch.
@@ -466,55 +495,50 @@ def run_warm(args: argparse.Namespace, out_dir: Path) -> int:
 
     step = "W0"
     repro_stats: list = []
+    scanner = None
     try:
         with Scanner.open() as scanner:
             scanner.park_mode = args.park
-            # ---- W0: precheck (read-only + is_magazine_loaded) --------
+            # ---- W0: precheck (read-only: doctor, start state, sensor) --
             doctor = diag.collect_doctor(scanner.io)
             print(diag.format_doctor(doctor))
             diag.write_sidecar(str(out_dir / "doctor-baseline.json"), doctor)
             summary["driver_revision"] = (doctor.get("host") or {}).get("driver_revision")
-            state_name = (doctor.get("state") or {}).get("name", "unknown")
+            # The verdict comes from the driver's own guard (read-only
+            # here; it is enforced again at the first write regardless).
+            try:
+                verdict = scanner.check_start_state()
+            except safety.UnsafeStartStateError as e:
+                print(f"error: {e}", file=sys.stderr)
+                summary["steps"]["W0"] = {"state": "unsafe", "refused": str(e)}
+                summary["session"] = scanner.session_report()
+                summary["status"] = f"FAILED at step W0 (unsafe start state, reg 0x01 = {e.observed!r}; power-cycle first)"
+                _save(out_dir, summary)
+                return 1
             loaded = scanner.is_magazine_loaded()
-            summary["steps"]["W0"] = {"state": state_name, "magazine_loaded": loaded}
+            summary["steps"]["W0"] = {"state": verdict.value, "magazine_loaded": loaded}
             _save(out_dir, summary)
 
             if not loaded and not args.assume_loaded:
                 print("error: no magazine detected -- insert the cassette and "
-                      "run tools/load_magazine.py first (or, if a person has "
-                      "visually confirmed the magazine is loaded and locked and "
-                      "the sensor bit is stale because a previous session already "
-                      "ran initialize(), re-run with --assume-loaded)",
+                      "run tools/load_magazine.py first. (--assume-loaded exists for "
+                      "controlled development use only, when a person has physically "
+                      "confirmed the magazine is seated and locked.)",
                       file=sys.stderr)
                 summary["status"] = "FAILED at step W0 (no magazine detected)"
                 _save(out_dir, summary)
                 return 1
             if not loaded:
                 print("WARNING: loader sensor reads 'not loaded' but --assume-loaded "
-                      "given (human confirmed magazine loaded and locked); continuing")
+                      "given (a person has physically confirmed the magazine is seated "
+                      "and locked); continuing")
                 summary["steps"]["W0"]["assume_loaded"] = True
                 _save(out_dir, summary)
-            if state_name == "cold-never-homed":
+            if verdict is safety.StartState.COLD:
                 print("error: scanner reports cold-never-homed -- the warm "
                       "block expects an already-homed scanner. Run the "
                       "'cold' block instead.", file=sys.stderr)
                 summary["status"] = "FAILED at step W0 (cold scanner -- use 'cold' block)"
-                _save(out_dir, summary)
-                return 1
-            if state_name != "idle-homed":
-                # 2026-09-04: starting a session while reg 0x01 read 0x23
-                # (scan bit still set from an aborted calibration) ended in
-                # a motor whine and a firmware hang (USB enumerated, every
-                # control read timing out) -- the only recovery was a
-                # power cycle.  An engine left running by an aborted
-                # session must not be re-initialized on top of; refuse.
-                raw01 = (doctor.get("state") or {}).get("raw")
-                print(f"error: reg 0x01 = {raw01} is neither idle-homed (0x22) nor "
-                      "cold (0x00). The scanner is in an undefined state (typically "
-                      "an aborted session left the scan engine running). Do NOT "
-                      "start a new session on top of it: power-cycle the scanner, "
-                      "then run the 'cold' block or load_magazine.py.", file=sys.stderr)
-                summary["status"] = f"FAILED at step W0 (reg 0x01 = {raw01}, undefined state -- power-cycle first)"
                 _save(out_dir, summary)
                 return 1
 
@@ -635,16 +659,11 @@ def run_warm(args: argparse.Namespace, out_dir: Path) -> int:
                     summary["steps"]["W7"] = {"ejected": True}
                     _save(out_dir, summary)
 
-    except Exception:
-        summary["status"] = f"FAILED at step {step}"
-        summary["traceback"] = traceback.format_exc()
-        summary["finished_utc"] = datetime.now(timezone.utc).isoformat()
-        _save(out_dir, summary)
-        print(_SAFETY_STOP_MESSAGE, file=sys.stderr)
-        print(render_report(summary))
-        return 1
+    except (Exception, KeyboardInterrupt):
+        return _fail(summary, out_dir, step, scanner)
 
     summary["status"] = "COMPLETED"
+    summary["session"] = scanner.session_report() if scanner is not None else None
     summary["finished_utc"] = datetime.now(timezone.utc).isoformat()
     _save(out_dir, summary)
     print(render_report(summary))
@@ -700,18 +719,21 @@ def run_cold(args: argparse.Namespace, out_dir: Path) -> int:
     input("Press Enter once the scanner has been power-cycled... ")
 
     step = "C0"
+    scanner = None
     try:
-        # ---- C0: wait for re-enumeration (UsbIo.open()/close() only) ----
+        # ---- C0: wait for re-enumeration (read-only open/close only) ----
         print("Waiting for the scanner to re-enumerate on the USB bus (up to 90s)...")
         deadline = time.monotonic() + 90.0
         enumerated = False
-        while time.monotonic() < deadline:
+        while True:
             try:
-                io = UsbIo.open()
+                io = UsbIo.open(readonly=True)
                 io.close()
                 enumerated = True
                 break
             except Of135iError:
+                if time.monotonic() > deadline:
+                    break
                 time.sleep(2.0)
         summary["steps"]["C0"] = {"enumerated": enumerated}
         _save(out_dir, summary)
@@ -731,9 +753,17 @@ def run_cold(args: argparse.Namespace, out_dir: Path) -> int:
             print(diag.format_doctor(doctor))
             diag.write_sidecar(str(out_dir / "doctor-cold.json"), doctor)
             summary["driver_revision"] = (doctor.get("host") or {}).get("driver_revision")
-            state_name = (doctor.get("state") or {}).get("name", "unknown")
-            c1 = {"state": state_name}
-            if state_name == "idle-homed":
+            try:
+                verdict = scanner.check_start_state()
+            except safety.UnsafeStartStateError as e:
+                print(f"error: {e}", file=sys.stderr)
+                summary["steps"]["C1"] = {"state": "unsafe", "refused": str(e)}
+                summary["session"] = scanner.session_report()
+                summary["status"] = f"FAILED at step C1 (unsafe start state, reg 0x01 = {e.observed!r}; power-cycle first)"
+                _save(out_dir, summary)
+                return 1
+            c1 = {"state": verdict.value}
+            if verdict is safety.StartState.IDLE:
                 c1["note"] = "scanner was not actually power-cycled?"
                 print("note: scanner reports idle-homed -- was it actually "
                       "power-cycled? Continuing anyway.")
@@ -809,16 +839,11 @@ def run_cold(args: argparse.Namespace, out_dir: Path) -> int:
                 summary["steps"]["C5"] = {"ejected": True}
                 _save(out_dir, summary)
 
-    except Exception:
-        summary["status"] = f"FAILED at step {step}"
-        summary["traceback"] = traceback.format_exc()
-        summary["finished_utc"] = datetime.now(timezone.utc).isoformat()
-        _save(out_dir, summary)
-        print(_SAFETY_STOP_MESSAGE, file=sys.stderr)
-        print(render_report(summary))
-        return 1
+    except (Exception, KeyboardInterrupt):
+        return _fail(summary, out_dir, step, scanner)
 
     summary["status"] = "COMPLETED"
+    summary["session"] = scanner.session_report() if scanner is not None else None
     summary["finished_utc"] = datetime.now(timezone.utc).isoformat()
     _save(out_dir, summary)
     print(render_report(summary))
@@ -855,9 +880,11 @@ def build_parser() -> argparse.ArgumentParser:
                          help="number of reproducibility scans (default 10, minimum 2)")
     p_warm.add_argument("--eject", action="store_true", help="eject the magazine at the very end")
     p_warm.add_argument("--assume-loaded", action="store_true",
-                        help="skip the loader-sensor precheck when a person has visually "
-                             "confirmed the magazine is loaded and locked (the sensor bit "
-                             "is unreliable once a previous session has run initialize())")
+                        help="CONTROLLED DEVELOPMENT USE ONLY: skip the loader-sensor "
+                             "precheck when a person has PHYSICALLY confirmed the magazine "
+                             "is seated and locked. The sensor bit is unreliable once a "
+                             "previous session has run initialize(); this flag is not a "
+                             "recovery mechanism and does not bypass the start-state guard")
     p_warm.add_argument("--skip-dpi-change", action="store_true",
                          help="skip the 2400->3600 dpi position-shift test (W6)")
     p_warm.add_argument("--park", choices=("verbatim", "semantic"), default="verbatim",

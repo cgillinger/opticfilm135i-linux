@@ -183,6 +183,13 @@ class MockUsbIo:
     def wait_reg(self, reg, value, timeout=0, mask=0xFF):
         return 0x22
 
+    def read_reg(self, reg, strict=False):
+        # Start-state guard (of135i.safety): the session is armed only
+        # when reg 0x01 reads 0x22. Served here, not from the trace
+        # queues, so the guard's single read never desynchronizes the
+        # captured cr/poll responses.
+        return 0x22 if reg == 0x01 else 0
+
     def end_access(self, which=0x8C, wIndex=16):
         pass
 
@@ -254,8 +261,10 @@ def _run_sequence(dpi):
     white, white_len = _white_buffer(t, codes)
     cal_buffers = {white_len: deque([white]), len(meas): deque([meas, meas])}
 
-    mock = MockUsbIo(order, cal_buffers)
+    mock = MockUsbIo([t.PREP, t.AFE_BASE] + order, cal_buffers)
     scanner = Scanner(mock)
+    scanner.initialize(ir=True, dpi=dpi)   # required before every scan (safety pass)
+    mock.writes.clear()
     raw, width, meta = scanner.scan(frame=1, ir=True, dpi=dpi, lines=n_lines)
     assert width == W and meta == {"width": W, "alternating": True, "dpi": dpi}
     assert len(raw) == n_chunks * t.IMAGE_CHUNK_LEN

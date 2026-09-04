@@ -13,6 +13,14 @@ Layout per driver-design.md:
 `scan`, `status`, `eject` and `doctor` are wired to device.py/diag.py.
 `preview` has no captured trace to derive a phase list from yet
 (driver-design.md open item) and stays a stub.
+
+Hardware safety (safety.py, docs/hardware-safety.md): `status` and
+`doctor` open a READ-ONLY session that can never write. `scan`,
+`eject` and `watch` open a writing session whose first write is
+preceded by the start-state check inside the driver; the CLI adds
+nothing to those rules, it only reports the outcome. On any failure
+or Ctrl-C the CLI prints the session's failure record and the power-
+cycle instruction and exits -- it never sends a recovery command.
 """
 
 from __future__ import annotations
@@ -21,8 +29,11 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Callable
 
-from . import diag, image
+import usb.core
+
+from . import diag, image, safety
 from .device import SUPPORTED_DPIS, Scanner
 from .usbio import Of135iError, UsbIo
 
@@ -34,14 +45,16 @@ _BUTTON_NAMES = {0x48: "eject", 0x04: "sensor"}
 
 def _cmd_status(args: argparse.Namespace) -> int:
     try:
-        with UsbIo.open() as io:
+        with UsbIo.open(readonly=True) as io:
             for reg in _STATUS_REGS:
                 val = io.read_reg(reg)
                 print(f"reg 0x{reg:02x} = 0x{val:02x}")
+                if reg == 0x01:
+                    print(f"  start state: {safety.classify_reg01(val).value}")
             reg101 = io.read_ext_reg(0x101)
             print(f"reg 0x101 = 0x{reg101:02x}")
             if reg101 & 0x08:
-                print("magazine: loaded")
+                print("magazine: sensor reports present (does not prove it is locked)")
             else:
                 print("magazine: not detected")
             button = io.read_button()
@@ -58,7 +71,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
     try:
-        with UsbIo.open() as io:
+        with UsbIo.open(readonly=True) as io:
             report = diag.collect_doctor(io)
             print(diag.format_doctor(report))
             if args.json:
@@ -68,6 +81,51 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 1
     return 0
+
+
+def _run_writing_session(body: Callable[[Scanner], int]) -> int:
+    """Open a writing session, run `body(scanner)`, and report.
+
+    Every failure path ends here with a printed explanation and an
+    exit code -- and NOTHING sent to the scanner after the failure:
+    the driver marks the session failed the moment an exception (or
+    Ctrl-C) escapes a hardware operation, and Scanner.__exit__ only
+    closes the USB handle.
+    """
+    scanner: Scanner | None = None
+    try:
+        with Scanner.open() as scanner:
+            return body(scanner)
+    except KeyboardInterrupt:
+        print("\ninterrupted.", file=sys.stderr)
+        _print_session_failure(scanner)
+        return 130
+    except safety.SafetyError as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 1
+    except (Of135iError, usb.core.USBError) as e:
+        print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
+        _print_session_failure(scanner)
+        return 1
+    except Exception as e:
+        print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
+        _print_session_failure(scanner)
+        raise
+
+
+def _print_session_failure(scanner: Scanner | None) -> None:
+    if scanner is None:
+        print(safety.POWER_CYCLE_INSTRUCTION, file=sys.stderr)
+        return
+    s = scanner.session
+    if s.failure or s.refusal:
+        print(s.describe_failure(), file=sys.stderr)
+    elif s.writes:
+        print(f"{s.writes} write(s) had been sent; the hardware state is unknown. "
+              f"{safety.NO_RECOVERY_ATTEMPTED} {safety.POWER_CYCLE_INSTRUCTION}",
+              file=sys.stderr)
+    else:
+        print(safety.NO_COMMANDS_SENT, file=sys.stderr)
 
 
 def _write_image(arr, out: str, positive: bool = False) -> None:
@@ -136,36 +194,38 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # before every frame (protocol-notes.md pass 14). initialize()
     # writes the power-on base table only on its first call per
     # session, matching the vendor.
-    try:
-        with Scanner.open() as scanner:
-            scanner.park_mode = args.park
-            # Check the loader sensor BEFORE initialize() — the base
-            # register table written by initialize() changes ext reg
-            # 0x101 state, making the sensor bit unreliable after it.
-            if not scanner.is_magazine_loaded():
-                print("error: no magazine detected — insert the cassette "
-                      "and run load_magazine.py first", file=sys.stderr)
-                return 1
-            for frame in frames:
-                scanner.initialize(ir=dual, dpi=args.dpi)
-                out = _frame_output(args.output, frame) if multi else args.output
-                log.info("scanning frame %d @ %d dpi%s", frame, args.dpi,
-                          " (dual-light pass)" if dual else "")
-                if dual:
-                    raw, width, _meta = scanner.scan(frame=frame, ir=True, dpi=args.dpi)
-                    _finish_dual_scan(args, raw, width, out, write_ir=args.ir)
-                else:
-                    raw, width = scanner.scan(frame=frame)
-                    _finish_plain_scan(args, raw, width, out)
-                del raw
-                _write_diag_sidecar(args, scanner, out, frame)
-            if args.eject:
-                scanner.eject()
-                print("ejected")
-    except Of135iError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 1
-    return 0
+    def body(scanner: Scanner) -> int:
+        scanner.park_mode = args.park
+        # Read-only start-state check up front, so an unsafe scanner
+        # is reported before the magazine message (the driver would
+        # refuse at the first write anyway).
+        scanner.check_start_state()
+        # Check the loader sensor BEFORE initialize() — the base
+        # register table written by initialize() changes ext reg
+        # 0x101 state, making the sensor bit unreliable after it.
+        if not scanner.is_magazine_loaded():
+            print("error: no magazine detected — insert the cassette "
+                  "and run load_magazine.py first", file=sys.stderr)
+            return 1
+        for frame in frames:
+            scanner.initialize(ir=dual, dpi=args.dpi)
+            out = _frame_output(args.output, frame) if multi else args.output
+            log.info("scanning frame %d @ %d dpi%s", frame, args.dpi,
+                      " (dual-light pass)" if dual else "")
+            if dual:
+                raw, width, _meta = scanner.scan(frame=frame, ir=True, dpi=args.dpi)
+                _finish_dual_scan(args, raw, width, out, write_ir=args.ir)
+            else:
+                raw, width = scanner.scan(frame=frame)
+                _finish_plain_scan(args, raw, width, out)
+            del raw
+            _write_diag_sidecar(args, scanner, out, frame)
+        if args.eject:
+            scanner.eject()
+            print("ejected")
+        return 0
+
+    return _run_writing_session(body)
 
 
 def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
@@ -289,46 +349,48 @@ def _write_diag_sidecar(args: argparse.Namespace, scanner: Scanner, out: str, fr
 
 
 def _cmd_eject(args: argparse.Namespace) -> int:
-    try:
-        with Scanner.open() as scanner:
-            scanner.eject()
-    except Of135iError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 1
-    print("ejected")
-    return 0
+    def body(scanner: Scanner) -> int:
+        scanner.eject()
+        print("ejected")
+        return 0
+
+    return _run_writing_session(body)
 
 
 def _cmd_watch(args: argparse.Namespace) -> int:
-    try:
-        with Scanner.open() as scanner:
-            print("watching for button events (Ctrl+C to stop)", flush=True)
+    """Poll the button endpoint (reads only) and eject on the eject
+    button. The start state is checked read-only up front so an
+    unsafe scanner is refused immediately instead of at the first
+    button press; a failed eject ends the watch (the session is
+    failed; a further press must not send anything)."""
+    def body(scanner: Scanner) -> int:
+        scanner.check_start_state()
+        print("watching for button events (Ctrl+C to stop)", flush=True)
+        while True:
             try:
-                while True:
-                    button = scanner.io.read_button(timeout_ms=500)
-                    if button is None:
-                        continue
-                    if button == 0x48:
-                        print("eject button pressed", flush=True)
-                        if scanner.is_magazine_loaded():
-                            scanner.eject()
-                            print("ejected", flush=True)
-                        else:
-                            print("magazine not detected, ignoring", flush=True)
-                    elif button == 0x04:
-                        if scanner.is_magazine_loaded():
-                            print("magazine inserted", flush=True)
-                        else:
-                            print("magazine removed", flush=True)
-                    else:
-                        print(f"unknown event: 0x{button:02x}", flush=True)
+                button = scanner.io.read_button(timeout_ms=500)
             except KeyboardInterrupt:
+                # Idle wait interrupted: nothing was in progress.
                 print("\nstopped")
                 return 0
-    except Of135iError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 1
-    return 0
+            if button is None:
+                continue
+            if button == 0x48:
+                print("eject button pressed", flush=True)
+                if scanner.is_magazine_loaded():
+                    scanner.eject()
+                    print("ejected", flush=True)
+                else:
+                    print("magazine not detected, ignoring", flush=True)
+            elif button == 0x04:
+                if scanner.is_magazine_loaded():
+                    print("magazine inserted", flush=True)
+                else:
+                    print("magazine removed", flush=True)
+            else:
+                print(f"unknown event: 0x{button:02x}", flush=True)
+
+    return _run_writing_session(body)
 
 
 def _not_wired_yet(args: argparse.Namespace) -> int:

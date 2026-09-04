@@ -7,37 +7,34 @@ shading data) and bulk IN (calibration + image data). Data read from the
 scanner is stored per buffer-descriptor in --out.
 
 Usage:
-  sudo .venv/bin/python replay_trace.py TRACE.json.gz --out OUTDIR [--dry-run]
+  .venv/bin/python tools/replay_trace.py TRACE.json.gz --out OUTDIR [--dry-run]
 
-Safety: the trace is replayed verbatim; motor moves are the captured
-ones (calibration passes + frame feed + scan). Run with the film
-magazine in the same state as the capture (loaded, frame 1).
-USB errors are logged and skipped (stalls cleared), not fatal — the
-capture contains enumeration debris that a live replay cannot satisfy.
+Safety (docs/hardware-safety.md): the device is opened through the
+driver's guarded transport (of135i.usbio.UsbIo), so the process lock
+and the start-state guard apply -- the replay refuses to send anything
+unless reg 0x01 reads 0x22 (idle-homed). A cold scanner (0x00) is
+refused too: a replay is not the cold-init path. The FIRST USB error
+of any kind aborts the replay; nothing is retried, no stall is
+"cleared", no recovery command is sent, and the operator is told to
+power-cycle. The trace is replayed verbatim; motor moves are the
+captured ones. Run with the film magazine in the same state as the
+capture (loaded, frame 1).
 """
 
 import argparse
 import gzip
 import json
+import logging
 import struct
 import sys
 import time
 from pathlib import Path
 
-import usb.core
-import usb.util
+_REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO))
 
-VID, PID = 0x07B3, 0x1436
-
-
-def open_dev():
-    dev = usb.core.find(idVendor=VID, idProduct=PID)
-    if dev is None:
-        sys.exit("Scanner not on host bus (VM holds it? standby?).")
-    if dev.is_kernel_driver_active(0):
-        dev.detach_kernel_driver(0)
-    dev.set_configuration()
-    return dev
+from of135i import safety  # noqa: E402
+from of135i.usbio import EP_BULK_IN, EP_BULK_OUT, Of135iError, UsbIo  # noqa: E402
 
 
 class Replayer:
@@ -84,14 +81,11 @@ class Replayer:
                     return
                 time.sleep(0.004)
         elif t == "bo":
-            dev.write(0x02, bytes.fromhex(op["data"]), timeout=5000)
+            dev.write(EP_BULK_OUT, bytes.fromhex(op["data"]), timeout=5000)
         elif t == "bi":
-            try:
-                data = dev.read(0x81, op["len"], timeout=15000)
-            except usb.core.USBTimeoutError:
-                self.mismatch += 1
-                print(f"op{i} bi len={op['len']}: TIMEOUT", file=self.log)
-                return
+            # A bulk-IN timeout is NOT skipped any more: it aborts the
+            # replay like every other USB error (safety pass 2026-09-05).
+            data = dev.read(EP_BULK_IN, op["len"], timeout=15000)
             self.cur.extend(data)
 
     def save(self):
@@ -119,46 +113,53 @@ def main():
             stats[op["t"]] = stats.get(op["t"], 0) + 1
             bi += op.get("len", 0) if op["t"] == "bi" else 0
         print(f"{len(ops)} ops {stats}; bulk-in {bi} B; no device touched.")
-        return
+        return 0
 
-    dev = open_dev()
-    log = open(outdir / "replay.log", "w")
-    r = Replayer(dev, outdir, log)
-    t0 = time.time()
-    consecutive = 0
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     try:
-        for i, op in enumerate(ops):
-            if op["dt"] > args.pace:
-                time.sleep(min(op["dt"], 2.0))
-            try:
+        io = UsbIo.open()
+    except Of135iError as e:
+        sys.exit(f"error: {e}")
+    log = open(outdir / "replay.log", "w")
+    r = Replayer(io.dev, outdir, log)
+    t0 = time.time()
+    status = 1
+    try:
+        verdict = safety.verify_start_state(io)
+        if verdict is not safety.StartState.IDLE:
+            raise safety.OperationNotAllowedError(
+                f"replay refused: scanner start state is {verdict.value}; a trace replay "
+                f"is only permitted from the idle-homed state (reg 0x01 = 0x22). "
+                f"{safety.NO_COMMANDS_SENT}")
+        with io.session.operation("replay"):
+            for i, op in enumerate(ops):
+                io.session.phase = f"op{i}"
+                if op["dt"] > args.pace:
+                    time.sleep(min(op["dt"], 2.0))
                 r.exec_op(i, op)
-                consecutive = 0
-            except usb.core.USBError as e:
-                r.mismatch += 1
-                consecutive += 1
-                print(f"op{i} {op['t']}: USB error {e} — continuing",
-                      file=log)
-                if getattr(e, "errno", None) == 32:      # EPIPE: clear stall
-                    for ep in (0x81, 0x02):
-                        try:
-                            dev.clear_halt(ep)
-                        except usb.core.USBError:
-                            pass
-                if consecutive > 25:
-                    print(f"op{i}: too many consecutive USB errors, "
-                          f"aborting", file=log)
-                    break
-            if i % 200 == 0:
-                done = sum(len(b) for _, b in r.buffers) + len(r.cur)
-                print(f"\r  op {i}/{len(ops)}  data {done//1024} kB  "
-                      f"mismatches {r.mismatch}   ", end="", flush=True)
+                if i % 200 == 0:
+                    done = sum(len(b) for _, b in r.buffers) + len(r.cur)
+                    print(f"\r  op {i}/{len(ops)}  data {done//1024} kB  "
+                          f"mismatches {r.mismatch}   ", end="", flush=True)
+        status = 0
+    except KeyboardInterrupt:
+        print("\ninterrupted.", file=sys.stderr)
+        print(io.session.describe_failure(), file=sys.stderr)
+        status = 130
+    except safety.SafetyError as e:
+        print(f"\nrefused: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"\nerror at {io.session.phase}: {type(e).__name__}: {e}", file=sys.stderr)
+        print(io.session.describe_failure(), file=sys.stderr)
     finally:
         r.save()
+        print(json.dumps(io.session.snapshot(), indent=2, default=str), file=log)
         log.close()
-        usb.util.dispose_resources(dev)
+        io.close()
     print(f"\nDone in {time.time()-t0:.0f} s, {len(r.buffers)} buffers, "
-          f"{r.mismatch} mismatches. Output in {outdir}/")
+          f"{r.mismatch} mismatches, session {io.session.state.value}. Output in {outdir}/")
+    return status
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -18,6 +18,19 @@ settling etc.), so `_exec_ops` below reproduces replay_trace.py's
 executor semantics (see its module docstring) exactly, phase by
 phase, plus the hardware-discovered engine-busy wait after every
 execute pulse.
+
+Hardware safety (safety.py, docs/hardware-safety.md): every public
+method that can write to the scanner -- initialize(), cold_init(),
+scan(), eject(), home(), park_semantic(), load_magazine() -- runs as
+a *hardware operation* (`_operation()`). The first operation of a
+session verifies the start state (reg 0x01 must read 0x22, or 0x00
+for the cold-init path only) before its first write; an exception
+escaping any operation, KeyboardInterrupt included, marks the
+session failed and no recovery command of any kind is sent
+afterwards. The low-level executor `_exec_ops()` refuses to run
+outside an operation, so nothing can bypass this by calling it
+directly. Read-only methods (is_magazine_loaded, check_start_state)
+never write.
 """
 
 from __future__ import annotations
@@ -25,11 +38,15 @@ from __future__ import annotations
 import importlib
 import logging
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 import numpy as np
 
-from . import calibrate, tables, tables_base, tables_ir
+from . import calibrate, safety, tables, tables_base, tables_ir
+from .safety import (
+    OperationNotAllowedError, SessionState, StartState, UnsafeStartStateError,
+)
 from .tables import Op, Phase
 from .usbio import EP_BULK_IN, EP_BULK_OUT, Of135iError, UsbIo
 
@@ -67,10 +84,7 @@ _PACE_THRESHOLD = 0.05
 _PACE_CAP = 2.0
 
 
-def _has_execute_pulse(data: bytes) -> bool:
-    """True if a cw wv=0x83 register-batch payload contains the pair
-    (0x0f, 0x01) -- register 0x0f = "GO"."""
-    return any(data[i] == 0x0F and data[i + 1] == 0x01 for i in range(0, len(data) - 1, 2))
+_has_execute_pulse = safety.has_execute_pulse
 
 
 # ---------------------------------------------------- per-scan shading diag
@@ -137,6 +151,27 @@ class Scanner:
     def __init__(self, io: UsbIo):
         self.io = io
         self._base_initialized = False
+        # Set by initialize(), cleared by scan(): the vendor re-runs its
+        # PREP/AFE_BASE equivalent before every frame, and a scan
+        # without it is not a verified sequence.
+        self._prepared_for_scan = False
+
+        # Hardware-safety session (safety.py). A real UsbIo brings its
+        # own; a duck-typed transport (tests) gets one attached here,
+        # with its device handle wrapped in the same write-gating proxy,
+        # so the guard cannot be skipped by constructing Scanner over
+        # something other than UsbIo.
+        session = getattr(io, "session", None)
+        if not isinstance(session, safety.HardwareSession):
+            session = safety.HardwareSession()
+            try:
+                io.session = session
+            except AttributeError:
+                pass
+            dev = getattr(io, "dev", None)
+            if dev is not None and not isinstance(dev, safety.GuardedDevice):
+                io.dev = safety.GuardedDevice(dev, session)
+        self.session: safety.HardwareSession = session
 
         # Per-scan diagnostics (see diag.py). last_diag is populated by
         # scan()/_scan_dual() on every call (overwritten, not
@@ -171,7 +206,53 @@ class Scanner:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        # Close only. Deliberately NO park/home/eject/initialize here:
+        # if the block is left by an exception the hardware state is
+        # unknown and the only valid recovery is a power cycle.
         self.close()
+
+    # ------------------------------------------------------- safety gate
+
+    def check_start_state(self) -> StartState:
+        """Read-only: verify the scanner's start state for this session
+        (reg 0x01, read once, strictly) and return the classification.
+        Raises safety.UnsafeStartStateError -- with zero writes -- if
+        the state is neither idle-homed (0x22) nor cold (0x00), or if
+        it cannot be read. Idempotent: later calls return the verdict.
+        """
+        return safety.verify_start_state(self.io)
+
+    @contextmanager
+    def _operation(self, name: str, *, cold_ok: bool = False):
+        """Run a public hardware operation.
+
+        Outermost operation of a session: verifies the start state
+        first (no writes happen before that), and refuses anything but
+        the cold-init path (`cold_ok` operations: initialize/eject run
+        cold_init() themselves; cold_init itself) on a cold scanner.
+        Nested operations (initialize -> cold_init, scan -> park) run
+        inside the outer one without re-checking -- the transient
+        engine states inside a session are expected. Any exception
+        escaping the block marks the session FAILED (safety.
+        HardwareSession.operation); nothing is sent afterwards.
+        """
+        session = self.session
+        if not session.operations:
+            self.check_start_state()
+            if session.state is SessionState.COLD and not cold_ok:
+                raise OperationNotAllowedError(
+                    f"{name}() refused: the scanner is in the cold start state "
+                    f"(reg 0x01 = 0x00) and only initialize()/eject() -- which run the "
+                    f"cold-init path first -- or cold_init() itself may write to it. "
+                    f"{safety.NO_COMMANDS_SENT}",
+                    observed=session.start_reg01, session=session.snapshot())
+        with session.operation(name):
+            yield
+
+    def session_report(self) -> dict:
+        """JSON-serializable snapshot of the safety session (state,
+        write/execute counters, phase, failure record)."""
+        return self.session.snapshot()
 
     # ------------------------------------------------------- op execution
 
@@ -198,7 +279,17 @@ class Scanner:
         buffer-read descriptors were encountered (most phases produce
         0 or 1; "scan" produces one per image chunk plus the trailing
         drain).
+
+        Refuses to run outside a hardware operation (see _operation):
+        this is the only way op streams reach the wire, and every
+        caller must therefore be a guarded public method.
         """
+        self.session.write_allowed_or_final()
+        if not self.session.operations:
+            raise OperationNotAllowedError(
+                "_exec_ops() called outside a hardware operation; use the public "
+                "Scanner methods (initialize/scan/eject/load_magazine). Nothing was sent.",
+                session=self.session.snapshot())
         dev = self.io.dev
         collected: list[bytes] = []
         cur: bytearray | None = None
@@ -307,6 +398,7 @@ class Scanner:
         the per-scan diagnostics -- see diag.py and scan()/_scan_dual().
         """
         ops = phase.patched(**inject) if inject else phase.ops
+        self.session.phase = phase.name
         t0 = time.monotonic()
         try:
             return self._exec_ops(ops)
@@ -395,7 +487,11 @@ class Scanner:
                 f"park_semantic: expected 2 control writes with wValue 0x8b in "
                 f"{t.__name__}.PARK, found {len(ctrl_8b)}"
             )
+        with self._operation("park"):
+            self._park_semantic_body(ctrl_8b, has_0x19)
 
+    def _park_semantic_body(self, ctrl_8b, has_0x19) -> None:
+        self.session.phase = "park"
         t0 = time.monotonic()
         dev = self.io.dev
         waits = {
@@ -498,35 +594,38 @@ class Scanner:
         equivalent (protocol-notes.md pass 14) -- so the base table is
         written on the first call only.
 
-        Cold-start detection: a scanner that has just been power-cycled
-        has never been homed and reg 0x01 reads without bit 0x20 set
-        (the vendor's own "ready" bit, see _wait_engine_idle). Every
-        successful run to date has started from a vendor-initiated
-        state (0x01=0x22) -- see cold_init()'s docstring -- so this
-        runs the vendor's cold-start sequence first when that bit is
-        missing, exactly once per session.
+        Cold start: the session's start-state check (safety.py) reads
+        reg 0x01 once before the first write. 0x22 (idle-homed) is the
+        state every successful run to date started from; 0x00 (fresh
+        power-on, never homed) makes this run the vendor's cold-start
+        sequence first, exactly once per session -- and nothing else
+        is accepted: any other value, or an unreadable one, refuses
+        the whole session with zero writes.
         """
-        if not self._base_initialized:
-            val01 = self.io.read_reg(0x01)
-            if val01 == 0x00:
-                log.info(
-                    "initialize: reg 0x01=%#04x lacks bit 0x20 -- cold-start "
-                    "state (fresh power-on), running cold_init() first",
-                    val01,
-                )
-                self.cold_init()
-            self.io.write_regs(tables_base.BASE_INIT_PAIRS)
-            for adr, val in tables_base.AFE_BASE_PAIRS:
-                self.io.write_regs([(0x51, adr), (0x5D, 0x00), (0x5E, val)])
-            self._base_initialized = True
-        # IR mode: trace 04's own prep carries IR-LED setup that the
-        # plain prep lacks (a dim IR pass was observed without it,
-        # 2026-08-30) -- run the matching phase set. Other resolutions:
-        # their own prep/afe_base (the base register table is dpi-
-        # dependent: regs 0x3b/0x3c, and the sensor timing at 7200).
+        # Validate parameters before entering the operation, so a bad
+        # argument is a plain error and not a hardware-session failure.
         t = _tables_for(dpi, ir)
-        self._run_phase(t.PREP)
-        self._run_phase(t.AFE_BASE)
+        with self._operation("initialize", cold_ok=True):
+            if not self._base_initialized:
+                if self.session.state is SessionState.COLD:
+                    log.info(
+                        "initialize: reg 0x01=0x00 -- cold-start state (fresh "
+                        "power-on), running cold_init() first",
+                    )
+                    self.cold_init()
+                self.session.phase = "base_init"
+                self.io.write_regs(tables_base.BASE_INIT_PAIRS)
+                for adr, val in tables_base.AFE_BASE_PAIRS:
+                    self.io.write_regs([(0x51, adr), (0x5D, 0x00), (0x5E, val)])
+                self._base_initialized = True
+            # IR mode: trace 04's own prep carries IR-LED setup that the
+            # plain prep lacks (a dim IR pass was observed without it,
+            # 2026-08-30) -- run the matching phase set. Other resolutions:
+            # their own prep/afe_base (the base register table is dpi-
+            # dependent: regs 0x3b/0x3c, and the sensor timing at 7200).
+            self._run_phase(t.PREP)
+            self._run_phase(t.AFE_BASE)
+            self._prepared_for_scan = True
 
     # ---------------------------------------------------------- cold-start
 
@@ -545,13 +644,54 @@ class Scanner:
         three rounds of loader homing moves (3 moves each), with the
         register table + AFE sequence rewritten between rounds.
 
-        Called automatically by initialize() when it detects a cold
-        scanner; can also be called directly. Leaves the scanner in
-        the same homed state initialize() otherwise assumes, but does
-        NOT itself write BASE_INIT_PAIRS -- COLD_INIT_PAIRS carries the
-        loader (not scan) motor profile, so initialize() still runs
-        its normal power-on table write afterwards.
+        Called automatically by initialize()/eject() on a cold scanner;
+        can also be called directly, but ONLY from the cold start state
+        (reg 0x01 = 0x00, see safety.py): on an already-homed scanner,
+        or one in any other state, it refuses with zero writes -- re-
+        homing a magazine-loaded transport is not a verified sequence.
+        Leaves the scanner in the same homed state initialize()
+        otherwise assumes, but does NOT itself write BASE_INIT_PAIRS --
+        COLD_INIT_PAIRS carries the loader (not scan) motor profile, so
+        initialize() still runs its normal power-on table write
+        afterwards.
+
+        When the sequence completes, reg 0x01 is read again (strictly)
+        and must be 0x22 -- COLD_INIT_PAIRS writes 0x01=0x22 and the
+        idle bit 0x20 sets when the last homing move completes -- for
+        the session to be armed for normal operations. Anything else
+        is a new observation: the session is refused there, no
+        further command is sent, and the operator is asked to power-
+        cycle (and to record the value).
         """
+        # Precondition BEFORE the operation (a refusal here is not a
+        # hardware failure): the read-only start check, then COLD-only.
+        self.check_start_state()
+        if self.session.state is not SessionState.COLD or self.session.cold_init_done:
+            raise OperationNotAllowedError(
+                "cold_init() is only permitted from the cold start state (reg 0x01 = "
+                f"0x00) and only once per session; session is {self.session.state.value}"
+                f"{' (cold_init already done)' if self.session.cold_init_done else ''}. "
+                f"{safety.NO_COMMANDS_SENT}",
+                observed=self.session.start_reg01, session=self.session.snapshot())
+        with self._operation("cold_init", cold_ok=True):
+            self.session.phase = "cold_init"
+            self._cold_init_body()
+            self.session.phase = "cold_init:verify"
+            val01 = self.io.read_reg(0x01, strict=True)
+            if val01 != safety.REG01_IDLE:
+                self.session.refuse(
+                    f"cold_init completed but reg 0x01 = {val01:#04x} instead of "
+                    f"{safety.REG01_IDLE:#04x}", val01)
+                raise UnsafeStartStateError(
+                    f"cold_init completed but the scanner reads reg 0x01 = {val01:#04x}, "
+                    f"not the expected idle state {safety.REG01_IDLE:#04x}. No further "
+                    f"commands were sent. This is a new observation -- please record it. "
+                    f"{safety.POWER_CYCLE_INSTRUCTION}",
+                    observed=val01, session=self.session.snapshot())
+            self.session.arm_after_cold_init(val01)
+            log.info("cold_init: complete, reg 0x01 = %#04x -- session armed", val01)
+
+    def _cold_init_body(self) -> None:
         log.info("cold_init: starting vendor cold-start sequence")
 
         # ---- 1: GL chip handshake --------------------------------------
@@ -576,11 +716,12 @@ class Scanner:
         # ---- 9: three rounds of loader homing (3 moves each) -------------
         for round_n in range(1, 4):
             log.info("cold_init: homing round %d/3", round_n)
+            self.session.phase = f"cold_init:homing-{round_n}"
             self._cold_homing_round()
             if round_n < 3:
                 self._cold_write_table_and_afe()
 
-        log.info("cold_init: complete")
+        log.info("cold_init: homing done")
 
     def _cold_write_table_and_afe(self) -> None:
         """Steps 3-7 of cold_init(): the cold register table, end-of-
@@ -754,9 +895,8 @@ class Scanner:
         # No motor-busy bit is confirmed yet (driver-design.md open
         # items / protocol-notes.md pass 4 "Motor/feed" note): reg 0x01
         # was observed unchanged across a real homing move on hardware.
-        # Poll it briefly (as of135i_poc.py's motor_run does) so a
-        # deployed driver at least has somewhere to add a real busy
-        # check later, but don't block indefinitely on it.
+        # Poll it briefly so a deployed driver at least has somewhere
+        # to add a real busy check later, but don't block indefinitely.
         time.sleep(0.1)
         self._wait_engine_idle()
         self.io.write_regs([(0x09, 0x00)])
@@ -767,8 +907,31 @@ class Scanner:
         runs the engine for whatever line count regs 0x25-0x27 hold, and
         the vendor flow has no homing command at all (positioning is an
         absolute mode-0x18 feed from wherever the carriage is). Not used
-        by the scan flow any more; kept for the CLI/tools only."""
-        self._motor_run(0x30, 1)
+        by the scan flow, the CLI or any tool; kept only as a guarded
+        entry point (it is NOT a recovery command)."""
+        with self._operation("home"):
+            self.session.phase = "home"
+            self._motor_run(0x30, 1)
+
+    def load_magazine(self) -> None:
+        """Run the vendor's magazine insert flow (tables_load.LOAD: the
+        2026-09-02 capture's loader-sensor ack, feed and prescan
+        traverse -- hardware-verified load -> scan -> eject that day).
+        The cassette must already be pushed in to the stop by hand.
+        Requires initialize() first in this session, as the vendor
+        flow does (the tool tools/load_magazine.py does both).
+
+        This sets the vendor's "loaded" indication; it does not prove
+        the magazine is mechanically latched (docs/hardware-safety.md).
+        """
+        from . import tables_load
+        self.session.write_allowed_or_final()
+        if not self._base_initialized:
+            raise OperationNotAllowedError(
+                "load_magazine() requires initialize() first in this session. "
+                f"{safety.NO_COMMANDS_SENT}", session=self.session.snapshot())
+        with self._operation("load_magazine"):
+            self._run_phase(tables_load.LOAD)
 
     def eject(self) -> None:
         """Eject the film magazine the way the vendor driver does it from
@@ -787,21 +950,27 @@ class Scanner:
         variant is the one that freed the magazine each time via the
         vendor software.
 
-        Safety guards (2026-09-03):
+        Safety guards:
+        - Start-state guard (safety.py): a session that reads anything
+          but 0x22/0x00 in reg 0x01 is refused before any write.
         - If no magazine is detected (loader sensor bit 0x08 clear),
           log a notice and return immediately — no motor commands.
-        - If reg 0x01=0x00 (cold start, never homed), run cold_init()
-          first — ejecting from an unhomed state is undefined.
+          (The sensor is only trustworthy before the first initialize()
+          of the scanner's power cycle -- docs/hardware-safety.md.)
+        - Cold start (0x00, never homed): run cold_init() first —
+          ejecting from an unhomed state is undefined.
         """
-        if not self.is_magazine_loaded():
-            log.info("eject: no magazine detected — nothing to do")
-            return
+        with self._operation("eject", cold_ok=True):
+            if not self.is_magazine_loaded():
+                log.info("eject: no magazine detected — nothing to do")
+                return
+            if self.session.state is SessionState.COLD:
+                log.info("eject: reg 0x01=0x00 (cold state) — running cold_init() first")
+                self.cold_init()
+            self.session.phase = "eject"
+            self._eject_body()
 
-        val01 = self.io.read_reg(0x01)
-        if val01 == 0x00:
-            log.info("eject: reg 0x01=%#04x (cold state) — running cold_init() first", val01)
-            self.cold_init()
-
+    def _eject_body(self) -> None:
         feedl = 3090
         self.io.write_regs([(0x33, 0x8E)])
         self.io.write_regs([(0x32, (self.io.read_reg(0x32) | 0x02) & 0xFF)])
@@ -910,6 +1079,12 @@ class Scanner:
         {"width": W, "alternating": True, "dpi": dpi} -- see
         image.split_ir() for turning raw_bytes into separate visible/IR
         arrays.
+
+        Safety: runs as a hardware operation (start-state guard on the
+        session's first write; any exception marks the session failed
+        and nothing -- no PARK -- is sent afterwards). Requires
+        initialize() first in this session, before EVERY scan, as the
+        vendor flow does; refuses with zero writes otherwise.
         """
         # Magazine presence: the CLI checks the loader sensor before
         # initialize() (the only point where it's reliable). By the time
@@ -917,9 +1092,28 @@ class Scanner:
         # 0x101 so re-checking here would be unreliable. Callers that
         # bypass the CLI should verify the magazine is loaded before
         # calling scan().
-        if ir or dpi != 3600:
-            return self._scan_dual(dual_tables(dpi), frame=frame, lines=lines)
+        #
+        # Parameter validation BEFORE the operation: a bad argument is a
+        # plain error, not a hardware-session failure.
+        self.session.write_allowed_or_final()
+        t = dual_tables(dpi) if (ir or dpi != 3600) else None
+        if self.park_mode not in ("verbatim", "semantic"):
+            raise ValueError(f"unknown park_mode {self.park_mode!r} (want 'verbatim' or 'semantic')")
+        if not self._prepared_for_scan:
+            raise OperationNotAllowedError(
+                "scan() requires initialize() first (before every frame) in this session. "
+                f"{safety.NO_COMMANDS_SENT}", session=self.session.snapshot())
+        if t is not None:
+            n_lines_check = lines if lines is not None else t.DEFAULT_LINES
+            if n_lines_check > 0xFFFFFF:
+                raise Of135iError(f"line count {n_lines_check} does not fit the 24-bit register")
+        with self._operation("scan"):
+            self._prepared_for_scan = False
+            if t is not None:
+                return self._scan_dual(t, frame=frame, lines=lines)
+            return self._scan_plain(frame=frame, lines=lines)
 
+    def _scan_plain(self, frame: int, lines: int | None) -> tuple[bytes, int]:
         # No homing move here. The vendor flow has none (protocol-notes.md
         # pass 14): positioning below is an absolute mode-0x18 feed that
         # works from wherever the previous frame left the carriage. The
@@ -981,6 +1175,7 @@ class Scanner:
         # ops up to (not including) the re-upload's buffer-write
         # descriptor (split_at), compute, then run the rest patched.
         verify_phase = tables.CAL_SHADING_VERIFY
+        self.session.phase = verify_phase.name
         _t0 = time.monotonic()
         verify_raw = self._exec_ops(verify_phase.ops[:verify_phase.split_at])[0]
         verify_meas = np.frombuffer(verify_raw, dtype="<u2").reshape(128, 3762, 3)
@@ -1051,6 +1246,7 @@ class Scanner:
             "park_waits": dict(self._diag_park_waits) if self._diag_park_waits is not None else None,
             "started_utc": started_utc,
             "finished_utc": datetime.now(timezone.utc).isoformat(),
+            "session": self.session.snapshot(),
         }
 
         return image, tables.IMAGE_WIDTH
@@ -1164,6 +1360,7 @@ class Scanner:
         self._run_phase(t.CAL_SHADING_UPLOAD, shading_table_a=shading_a, shading_table_b=shading_b)
 
         verify_phase = t.CAL_SHADING_VERIFY
+        self.session.phase = verify_phase.name
         _t0 = time.monotonic()
         verify_raw = self._exec_ops(verify_phase.ops[:verify_phase.split_at])[0]
         verify_meas = np.frombuffer(verify_raw, dtype="<u2").reshape(t.SHADING_LINES, W, 3)
@@ -1256,6 +1453,7 @@ class Scanner:
             "park_waits": dict(self._diag_park_waits) if self._diag_park_waits is not None else None,
             "started_utc": started_utc,
             "finished_utc": datetime.now(timezone.utc).isoformat(),
+            "session": self.session.snapshot(),
         }
 
         return image, W, {"width": W, "alternating": True, "dpi": dpi}

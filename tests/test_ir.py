@@ -174,7 +174,7 @@ def _build_queues(phase_order):
 class MockUsbIo:
     def __init__(self, cal_buffers: dict[int, deque]):
         self.writes: list[bytes] = []
-        self.dev = _FakeDev(_build_queues(PHASE_ORDER_IR), self.writes, cal_buffers)
+        self.dev = _FakeDev(_build_queues([tables_ir.PREP, tables_ir.AFE_BASE] + PHASE_ORDER_IR), self.writes, cal_buffers)
         self.buf_reads: list[tuple[int, int]] = []
         self.buf_writes: list[tuple[int, bytes]] = []
 
@@ -183,6 +183,13 @@ class MockUsbIo:
 
     def wait_reg(self, reg, value, timeout=0, mask=0xFF):
         return 0x22
+
+    def read_reg(self, reg, strict=False):
+        # Start-state guard (of135i.safety): the session is armed only
+        # when reg 0x01 reads 0x22. Served here, not from the trace
+        # queues, so the guard's single read never desynchronizes the
+        # captured cr/poll responses.
+        return 0x22 if reg == 0x01 else 0
 
     def end_access(self, which=0x8C, wIndex=16):
         pass
@@ -337,6 +344,8 @@ def _expected_stream():
 def test_scan_sequence_matches_trace_ir():
     mock = MockUsbIo(_build_cal_buffers())
     scanner = Scanner(mock)
+    scanner.initialize(ir=True)   # required before every scan (safety pass); not under test
+    mock.writes.clear()
     raw, width, meta = scanner.scan(frame=1, ir=True)
 
     assert width == tables_ir.IMAGE_WIDTH == 5184

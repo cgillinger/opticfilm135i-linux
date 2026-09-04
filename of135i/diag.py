@@ -35,7 +35,7 @@ from pathlib import Path
 
 import usb.util
 
-from . import tables, tables_ir
+from . import safety, tables, tables_ir
 
 log = logging.getLogger("of135i")
 
@@ -154,14 +154,23 @@ def _collect_regs(io) -> dict:
 
 
 def _collect_state(io) -> dict:
+    """Engine state from reg 0x01, classified by the ONE rule set in
+    safety.classify_reg01 (the same rule the start-state guard
+    enforces). An unsafe state gets the operator advice attached;
+    doctor itself never acts on it."""
     val = io.read_reg(0x01)
-    if val == 0x22:
-        name = "idle-homed"
-    elif val == 0x00:
-        name = "cold-never-homed"
-    else:
-        name = "unknown"
-    return {"raw": f"0x{val:02x}", "name": name}
+    verdict = safety.classify_reg01(val)
+    out = {"raw": f"0x{val:02x}", "name": verdict.value}
+    if verdict is safety.StartState.UNSAFE:
+        out["advice"] = (
+            "not an accepted start state: every writing operation will refuse to "
+            "start. " + safety.POWER_CYCLE_INSTRUCTION
+        )
+        out["magazine_sensor_note"] = (
+            "the loader-sensor reading is unreliable in this state (a previous "
+            "session has written the base register table)"
+        )
+    return out
 
 
 def _collect_host() -> dict:
@@ -264,6 +273,10 @@ def format_doctor(report: dict) -> str:
     state = report.get("state")
     if isinstance(state, dict) and not is_error(state):
         lines.append(f"  reg 0x01 = {state.get('raw')} ({state.get('name')})")
+        if state.get("advice"):
+            lines.append(f"  ADVICE: {state['advice']}")
+        if state.get("magazine_sensor_note"):
+            lines.append(f"  note: {state['magazine_sensor_note']}")
     else:
         lines.append(f"  <unavailable: {state}>")
     status_word = report.get("status_word")

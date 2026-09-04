@@ -263,7 +263,13 @@ class MockUsbIo:
 
     def __init__(self, cal_buffers: dict[int, deque]):
         self.writes: list[bytes] = []
-        self.dev = _FakeDev(_build_queues(PHASE_ORDER), self.writes, cal_buffers)
+        # PREP/AFE_BASE first: scan() now requires initialize() in the
+        # same session (safety pass), whose polls must find their
+        # captured responses too. The expected stream below still
+        # covers PHASE_ORDER only -- initialize()'s writes are cleared
+        # before scan() (see the sequence test).
+        self.dev = _FakeDev(_build_queues([tables.PREP, tables.AFE_BASE] + PHASE_ORDER),
+                            self.writes, cal_buffers)
         self.buf_reads: list[tuple[int, int]] = []
         self.buf_writes: list[tuple[int, bytes]] = []
 
@@ -272,6 +278,13 @@ class MockUsbIo:
 
     def wait_reg(self, reg, value, timeout=0, mask=0xFF):
         return 0x22
+
+    def read_reg(self, reg, strict=False):
+        # Start-state guard (of135i.safety): the session is armed only
+        # when reg 0x01 reads 0x22. Served here, not from the trace
+        # queues, so the guard's single read never desynchronizes the
+        # captured cr/poll responses.
+        return 0x22 if reg == 0x01 else 0
 
     def end_access(self, which=0x8C, wIndex=16):
         pass
@@ -513,6 +526,8 @@ def test_warmup_gives_up_after_max_retries():
 def test_scan_sequence_matches_trace():
     mock = MockUsbIo(_build_cal_buffers())
     scanner = Scanner(mock)
+    scanner.initialize()          # base table + PREP + AFE_BASE (not under test here)
+    mock.writes.clear()
     raw, width = scanner.scan(frame=1)
 
     assert width == tables.IMAGE_WIDTH == 3762
