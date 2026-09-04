@@ -39,7 +39,8 @@ Total hardware scan count has not been systematically tracked.
 | 7200 dpi scans | At least 1 | Hardware-verified |
 | A3 reproducibility | 2 rounds × 10 scans (6 warm + 4 cold) | Repeated |
 | Whole-strip batches (4 frames) | At least 1 documented | Hardware-verified |
-| Cold-start cycles | >=5 (Test 1 + Test 9 scans 6–9) | Partial — lamp warmup issue open |
+| Cold-start initializations | >=3 documented (cold eject 09-02, Test 1, Test 9) | Partial — lamp warmup issue open |
+| Post-cold-start scans | >=5 (Test 1 + Test 9 scans 6–9) | Partial — gain clips to 0x3F, flat images |
 | Eject cycles | Multiple | Hardware-verified |
 | Magazine load cycles | Multiple | Hardware-verified |
 | IR scans (dual-light) | Standard mode in nearly all scans | Repeated |
