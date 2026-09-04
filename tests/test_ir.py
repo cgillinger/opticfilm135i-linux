@@ -29,6 +29,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 import struct
 import sys
 from collections import deque
@@ -350,6 +351,20 @@ def test_scan_sequence_matches_trace_ir():
         f"{len(expected)} B expected (first divergence at byte "
         f"{next((i for i in range(min(len(actual), len(expected))) if actual[i] != expected[i]), min(len(actual), len(expected)))})"
     )
+
+    # Per-scan diagnostics (of135i.diag / device.py Part 2), dual-light
+    # path -- mirrors tests/test_calibrate.py's same check.
+    d = scanner.last_diag
+    assert isinstance(d, dict), d
+    assert d["dual"] is True, d["dual"]
+    assert d["dpi"] == 3600, d["dpi"]
+    assert d["warmup_attempts"] == 1, d["warmup_attempts"]
+    assert "cal_white" in d["phase_seconds"], d["phase_seconds"]
+    assert "scan" in d["phase_seconds"], d["phase_seconds"]
+    assert isinstance(d["poll_timeouts"], int), d["poll_timeouts"]
+    assert isinstance(d["cr_mismatches"], int), d["cr_mismatches"]
+    json.dumps(d, default=str)  # must be JSON-serializable
+
     print(
         f"test_scan_sequence_matches_trace_ir OK "
         f"({len(mock.writes)} writes, {len(actual)} B)"

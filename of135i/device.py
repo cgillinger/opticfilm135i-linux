@@ -25,6 +25,7 @@ from __future__ import annotations
 import importlib
 import logging
 import time
+from datetime import datetime, timezone
 
 import numpy as np
 
@@ -72,6 +73,51 @@ def _has_execute_pulse(data: bytes) -> bool:
     return any(data[i] == 0x0F and data[i + 1] == 0x01 for i in range(0, len(data) - 1, 2))
 
 
+# ---------------------------------------------------- per-scan shading diag
+
+def _parse_shading_offsets(payload: bytes) -> np.ndarray:
+    """Recover the per-pixel offset field of a calibrate.shading_table()/
+    shading_table2()-style payload (126 payload + 2 zero trailer
+    (offset, gain) u16 LE pairs per full 512 B block, final block
+    unpadded), mirroring tests/test_calibrate.py's _parse_shading_blocks.
+    Returns an (n_pixels, 3) float64 array (pixel-interleaved RGB, same
+    order as the image line format). Diagnostics only -- does not feed
+    back into calibrate.py or the scan flow."""
+    offsets: list[int] = []
+    i, n = 0, len(payload)
+    while i < n:
+        remaining = n - i
+        if remaining >= 512:
+            block, n_payload = payload[i:i + 512], 126
+            i += 512
+        else:
+            block, n_payload = payload[i:i + remaining], remaining // 4
+            i += remaining
+        pairs = np.frombuffer(block, dtype="<u2").reshape(-1, 2)
+        offsets.extend(pairs[:n_payload, 0].tolist())
+    arr = np.array(offsets, dtype=np.float64)
+    if arr.size == 0 or arr.size % 3 != 0:
+        raise ValueError(f"shading payload does not hold a whole number of RGB pixels ({arr.size} values)")
+    return arr.reshape(-1, 3)
+
+
+def _shading_stats(payload: bytes) -> dict:
+    """Per-scan diagnostics summary of one shading-table upload payload:
+    per-channel offset mean/min/max when the block format parses
+    cleanly, else just the payload length (see diag.py/device.py's
+    module docs -- this never raises, and never touches calibrate.py)."""
+    try:
+        px = _parse_shading_offsets(payload)
+        return {
+            "per_channel_offset": [
+                {"mean": float(px[:, ch].mean()), "min": float(px[:, ch].min()), "max": float(px[:, ch].max())}
+                for ch in range(3)
+            ],
+        }
+    except Exception as e:
+        return {"len_bytes": len(payload), "note": f"could not parse per-channel stats: {e}"}
+
+
 # Lamp warmup retry: if gain_codes returns all-maxed (0x3F) on every
 # channel, the lamp is likely cold (insufficient white-line levels for
 # meaningful calibration).  Wait and re-measure up to this many times.
@@ -85,6 +131,20 @@ class Scanner:
     def __init__(self, io: UsbIo):
         self.io = io
         self._base_initialized = False
+
+        # Per-scan diagnostics (see diag.py). last_diag is populated by
+        # scan()/_scan_dual() on every call (overwritten, not
+        # accumulated); the _diag_* attributes below are the recording
+        # points _run_phase/_exec_ops/_poll_one/_gain_with_warmup write
+        # into, reset at the start of each scan() / _scan_dual() call.
+        # None of this adds or changes any USB operation -- it only
+        # observes values/timings the driver already computes.
+        self.last_diag: dict | None = None
+        self._diag_phase_seconds: dict[str, float] = {}
+        self._diag_poll_timeouts: int = 0
+        self._diag_cr_mismatches: int = 0
+        self._diag_poll_timeout_details: list[dict] = []
+        self._diag_warmup: dict | None = None
 
     @classmethod
     def open(cls) -> "Scanner":
@@ -156,6 +216,7 @@ class Scanner:
             elif op.kind == "cr":
                 got = bytes(dev.ctrl_transfer(op.bm, op.br, op.wv, op.wi, op.length))
                 if got != op.resp:
+                    self._diag_cr_mismatches += 1
                     log.debug(
                         "cr wv=%#06x wi=%#06x: got %s want %s -- continuing",
                         op.wv, op.wi, got.hex(), op.resp.hex(),
@@ -209,6 +270,12 @@ class Scanner:
                     and (got[0] & ~0x18 & 0xFF) == (want[0] & ~0x18 & 0xFF)):
                 return
             if time.monotonic() > deadline:
+                self._diag_poll_timeouts += 1
+                if len(self._diag_poll_timeout_details) < 20:
+                    self._diag_poll_timeout_details.append({
+                        "wv": f"0x{op.wv:04x}", "wi": f"0x{op.wi:04x}",
+                        "last": got.hex(), "want": want.hex(),
+                    })
                 log.warning(
                     "poll wv=%#06x wi=%#06x timed out after %.1fs "
                     "(last %s, want %s) -- continuing",
@@ -219,9 +286,19 @@ class Scanner:
 
     def _run_phase(self, phase: Phase, **inject) -> list[bytes]:
         """Execute a phase's full op stream (with injections applied),
-        returning its collected read buffers."""
+        returning its collected read buffers.
+
+        Timed into self._diag_phase_seconds[phase.name] (accumulated,
+        in case a phase name is ever run more than once per scan) for
+        the per-scan diagnostics -- see diag.py and scan()/_scan_dual().
+        """
         ops = phase.patched(**inject) if inject else phase.ops
-        return self._exec_ops(ops)
+        t0 = time.monotonic()
+        try:
+            return self._exec_ops(ops)
+        finally:
+            dt = time.monotonic() - t0
+            self._diag_phase_seconds[phase.name] = self._diag_phase_seconds.get(phase.name, 0.0) + dt
 
     # -------------------------------------------------------------- init
 
@@ -585,11 +662,27 @@ class Scanner:
         white line(s) to feed to gain_codes().
 
         Returns (gain_r, gain_g, gain_b).
+
+        Records into self._diag_warmup (for scan()/_scan_dual()'s
+        per-scan diagnostics -- see diag.py): "attempts" (CAL_WHITE run
+        count), "gain_history" (one [r,g,b] per attempt), "exhausted"
+        (bool), and "white_mean"/"white_max" (per-channel, from the
+        LAST attempt's white array -- the one gain_codes() was
+        actually computed from for the returned codes).
         """
+        diag = {"attempts": 0, "gain_history": [], "exhausted": False,
+                "white_mean": None, "white_max": None}
+        self._diag_warmup = diag
+
         for attempt in range(_WARMUP_MAX_RETRIES + 1):
             white_raw = self._run_phase(cal_white_phase)[0]
             white = parse_white(white_raw)
             gain_r, gain_g, gain_b = calibrate.gain_codes(white)
+
+            diag["attempts"] += 1
+            diag["gain_history"].append([gain_r, gain_g, gain_b])
+            diag["white_mean"] = [float(x) for x in white.astype(np.float64).mean(axis=0)]
+            diag["white_max"] = [float(x) for x in white.astype(np.float64).max(axis=0)]
 
             all_maxed = (gain_r == calibrate._GAIN_MAX_CODE
                          and gain_g == calibrate._GAIN_MAX_CODE
@@ -607,6 +700,7 @@ class Scanner:
                 )
                 time.sleep(_WARMUP_RETRY_DELAY)
 
+        diag["exhausted"] = True
         log.warning(
             "gain still maxed after %d retries — proceeding "
             "(image may be flat/underexposed)",
@@ -655,6 +749,15 @@ class Scanner:
         # calibration reads (frame 2+ of a batch calibrated dark,
         # 2026-09-01).
 
+        # ---- per-scan diagnostics: reset recording state (see diag.py) --
+        self._diag_phase_seconds = {}
+        self._diag_poll_timeouts = 0
+        self._diag_cr_mismatches = 0
+        self._diag_poll_timeout_details = []
+        self._diag_warmup = None
+        started_utc = datetime.now(timezone.utc).isoformat()
+        t_start = time.monotonic()
+
         # ---- dark pair (offset bracket, gain=0) ------------------------
         dark_a_raw = self._run_phase(tables.CAL_DARK_A)[0]
         dark_b_raw = self._run_phase(tables.CAL_DARK_B)[0]
@@ -697,11 +800,15 @@ class Scanner:
         # ops up to (not including) the re-upload's buffer-write
         # descriptor (split_at), compute, then run the rest patched.
         verify_phase = tables.CAL_SHADING_VERIFY
+        _t0 = time.monotonic()
         verify_raw = self._exec_ops(verify_phase.ops[:verify_phase.split_at])[0]
         verify_meas = np.frombuffer(verify_raw, dtype="<u2").reshape(128, 3762, 3)
         shading2 = calibrate.shading_table2(verify_meas, shading_meas)
         remaining = verify_phase.patched(shading_table2=shading2)[verify_phase.split_at:]
         self._exec_ops(remaining)
+        self._diag_phase_seconds["cal_shading_verify"] = (
+            self._diag_phase_seconds.get("cal_shading_verify", 0.0) + (time.monotonic() - _t0)
+        )
 
         # ---- position: relative feed from current carriage position ------
         feedl = tables.feedl_for_frame(frame)
@@ -732,6 +839,36 @@ class Scanner:
         # PARK's own first op is the captured end-of-access control
         # write (cw wv=0x8d) -- no separate call needed here.
         self._run_phase(tables.PARK)
+
+        warmup = self._diag_warmup or {}
+        self.last_diag = {
+            "dpi": 3600,
+            "frame": frame,
+            "dual": False,
+            "lines": n_lines,
+            "width": tables.IMAGE_WIDTH,
+            "raw_bytes": len(image),
+            "chunk_count": tables.IMAGE_CHUNK_COUNT,
+            "dark_a_mean": [float(x) for x in dark_a.astype(np.float64).mean(axis=0)],
+            "dark_b_mean": [float(x) for x in dark_b.astype(np.float64).mean(axis=0)],
+            "white_mean": warmup.get("white_mean"),
+            "white_max": warmup.get("white_max"),
+            "gain_codes": [gain_r, gain_g, gain_b],
+            "warmup_attempts": warmup.get("attempts"),
+            "warmup_gain_history": warmup.get("gain_history"),
+            "warmup_exhausted": warmup.get("exhausted"),
+            "offset_codes": [off_r, off_g, off_b],
+            "shading": _shading_stats(shading),
+            "shading2": _shading_stats(shading2),
+            "feedl": feedl,
+            "phase_seconds": dict(self._diag_phase_seconds),
+            "total_seconds": time.monotonic() - t_start,
+            "poll_timeouts": self._diag_poll_timeouts,
+            "cr_mismatches": self._diag_cr_mismatches,
+            "poll_timeout_details": list(self._diag_poll_timeout_details),
+            "started_utc": started_utc,
+            "finished_utc": datetime.now(timezone.utc).isoformat(),
+        }
 
         return image, tables.IMAGE_WIDTH
 
@@ -773,6 +910,15 @@ class Scanner:
         # No homing move -- see scan().
         W = t.IMAGE_WIDTH
         dpi = t.DPI
+
+        # ---- per-scan diagnostics: reset recording state (see diag.py) --
+        self._diag_phase_seconds = {}
+        self._diag_poll_timeouts = 0
+        self._diag_cr_mismatches = 0
+        self._diag_poll_timeout_details = []
+        self._diag_warmup = None
+        started_utc = datetime.now(timezone.utc).isoformat()
+        t_start = time.monotonic()
 
         # ---- dark pair (offset bracket, gain=0) ------------------------
         # Both reads feed offset_codes() (per-channel means, same as the
@@ -834,6 +980,7 @@ class Scanner:
         self._run_phase(t.CAL_SHADING_UPLOAD, shading_table_a=shading_a, shading_table_b=shading_b)
 
         verify_phase = t.CAL_SHADING_VERIFY
+        _t0 = time.monotonic()
         verify_raw = self._exec_ops(verify_phase.ops[:verify_phase.split_at])[0]
         verify_meas = np.frombuffer(verify_raw, dtype="<u2").reshape(t.SHADING_LINES, W, 3)
         # Same cross-connection: table A (visible lines) uses TARGET_A,
@@ -848,6 +995,9 @@ class Scanner:
             shading_table2_a=shading2_a, shading_table2_b=shading2_b,
         )[verify_phase.split_at:]
         self._exec_ops(remaining)
+        self._diag_phase_seconds["cal_shading_verify"] = (
+            self._diag_phase_seconds.get("cal_shading_verify", 0.0) + (time.monotonic() - _t0)
+        )
 
         # ---- position: relative feed from current carriage position ------
         # POSITION uses mode 0x18 (feed) which advances FEEDL steps from
@@ -891,5 +1041,35 @@ class Scanner:
 
         # ---- park ---------------------------------------------------------
         self._run_phase(t.PARK)
+
+        warmup = self._diag_warmup or {}
+        self.last_diag = {
+            "dpi": dpi,
+            "frame": frame,
+            "dual": True,
+            "lines": n_lines,
+            "width": W,
+            "raw_bytes": len(image),
+            "chunk_count": n_chunks,
+            "dark_a_mean": [float(x) for x in dark_a.astype(np.float64).mean(axis=0)],
+            "dark_b_mean": [float(x) for x in dark_b.astype(np.float64).mean(axis=0)],
+            "white_mean": warmup.get("white_mean"),
+            "white_max": warmup.get("white_max"),
+            "gain_codes": [gain_r, gain_g, gain_b],
+            "warmup_attempts": warmup.get("attempts"),
+            "warmup_gain_history": warmup.get("gain_history"),
+            "warmup_exhausted": warmup.get("exhausted"),
+            "offset_codes": [off_r, off_g, off_b],
+            "shading": {"a": _shading_stats(shading_a), "b": _shading_stats(shading_b)},
+            "shading2": {"a": _shading_stats(shading2_a), "b": _shading_stats(shading2_b)},
+            "feedl": feedl,
+            "phase_seconds": dict(self._diag_phase_seconds),
+            "total_seconds": time.monotonic() - t_start,
+            "poll_timeouts": self._diag_poll_timeouts,
+            "cr_mismatches": self._diag_cr_mismatches,
+            "poll_timeout_details": list(self._diag_poll_timeout_details),
+            "started_utc": started_utc,
+            "finished_utc": datetime.now(timezone.utc).isoformat(),
+        }
 
         return image, W, {"width": W, "alternating": True, "dpi": dpi}

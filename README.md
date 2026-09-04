@@ -108,7 +108,22 @@ sudo .venv/bin/python -m of135i status
 
 # watch mode: ejects on hardware button press, reports magazine events
 sudo .venv/bin/python -m of135i watch
+
+# read-only hardware health report
+sudo .venv/bin/python -m of135i doctor --json doctor-report.json
 ```
+
+`doctor` is strictly read-only on the wire (USB control reads and
+descriptor queries only — no register writes, no motor commands, no
+`initialize()`/`cold_init()`): it prints USB descriptor info, the
+GL chip id, the derived engine state (idle-homed / cold-never-homed /
+unknown from register 0x01), a dump of every register the vendor
+driver itself is observed reading, magazine/button status, and host
+info (Python/pyusb versions, driver git revision). `--json PATH` also
+saves the report as JSON. Every `scan` additionally writes a
+`<output>.diag.json` sidecar alongside each frame with the computed
+calibration values (gain/offset/shading), phase timings, and poll/
+mismatch counters for that frame — disable it with `--no-diag`.
 
 To run without `sudo`, install the udev rule (see the file for the
 commands): [`udev/60-of135i.rules`](udev/60-of135i.rules).

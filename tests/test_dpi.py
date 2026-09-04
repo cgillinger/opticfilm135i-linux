@@ -25,6 +25,7 @@ Covers, for every dpi module:
 
 from __future__ import annotations
 
+import json
 import struct
 import sys
 from collections import deque
@@ -254,9 +255,20 @@ def _run_sequence(dpi):
     cal_buffers = {white_len: deque([white]), len(meas): deque([meas, meas])}
 
     mock = MockUsbIo(order, cal_buffers)
-    raw, width, meta = Scanner(mock).scan(frame=1, ir=True, dpi=dpi, lines=n_lines)
+    scanner = Scanner(mock)
+    raw, width, meta = scanner.scan(frame=1, ir=True, dpi=dpi, lines=n_lines)
     assert width == W and meta == {"width": W, "alternating": True, "dpi": dpi}
     assert len(raw) == n_chunks * t.IMAGE_CHUNK_LEN
+
+    # Per-scan diagnostics (of135i.diag / device.py Part 2), dual-light
+    # path -- mirrors tests/test_calibrate.py's same check.
+    d = scanner.last_diag
+    assert isinstance(d, dict), d
+    assert d["dual"] is True and d["dpi"] == dpi, d
+    assert d["warmup_attempts"] == 1, d["warmup_attempts"]
+    assert "cal_white" in d["phase_seconds"] and "scan" in d["phase_seconds"], d["phase_seconds"]
+    assert isinstance(d["poll_timeouts"], int) and isinstance(d["cr_mismatches"], int), d
+    json.dumps(d, default=str)  # must be JSON-serializable
 
     # Expected stream.
     off_r, off_g, off_b = calibrate.offset_codes(np.zeros((4, 3), np.uint16), np.zeros((4, 3), np.uint16))

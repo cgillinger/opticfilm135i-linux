@@ -21,6 +21,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 import struct
 import sys
 from collections import deque
@@ -510,6 +511,21 @@ def test_scan_sequence_matches_trace():
         f"{len(expected)} B expected (first divergence at byte "
         f"{next((i for i in range(min(len(actual), len(expected))) if actual[i] != expected[i]), min(len(actual), len(expected)))})"
     )
+
+    # Per-scan diagnostics (of135i.diag / device.py Part 2): observed
+    # values only, no new USB operations -- the write-stream assertion
+    # above already proves that.
+    d = scanner.last_diag
+    assert isinstance(d, dict), d
+    assert d["gain_codes"] == [0x2E, 0x21, 0x29], d["gain_codes"]
+    assert d["offset_codes"] == [0x010B, 0x010A, 0x010B], d["offset_codes"]
+    assert d["warmup_attempts"] == 1, d["warmup_attempts"]
+    assert "cal_white" in d["phase_seconds"], d["phase_seconds"]
+    assert "scan" in d["phase_seconds"], d["phase_seconds"]
+    assert isinstance(d["poll_timeouts"], int), d["poll_timeouts"]
+    assert isinstance(d["cr_mismatches"], int), d["cr_mismatches"]
+    json.dumps(d, default=str)  # must be JSON-serializable
+
     print(
         f"test_scan_sequence_matches_trace OK "
         f"({len(mock.writes)} writes, {len(actual)} B)"

@@ -8,8 +8,9 @@ Layout per driver-design.md:
     of135i preview
     of135i status
     of135i watch
+    of135i doctor
 
-`scan`, `status` and `eject` are wired to device.py (scan sequencing).
+`scan`, `status`, `eject` and `doctor` are wired to device.py/diag.py.
 `preview` has no captured trace to derive a phase list from yet
 (driver-design.md open item) and stays a stub.
 """
@@ -21,7 +22,7 @@ import logging
 import sys
 from pathlib import Path
 
-from . import image
+from . import diag, image
 from .device import SUPPORTED_DPIS, Scanner
 from .usbio import Of135iError, UsbIo
 
@@ -49,6 +50,20 @@ def _cmd_status(args: argparse.Namespace) -> int:
             else:
                 name = _BUTTON_NAMES.get(button, f"0x{button:02x}")
                 print(f"button: {name}")
+    except Of135iError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    try:
+        with UsbIo.open() as io:
+            report = diag.collect_doctor(io)
+            print(diag.format_doctor(report))
+            if args.json:
+                diag.write_sidecar(args.json, report)
+                print(f"wrote {args.json}")
     except Of135iError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
@@ -142,6 +157,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                     raw, width = scanner.scan(frame=frame)
                     _finish_plain_scan(args, raw, width, out)
                 del raw
+                _write_diag_sidecar(args, scanner, out, frame)
             if args.eject:
                 scanner.eject()
                 print("ejected")
@@ -240,6 +256,37 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
         print(f"wrote {ir_out} ({ir.shape[1]}x{ir.shape[0]}, 16-bit, IR channel)")
 
 
+def _write_diag_sidecar(args: argparse.Namespace, scanner: Scanner, out: str, frame: int) -> None:
+    """Write <out>'s .diag.json sidecar from scanner.last_diag (see
+    diag.py/device.py) unless --no-diag was given, and log a one-line
+    INFO summary of the per-frame calibration/health counters."""
+    if args.no_diag or scanner.last_diag is None:
+        return
+    d = scanner.last_diag
+    sidecar = dict(d)
+    sidecar["output"] = out
+    sidecar["cli"] = {
+        "frame": frame,
+        "frames": args.frames,
+        "dpi": args.dpi,
+        "ir": args.ir,
+        "positive": args.positive,
+        "rotate": args.rotate,
+        "no_clean": args.no_clean,
+    }
+    path = diag.sidecar_path(out)
+    diag.write_sidecar(path, sidecar)
+    print(f"wrote {path}")
+    gain_r, gain_g, gain_b = d.get("gain_codes", [0, 0, 0])
+    off_r, off_g, off_b = d.get("offset_codes", [0, 0, 0])
+    log.info(
+        "frame %d diag: gain R=%#04x G=%#04x B=%#04x offset R=%#06x G=%#06x B=%#06x "
+        "warmup_attempts=%s poll_timeouts=%s cr_mismatches=%s",
+        frame, gain_r, gain_g, gain_b, off_r, off_g, off_b,
+        d.get("warmup_attempts"), d.get("poll_timeouts"), d.get("cr_mismatches"),
+    )
+
+
 def _cmd_eject(args: argparse.Namespace) -> int:
     try:
         with Scanner.open() as scanner:
@@ -317,6 +364,8 @@ def build_parser() -> argparse.ArgumentParser:
              "clean the visible image with it")
     p_scan.add_argument("--no-clean", action="store_true",
         help="skip IR-based dust/scratch removal on the visible image (--ir only)")
+    p_scan.add_argument("--no-diag", action="store_true",
+        help="skip writing the <output>.diag.json calibration/timing sidecar")
     p_scan.add_argument("-o", "--output", required=True, help="output file path (.tiff or .pnm)")
     p_scan.set_defaults(func=_cmd_scan)
 
@@ -332,6 +381,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_watch = sub.add_parser("watch", help="poll buttons and eject on button press")
     p_watch.set_defaults(func=_cmd_watch)
+
+    p_doctor = sub.add_parser(
+        "doctor", help="read-only hardware health report (no motor/register writes)")
+    p_doctor.add_argument("--json", metavar="PATH", help="also write the report as JSON to PATH")
+    p_doctor.set_defaults(func=_cmd_doctor)
 
     return parser
 
