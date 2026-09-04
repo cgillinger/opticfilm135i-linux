@@ -53,14 +53,29 @@ one invocation. The rough edges you should know about:
   captured pacing between commands, because slimmed-down variants
   produced wrong calibration (see docs/protocol-notes.md). A 3600 dpi
   frame therefore takes noticeably longer than in the vendor software.
-  Slow and correct first; trimming the stream is future work.
+  Slow and correct first. The stream is now classified op by op in
+  [`docs/replay-analysis.md`](docs/replay-analysis.md) and the first
+  phase (PARK) has a semantic implementation behind `--park semantic`
+  (real read-modify-write and condition waits instead of captured
+  pacing); it is off by default until it has been A/B-tested on
+  hardware.
 - **Cold-start initialization is handled.** The driver detects a freshly
   power-cycled scanner (reg 0x01 = 0x00) and runs the vendor's cold-start
   homing sequence automatically — no VM or vendor software needed.
   Scanning immediately after a cold start used to produce flat images
   (lamp not yet warmed up, AFE gain clipped at maximum); the driver now
   re-measures the white line up to three times with a short delay when
-  that happens. Implemented, not yet hardware-verified.
+  that happens. The retry has been seen triggering on hardware
+  (2026-09-04) but that scan did not complete, so its effect on the
+  image is still unverified.
+- **After an interrupted scan, power-cycle before anything else.** A
+  session that is aborted inside a phase (Ctrl-C, a crash, a USB
+  timeout) can leave the scan engine running (reg 0x01 reads 0x23
+  rather than the idle 0x22). Starting a new session on top of that
+  state produced a motor event and a firmware hang on 2026-09-04; the
+  scanner stayed on the bus but answered nothing until power was cut.
+  `tools/hwblock.py` refuses to start unless the scanner is idle (0x22)
+  or cold (0x00); the plain `scan` command does not check this yet.
 - **The magazine must be loaded through the driver**
   (`tools/load_magazine.py`) — the autoloader is driver-managed and the
   hardware buttons are dead without a driver process.
