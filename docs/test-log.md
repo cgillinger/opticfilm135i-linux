@@ -563,3 +563,87 @@ with a warning (does not abort — the user may still want the data).
 
 **Status:** IMPLEMENTED. Needs hardware verification (cold-start
 scan after power cycle).
+
+---
+
+## 2026-09-04 (evening) — First hardware run of doctor/hwblock, firmware hang
+
+### Context
+
+First hardware session with the new diagnostics (`of135i doctor`,
+`.diag.json` sidecars, `tools/hwblock.py`). Scanner powered on from
+cold, cassette inserted but not pushed to the stop ("in, not locked",
+eject button orange).
+
+### Test 11a: `doctor` on a cold scanner — PASSED (read-only)
+
+`doctor` ran to completion in a few seconds: USB descriptors, chip id
+`01`, reg 0x01 = 0x00 (cold-never-homed), status word 0x4855, 288
+registers dumped, loader sensor "loaded", button event "sensor".
+No writes issued. Report saved as `doctor-0.json` in the private
+analysis directory.
+
+### Test 11b: cold_init + load_magazine.py — PASSED mechanically, state open
+
+`tools/load_magazine.py` ran cold_init (3 homing rounds) and the
+default load flow. Same benign warnings as Test 1 (initial status
+word 0x4855 poll timeout, settle 0x32=0x1D, resync 0xF855), plus
+`poll ... last cc55 want d855` at the end of the load. Christian:
+"everything sounds normal". Button steady BLUE. `doctor` afterwards:
+reg 0x01 = **0x02** (not 0x22), status word 0xcc55, sensor loaded.
+
+**Open finding (TODO 9b):** the magazine sat LOOSE but in place after
+the load while the LED showed blue; Christian states that state should
+show ORANGE. Our load flow sets the "loaded" indication without the
+magazine being latched. Not yet analysed. Christian then seated and
+locked the magazine by hand (LED still blue).
+
+### Test 11c: hwblock warm, first attempt — ABORTED by operator decision
+
+Started `hwblock.py warm --repeat 10`. While the first scan was in
+CAL_WHITE (warmup retry had triggered: gain 0x3F on a lamp only
+minutes from cold start), Christian reported the magazine loose. I
+stopped the process with SIGINT (safety rule B6) — inside the bulk
+read of the white measurement.
+
+State left behind (doctor): reg 0x01 = **0x23** (scan bit set, engine
+running), 0x03 = 0x30 (lamp on), status word 0xa555, sensor bit clear.
+
+### Test 11d: new session on top of the aborted state — FAILED, FIRMWARE HANG
+
+Second `hwblock warm` exited at W0 because `is_magazine_loaded()`
+read false (sensor bit is unreliable once a session has written the
+base table — TODO 9c). Added `--assume-loaded` and started a third
+run. `initialize()` (base table 0x01=0x22, 0x02=0x78 … + PREP +
+AFE_BASE) ran on top of the still-running engine; polls showed
+0x32=0x99 (want 0x95) and status classes 0xB1/0xB5 (want 0xF8/0xFC).
+CAL_DARK_A's execute pulse followed; Christian heard a **loud two-tone
+sound** that stopped after a moment; the next control write timed out
+(`USBTimeoutError`). Afterwards the device stayed enumerated but every
+control read timed out (2 s). Kernel log: nothing.
+
+**Root cause (assessment):** re-initializing a scanner whose scan
+engine was left running by an aborted session. The vendor's base
+table assumes an idle engine; writing it plus an execute pulse into a
+running engine produced a motor event and a firmware lock-up. The
+A9 recovery premise "a new process against an *idle* scanner" does
+not extend to a scanner with the engine running.
+
+**Recovery:** power off (done by Christian). Session paused there.
+
+**Changes made:** `hwblock` W0 now refuses to start unless reg 0x01
+is 0x22 (idle-homed) or 0x00 (cold) and tells the operator to
+power-cycle; `--assume-loaded` documented as "human confirmed locked
+magazine" only. TODOs 9b/9c/9d recorded (CLAUDE.md).
+
+**Rules confirmed/added:**
+- After ANY abort inside a phase, the only recovery is a power cycle.
+  Never start a new session when reg 0x01 is neither 0x22 nor 0x00.
+- The loader-sensor precheck is only meaningful before the first
+  `initialize()` of the scanner's power cycle.
+
+**Status:** doctor HARDWARE VERIFIED (read-only path). hwblock W0 +
+first-scan calibration reached hardware; W1–W6 NOT RUN. Warmup retry
+observed triggering on hardware (gain 0x3F, retry 1/3 logged) but the
+scan never completed, so its effect is still UNVERIFIED. AFE offset
+codes: no completed scan, UNVERIFIED. Semantic PARK: not exercised.

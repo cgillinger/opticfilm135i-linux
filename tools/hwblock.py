@@ -479,17 +479,42 @@ def run_warm(args: argparse.Namespace, out_dir: Path) -> int:
             summary["steps"]["W0"] = {"state": state_name, "magazine_loaded": loaded}
             _save(out_dir, summary)
 
-            if not loaded:
+            if not loaded and not args.assume_loaded:
                 print("error: no magazine detected -- insert the cassette and "
-                      "run tools/load_magazine.py first", file=sys.stderr)
+                      "run tools/load_magazine.py first (or, if a person has "
+                      "visually confirmed the magazine is loaded and locked and "
+                      "the sensor bit is stale because a previous session already "
+                      "ran initialize(), re-run with --assume-loaded)",
+                      file=sys.stderr)
                 summary["status"] = "FAILED at step W0 (no magazine detected)"
                 _save(out_dir, summary)
                 return 1
+            if not loaded:
+                print("WARNING: loader sensor reads 'not loaded' but --assume-loaded "
+                      "given (human confirmed magazine loaded and locked); continuing")
+                summary["steps"]["W0"]["assume_loaded"] = True
+                _save(out_dir, summary)
             if state_name == "cold-never-homed":
                 print("error: scanner reports cold-never-homed -- the warm "
                       "block expects an already-homed scanner. Run the "
                       "'cold' block instead.", file=sys.stderr)
                 summary["status"] = "FAILED at step W0 (cold scanner -- use 'cold' block)"
+                _save(out_dir, summary)
+                return 1
+            if state_name != "idle-homed":
+                # 2026-09-04: starting a session while reg 0x01 read 0x23
+                # (scan bit still set from an aborted calibration) ended in
+                # a motor whine and a firmware hang (USB enumerated, every
+                # control read timing out) -- the only recovery was a
+                # power cycle.  An engine left running by an aborted
+                # session must not be re-initialized on top of; refuse.
+                raw01 = (doctor.get("state") or {}).get("raw")
+                print(f"error: reg 0x01 = {raw01} is neither idle-homed (0x22) nor "
+                      "cold (0x00). The scanner is in an undefined state (typically "
+                      "an aborted session left the scan engine running). Do NOT "
+                      "start a new session on top of it: power-cycle the scanner, "
+                      "then run the 'cold' block or load_magazine.py.", file=sys.stderr)
+                summary["status"] = f"FAILED at step W0 (reg 0x01 = {raw01}, undefined state -- power-cycle first)"
                 _save(out_dir, summary)
                 return 1
 
@@ -829,6 +854,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_warm.add_argument("--repeat", type=int, default=10,
                          help="number of reproducibility scans (default 10, minimum 2)")
     p_warm.add_argument("--eject", action="store_true", help="eject the magazine at the very end")
+    p_warm.add_argument("--assume-loaded", action="store_true",
+                        help="skip the loader-sensor precheck when a person has visually "
+                             "confirmed the magazine is loaded and locked (the sensor bit "
+                             "is unreliable once a previous session has run initialize())")
     p_warm.add_argument("--skip-dpi-change", action="store_true",
                          help="skip the 2400->3600 dpi position-shift test (W6)")
     p_warm.add_argument("--park", choices=("verbatim", "semantic"), default="verbatim",
