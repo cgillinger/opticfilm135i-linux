@@ -68,12 +68,44 @@ def test_gain_codes_against_capture():
 # ----------------------------------------------------------- offset_codes
 
 
-def test_offset_codes_default():
+def test_offset_codes_fallback_on_zero_dark():
+    """Zero dark buffers have slope=0 -> falls back to hardcoded default."""
     dark_a = np.zeros((512, 3), dtype=np.uint16)
     dark_b = np.zeros((512, 3), dtype=np.uint16)
     codes = calibrate.offset_codes(dark_a, dark_b)
     assert codes == (0x010B, 0x010A, 0x010B), codes
-    print("test_offset_codes_default OK")
+    print("test_offset_codes_fallback_on_zero_dark OK")
+
+
+def test_offset_codes_from_reference_bracket():
+    """Bracket data from the reference unit's capture (cal-analysis.md
+    section 1) must reproduce the vendor's codes (267, 266, 267)."""
+    # Reference unit means: dark_a at offset=0x80, dark_b at offset=0xff
+    ref_means_a = [21411, 27770, 24897]   # R, G, B
+    ref_means_b = [23644, 30052, 27174]
+    dark_a = np.tile(np.array(ref_means_a, dtype=np.uint16), (512, 1))
+    dark_b = np.tile(np.array(ref_means_b, dtype=np.uint16), (512, 1))
+    codes = calibrate.offset_codes(dark_a, dark_b)
+    expected = (0x010B, 0x010A, 0x010B)
+    assert codes == expected, f"got {tuple(hex(c) for c in codes)}, want {tuple(hex(c) for c in expected)}"
+    print(f"test_offset_codes_from_reference_bracket OK ({[hex(c) for c in codes]})")
+
+
+def test_offset_codes_adapts_to_different_slope():
+    """A unit with double the slope should produce different code steps
+    but the same target dark level."""
+    # Double the reference slope: (mean_b - mean_a) is doubled
+    ref_means_a = [21411, 27770, 24897]
+    ref_means_b = [23644, 30052, 27174]
+    # With doubled slope, mean_b = mean_a + 2*(ref_mean_b - ref_mean_a)
+    doubled_b = [a + 2 * (b - a) for a, b in zip(ref_means_a, ref_means_b)]
+    dark_a = np.tile(np.array(ref_means_a, dtype=np.uint16), (512, 1))
+    dark_b = np.tile(np.array(doubled_b, dtype=np.uint16), (512, 1))
+    codes = calibrate.offset_codes(dark_a, dark_b)
+    # Double slope -> half the margin in code steps -> 0xff + 6 = 261
+    expected = (261, 261, 261)
+    assert codes == expected, f"got {codes}, want {expected}"
+    print(f"test_offset_codes_adapts_to_different_slope OK ({codes})")
 
 
 # ---------------------------------------------------------- shading_table
@@ -313,8 +345,9 @@ def _build_cal_buffers():
     trace's own captured re-upload bytes.
 
     Every other buffer's content is irrelevant to the register-batch
-    stream (dark pairs feed offset_codes(), which ignores its inputs)
-    so plain zeros are used for those (the default fallback).
+    stream (dark pairs feed offset_codes(); the mock's zero-filled dark
+    buffers have slope=0, triggering the fallback to the same hardcoded
+    codes the trace uses) so plain zeros are used for those.
     """
     measure_offsets = _captured_shading_offsets(tables.CAL_SHADING_UPLOAD, "shading_table")
 
@@ -404,7 +437,9 @@ def test_scan_sequence_matches_trace():
 def main() -> int:
     tests = [
         test_gain_codes_against_capture,
-        test_offset_codes_default,
+        test_offset_codes_fallback_on_zero_dark,
+        test_offset_codes_from_reference_bracket,
+        test_offset_codes_adapts_to_different_slope,
         test_shading_table_against_capture,
         test_scan_sequence_matches_trace,
     ]

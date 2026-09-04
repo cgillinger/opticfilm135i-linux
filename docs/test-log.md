@@ -39,8 +39,8 @@ Total hardware scan count has not been systematically tracked.
 | 7200 dpi scans | At least 1 | Hardware-verified |
 | A3 reproducibility | 2 rounds × 10 scans (6 warm + 4 cold) | Repeated |
 | Whole-strip batches (4 frames) | At least 1 documented | Hardware-verified |
-| Cold-start initializations | >=3 documented (cold eject 09-02, Test 1, Test 9) | Partial — lamp warmup issue open |
-| Post-cold-start scans | >=5 (Test 1 + Test 9 scans 6–9) | Partial — gain clips to 0x3F, flat images |
+| Cold-start initializations | >=3 documented (cold eject 09-02, Test 1, Test 9) | Partial — warmup retry implemented, not yet hardware-verified |
+| Post-cold-start scans | >=5 (Test 1 + Test 9 scans 6–9) | Partial — gain clips to 0x3F without warmup retry |
 | Eject cycles | Multiple | Hardware-verified |
 | Magazine load cycles | Multiple | Hardware-verified |
 | IR scans (dual-light) | Standard mode in nearly all scans | Repeated |
@@ -463,3 +463,103 @@ is needed.
 
 **Status:** ✅ A3 VERIFIED (warm start), ❌ cold-start scanning needs
 lamp warmup mitigation.
+
+---
+
+## 2026-09-04 — AFE offset, lamp warmup, IR regression analysis
+
+### Test 10: 3600 dpi IR regression — offline comparison
+
+**Goal:** Compare the IR channel from a post-shading-fix scan
+(`fix-test-f1-ir.tiff`, 2026-09-03) against the pre-fix reference
+(`rulle-f1-ir.tiff`, 2026-09-01) to check for IR quality regression.
+
+**Method:** 16-bit channel statistics comparison using tifffile
+(Pillow's reader truncates to 8-bit).
+
+**Results:**
+
+| Metric | Pre-fix (rulle-f1-ir) | Post-fix (fix-test-f1-ir) |
+|---|---|---|
+| Shape | 5260×5184 | 5248×5184 |
+| IR mean | 32514 | 39918 |
+| IR std | 23397 | 27026 |
+| IR min | 985 | 7768 |
+| IR max | 55866 | **65535 (saturated)** |
+| p50 (median) | 48380 | **65535 (saturated)** |
+| p1 | 1212 | 9179 |
+| Dark pixels (<~10k) | ~36% (film area) | ~40% (film area) |
+
+**Finding:** The post-fix IR channel saturates at 65535 in bright
+(clear film / no dust) areas. More than 50% of pixels are clipped.
+The pre-fix version had no saturation (max=55866).
+
+**Root cause:** The pre-fix version (2026-09-01) used the wrong
+shading formula for the dual-light mode — a single-table formula
+that coincidentally produced non-saturating IR values. The current
+code uses the vendor-derived per-address shading targets
+(SHADING2_TARGET_B = 90112), which produce higher gain in the IR
+shading correction.
+
+**Impact assessment:** The saturation does NOT affect dust detection
+usability. The IR channel's purpose is binary discrimination between
+"dust/scratch" (dark defect) and "clean film" (bright background).
+With the post-fix data, dark defects sit at ~8k–10k counts vs bright
+at 65535 — ample contrast (>6:1 ratio). The `remove_dust()` function
+operates on this contrast and continues to work correctly (verified
+by the synthetic dust removal test in test_ir.py, and by visual
+inspection of fix-test-f1-pos-ir.tiff which shows clean dust removal
+results).
+
+**Height difference:** 12 lines (5260 vs 5248), consistent with the
+doubled channel stagger (6→12 lines) introduced in the 2026-09-02
+shading fix. Expected and correct.
+
+**Status:** ✅ NOT A REGRESSION. IR saturation in bright areas is
+the expected result of using the vendor's correct shading targets.
+Dust detection function is unaffected.
+
+### Implementation: AFE offset from dark measurements
+
+**Change:** `calibrate.offset_codes()` now computes the per-channel
+AFE offset code from the two-point dark bracket (offset=0x80 and
+offset=0xff measurements), instead of returning a hardcoded constant.
+
+**Formula:** Per channel, the slope of dark level vs offset code is
+measured from the bracket. The final code is `0xff + round(margin /
+slope)`, where the margin in dark-level space (211/198/215 counts
+for R/G/B) is derived from the reference unit's vendor capture. On
+the reference unit this reproduces the vendor's codes exactly
+(R=0x010b, G=0x010a, B=0x010b). On a unit with a different AFE
+slope, the code count adapts proportionally.
+
+**Fallback:** If the bracket slope is abnormal (< 1 count per code
+step — e.g. zero-filled mock data), the hardcoded default is used.
+
+**Tests:** 3 new offline tests (zero-dark fallback, reference bracket
+round-trip, slope adaptation). All 18 offline tests pass. Sequence
+test unchanged (mock's zero dark data triggers the fallback path).
+
+**Status:** OFFLINE VERIFIED. Needs hardware verification.
+
+### Implementation: Lamp warmup retry
+
+**Change:** `Scanner._gain_with_warmup()` wraps the white-line
+measurement + gain computation. If all three gain codes are at
+maximum (0x3F), the method waits 5 seconds and re-runs the
+CAL_WHITE phase, up to 3 retries (15 seconds total maximum).
+
+**Rationale:** After `cold_init()`, the lamp has not warmed up,
+causing the white measurement to return very low levels. The AFE
+gain clips to 0x3F (maximum), producing flat/underexposed images.
+The vendor likely avoids this via a preview pass that doubles as
+warmup time. The retry loop achieves the same effect without
+requiring a full preview implementation.
+
+**Behavior:** Both `scan()` and `_scan_dual()` use the retry.
+If gain stabilizes below 0x3F, scanning proceeds normally with
+a log message. If still maxed after 3 retries, scanning proceeds
+with a warning (does not abort — the user may still want the data).
+
+**Status:** IMPLEMENTED. Needs hardware verification (cold-start
+scan after power cycle).

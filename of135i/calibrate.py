@@ -5,20 +5,24 @@ cal-data/cal-analysis.md (read that file's "Resolution" section first
 -- it is the final, solved word on the shading-table format):
 
   - gain_codes():   AFE gain (regs 2/3/4) from a white-line measurement.
-  - offset_codes(): AFE offset (regs 5/6/7) -- currently a documented
-                     constant; the bracket-measurement-based formula
-                     did not resolve (see cal-analysis.md section 3).
+  - offset_codes(): AFE offset (regs 5/6/7) from the dark bracket
+                     measurements (linear extrapolation from the
+                     [0x80, 0xff] two-point bracket).
   - shading_table(): the 45,856 B per-pixel shading-correction upload
                      from a 128-line dark-current-free measurement.
 
-All three operate on plain numpy arrays; no device I/O here.
+All three operate on plain numpy arrays; no device I/O here (except
+logging, which is side-effect-only diagnostics).
 """
 
 from __future__ import annotations
 
+import logging
 import struct
 
 import numpy as np
+
+log = logging.getLogger("of135i")
 
 # ----------------------------------------------------------------- gain
 
@@ -59,20 +63,36 @@ def gain_codes(white_line: np.ndarray) -> tuple[int, int, int]:
 
 # --------------------------------------------------------------- offset
 
-# cal-analysis.md section 3: no clean small-target linear model fits
-# the two-point [0x80, 0xff] bracket -- both directions extrapolate
-# the wrong way. What *is* solid is the empirically observed final
-# applied codes from the capture (trace op 351/353/355 in
-# tables.CAL_SHADING_MEASURE, right before the shading measurement
-# run): R=0x010b, G=0x010a, B=0x010b.
+# Bracket codes used by the vendor's dark calibration (gain=0):
+_OFFSET_BRACKET_LO = 0x80   # offset code for dark_a measurement
+_OFFSET_BRACKET_HI = 0xFF   # offset code for dark_b measurement
+
+# Dark-level margin (raw counts at gain=0) above the dark_b
+# measurement. Derived from the reference unit's vendor capture:
+# the vendor's final codes (R=0x010b=267, G=0x010a=266, B=0x010b=267)
+# are 12/11/12 code steps above 0xff.  Multiplied by the reference
+# unit's per-channel slope (~17.6/18.0/17.9 counts per code step)
+# this gives a margin of ~211/198/215 dark-level counts above the
+# 0xff measurement.
 #
-# TODO(offset mechanism): the dark_a/dark_b measurement pairs are
-# accepted as arguments for future diagnostic/derivation use (e.g. a
-# 3rd bracket point, or a different fit once one is captured), but are
-# NOT currently used to compute the return value -- confidence in any
-# formula derived from just two bracket points was assessed "low /
-# inconclusive" in cal-analysis.md. Ship the known-good constant.
+# On a unit with the same slope this reproduces the vendor codes
+# exactly. On a unit with a different slope (different AFE voltage-
+# per-step) the code count adapts proportionally while targeting the
+# same dark-level increment.
+#
+# Limitation: the margin values themselves are from a single unit.
+# Cross-unit testing is needed to validate this model.
+_OFFSET_LEVEL_MARGIN = (211.0, 198.0, 215.0)   # R, G, B
+
+# Fallback: the vendor's empirically observed final codes, used when
+# the bracket slope is too low to be meaningful (e.g. all-zero dark
+# buffers from a mock, or a malfunctioning AFE).
 _OFFSET_DEFAULT = (0x010B, 0x010A, 0x010B)
+
+# Minimum plausible slope (counts per offset code step). The reference
+# unit measures ~17.6–18.0; anything below 1.0 is anomalous and should
+# fall back to the hardcoded default.
+_OFFSET_MIN_SLOPE = 1.0
 
 
 def offset_codes(
@@ -81,17 +101,51 @@ def offset_codes(
     """AFE offset codes (regs 5/6/7, R/G/B), each a 16-bit AFE-indirect
     value (hi byte via reg 0x5d, lo byte via reg 0x5e).
 
-    `dark_a` (gain=0, offset=0x80) and `dark_b` (gain=0, offset=0xff)
-    are (N, 3) uint16 dark-current measurements, accepted for future
-    use/diagnostics -- see the module TODO above. The current
-    implementation returns the empirically observed final codes
-    unconditionally.
+    Computed from the two-point dark bracket: `dark_a` (gain=0,
+    offset=0x80) and `dark_b` (gain=0, offset=0xff), both (N, 3)
+    uint16.  Per channel, the slope of dark level vs offset code is
+    measured, and the final code is 0xff + margin/slope, where the
+    margin in dark-level space is the empirically derived
+    _OFFSET_LEVEL_MARGIN.
+
+    On the reference unit this reproduces the vendor's codes exactly
+    (R=0x010b, G=0x010a, B=0x010b).  Falls back to those hardcoded
+    codes if the bracket slope is abnormal (< 1 count per code step).
     """
-    for name, arr in (("dark_a", dark_a), ("dark_b", dark_b)):
-        arr = np.asarray(arr)
-        if arr.ndim != 2 or arr.shape[1] != 3:
-            raise ValueError(f"{name}: expected (N, 3) array, got shape {arr.shape}")
-    return _OFFSET_DEFAULT
+    arr_a = np.asarray(dark_a, dtype=np.float64)
+    arr_b = np.asarray(dark_b, dtype=np.float64)
+    if arr_a.ndim != 2 or arr_a.shape[1] != 3:
+        raise ValueError(f"dark_a: expected (N, 3) array, got shape {arr_a.shape}")
+    if arr_b.ndim != 2 or arr_b.shape[1] != 3:
+        raise ValueError(f"dark_b: expected (N, 3) array, got shape {arr_b.shape}")
+
+    codes: list[int] = []
+    ch_names = "RGB"
+    for ch in range(3):
+        mean_a = float(np.mean(arr_a[:, ch]))
+        mean_b = float(np.mean(arr_b[:, ch]))
+        slope = (mean_b - mean_a) / (_OFFSET_BRACKET_HI - _OFFSET_BRACKET_LO)
+
+        if slope < _OFFSET_MIN_SLOPE:
+            log.debug(
+                "offset ch %s: bracket slope %.2f < %.1f — "
+                "using fallback %#06x",
+                ch_names[ch], slope, _OFFSET_MIN_SLOPE, _OFFSET_DEFAULT[ch],
+            )
+            codes.append(_OFFSET_DEFAULT[ch])
+            continue
+
+        margin_codes = round(_OFFSET_LEVEL_MARGIN[ch] / slope)
+        code = _OFFSET_BRACKET_HI + margin_codes
+        code = max(0, min(code, 0xFFFF))
+
+        log.debug(
+            "offset ch %s: slope=%.2f, margin=%d codes, code=%#06x",
+            ch_names[ch], slope, margin_codes, code,
+        )
+        codes.append(code)
+
+    return tuple(codes)  # type: ignore[return-value]
 
 
 # -------------------------------------------------------------- shading

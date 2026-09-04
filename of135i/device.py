@@ -72,6 +72,13 @@ def _has_execute_pulse(data: bytes) -> bool:
     return any(data[i] == 0x0F and data[i + 1] == 0x01 for i in range(0, len(data) - 1, 2))
 
 
+# Lamp warmup retry: if gain_codes returns all-maxed (0x3F) on every
+# channel, the lamp is likely cold (insufficient white-line levels for
+# meaningful calibration).  Wait and re-measure up to this many times.
+_WARMUP_MAX_RETRIES = 3
+_WARMUP_RETRY_DELAY = 5.0   # seconds between retries
+
+
 class Scanner:
     """Drives the of135i scan sequence over a UsbIo transport."""
 
@@ -566,6 +573,47 @@ class Scanner:
             log.warning("eject: status word stuck at %#04x -- continuing", last)
         self.io.write_regs([(0x09, 0x00)])
 
+    # -------------------------------------------------- lamp warmup retry
+
+    def _gain_with_warmup(self, cal_white_phase, parse_white):
+        """Compute AFE gain codes from a white-line measurement, retrying
+        if the gain clips to maximum on every channel (a sign that the
+        lamp hasn't warmed up yet — observed after cold_init).
+
+        `cal_white_phase` is the Phase to run for the white measurement.
+        `parse_white` is a callable(raw_bytes) -> (N, 3) ndarray of the
+        white line(s) to feed to gain_codes().
+
+        Returns (gain_r, gain_g, gain_b).
+        """
+        for attempt in range(_WARMUP_MAX_RETRIES + 1):
+            white_raw = self._run_phase(cal_white_phase)[0]
+            white = parse_white(white_raw)
+            gain_r, gain_g, gain_b = calibrate.gain_codes(white)
+
+            all_maxed = (gain_r == calibrate._GAIN_MAX_CODE
+                         and gain_g == calibrate._GAIN_MAX_CODE
+                         and gain_b == calibrate._GAIN_MAX_CODE)
+            if not all_maxed:
+                if attempt > 0:
+                    log.info("gain stabilized after %d warmup retry(s)", attempt)
+                return gain_r, gain_g, gain_b
+
+            if attempt < _WARMUP_MAX_RETRIES:
+                log.warning(
+                    "gain maxed R=G=B=0x3F — lamp may need warmup, "
+                    "retrying in %.0fs (%d/%d)",
+                    _WARMUP_RETRY_DELAY, attempt + 1, _WARMUP_MAX_RETRIES,
+                )
+                time.sleep(_WARMUP_RETRY_DELAY)
+
+        log.warning(
+            "gain still maxed after %d retries — proceeding "
+            "(image may be flat/underexposed)",
+            _WARMUP_MAX_RETRIES,
+        )
+        return gain_r, gain_g, gain_b
+
     # -------------------------------------------------------------- scan
 
     def scan(
@@ -614,9 +662,10 @@ class Scanner:
         dark_b = np.frombuffer(dark_b_raw, dtype="<u2").reshape(-1, 3)
 
         # ---- white line (gain=0) -> compute AFE gain -------------------
-        white_raw = self._run_phase(tables.CAL_WHITE)[0]
-        white = np.frombuffer(white_raw, dtype="<u2").reshape(-1, 3)
-        gain_r, gain_g, gain_b = calibrate.gain_codes(white)
+        gain_r, gain_g, gain_b = self._gain_with_warmup(
+            tables.CAL_WHITE,
+            lambda raw: np.frombuffer(raw, dtype="<u2").reshape(-1, 3),
+        )
         log.info("computed gain codes: R=%#04x G=%#04x B=%#04x", gain_r, gain_g, gain_b)
 
         # ---- gain-check pair (offset bracket, gain=computed) -----------
@@ -742,10 +791,10 @@ class Scanner:
         # path) -- computed from the VISIBLE line only, since mixing in
         # the IR line's near-flat/bright broadcast values would badly
         # skew the 99.9th-percentile peak calculation.
-        white_raw = self._run_phase(t.CAL_WHITE)[0]
-        white = np.frombuffer(white_raw, dtype="<u2").reshape(2, -1, 3)
-        white_visible = white[1]
-        gain_r, gain_g, gain_b = calibrate.gain_codes(white_visible)
+        gain_r, gain_g, gain_b = self._gain_with_warmup(
+            t.CAL_WHITE,
+            lambda raw: np.frombuffer(raw, dtype="<u2").reshape(2, -1, 3)[1],
+        )
         log.info("computed gain codes (%d dpi dual): R=%#04x G=%#04x B=%#04x", dpi, gain_r, gain_g, gain_b)
 
         # ---- gain-check pair (offset bracket, gain=computed) -----------

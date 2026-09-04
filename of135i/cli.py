@@ -311,7 +311,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="eject the film magazine after the last frame")
     p_scan.add_argument("--dpi", type=int, default=3600, choices=SUPPORTED_DPIS,
         help="scan resolution (default 3600; resolutions other than 3600 "
-             "always run a dual-light pass and are not yet hardware-verified)")
+             "always run a dual-light pass)")
     p_scan.add_argument("--ir", action="store_true",
         help="capture an IR (dust/scratch) pass: write the IR channel and "
              "clean the visible image with it")
