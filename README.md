@@ -166,7 +166,9 @@ FEEDL stepping from the carriage's current position, 38.0 mm frame pitch), calib
 (pixel-interleaved RGB16, 3762 px/line @ 3600 dpi) and the two-stage
 shading correction. [`docs/driver-design.md`](docs/driver-design.md)
 describes the architecture; [`docs/cal-analysis.md`](docs/cal-analysis.md)
-the calibration formula reverse-engineering.
+the calibration formula reverse-engineering; [`docs/replay-analysis.md`](docs/replay-analysis.md)
+classifies the replayed command stream and sets the order for turning
+it into semantic register sets and explicit waits.
 
 The driver executes the captured command stream as data tables
 (`of135i/tables.py`, regenerable via `tools/gen_tables.py`) with live
