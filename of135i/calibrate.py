@@ -35,7 +35,7 @@ _GAIN_DIVISOR = 32
 _GAIN_MAX_CODE = 63
 
 
-def gain_codes(white_line: np.ndarray) -> tuple[int, int, int]:
+def gain_codes(white_line: np.ndarray, clamp_nonpositive: bool = False) -> tuple[int, int, int]:
     """Compute AFE gain codes (regs 2/3/4, R/G/B) from a white-line scan.
 
     `white_line` is (N, 3) uint16, pixel-interleaved RGB (one scanned
@@ -43,6 +43,13 @@ def gain_codes(white_line: np.ndarray) -> tuple[int, int, int]:
     Per channel: peak = 99.9th percentile (robust against single hot
     pixels/outliers vs. a bare max), code = round(32 * target / peak),
     clamped to the AFE gain register's 6-bit range [0, 63].
+
+    A non-positive peak (an all-zero white line) normally raises: on
+    the plain calibration path it means something is wrong. With
+    clamp_nonpositive=True it instead maps to the maximum gain code
+    (a dark white line physically calls for maximum gain), so the
+    cold-start warmup loop can treat a zero read as "lamp not ready
+    yet" and retry rather than crash -- see Scanner._gain_with_warmup.
 
     Validated against cal-data/capture/cal-frame00501-len31104.bin:
     expect (0x2e, 0x21, 0x29), +/-1 per channel.
@@ -55,6 +62,9 @@ def gain_codes(white_line: np.ndarray) -> tuple[int, int, int]:
     for ch in range(3):
         peak = np.percentile(arr[:, ch].astype(np.float64), 99.9)
         if peak <= 0:
+            if clamp_nonpositive:
+                codes.append(_GAIN_MAX_CODE)
+                continue
             raise ValueError(f"channel {ch}: non-positive peak level ({peak})")
         code = round(_GAIN_DIVISOR * _GAIN_TARGET / peak)
         codes.append(int(min(max(code, 0), _GAIN_MAX_CODE)))

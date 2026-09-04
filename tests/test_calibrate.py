@@ -130,6 +130,21 @@ def _parse_shading_blocks(buf: bytes):
     return np.array(offsets, dtype=np.uint16), np.array(gains, dtype=np.uint16)
 
 
+def test_warmup_survives_zero_white_line():
+    """A cold lamp can read a completely dark (all-zero) white line, not
+    just a dim one -- observed 2026-09-04, cold-start scan crashed here
+    (gain_codes raised on a zero peak).  _gain_with_warmup must treat a
+    zero read as 'not warm yet' (maxed gain), retry, and give up
+    gracefully after _WARMUP_MAX_RETRIES instead of raising."""
+    from of135i import device as devmod
+    h = _WarmupHarness([0, 0, 0, 0])   # every attempt reads all zeros
+    codes = h.run()
+    assert codes == (calibrate._GAIN_MAX_CODE,) * 3, codes
+    assert h.runs == devmod._WARMUP_MAX_RETRIES + 1, h.runs
+    assert len(h.sleeps) == devmod._WARMUP_MAX_RETRIES, h.sleeps
+    print("test_warmup_survives_zero_white_line OK")
+
+
 def test_shading_table_against_capture():
     raw = (CAPTURE / "cal-frame00797-len2889216.bin").read_bytes()
     measurement = np.frombuffer(raw, dtype="<u2").reshape(128, 3762, 3)
@@ -542,6 +557,7 @@ def main() -> int:
         test_warmup_no_retry_when_gain_normal,
         test_warmup_retries_until_gain_stabilizes,
         test_warmup_gives_up_after_max_retries,
+        test_warmup_survives_zero_white_line,
         test_scan_sequence_matches_trace,
     ]
     for t in tests:

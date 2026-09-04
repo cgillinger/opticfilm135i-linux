@@ -857,7 +857,7 @@ class Scanner:
         for attempt in range(_WARMUP_MAX_RETRIES + 1):
             white_raw = self._run_phase(cal_white_phase)[0]
             white = parse_white(white_raw)
-            gain_r, gain_g, gain_b = calibrate.gain_codes(white)
+            gain_r, gain_g, gain_b = calibrate.gain_codes(white, clamp_nonpositive=True)
 
             diag["attempts"] += 1
             diag["gain_history"].append([gain_r, gain_g, gain_b])
