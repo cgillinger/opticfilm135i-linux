@@ -1018,3 +1018,64 @@ records the working status word (f055 after feed, sensor bit going
 clear) and settles d855-vs-dc55 (Test 12 addendum) from a known-good
 load. Scanner read 0x00 cold, magazine out, after the Test 13 power
 cycle.
+
+## 2026-09-05 — Test 14: clean vendor load captured — root cause of the loose magazine
+
+`captures/20260905-vendor-clean-load.pcap` (usbmon1 on the Linux host,
+QuickScan in the Win11 VM driven by the VM Claude session; magazine
+taken fully out on QuickScan's prompt and reinserted fresh; it latched
+the instant it reached the stop). 442 ops. The decisive comparison:
+
+### What the vendor's engaging load feed actually is
+The sequence: register setup (op 40, mode 0x78 loader profile) → an
+app-start JOG (op 109 feed 6690, op 137 feed 6690, op 155 eject 3090)
+→ a ~25 s idle-poll GAP where the operator removed and reinserted the
+magazine → **the engaging load feed at op 199**, which is `mode 0x18
+FEEDL 6690` immediately followed by a FULL 47-register reprogram
+(op 201: 0x14-0x3a incl. **0x35=0xbb, 0x15=0x90, 0x03=0x30**) BEFORE the
+GO → traverse (op 218, mode 0x1c FEEDL 71490) → locked, idle at dc55.
+
+Our `tables_load.LOAD` (from eject-from-loaded ops 291-640) runs the
+feed as a **19-register** batch with NONE of that block: it executes
+with whatever the base table left (0x35=0xfb, not 0xbb). The engaging
+feed here programs **64 registers vs our 19**; the 47 it adds are
+exactly the motor/exposure/timing set our feed omits. 0x35 (motor) at
+feed time is 0xbb in every engaging load, 0xfb in ours. **That is why
+the transport runs but the cassette does not follow** — confirmed
+across Tests 11b/12b/13 (to-the-stop and trigger-point both failed
+identically) and now explained.
+
+This matches `load-only-fixed` (feed op 794 n=32 + op 796 reg block)
+and is the "wrong context" the review suspected: LOAD was regenerated
+at 3dd825e from an EJECT capture whose load ran with registers already
+set, so the extracted feed is stripped of the setup a standalone load
+needs.
+
+### Completion values (fix the strict polls)
+Feed completion here: **f455**; traverse: **dc55**. Our strict targets
+(from eject-from-loaded) are f055 / d855 — i.e. the strict poll added
+2026-09-05 would REJECT even this correct vendor load. The session-
+invariant signal is the loader-sensor bit **0x08 going CLEAR** after
+the feed (cassette pulled past the sensor: f0/f4 both have it clear;
+our failed ec55 had it set). The completion check must key on that bit
+(high nibble = done AND bit 0x08 clear), not on an exact status-word
+value or a convenience range. d855 vs dc55 is thereby settled: both
+are done-class, bit 0x04 is session-variable; the fresh-insert load
+settles at dc55.
+
+### Next session (offline first, then one verify)
+1. Regenerate `tables_load.LOAD` from `20260905-vendor-clean-load`
+   (the engaging feed with its 47-reg block + the traverse), via
+   tools/gen_load_table.py; do NOT hand-edit.
+2. Replace the exact-match strict completion polls with the sensor-bit
+   test: after the feed, require reg 0x101 bit 0x08 CLEAR (done class);
+   fail closed otherwise. This is the composite LOADED-check the review
+   asked for, grounded in the loader sensor, not a status-word range.
+3. Offline tests, then ONE hardware load from a fresh insert to verify
+   the cassette engages (sensor bit clears, magazine latches). Only
+   then revisit the 0x02 loaded-idle start state (still parked).
+
+Mechanical note (Christian, Test 14): QuickScan required the magazine
+taken FULLY out and reinserted; it latched the moment it hit the stop.
+So full insertion to the stop IS correct — the earlier trigger-point
+idea was wrong; the missing piece was always the feed's register block.
