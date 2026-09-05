@@ -135,8 +135,21 @@ def _shading_stats(payload: bytes) -> dict:
 # Lamp warmup retry: if gain_codes returns all-maxed (0x3F) on every
 # channel, the lamp is likely cold (insufficient white-line levels for
 # meaningful calibration).  Wait and re-measure up to this many times.
-_WARMUP_MAX_RETRIES = 3
-_WARMUP_RETRY_DELAY = 5.0   # seconds between retries
+# Lamp warmup (see _gain_with_warmup): after a cold start the first
+# white-line measurement can be so dark that every channel's gain code
+# clips at maximum (0x3f). Test 11 (2026-09-04) showed 3 x 5 s was not
+# enough; Tests 17-21 (2026-09-05) showed the load flow's ~60 s of lamp
+# time makes the first scan fine. The real warmup curve has NOT been
+# measured. The measurement IS the probe: a scan from bare power-on with
+# a generous `--warmup-budget` records every white-line measurement with
+# its time in the sidecar (warmup_peak_history / warmup_measurement_
+# times_s) and completes once the lamp is stable -- no separate tool,
+# no extra sequence. Until that has been run the budget below is a
+# bounded default, not a measured value. Set Scanner.warmup_budget_s to
+# change it per run (CLI: --warmup-budget).
+_WARMUP_BUDGET_S = 60.0       # total wall-clock budget, hard upper bound
+_WARMUP_INTERVAL_S = 5.0      # between white-line measurements
+_WARMUP_STABLE_PCT = 3.0      # consecutive peaks must agree within this
 
 # Semantic PARK (see park_semantic() and docs/replay-analysis.md's
 # "Conversion order" step 1): timeout and poll interval for the two
@@ -253,6 +266,8 @@ class Scanner:
         self._diag_cr_mismatches: int = 0
         self._diag_poll_timeout_details: list[dict] = []
         self._diag_warmup: dict | None = None
+        # Lamp warmup budget for this scanner object (see _WARMUP_BUDGET_S).
+        self.warmup_budget_s: float = _WARMUP_BUDGET_S
         self._diag_park_waits: dict | None = None
 
         # PARK phase implementation switch (see park_semantic() and
@@ -1221,60 +1236,101 @@ class Scanner:
     # -------------------------------------------------- lamp warmup retry
 
     def _gain_with_warmup(self, cal_white_phase, parse_white):
-        """Compute AFE gain codes from a white-line measurement, retrying
-        if the gain clips to maximum on every channel (a sign that the
-        lamp hasn't warmed up yet — observed after cold_init).
+        """Compute AFE gain codes from a white-line measurement, waiting
+        for the lamp when the first measurement says it is not ready.
 
-        `cal_white_phase` is the Phase to run for the white measurement.
-        `parse_white` is a callable(raw_bytes) -> (N, 3) ndarray of the
-        white line(s) to feed to gain_codes().
+        `cal_white_phase` is the Phase to run for the white measurement
+        (a single-line read, no motor move). `parse_white` is a
+        callable(raw_bytes) -> (N, 3) ndarray of the white line(s).
 
-        Returns (gain_r, gain_g, gain_b).
+        Rules (fail-closed, see docs/hardware-safety.md):
+          - A warm lamp -- the first measurement gives a non-maxed gain
+            code on at least one channel -- returns at once, exactly as
+            every verified scan to date (one CAL_WHITE run).
+          - Otherwise the lamp is warming: measure again every
+            _WARMUP_INTERVAL_S and accept only when two CONSECUTIVE
+            measurements are non-maxed and their per-channel peaks agree
+            within _WARMUP_STABLE_PCT (calibrating on a still-rising lamp
+            would fix the gain at a level the lamp then overshoots).
+          - The total budget is self.warmup_budget_s (default
+            _WARMUP_BUDGET_S), enforced both by the clock and by a hard
+            cap on the number of measurements, so the loop cannot run
+            forever even with a stopped clock. Exhausting it raises
+            safety.LampWarmupError: no scan, no motor command, the
+            operation fails like any other.
+          - A malformed white buffer (not (N, 3), or empty) or a
+            saturated one (any channel peak at 65535 at gain 0 -- never
+            seen on this unit, physically implausible) raises
+            LampWarmupError immediately. USB errors, timeouts and
+            Ctrl-C during the wait propagate untouched.
 
-        Records into self._diag_warmup (for scan()/_scan_dual()'s
-        per-scan diagnostics -- see diag.py): "attempts" (CAL_WHITE run
-        count), "gain_history" (one [r,g,b] per attempt), "exhausted"
-        (bool), and "white_mean"/"white_max" (per-channel, from the
-        LAST attempt's white array -- the one gain_codes() was
-        actually computed from for the returned codes).
+        Records into self._diag_warmup: "attempts", "gain_history",
+        "peak_history", "elapsed_s", "exhausted" (True only on the
+        failure path, kept for the sidecar/hwblock fields), and
+        "white_mean"/"white_max" of the LAST measurement.
         """
-        diag = {"attempts": 0, "gain_history": [], "exhausted": False,
-                "white_mean": None, "white_max": None}
+        diag = {"attempts": 0, "gain_history": [], "peak_history": [], "measurement_times_s": [],
+                "elapsed_s": 0.0, "exhausted": False, "white_mean": None, "white_max": None}
         self._diag_warmup = diag
+        budget = float(self.warmup_budget_s)
+        interval = _WARMUP_INTERVAL_S
+        max_measurements = 1 + int(budget // interval)
+        t0 = time.monotonic()
 
-        for attempt in range(_WARMUP_MAX_RETRIES + 1):
+        def fail(msg: str) -> "safety.LampWarmupError":
+            diag["exhausted"] = True
+            return safety.LampWarmupError(
+                f"{msg} after {diag['attempts']} white-line measurement(s) in "
+                f"{diag['elapsed_s']:.1f}s (budget {budget:.0f}s); per-channel peaks "
+                f"{diag['peak_history']}. No scan was made and no motor command was sent. "
+                f"{safety.NO_RECOVERY_ATTEMPTED} {safety.POWER_CYCLE_INSTRUCTION} Then run "
+                f"the magazine load flow first (it gives the lamp about a minute) or raise "
+                f"the budget (--warmup-budget).",
+                measurements=diag["attempts"], peak_history=list(diag["peak_history"]),
+                elapsed_s=diag["elapsed_s"], observed=self.session.start_reg01,
+                session=self.session.snapshot())
+
+        def measure():
             white_raw = self._run_phase(cal_white_phase)[0]
             white = parse_white(white_raw)
-            gain_r, gain_g, gain_b = calibrate.gain_codes(white, clamp_nonpositive=True)
-
             diag["attempts"] += 1
-            diag["gain_history"].append([gain_r, gain_g, gain_b])
-            diag["white_mean"] = [float(x) for x in white.astype(np.float64).mean(axis=0)]
-            diag["white_max"] = [float(x) for x in white.astype(np.float64).max(axis=0)]
+            diag["elapsed_s"] = time.monotonic() - t0
+            diag["measurement_times_s"].append(round(diag["elapsed_s"], 2))
+            if white.ndim != 2 or white.shape[1] != 3 or white.shape[0] == 0:
+                raise fail(f"malformed white-line measurement (shape {tuple(white.shape)})")
+            w = white.astype(np.float64)
+            peaks = [float(np.percentile(w[:, c], 99.9)) for c in range(3)]
+            diag["peak_history"].append([round(pk, 1) for pk in peaks])
+            diag["white_mean"] = [float(x) for x in w.mean(axis=0)]
+            diag["white_max"] = [float(x) for x in w.max(axis=0)]
+            if any(pk >= 65535.0 for pk in peaks):
+                raise fail("white line saturated at gain 0 (implausible AFE state)")
+            codes = calibrate.gain_codes(white, clamp_nonpositive=True)
+            diag["gain_history"].append(list(codes))
+            maxed = all(c == calibrate._GAIN_MAX_CODE for c in codes)
+            return codes, peaks, maxed
 
-            all_maxed = (gain_r == calibrate._GAIN_MAX_CODE
-                         and gain_g == calibrate._GAIN_MAX_CODE
-                         and gain_b == calibrate._GAIN_MAX_CODE)
-            if not all_maxed:
-                if attempt > 0:
-                    log.info("gain stabilized after %d warmup retry(s)", attempt)
-                return gain_r, gain_g, gain_b
+        codes, peaks, maxed = measure()
+        if not maxed:
+            return codes                      # the verified single-measurement path
 
-            if attempt < _WARMUP_MAX_RETRIES:
-                log.warning(
-                    "gain maxed R=G=B=0x3F — lamp may need warmup, "
-                    "retrying in %.0fs (%d/%d)",
-                    _WARMUP_RETRY_DELAY, attempt + 1, _WARMUP_MAX_RETRIES,
-                )
-                time.sleep(_WARMUP_RETRY_DELAY)
-
-        diag["exhausted"] = True
-        log.warning(
-            "gain still maxed after %d retries — proceeding "
-            "(image may be flat/underexposed)",
-            _WARMUP_MAX_RETRIES,
-        )
-        return gain_r, gain_g, gain_b
+        log.warning("gain maxed R=G=B=0x3F on the first white line -- lamp not ready; "
+                    "waiting up to %.0fs (measuring every %.0fs)", budget, interval)
+        prev_peaks, prev_maxed = peaks, True
+        while True:
+            elapsed = time.monotonic() - t0
+            if diag["attempts"] >= max_measurements or elapsed + interval > budget:
+                raise fail("lamp did not reach a stable usable level")
+            time.sleep(interval)
+            codes, peaks, maxed = measure()
+            if not maxed and not prev_maxed:
+                stable = all(abs(pk - pp) <= _WARMUP_STABLE_PCT / 100.0 * max(pp, 1.0)
+                             for pk, pp in zip(peaks, prev_peaks))
+                if stable:
+                    log.info("lamp warm: gain %s after %d measurements, %.0fs",
+                             [hex(c) for c in codes], diag["attempts"], diag["elapsed_s"])
+                    return codes
+            prev_peaks, prev_maxed = peaks, maxed
 
     # -------------------------------------------------------------- scan
 
@@ -1457,6 +1513,8 @@ class Scanner:
             "warmup_attempts": warmup.get("attempts"),
             "warmup_gain_history": warmup.get("gain_history"),
             "warmup_exhausted": warmup.get("exhausted"),
+            "warmup_peak_history": warmup.get("peak_history"),
+            "warmup_measurement_times_s": warmup.get("measurement_times_s"),
             "offset_codes": [off_r, off_g, off_b],
             "shading": _shading_stats(shading),
             "shading2": _shading_stats(shading2),
@@ -1669,6 +1727,8 @@ class Scanner:
             "warmup_attempts": warmup.get("attempts"),
             "warmup_gain_history": warmup.get("gain_history"),
             "warmup_exhausted": warmup.get("exhausted"),
+            "warmup_peak_history": warmup.get("peak_history"),
+            "warmup_measurement_times_s": warmup.get("measurement_times_s"),
             "offset_codes": [off_r, off_g, off_b],
             "shading": {"a": _shading_stats(shading_a), "b": _shading_stats(shading_b)},
             "shading2": {"a": _shading_stats(shading2_a), "b": _shading_stats(shading2_b)},

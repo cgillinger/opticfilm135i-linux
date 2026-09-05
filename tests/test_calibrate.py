@@ -133,15 +133,21 @@ def _parse_shading_blocks(buf: bytes):
 def test_warmup_survives_zero_white_line():
     """A cold lamp can read a completely dark (all-zero) white line, not
     just a dim one -- observed 2026-09-04, cold-start scan crashed here
-    (gain_codes raised on a zero peak).  _gain_with_warmup must treat a
-    zero read as 'not warm yet' (maxed gain), retry, and give up
-    gracefully after _WARMUP_MAX_RETRIES instead of raising."""
-    from of135i import device as devmod
-    h = _WarmupHarness([0, 0, 0, 0])   # every attempt reads all zeros
-    codes = h.run()
-    assert codes == (calibrate._GAIN_MAX_CODE,) * 3, codes
-    assert h.runs == devmod._WARMUP_MAX_RETRIES + 1, h.runs
-    assert len(h.sleeps) == devmod._WARMUP_MAX_RETRIES, h.sleeps
+    (gain_codes raised on a zero peak). _gain_with_warmup must treat a
+    zero read as 'not warm yet' (maxed gain, keep measuring) -- and, if
+    it never lights, fail closed at the cap instead of raising from
+    gain_codes or returning maxed codes."""
+    from of135i import device as devmod, safety
+    cap = 1 + int(devmod._WARMUP_BUDGET_S // devmod._WARMUP_INTERVAL_S)
+    h = _WarmupHarness([0] * (cap + 2))   # every attempt reads all zeros
+    try:
+        h.run()
+    except safety.LampWarmupError as e:
+        assert e.measurements == cap and h.scanner._diag_warmup["gain_history"][0] == [0x3F, 0x3F, 0x3F]
+    else:
+        raise AssertionError("all-zero white did not fail closed")
+    h = _WarmupHarness([0, 0, _peak_for_gain_code(0x21), _peak_for_gain_code(0x21)])
+    assert h.run() == (0x21, 0x21, 0x21) and h.runs == 4
     print("test_warmup_survives_zero_white_line OK")
 
 
@@ -495,33 +501,134 @@ def test_warmup_no_retry_when_gain_normal():
     print("test_warmup_no_retry_when_gain_normal OK")
 
 
-def test_warmup_retries_until_gain_stabilizes():
-    """Cold lamp for two measurements, then warm: three runs, two
-    delays of _WARMUP_RETRY_DELAY, and the *warm* codes are returned."""
+def test_warmup_waits_for_two_stable_measurements():
+    """Cold lamp for two measurements, then rising, then stable: the
+    codes are returned only once two consecutive non-maxed measurements
+    agree within _WARMUP_STABLE_PCT, one interval sleep per wait."""
     from of135i import device as devmod
     dim = _dim_peak_that_maxes_gain()
+    rising = _peak_for_gain_code(0x3A)          # bright enough not to max, still far from warm
     good = _peak_for_gain_code(0x2E)
-    h = _WarmupHarness([dim, dim, good])
+    h = _WarmupHarness([dim, dim, rising, good, good])
     codes = h.run()
     assert codes == (0x2E, 0x2E, 0x2E), codes
-    assert h.runs == 3, h.runs
-    assert h.sleeps == [devmod._WARMUP_RETRY_DELAY] * 2, h.sleeps
-    print("test_warmup_retries_until_gain_stabilizes OK")
+    assert h.runs == 5, h.runs
+    assert h.sleeps == [devmod._WARMUP_INTERVAL_S] * 4, h.sleeps
+    d = h.scanner._diag_warmup
+    assert d["attempts"] == 5 and not d["exhausted"] and len(d["peak_history"]) == 5
+    print("test_warmup_waits_for_two_stable_measurements OK")
 
 
-def test_warmup_gives_up_after_max_retries():
-    """Lamp never warms: exactly 1 + _WARMUP_MAX_RETRIES runs, one
-    delay per retry, and the maxed codes are returned rather than
-    raising (the scan proceeds, possibly flat)."""
-    from of135i import device as devmod
+def test_warmup_dark_lamp_fails_closed_within_budget():
+    """Lamp never lights: the loop stops at the measurement cap
+    (1 + budget // interval) and raises LampWarmupError -- never the
+    maxed codes, never a scan. Sleep count = measurements - 1."""
+    from of135i import device as devmod, safety
     dim = _dim_peak_that_maxes_gain()
-    n = devmod._WARMUP_MAX_RETRIES
-    h = _WarmupHarness([dim] * (n + 1))
-    codes = h.run()
-    assert codes == (calibrate._GAIN_MAX_CODE,) * 3, codes
-    assert h.runs == n + 1, h.runs
-    assert len(h.sleeps) == n, h.sleeps
-    print(f"test_warmup_gives_up_after_max_retries OK ({h.runs} runs)")
+    cap = 1 + int(devmod._WARMUP_BUDGET_S // devmod._WARMUP_INTERVAL_S)
+    h = _WarmupHarness([dim] * (cap + 5))
+    try:
+        h.run()
+    except safety.LampWarmupError as e:
+        assert e.measurements == cap and h.runs == cap and len(h.sleeps) == cap - 1, (e.measurements, h.runs, len(h.sleeps))
+        assert "No scan was made" in str(e) and "Power the scanner OFF" in str(e)
+        assert h.scanner._diag_warmup["exhausted"] is True
+    else:
+        raise AssertionError("dark lamp did not fail")
+    print(f"test_warmup_dark_lamp_fails_closed_within_budget OK ({cap} measurements)")
+
+
+def test_warmup_budget_is_per_scanner_and_clock_bounded():
+    """A smaller budget means fewer measurements; a stopped clock cannot
+    extend the loop (the cap does the bounding)."""
+    from of135i import device as devmod, safety
+    dim = _dim_peak_that_maxes_gain()
+    h = _WarmupHarness([dim] * 20)
+    h.scanner.warmup_budget_s = 2 * devmod._WARMUP_INTERVAL_S
+    try:
+        h.run()
+    except safety.LampWarmupError as e:
+        assert e.measurements == 3 and h.runs == 3, (e.measurements, h.runs)
+    else:
+        raise AssertionError("did not fail")
+    print("test_warmup_budget_is_per_scanner_and_clock_bounded OK")
+
+
+def test_warmup_never_stable_lamp_fails():
+    """Non-maxed but oscillating peaks (>3 % between measurements) never
+    satisfy the stability rule: fail at the cap, no codes returned."""
+    from of135i import device as devmod, safety
+    dim = _dim_peak_that_maxes_gain()
+    lo, hi = _peak_for_gain_code(0x30), _peak_for_gain_code(0x20)
+    cap = 1 + int(devmod._WARMUP_BUDGET_S // devmod._WARMUP_INTERVAL_S)
+    h = _WarmupHarness([dim] + [lo, hi] * cap)
+    try:
+        h.run()
+    except safety.LampWarmupError as e:
+        assert e.measurements == cap, e.measurements
+    else:
+        raise AssertionError("oscillating lamp did not fail")
+    print("test_warmup_never_stable_lamp_fails OK")
+
+
+def test_warmup_saturated_or_malformed_white_fails_immediately():
+    """A saturated white line (65535 at gain 0) or a malformed buffer
+    fails on that measurement, with no further sleeps."""
+    from of135i import safety
+    h = _WarmupHarness([65535])
+    try:
+        h.run()
+    except safety.LampWarmupError as e:
+        assert "saturated" in str(e) and h.runs == 1 and h.sleeps == []
+    else:
+        raise AssertionError("saturated white accepted")
+    h = _WarmupHarness([_peak_for_gain_code(0x21)])
+    h._fake_run_phase = lambda phase, **inject: [b""]          # empty buffer
+    h.scanner._run_phase = h._fake_run_phase  # type: ignore[method-assign]
+    try:
+        h.run()
+    except safety.LampWarmupError as e:
+        assert "malformed" in str(e)
+    else:
+        raise AssertionError("malformed white accepted")
+    print("test_warmup_saturated_or_malformed_white_fails_immediately OK")
+
+
+def test_warmup_ctrl_c_and_usb_errors_propagate():
+    """Ctrl-C during the wait and a USB error during a measurement
+    propagate untouched (the scan operation then fails the session);
+    nothing is retried."""
+    from of135i import device as devmod
+    import usb.core
+    dim = _dim_peak_that_maxes_gain()
+    h = _WarmupHarness([dim, dim])
+    real_sleep = devmod.time.sleep
+    def interrupt(s):
+        raise KeyboardInterrupt
+    devmod.time.sleep = interrupt
+    try:
+        h.scanner._gain_with_warmup(tables.CAL_WHITE, lambda raw: np.frombuffer(raw, dtype="<u2").reshape(-1, 3))
+    except KeyboardInterrupt:
+        assert h.runs == 1
+    else:
+        raise AssertionError("Ctrl-C swallowed")
+    finally:
+        devmod.time.sleep = real_sleep
+    h = _WarmupHarness([dim])
+    calls = {"n": 0}
+    def usb_fail(phase, **inject):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise usb.core.USBError("[Errno 110] Operation timed out", errno=110)
+        return [np.full((5184, 3), dim, dtype="<u2").tobytes()]
+    h.scanner._run_phase = usb_fail  # type: ignore[method-assign]
+    try:
+        h.run()
+    except usb.core.USBError:
+        assert calls["n"] == 2
+    else:
+        raise AssertionError("USB error swallowed")
+    print("test_warmup_ctrl_c_and_usb_errors_propagate OK")
 
 
 def test_scan_sequence_matches_trace():
@@ -571,8 +678,12 @@ def main() -> int:
         test_offset_codes_adapts_to_different_slope,
         test_shading_table_against_capture,
         test_warmup_no_retry_when_gain_normal,
-        test_warmup_retries_until_gain_stabilizes,
-        test_warmup_gives_up_after_max_retries,
+        test_warmup_waits_for_two_stable_measurements,
+        test_warmup_dark_lamp_fails_closed_within_budget,
+        test_warmup_budget_is_per_scanner_and_clock_bounded,
+        test_warmup_never_stable_lamp_fails,
+        test_warmup_saturated_or_malformed_white_fails_immediately,
+        test_warmup_ctrl_c_and_usb_errors_propagate,
         test_warmup_survives_zero_white_line,
         test_scan_sequence_matches_trace,
     ]

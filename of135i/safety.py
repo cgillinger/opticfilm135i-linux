@@ -160,6 +160,22 @@ class ScannerBusyError(SafetyError):
     """Another process holds the scanner lock."""
 
 
+class LampWarmupError(SafetyError):
+    """The lamp did not reach a usable, stable white level within the
+    warmup budget (or the white measurement was implausible: saturated
+    or malformed). No scan was made and no motor command follows; the
+    scan operation is FAILED like any other. ``measurements`` is the
+    number of CAL_WHITE runs, ``peak_history`` the per-channel white
+    peaks seen, ``elapsed_s`` the wall-clock time spent."""
+
+    def __init__(self, message: str, *, measurements: int, peak_history: list,
+                 elapsed_s: float, **kw):
+        super().__init__(message, **kw)
+        self.measurements = measurements
+        self.peak_history = peak_history
+        self.elapsed_s = elapsed_s
+
+
 class LoadIncompleteError(SafetyError):
     """The magazine load sequence ran to its end but the scanner did not
     report the captured completion value (status word). The transport

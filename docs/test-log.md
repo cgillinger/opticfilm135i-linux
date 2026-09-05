@@ -1433,3 +1433,39 @@ Verdict: the calibration and the geometry are reproducible to one code
 and four rows over ten consecutive scans; the slow monotonic brightness
 drift (~2 % over 11 minutes) is the one thing to keep an eye on (lamp
 warming — consistent with the cold-start warmup topic, P2).
+
+## 2026-09-05 — P2 (offline): lamp warmup is now bounded, measurement-based and fail-closed
+
+Audit of `_gain_with_warmup` (was: up to 3 retries × 5 s, then
+**proceed with maxed gain** — a flat image, as Test 11 showed after a
+bare cold start). Findings and changes (96 offline tests green):
+
+- "Lamp not ready" = all three gain codes at 0x3f on a measurement.
+  An all-zero white line already mapped to that (clamp_nonpositive).
+- New rule: a warm first measurement returns at once (the single-
+  measurement path of every verified scan). Otherwise re-measure every
+  5 s; accept only two consecutive non-maxed measurements whose peaks
+  agree within 3 %. Budget `Scanner.warmup_budget_s` (default 60 s,
+  `scan --warmup-budget`, `hwblock cold --warmup-budget`), enforced by
+  the clock AND a measurement cap (13 at the default), so a stopped
+  clock cannot extend it.
+- Fail-closed: budget exhausted, saturated white (65535 at gain 0) or
+  malformed buffer → `LampWarmupError` (SafetyError): no scan, no motor
+  command, session FAILED, power cycle. USB errors, timeouts and Ctrl-C
+  propagate untouched. Nothing is retried.
+- Sidecar: `warmup_peak_history` and `warmup_measurement_times_s` —
+  a scan from bare power-on with a generous budget IS the warmup
+  probe; no separate tool.
+- Tests: warm lamp (1 run, no sleep), gradual warmup (accepted on the
+  second stable measurement), dark lamp (fails at the cap), smaller
+  per-scanner budget, never-stable lamp, saturation, malformed data,
+  Ctrl-C and USB errors. The fake device now models a lit lamp for
+  unscripted reads and repeats the last scripted calibration buffer
+  across batch frames (zeros modelled a dark lamp, which the driver now
+  refuses).
+
+Not run on hardware. Planned single test (P2, needs approval): bare
+power-on, magazine in, `hwblock cold --warmup-budget 300` — the
+cold-start scan records the warmup curve; the second scan in the same
+session checks the lamp is then warm. Only after that is a real budget
+chosen.

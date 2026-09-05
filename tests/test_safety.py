@@ -103,7 +103,7 @@ class FakeUsbDevice:
     by which an interrupted real scan is left at 0x23. Extended reads
     (wValue 0x018e) return the magazine sensor for reg 0x101 and a
     "done" status word (0xf855) otherwise. Bulk IN serves scripted
-    buffers by descriptor length (cal_buffers), else zeros.
+    buffers by descriptor length (cal_buffers), else a constant lit-lamp level (0x7000).
 
     Counting: out_count/out_log count every completed OUT transfer
     (control OUT + bulk OUT); pulses counts completed execute pulses.
@@ -160,6 +160,7 @@ class FakeUsbDevice:
         self.magazine = magazine
         self.fault = fault
         self.cal_buffers = cal_buffers or {}
+        self._last_cal: dict = {}
         self.out_count = 0
         self.in_count = 0
         self.bulk_in_count = 0
@@ -235,7 +236,16 @@ class FakeUsbDevice:
                     self._pending = None
                 else:
                     q = self.cal_buffers.get(ln)
-                    self._pending = [q.popleft() if q else bytes(ln), 0]
+                    if q:
+                        buf = q.popleft()
+                        self._last_cal[ln] = buf
+                    else:
+                        # Scripted buffers exhausted (multi-frame batch) or
+                        # none scripted: repeat the last one for this
+                        # length, else a lit-lamp constant -- never zeros
+                        # (zeros model a dark lamp, which fails closed).
+                        buf = self._last_cal.get(ln) or (b"\x00\x70" * ((ln + 1) // 2))[:ln]
+                    self._pending = [buf, 0]
             return len(data)
 
         length = data_or_wLength
@@ -293,7 +303,11 @@ class FakeUsbDevice:
             if len(chunk) < length:
                 chunk += bytes(length - len(chunk))
             return chunk
-        return bytes(length)
+        # Unscripted bulk-in: a lit lamp / plausible sensor level rather
+        # than zeros. All-zero data models a DARK lamp, which the driver
+        # now (correctly) refuses to scan with (LampWarmupError); tests
+        # that want the dark case script it explicitly.
+        return (b"\x00\x70" * ((length + 1) // 2))[:length]
 
     def write(self, endpoint, data, timeout=None):
         data = bytes(data)

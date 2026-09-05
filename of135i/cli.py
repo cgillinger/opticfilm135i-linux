@@ -200,6 +200,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # session, matching the vendor.
     def body(scanner: Scanner) -> int:
         scanner.park_mode = args.park
+        if getattr(args, 'warmup_budget', None) is not None:
+            scanner.warmup_budget_s = float(args.warmup_budget)
         # Read-only start-state check up front, so an unsafe scanner
         # is reported before the magazine message (the driver would
         # refuse at the first write anyway).
@@ -430,6 +432,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip IR-based dust/scratch removal on the visible image (--ir only)")
     p_scan.add_argument("--no-diag", action="store_true",
         help="skip writing the <output>.diag.json calibration/timing sidecar")
+    p_scan.add_argument("--warmup-budget", type=float, default=None, metavar="SECONDS",
+                        help="total time to wait for the lamp after a cold start before "
+                             "failing the scan (default: the driver's bounded default, 60 s)")
     p_scan.add_argument("--park", choices=("verbatim", "semantic"), default="verbatim",
         help="PARK phase implementation: verbatim replays the captured stream "
              "(default); semantic issues the same writes with real "

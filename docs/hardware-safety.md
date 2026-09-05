@@ -293,6 +293,25 @@ mechanism and does **not** bypass the start-state guard. No new motor
 experiment was run to investigate the magazine states during the safety
 pass.
 
+## Lamp warmup is bounded and fails closed
+
+After a cold start the first white-line measurement can be dark enough
+that every channel's gain code clips at maximum. `_gain_with_warmup`
+then re-measures (a single-line read, no motor move) every 5 s and
+accepts only two consecutive usable measurements that agree within 3 %
+— calibrating on a still-rising lamp would fix the gain at a level the
+lamp then overshoots. The wait is bounded by `Scanner.warmup_budget_s`
+(default 60 s, CLI `--warmup-budget`) both by the clock and by a hard
+cap on the number of measurements. Exhausting it, a saturated white
+line (65535 at gain 0: an implausible AFE state) or a malformed
+measurement raises `LampWarmupError`: no scan, no motor command, the
+operation fails like any other and a power cycle is required. USB
+errors, timeouts and Ctrl-C during the wait propagate untouched.
+A warm lamp takes the same single-measurement path every verified scan
+has taken. Offline-verified (fault injection for a dark lamp, gradual
+warmup, a never-stable lamp, saturation, malformed data, Ctrl-C and USB
+errors); the bounded wait itself has not yet been seen on hardware.
+
 ## Recovery after an interrupted scan
 
 An interrupted or failed writing operation (Ctrl-C, a crash, a USB

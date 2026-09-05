@@ -80,11 +80,17 @@ The rough edges you should know about:
   power-cycled scanner (reg 0x01 = 0x00) and runs the vendor's cold-start
   homing sequence automatically — no VM or vendor software needed.
   Scanning immediately after a cold start used to produce flat images
-  (lamp not yet warmed up, AFE gain clipped at maximum); the driver now
-  re-measures the white line up to three times with a short delay when
-  that happens. The retry has been seen triggering on hardware
-  (2026-09-04) but that scan did not complete, so its effect on the
-  image is still unverified.
+  (lamp not yet warmed up, AFE gain clipped at maximum). The driver now
+  waits for the lamp when the first white-line measurement says it is
+  not ready: it re-measures every 5 s until two consecutive
+  measurements are usable and agree within 3 %, within a bounded budget
+  (60 s by default, `--warmup-budget` to change), and **fails the scan
+  instead of scanning flat** if the lamp never gets there. Every
+  measurement and its time go into the scan's `.diag.json`, so a scan
+  from bare power-on with a generous budget is also the measurement of
+  the real warmup curve. The bounded wait has not yet been exercised on
+  hardware; every verified scan so far started with a warm lamp (the
+  magazine load flow alone gives it about a minute).
 - **After an interrupted scan, power-cycle before anything else.** A
   session that is aborted inside a phase (Ctrl-C, a crash, a USB
   timeout) can leave the scan engine running (reg 0x01 reads 0x23
