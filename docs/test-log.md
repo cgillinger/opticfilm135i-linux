@@ -1348,7 +1348,7 @@ Single unit, single host, as before.
 
 | Parameter / mechanism | Then | Now | Why |
 |---|---|---|---|
-| AFE offset codes | 🔴 `_OFFSET_DEFAULT` placeholder | 🟢 dynamic per scan (two-point dark bracket, `offset_codes`) | Computed on every scan since 44a6b45; on hardware 09-05 every frame gave 0x010a/0x0109-0x010a/0x010a, i.e. within one code of the vendor's 0x010b/0x010a/0x010b and stable across 12 frames. `_OFFSET_DEFAULT` remains only as the fallback for an abnormal bracket slope. |
+| AFE offset codes | 🔴 `_OFFSET_DEFAULT` placeholder | 🟡 middle stage dynamic, first and final stages replayed | The vendor writes offsets in three stages (bracket 1 result in cal_white, bracket 2 result in cal_shading_measure, small final codes at the end of cal_shading_measure / in cal_shading_verify). Only the middle stage is computed (`offset_codes`, stable across 13 frames on 09-05: 0x010a/0x0109-0x010a/0x010a); the first and final stages are captured constants. The formula's margins were fitted to the plain 3600 capture, which it reproduces within one code; in dual mode the vendor's own captures sit 5-12 codes higher, and the vendor recomputes the final small codes per pass (±2 codes). Images unaffected (black floor ~1400 counts, no clipping), but unit- and session-dependent by nature. |
 | Cold-start regs 0x4f/0x3b/0x3c | 🔴 cause unknown | 🟢 explained | 0x4f=0x63 and 0x3b/0x3c=0x00 are the vendor's device-open table (loader context); 0x03/0xff/0xff are the scan-session base table (dpi-dependent 0x3b/0x3c). `tables_load.OPEN` carries the former verbatim. |
 | Cold homing FEEDL (were "8730/4620") | 🟡 unit-dependent travel | 🟢 vendor constants | They are 0x1a22/0x0c12 = feed 6690 / eject 3090, the same jog the vendor runs at every app start on every unit; no adaptive homing exists on the vendor side either. Byte-identical in all captures. |
 | Magazine load flow (OPEN, JOG, LOAD tables) | 🔴 (unengaged loads, Tests 11b-16) | 🟢 as a whole; 🟡 as parts | Byte-identical to the vendor's clean-load session; 4/4 latched. Which element is necessary is NOT isolated — do not vary parts without A/B. |
@@ -1666,3 +1666,18 @@ full semantic PARK; verbatim PARK remains the default.
   codes (0/1/2/130), the retired cold block.
 - Tests: `of135i load` order and exit codes on the fake, `version`
   touches no USB. Offline suite: 106 tests, all passing.
+
+
+## 2026-09-05 — Calibration cross-check (offline) and A10 correction
+
+Comparing the AFE codes across the QuickScan captures (plain 2026-08-30,
+dual 2026-09-02), a second vendor-driver session captured today
+(private) and our 13 frames today: gain codes agree within ±2 across
+all of them (2c-2e / 20-23 / 27-29). Offsets are a three-stage vendor
+sequence of which our driver computes only the middle stage; its
+margins were fitted to the plain capture and land 5-12 codes below the
+vendor's dual-mode values, and the final small codes are replayed from
+the capture while the vendor recomputes them per pass (±2). A10's
+offset row corrected from green to yellow accordingly. No code change;
+images are unaffected (Test 20: no clipping, black floor identical
+across frames).
