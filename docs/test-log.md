@@ -38,11 +38,11 @@ Total hardware scan count has not been systematically tracked.
 | 600 dpi scans | At least 1 (after 0x2b fix) | Hardware-verified |
 | 7200 dpi scans | At least 1 | Hardware-verified |
 | A3 reproducibility | 2 rounds × 10 scans (6 warm + 4 cold) | Repeated |
-| Whole-strip batches (4 frames) | At least 1 documented | Hardware-verified |
-| Cold-start initializations | >=3 documented (cold eject 09-02, Test 1, Test 9) | Partial — warmup retry implemented, not yet hardware-verified |
+| Whole-strip batches (4 frames) | 4 documented (1 on 09-02, 3 on 09-05 incl. 1 raw), the last two frame-for-frame against the vendor app's output | Repeated |
+| Cold-start initializations | >=9 documented (cold eject 09-02, Test 1, Test 9, Tests 15-20) | Repeated — warmup retry never needed after the load flow (lamp warm by then); cold-scan warmup budget still unmeasured |
 | Post-cold-start scans | >=5 (Test 1 + Test 9 scans 6–9) | Partial — gain clips to 0x3F without warmup retry |
-| Eject cycles | Multiple | Hardware-verified |
-| Magazine load cycles | Multiple | Hardware-verified |
+| Eject cycles | Multiple, incl. 4 from driver-loaded magazines on 09-05 | Repeated |
+| Magazine load cycles (driver, vendor flow replayed whole) | 4/4 latched from power-on (Tests 17-20); 5 earlier attempts with out-of-context tables failed safely | Repeated |
 | IR scans (dual-light) | Standard mode in nearly all scans | Repeated |
 | Dust removal (IR inpainting) | Used in most scans with `--ir` | Repeated |
 | USB hosts / controllers | 1 | Limited |
@@ -1336,3 +1336,29 @@ the vendor references (`raw20-preview-vs-vendor.jpg`): all four frames
 neutral (R/G 0.96, vendor 0.85-0.94), correctly oriented, composition
 identical; ours flatter and less saturated than the vendor's rendering
 — acceptable for a preview, and colour work starts from the raw file.
+
+
+## 2026-09-05 — A10 revision: parameter classification after the load, positioning and colour work
+
+Revision of the Test 3 table (2026-09-03) in the light of Tests 12-20.
+Single unit, single host, as before.
+
+| Parameter / mechanism | Then | Now | Why |
+|---|---|---|---|
+| AFE offset codes | 🔴 `_OFFSET_DEFAULT` placeholder | 🟢 dynamic per scan (two-point dark bracket, `offset_codes`) | Computed on every scan since 44a6b45; on hardware 09-05 every frame gave 0x010a/0x0109-0x010a/0x010a, i.e. within one code of the vendor's 0x010b/0x010a/0x010b and stable across 12 frames. `_OFFSET_DEFAULT` remains only as the fallback for an abnormal bracket slope. |
+| Cold-start regs 0x4f/0x3b/0x3c | 🔴 cause unknown | 🟢 explained | 0x4f=0x63 and 0x3b/0x3c=0x00 are the vendor's device-open table (loader context); 0x03/0xff/0xff are the scan-session base table (dpi-dependent 0x3b/0x3c). `tables_load.OPEN` carries the former verbatim. |
+| Cold homing FEEDL (were "8730/4620") | 🟡 unit-dependent travel | 🟢 vendor constants | They are 0x1a22/0x0c12 = feed 6690 / eject 3090, the same jog the vendor runs at every app start on every unit; no adaptive homing exists on the vendor side either. Byte-identical in all captures. |
+| Magazine load flow (OPEN, JOG, LOAD tables) | 🔴 (unengaged loads, Tests 11b-16) | 🟢 as a whole; 🟡 as parts | Byte-identical to the vendor's clean-load session; 4/4 latched. Which element is necessary is NOT isolated — do not vary parts without A/B. |
+| Load completion masks (0xfb: class + sensor bit + busy) | — | 🟡 | Bit 0x04 varies between sessions (d8/dc, f0/f4) on this unit; the mask is derived from two captures and four runs, not from a bit-level spec. |
+| POSITION completion (mask 0xf0, budget × FEEDL/FEEDL_frame1) | 🟡 fixed 3× frame-1 budget (failed at frame 4) | 🟢 | Move time is linear in FEEDL on hardware (2.0/4.2/6.3 s for 17506/28266/39026); budget now 5.8× at frame 4. Polls settle at f5 before f4; class transition proved sufficient (frames correct 8/8). Mask 0xf1 is a possible tightening, untested. |
+| Interrupt endpoint handling | — | 🟢 | Overflow explained (unread events during the load) and prevented by draining as the vendor does; power cycle clears it. |
+| Colour LUT (`negative-color-lut.npy`) | 🟢 (as tone curve) | removed | Fitted to one frame of one film; 🔴 for any other film. Replaced by per-frame density inversion (preview only). |
+| Gain target 31673 | 🟡 | 🟡 | Unchanged: fitted with 2-4 % residual on one unit. Gain codes reproduced 0x2c-2d/0x21/0x27 across 13 frames on 09-05 (stable), but the target itself is still one-unit. |
+| AFE_BASE_PAIRS / EEPROM | 🟡 | 🟡 | EEPROM bytes (c84013 / ff…) still read and logged, not decoded; whether the vendor derives AFE values from them is unknown. |
+| Lamp warmup budget (3 × 5 s) | 🔴 open (Test 11: not enough after a bare cold start) | 🔴 open, lower urgency | With the load flow (cold_init + open + jog + load ≈ 60 s of lamp-on time) the first scan never needed a retry on 09-05. A bare cold-start scan without a load still has no measured warmup time. |
+| Poll leniency: benign mismatches (9c vs ad/bd, 8155 vs 9555, e8/ec vs f8/fc) | 🟡 unexplained | 🟡 | Same values every session; no effect on output. Not understood, not harmful. |
+| Cross-unit / cross-host | 🔴 | 🔴 | Still one unit, one host, one USB controller. |
+
+Safe to test automatically next: hwblock warm from a driver-loaded
+magazine (repeatability of gain/offset/levels), semantic PARK A/B.
+Not to be varied: anything in the OPEN/JOG/LOAD tables.
