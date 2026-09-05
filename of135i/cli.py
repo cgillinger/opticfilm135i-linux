@@ -35,7 +35,7 @@ import usb.core
 
 from . import diag, image, safety
 from .device import SUPPORTED_DPIS, Scanner
-from .usbio import Of135iError, UsbIo
+from .usbio import InterruptOverflowError, Of135iError, UsbIo
 
 log = logging.getLogger("of135i")
 
@@ -57,12 +57,16 @@ def _cmd_status(args: argparse.Namespace) -> int:
                 print("magazine: sensor reports present (does not prove it is locked)")
             else:
                 print("magazine: not detected")
-            button = io.read_button()
-            if button is None:
-                print("button: idle")
+            try:
+                button = io.read_button()
+            except InterruptOverflowError as e:
+                print(f"button: unreadable -- {e}")
             else:
-                name = _BUTTON_NAMES.get(button, f"0x{button:02x}")
-                print(f"button: {name}")
+                if button is None:
+                    print("button: idle")
+                else:
+                    name = _BUTTON_NAMES.get(button, f"0x{button:02x}")
+                    print(f"button: {name}")
     except Of135iError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
@@ -373,6 +377,9 @@ def _cmd_watch(args: argparse.Namespace) -> int:
                 # Idle wait interrupted: nothing was in progress.
                 print("\nstopped")
                 return 0
+            except InterruptOverflowError as e:
+                print(f"cannot watch: {e}", file=sys.stderr)
+                return 1
             if button is None:
                 continue
             if button == 0x48:

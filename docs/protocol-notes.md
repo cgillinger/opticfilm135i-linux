@@ -716,6 +716,21 @@ performs an eject on 0x48 events.
 Stale events can accumulate in the endpoint's queue (e.g. a 0x04 left
 over from cold_init homing); the first `read_button()` drains them.
 
+**EOVERFLOW after a driver-run load (2026-09-05).** After every magazine
+load run by this driver (Tests 17-19) every read of EP 0x83 -- with a
+1-, 8- or 64-byte buffer -- fails with usbfs `[Errno 75] Overflow`: the
+device answers with more than its declared 1-byte packet. Never seen
+before a load, and not after the vendor application's own load (doctor
+2026-09-04). The state persisted through eject and 40 min of idle. The
+vendor polls the endpoint continuously during its session (load-only
+capture: 134 empty 1-byte completions, one 0x48); we never read it
+while loading, so a backlog the device can no longer deliver in one
+packet is the working hypothesis. `read_button()` raises
+`InterruptOverflowError` (status/doctor report it, `watch` exits 1),
+and `tools/load_magazine.py` now drains the endpoint after the jog,
+the reinsert and the load, logging what it finds. Whether a power
+cycle clears it: to be confirmed.
+
 ## Pass 17 — DPI register analysis (2026-09-02)
 
 Captured four vendor scans (600, 1200, 2400, 7200 DPI) from

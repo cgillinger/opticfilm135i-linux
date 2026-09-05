@@ -85,12 +85,15 @@ def main(argv: list[str] | None = None, ask=input) -> int:
             scanner.initialize(prep=False)
             print("running the vendor app-start jog (feed, feed, eject)...")
             scanner.jog_magazine()       # raises StrictPollTimeoutError -> exit 1 below
+            print(f"interrupt events after the jog: {scanner.io.drain_events()}")
             reg32_before = scanner.io.read_reg(0x32)
             ask(REINSERT_PROMPT)
             reg32_after = scanner.io.read_reg(0x32)
+            print(f"interrupt events after the reinsert: {scanner.io.drain_events()}")
             print(f"reg 0x32 before/after the reinsert: {reg32_before:#04x} / {reg32_after:#04x}")
             print("running the vendor load sequence...")
             scanner.load_magazine()      # raises LoadIncompleteError -> exit 1 below
+            print(f"interrupt events after the load: {scanner.io.drain_events()}")
             print("load sequence completed (status class and loader-sensor bit matched the "
                   "capture after the feed, the traverse and a final read). This sets "
                   "the vendor's 'loaded' indication only: check by hand that the magazine "

@@ -1672,6 +1672,56 @@ def test_cli_eject_and_watch_paths():
 # ============================================================== doctor
 
 
+def test_interrupt_overflow_is_named_and_never_fatal():
+    """EP 0x83 answering with more than its 1-byte packet (usbfs
+    EOVERFLOW, seen after every driver-run load 2026-09-05): read_button
+    raises InterruptOverflowError; status prints it and exits 0, doctor
+    records it, watch stops with exit 1, drain_events() returns
+    "overflow" (the load tool logs it) -- and none of them writes."""
+    import usb.core
+    from of135i.usbio import InterruptOverflowError, Of135iError
+
+    def overflow():
+        return usb.core.USBError("[Errno 75] Overflow", errno=75)
+
+    fake = FakeUsbDevice(reg01=0x22)
+    fake.button_events.append(overflow())
+    io_ = UsbIo(fake, readonly=True)
+    e = expect(InterruptOverflowError, io_.read_button)
+    assert "overflow" in str(e).lower() and isinstance(e, Of135iError)
+    fake.button_events.append(overflow())
+    assert io_.drain_events() == "overflow"
+    fake.button_events.extend([0x04, 0x48])
+    assert io_.drain_events() == [0x04, 0x48]
+    assert fake.out_count == 0
+
+    fake = FakeUsbDevice(reg01=0x22)
+    fake.button_events.append(overflow())
+    with cli_over(fake):
+        with quiet():
+            code = cli.main(["status"])
+        so = _STDOUT.getvalue()
+    assert code == 0 and "button: unreadable" in so and "overflow" in so, (code, so)
+    assert fake.out_count == 0
+
+    fake = FakeUsbDevice(reg01=0x22)
+    fake.button_events.append(overflow())
+    with cli_over(fake):
+        report = diag.collect_doctor(UsbIo(fake, readonly=True))
+    assert "overflow" in str(report["button"]).lower(), report["button"]
+    assert fake.out_count == 0
+
+    fake = FakeUsbDevice(reg01=0x22)
+    fake.button_events.append(overflow())
+    with cli_over(fake):
+        with quiet():
+            code = cli.main(["watch"])
+        se = _STDERR.getvalue()
+    assert code == 1 and "cannot watch" in se, (code, se)
+    assert fake.out_count == 0
+    print("test_interrupt_overflow_is_named_and_never_fatal OK")
+
+
 def test_doctor_and_status_are_strictly_read_only():
     for reg01 in (0x22, 0x00, 0x23, 0x02):
         fake = FakeUsbDevice(reg01=reg01)
@@ -2076,6 +2126,7 @@ def main() -> int:
         test_cli_scan_eject_watch_refuse_unsafe_states_with_zero_writes,
         test_cli_scan_normal_path_and_failure_reporting,
         test_cli_eject_and_watch_paths,
+        test_interrupt_overflow_is_named_and_never_fatal,
         test_doctor_and_status_are_strictly_read_only,
         test_open_refuses_unsafe_states_before_any_state_change,
         test_open_verifies_before_configuring_and_keeps_one_session,

@@ -38,6 +38,25 @@ EP_BULK_IN = 0x81
 EP_BULK_OUT = 0x02
 EP_INT_IN = 0x83
 
+
+class InterruptOverflowError(Of135iError):
+    """The interrupt endpoint (EP 0x83, wMaxPacketSize 1) answered a
+    read with more data than its packet size (usbfs EOVERFLOW, errno
+    75), so no event can be read from it. Observed 2026-09-05 after
+    every magazine load run by this driver (Tests 17-19: present from
+    the first doctor after the load, through eject and idle), never
+    before a load and never after the vendor application's own load.
+    The vendor polls the endpoint continuously during its session; we
+    do not, so the state may be an event backlog the device can no
+    longer deliver in one packet. Harmless for scanning; it only
+    blocks the button/sensor event reads (status, watch, doctor)."""
+
+    def __init__(self, msg: str | None = None):
+        super().__init__(msg or (
+            "interrupt endpoint (EP 0x83) overflow: the scanner answers with more than its "
+            "1-byte packet size, so no button/sensor event can be read (seen after every "
+            "driver-run magazine load, 2026-09-05; cleared by a power cycle -- to be confirmed)"))
+
 _WRITE_CHUNK = 64          # bytes = 32 (reg, val) pairs
 _BUF_CHUNK = 16384         # bulk transfer chunk size
 
@@ -313,13 +332,37 @@ class UsbIo:
         Known codes: 0x48 = eject button, 0x04 = loader sensor event.
         Returns None on timeout (no event pending) rather than raising,
         since the interrupt endpoint is expected to be idle most of
-        the time.
+        the time. Raises InterruptOverflowError when the scanner
+        answers with more than the endpoint's 1-byte packet (EOVERFLOW,
+        see the class docstring) -- the event cannot be read then.
         """
         try:
             data = self.dev.read(EP_INT_IN, 1, timeout=timeout_ms)
         except usb.core.USBTimeoutError:
             return None
+        except usb.core.USBError as e:
+            if getattr(e, "errno", None) == 75 or "Overflow" in str(e):
+                raise InterruptOverflowError() from e
+            raise
         return int(data[0]) if len(data) else None
+
+    def drain_events(self, max_events: int = 8, timeout_ms: int = 50) -> list[int] | str:
+        """Read pending interrupt events (EP 0x83) until the endpoint is
+        idle or ``max_events`` were read -- what the vendor driver does
+        continuously in its own loop (its captures show 1-byte reads,
+        mostly empty, 0x48/0x04 when something happened). Reads only.
+        Returns the event codes, or the string "overflow" when the
+        endpoint is in the EOVERFLOW state (InterruptOverflowError)."""
+        events: list[int] = []
+        try:
+            for _ in range(max_events):
+                ev = self.read_button(timeout_ms=timeout_ms)
+                if ev is None:
+                    break
+                events.append(ev)
+        except InterruptOverflowError:
+            return "overflow"
+        return events
 
     def wait_reg(self, reg: int, value: int, timeout: float, mask: int = 0xFF) -> int:
         """Poll read_reg(reg) until (val & mask) == value, or raise on timeout.

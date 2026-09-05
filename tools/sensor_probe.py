@@ -28,7 +28,7 @@ from pathlib import Path
 _REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO))
 
-from of135i.usbio import UsbIo, Of135iError  # noqa: E402
+from of135i.usbio import InterruptOverflowError, UsbIo, Of135iError  # noqa: E402
 
 _BUTTON_NAMES = {0x48: "eject-button", 0x04: "sensor-event"}
 
@@ -48,6 +48,7 @@ def probe(io, seconds: float, hz: float, out=None) -> list[dict]:
 
     print(f"probing for {seconds:.0f}s at {hz:g} Hz (read-only). Insert the magazine "
           f"SLOWLY; note the position at each transition.", file=out, flush=True)
+    overflow = False
     while True:
         t = time.monotonic() - t0
         r101 = io.read_ext_reg(0x101)
@@ -56,9 +57,15 @@ def probe(io, seconds: float, hz: float, out=None) -> list[dict]:
         if state != last:
             emit(t, present=state[0], reg101=f"0x{r101:02x}", reg32=f"0x{r32:02x}")
             last = state
-        button = io.read_button(timeout_ms=10)
-        if button is not None:
-            emit(t, event=_BUTTON_NAMES.get(button, f"0x{button:02x}"))
+        if not overflow:
+            try:
+                button = io.read_button(timeout_ms=10)
+            except InterruptOverflowError as e:
+                overflow = True
+                emit(t, event=f"interrupt endpoint overflow ({e}); event reads stopped")
+            else:
+                if button is not None:
+                    emit(t, event=_BUTTON_NAMES.get(button, f"0x{button:02x}"))
         if t >= seconds:
             break
         time.sleep(period)
