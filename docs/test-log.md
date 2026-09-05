@@ -1224,3 +1224,12 @@ already hardware-verified from a vendor-loaded magazine.
 
 Full chain from power-on in one sitting: cold_init → vendor open → jog →
 fresh insert → load (latched) → scan → eject.
+
+## 2026-09-05 — Test 18: the load flow repeated from power-on — identical result
+
+Power cycle, magazine loose at the stop, `tools/load_magazine.py` from
+a terminal (`hw-2026-09-05-load2/load-5-repeat.log`): cold_init, OPEN,
+jog (four polls 0xf855), reinsert, engaging feed **0xf455**, traverse
+**0xdc55**, final 0xdc55, exit 0. Doctor (`doctor-8-after-load-2.json`):
+0x01=0x22, status 0xdc55, 0x32=0x05 — the same LOADED_READY signature
+as Test 17. Two for two from power-on.
