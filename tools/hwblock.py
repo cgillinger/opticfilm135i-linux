@@ -806,6 +806,8 @@ def run_cold(args: argparse.Namespace, out_dir: Path) -> int:
 
             # ---- C3: cold-start scan (initialize() triggers cold_init) -----
             step = "C3"
+            if getattr(args, "warmup_budget", None) is not None:
+                scanner.warmup_budget_s = float(args.warmup_budget)
             scanner.initialize(ir=True, dpi=3600)
             raw, width, _meta = scanner.scan(frame=args.frame, ir=True, dpi=3600)
             visible = _save_scan(out_dir, "cold-scan", raw, width, 3600, scanner)
@@ -915,6 +917,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_cold.add_argument("--out", required=True, metavar="DIR", help="output directory (required)")
     p_cold.add_argument("--frame", type=int, default=1, help="frame number to scan (default 1)")
     p_cold.add_argument("--eject", action="store_true", help="eject the magazine at the very end")
+    p_cold.add_argument("--warmup-budget", type=float, default=None, metavar="SECONDS",
+                        help="lamp warmup budget for the cold-start scan (default: the "
+                             "driver's 60 s); the sidecar records every measurement")
     p_cold.add_argument("--park", choices=("verbatim", "semantic"), default="verbatim",
                          help="PARK phase implementation (default verbatim; see "
                               "of135i scan --park's help / docs/replay-analysis.md)")
