@@ -1357,7 +1357,7 @@ Single unit, single host, as before.
 | AFE_BASE_PAIRS / EEPROM | 🟡 | 🟡 | EEPROM bytes (c84013 / ff…) still read and logged, not decoded; whether the vendor derives AFE values from them is unknown. |
 | Lamp warmup budget (3 × 5 s) | 🔴 open (Test 11: not enough after a bare cold start) | 🔴 open, lower urgency | With the load flow (cold_init + open + jog + load ≈ 60 s of lamp-on time) the first scan never needed a retry on 09-05. A bare cold-start scan without a load still has no measured warmup time. |
 | Poll leniency: benign mismatches (9c vs ad/bd, 8155 vs 9555, e8/ec vs f8/fc) | 🟡 unexplained | 🟡 | Same values every session; no effect on output. Not understood, not harmful. |
-| Cross-unit / cross-host | 🔴 | 🔴 | Still one unit, one host, one USB controller. |
+| Cross-unit / cross-host | 🔴 | 🔴 (permanent for cross-unit) | One unit, one host, one USB controller. A second unit is not available to this project and will not be; cross-unit verification can only come from other people's units (SANE users, a vendor with a fleet). Mitigation: everything that can be measured on the device at run time is (gain, offset, shading, load/position completion by state, not by fixed values), and every one-unit constant is labelled as such. Another USB port and another Linux host (B4/B5) ARE feasible and still open. |
 
 Safe to test automatically next: hwblock warm from a driver-loaded
 magazine (repeatability of gain/offset/levels), semantic PARK A/B.
