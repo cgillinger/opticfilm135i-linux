@@ -1211,3 +1211,16 @@ whole.
 
 Next: one scan from this state (frame 1, 3600 dpi) and an eject, both
 already hardware-verified from a vendor-loaded magazine.
+
+### Test 17, continued: scan and eject from the driver-loaded magazine
+- `scan --frame 1 --ir --positive --rotate 90` (new session, start
+  state 0x22): gain R=0x2d G=0x21 B=0x27, offsets 0x010a/0x0109/0x010a,
+  warmup_attempts=1, poll_timeouts=0, cr_mismatches=15. Image
+  5184x5248 visually correct and well exposed (`test17-frame1.tiff`,
+  `-ir.tiff`, `.diag.json`, preview `-view.jpg`).
+- `eject` (new session, 0x22): "ejected", exit 0. Doctor afterwards:
+  0x01=0x22, status 0xe855 (class E, sensor bit set: magazine still in
+  the slot), 0x32=0x9f.
+
+Full chain from power-on in one sitting: cold_init → vendor open → jog →
+fresh insert → load (latched) → scan → eject.
