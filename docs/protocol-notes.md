@@ -317,6 +317,15 @@ USB 512-padding; same block format as upload #1):
   history / cal-data (fit-inputs, align.npz).
 - Serious color work remains app-layer (darktable etc.) — this is the
   everyday convenience path.
+- **Retired 2026-09-05.** The LUT was fitted on ONE frame of one film
+  and baked in its mask and exposure: on another strip (Test 19, 1980s/
+  90s negatives) it rendered R/G ≈ 1.25 against the vendor's ≈ 0.92,
+  a strong red cast, with identical highlight values in every frame
+  where the vendor app balances per frame. `to_positive()` is now the
+  per-frame density inversion only (base from the 99.8th percentile,
+  black/white points per channel), a preview that adapts to the film
+  instead of matching one reference. The driver's product is the raw
+  linear negative; interpretation is the application's job.
 
 ### Channel alignment (pass 10 addendum, 2026-08-30)
 The raw image has the color channels offset along the scan axis:

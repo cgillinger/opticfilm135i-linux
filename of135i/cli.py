@@ -297,14 +297,8 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
         visible = _np.ascontiguousarray(_np.rot90(visible, 3)[:, ::-1])
         ir = _np.ascontiguousarray(_np.rot90(ir, 3)[:, ::-1])
 
-        # LUT-based to_positive() was fitted at width 3762 (the plain
-        # 3600 dpi scan's windowed width); dual-light images are at the
-        # raw sensor readout width (5184 px at 3600 dpi, 876..10512 at
-        # the other resolutions), so the same per-channel u16->u8
-        # mapping is applied to pixel VALUES it was never fitted against
-        # -- colors here are an approximation, not the fitted vendor-
-        # matched rendering the plain --positive path gives. Good enough
-        # for a first look; real color work should use the raw negative.
+        # Per-frame preview inversion (image.to_positive); real colour
+        # work starts from the raw negative written without --positive.
         visible = image.to_positive(visible)
     if args.rotate:
         visible = _np.ascontiguousarray(_np.rot90(visible, k=args.rotate // 90))

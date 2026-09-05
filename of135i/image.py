@@ -152,34 +152,28 @@ def write_pnm16(arr: np.ndarray, path: str | Path) -> None:
         f.write(pixel_data)
 
 
-_LUT_PATH = __import__("pathlib").Path(__file__).parent / "data" / "negative-color-lut.npy"
+def to_positive(arr, gamma: float = 2.2):
+    """Convert a raw negative scan to a display-ready PREVIEW positive.
 
-
-def to_positive(arr, gamma: float = 1.8):
-    """Convert a raw negative scan to a display-ready positive.
-
-    Density-domain inversion (the same math a darkroom print performs):
-    film base level per channel from the 99.8th percentile (the
-    unexposed rebate is the brightest thing in a negative), density =
-    log10(base/pixel), then per-channel black/white points at the
-    0.5/99.5 percentiles -- which also cancels the orange mask -- and a
+    Density-domain inversion (the same math a darkroom print performs),
+    computed per frame from the frame itself: film base level per
+    channel from the 99.8th percentile (the unexposed rebate is the
+    brightest thing in a negative), density = log10(base/pixel), then
+    per-channel black/white points at the 0.5/99.5 percentiles -- which
+    also cancels the orange mask of whatever film this is -- and a
     print gamma. Returns uint16 (lines, width, 3).
 
-    This is a convenience for everyday use; serious color work should
-    start from the raw negative in a dedicated tool (e.g. darktable's
-    negadoctor).
+    This is deliberately a convenience, not a colour pipeline: the
+    driver's product is the raw linear negative (calibrated, aligned,
+    unclipped); interpretation -- inversion, mask, white balance, tone
+    -- is per image and per photographer and belongs in the
+    application (darktable's negadoctor, VueScan, a SANE frontend). A
+    per-channel LUT learned against the vendor app's rendering of ONE
+    frame (2026-08-30) was shipped until 2026-09-05; it baked in that
+    film's mask and exposure and rendered another strip with a strong
+    red cast (test log, Test 19). Per-frame inversion adapts instead of
+    matching one reference.
     """
-    # Preferred path: a learned per-channel LUT (raw u16 -> display u8),
-    # fitted once against a reference rendering of the same frame
-    # (vendor-app output). Captures inversion, orange mask and tone
-    # curve in one mapping. Falls back to the generic density inversion
-    # below when no LUT file is shipped.
-    if _LUT_PATH.exists():
-        luts = np.load(_LUT_PATH)
-        a = np.asarray(arr)
-        out8 = np.stack([luts[c][a[..., c]] for c in range(3)], axis=-1)
-        return (np.clip(out8, 0, 255) * 257.0).astype(np.uint16)
-
     px = np.asarray(arr, dtype=np.float64)
     base = np.array([np.percentile(px[..., c], 99.8) for c in range(3)])
     dens = np.log10(np.clip(base, 1, None) / np.clip(px, 1.0, None))

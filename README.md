@@ -22,9 +22,13 @@ negative scanner Linux, SANE OpticFilm 135i, GL126, pyusb scanner driver*.
   scanning. The dark-bracket offset reproduces the vendor's codes on the
   reference unit; it is implemented but not yet hardware-verified.
 - Color-line (staggered CCD) channel alignment — no RGB fringing.
-- Output as 16-bit TIFF or PNM: raw negative, or a display-ready positive
-  (`--positive`, sRGB-tagged) via a learned tone-curve LUT that matches
-  the vendor application's color rendering.
+- Output as 16-bit TIFF or PNM: the raw linear negative (the driver's
+  actual product: calibrated, channel-aligned, unclipped), or a preview
+  positive (`--positive`, sRGB-tagged) by per-frame density inversion
+  with automatic black/white points per channel. The preview is a
+  convenience; colour interpretation (inversion, mask, white balance,
+  tone) belongs in the application — darktable's negadoctor, VueScan, a
+  SANE frontend — working from the raw negative.
 - IR scanning (`--ir`): dual-light alternating capture — visible image plus an
   IR channel where only dust and scratches are visible, with per-light
   two-stage shading calibration.
