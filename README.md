@@ -40,15 +40,20 @@ negative scanner Linux, SANE OpticFilm 135i, GL126, pyusb scanner driver*.
   at all, not even `SET_CONFIGURATION` — treats a short OUT transfer as
   an unknown hardware state, prevents two processes from driving the
   scanner at once (a Linux process lock), and keeps `doctor`/`status`
-  strictly read-only. Offline-verified only. See
+  strictly read-only. The guard has held on hardware through five
+  failed magazine loads (it stopped each one before the next motor
+  move) and every motor completion is verified against the vendor
+  capture's state class. See
   [`docs/hardware-safety.md`](docs/hardware-safety.md).
 
 ## Development status
 
-**Phase: working prototype. Single-frame and whole-strip batch scanning
-are the verified paths.** Scan, calibration, IR and dust removal are
-stable and hardware-verified, per frame and across a 4-frame strip in
-one invocation. The rough edges you should know about:
+**Phase: working prototype. Magazine loading, single-frame and
+whole-strip batch scanning, and eject are the verified paths.** Scan,
+calibration, IR and dust removal are stable and hardware-verified, per
+frame and across a 4-frame strip in one invocation, frame for frame
+against the vendor application's output of the same strip (2026-09-05).
+The rough edges you should know about:
 
 - **Eject depends on how the magazine was loaded.** Load with
   `tools/load_magazine.py` (the vendor's insert flow) and `eject` /
@@ -98,7 +103,9 @@ one invocation. The rough edges you should know about:
   The flow replays the vendor's own session from device open — its
   register table, app-start jog, a fresh insert to the stop by the
   operator, then the feed and traverse — and latched the magazine on
-  hardware on 2026-09-05, see the test log) — the
+  hardware three times out of three on 2026-09-05, see the test log.
+  The tool is interactive: run it in a terminal, it asks you to take
+  the magazine out and reinsert it half-way through) — the
   autoloader is driver-managed and the
   hardware buttons are dead without a driver process. The loader sensor
   reports magazine *presence*, not that it is mechanically locked — see
@@ -226,6 +233,8 @@ interoperability constants and our own code.
 - [x] Resolution profiles: all five DPIs (600/1200/2400/3600/7200) hardware-verified
 - [x] Whole-strip batch scanning (`--frames 1-4`)
 - [x] Eject from a loaded magazine, before or after scanning
+- [x] Magazine loading through the driver (the vendor's insert flow replayed whole; latched 3/3, 2026-09-05)
+- [x] Per-frame positioning wait scaled with the move length (frame 4 of a batch was scanned mid-move before; fixed and verified against the vendor's output, 2026-09-05)
 - [ ] Speed tuning (trim the replayed command stream)
 - [x] Cold-start initialization from a bare power-on
 - [x] udev rule for rootless operation
