@@ -643,7 +643,7 @@ class Scanner:
 
     # -------------------------------------------------------------- init
 
-    def initialize(self, ir: bool = False, dpi: int = 3600) -> None:
+    def initialize(self, ir: bool = False, dpi: int = 3600, prep: bool = True) -> None:
         """Full device initialization.
 
         First (once per session) the power-on base register table + AFE
@@ -666,6 +666,14 @@ class Scanner:
         sequence first, exactly once per session -- and nothing else
         is accepted: any other value, or an unreadable one, refuses
         the whole session with zero writes.
+
+        ``prep=False``: stop after the base table + AFE values -- the
+        vendor's device-open state, from which its app-start jog and
+        the magazine load run (clean-load capture ops 40-86, then JOG
+        at 88). The scan preparation phases (PREP/AFE_BASE) are never
+        part of the vendor's load flow; jog_magazine()/load_magazine()
+        callers pass prep=False. scan() still requires a prep=True
+        initialize() in the same session.
         """
         # Validate parameters before entering the operation, so a bad
         # argument is a plain error and not a hardware-session failure.
@@ -683,6 +691,8 @@ class Scanner:
                 for adr, val in tables_base.AFE_BASE_PAIRS:
                     self.io.write_regs([(0x51, adr), (0x5D, 0x00), (0x5E, val)])
                 self._base_initialized = True
+            if not prep:
+                return
             # IR mode: trace 04's own prep carries IR-LED setup that the
             # plain prep lacks (a dim IR pass was observed without it,
             # 2026-08-30) -- run the matching phase set. Other resolutions:
@@ -982,15 +992,59 @@ class Scanner:
             self.session.phase = "home"
             self._motor_run(0x30, 1)
 
+    def _strict_status_polls(self, phase: Phase) -> frozenset[int]:
+        """Indices of a phase's status-word polls (wValue 0x018e): the
+        motor completions, run strictly under load_status_matches()."""
+        return frozenset(i for i, op in enumerate(phase.ops)
+                         if op.kind == "poll" and op.wv == 0x018E)
+
+    def jog_magazine(self) -> None:
+        """Run the vendor's app-start jog (tables_load.JOG, clean-load
+        capture ops 88-170): interrupt/sensor acks, motor enable, feed
+        6690, 0x35=0xbb, feed 6690, eject 3090, motor disable -- with
+        the loader profile and slope tables, verbatim.
+
+        Why: every vendor load that engaged the cassette was preceded
+        by this jog (eject-from-loaded 2026-09-02, load-only
+        2026-08-30, clean-load 2026-09-05), and every load of ours
+        that did not engage lacked it (Tests 11b/12b/13/15: feed done,
+        loader-sensor bit still set, magazine loose). The jog's own
+        feeds never clear the sensor bit (0xf855 after each move);
+        it positions the mechanism for the load that follows. The
+        vendor runs it with the magazine loose in the slot, right
+        after the base table + AFE values (initialize(prep=False)),
+        and then has the operator take the magazine out and reinsert
+        it to the stop before load_magazine().
+
+        Its four status-word polls are strict under the masked test
+        (done class, sensor bit SET, busy clear; captured 0xf855): a
+        move that does not complete stops the flow, fails the session
+        and requires a power cycle. NOT yet hardware-verified as part
+        of a load.
+        """
+        from . import tables_load
+        self.session.write_allowed_or_final()
+        if not self._base_initialized:
+            raise OperationNotAllowedError(
+                "jog_magazine() requires initialize() first in this session. "
+                f"{safety.NO_COMMANDS_SENT}", session=self.session.snapshot())
+        with self._operation("jog_magazine"):
+            self._run_phase(tables_load.JOG, strict_polls=self._strict_status_polls(tables_load.JOG))
+            word = self.io.read_status_word()
+            log.info("jog_magazine: complete, status word %#06x", word)
+
     def load_magazine(self) -> None:
         """Run the vendor's standalone magazine insert flow
         (tables_load.LOAD, from the 2026-09-05 clean-load capture, Test
         14): loader-sensor ack, the engaging feed with the vendor's full
         register block, the prescan traverse and one idle housekeeping
         cycle. The cassette must already be pushed in by hand, fully,
-        to the stop (Test 14: the vendor loads from there). Requires
-        initialize() first in this session, as the vendor flow does
-        (the tool tools/load_magazine.py does both).
+        to the stop (Test 14: the vendor loads from there), AFTER
+        jog_magazine() has run in this session -- the vendor's flow is
+        initialize(prep=False) -> jog -> operator reinserts -> load,
+        and a load without the jog has never engaged the cassette
+        (Tests 11b-15). Requires initialize() first in this session;
+        tools/load_magazine.py runs the whole flow.
 
         Completion is verified, not assumed, at three points, each with
         the masked test load_status_matches() (state class AND loader-
@@ -1021,10 +1075,9 @@ class Scanner:
                 "load_magazine() requires initialize() first in this session. "
                 f"{safety.NO_COMMANDS_SENT}", session=self.session.snapshot())
         expected = load_completion_target()
-        strict = frozenset(i for i, op in enumerate(tables_load.LOAD.ops)
-                           if op.kind == "poll" and op.wv == 0x018E)
         with self._operation("load_magazine"):
-            self._run_phase(tables_load.LOAD, strict_polls=strict)
+            self._run_phase(tables_load.LOAD,
+                            strict_polls=self._strict_status_polls(tables_load.LOAD))
             self.session.phase = "load_verify"
             word = self.io.read_status_word()
             if not load_status_matches(word.to_bytes(2, "big"), expected.to_bytes(2, "big")):

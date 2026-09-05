@@ -156,3 +156,15 @@ Next hardware step: scanner power-cycled, magazine fully OUT, then
 reinserted fresh to the stop; `doctor`; `tools/load_magazine.py`;
 listen. Expect the sensor bit to clear during the feed and the
 magazine to latch. Then the `LOADED_READY` signature (§4 step 3).
+
+## 6. Test 15: the register block was not it — the jog is the common factor
+
+With the feed programmed exactly as the vendor programs it (§5), the
+feed still finished with the sensor bit set (0xfc55) and a loose
+magazine. Every engaging vendor load (three captures) is preceded by
+the app-start jog — feed 6690, 0x35=0xbb, feed 6690, eject 3090 with
+the loader profile — which none of our loads ever ran. Driver: new
+`tables_load.JOG` / `Scanner.jog_magazine()`, `initialize(prep=False)`
+(vendor's device-open state), and the tool runs initialize → jog →
+operator reinserts to the stop → load. Details and the next hardware
+step in docs/test-log.md, Test 15.

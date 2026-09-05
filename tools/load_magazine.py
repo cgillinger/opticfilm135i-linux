@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 """Load the film magazine the way the vendor driver does.
 
-Thin command-line wrapper around Scanner.load_magazine() (the vendor's
-standalone insert flow, compiled into of135i/tables_load.py from the
-2026-09-05 clean-load capture, Test 14 in docs/test-log.md). The user
-takes the magazine fully out and inserts the cassette fresh, all the
-way to the mechanical stop -- that is where the vendor app loads from
-(Test 14; the earlier trigger-point idea was wrong). The driver acks
-the loader sensor (reg 0x32), then runs the engaging feed (mode 0x18,
-FEEDL 0x1a22, the vendor's full register block, loader slope tables)
-and the slow prescan traverse (mode 0x1c, FEEDL 71490). Nothing else.
-Both motor completions and a final status read are verified with the
-masked completion test (state class AND loader-sensor bit 0x08; feed
-0xf455 = cassette pulled past the sensor, traverse 0xdc55) and the
-flow stops -- session failed, power cycle -- at the first that does
-not pass. This table is NOT yet hardware-verified as a load: the
-previous one (cut from an eject capture, feed without its register
-block) ran the transport without engaging the cassette (Tests 11b-13).
+Command-line wrapper around the vendor's insert flow (of135i/tables_load.py,
+compiled from the 2026-09-05 clean-load capture, Test 14 in docs/test-log.md),
+in the vendor's order:
+
+  1. base register table + AFE values (Scanner.initialize(prep=False);
+     on a cold scanner cold_init() runs first) -- magazine loose in the
+     slot, as at the vendor's app start;
+  2. the app-start JOG (Scanner.jog_magazine(): feed 6690, feed 6690,
+     eject 3090). Every vendor load that engaged the cassette was
+     preceded by it; every load of ours that did not engage lacked it
+     (Tests 11b-15). The magazine may move during it;
+  3. the operator takes the magazine FULLY OUT and reinserts it fresh,
+     all the way to the mechanical stop, then presses Enter (the
+     vendor app prompts the same; Test 14 latched from there);
+  4. the LOAD (Scanner.load_magazine(): loader-sensor ack, the engaging
+     feed with the vendor's full register block, the prescan traverse).
+
+Every motor completion is verified with the masked completion test
+(state class AND loader-sensor bit 0x08: jog moves 0xf855, engaging
+feed 0xf455 = cassette pulled past the sensor, traverse 0xdc55) and the
+flow stops -- session failed, power cycle -- at the first that does not
+pass. The JOG + reinsert + LOAD flow is NOT yet hardware-verified.
 
 Safety (docs/hardware-safety.md): the start-state guard in the driver
 refuses to send anything unless reg 0x01 reads 0x22 (idle-homed) or
@@ -51,8 +57,16 @@ from of135i.safety import POWER_CYCLE_INSTRUCTION, SafetyError  # noqa: E402
 from of135i.usbio import Of135iError  # noqa: E402
 
 
-def main() -> int:
-    if len(sys.argv) > 1:
+REINSERT_PROMPT = (
+    "\nJOG done. Now take the magazine FULLY OUT of the slot, then insert it "
+    "fresh all the way to the mechanical stop.\nPress Enter when it is at the "
+    "stop (Ctrl-C aborts; a power cycle is then required): "
+)
+
+
+def main(argv: list[str] | None = None, ask=input) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv:
         print(f"usage: {sys.argv[0]} (no arguments; --full was removed, see the "
               "module docstring)", file=sys.stderr)
         return 2
@@ -67,7 +81,13 @@ def main() -> int:
                 print("error: no magazine present in the slot (loader sensor clear)",
                       file=sys.stderr)
                 return 1
-            scanner.initialize()
+            scanner.initialize(prep=False)
+            print("running the vendor app-start jog (feed, feed, eject)...")
+            scanner.jog_magazine()       # raises StrictPollTimeoutError -> exit 1 below
+            reg32_before = scanner.io.read_reg(0x32)
+            ask(REINSERT_PROMPT)
+            reg32_after = scanner.io.read_reg(0x32)
+            print(f"reg 0x32 before/after the reinsert: {reg32_before:#04x} / {reg32_after:#04x}")
             print("running the vendor load sequence...")
             scanner.load_magazine()      # raises LoadIncompleteError -> exit 1 below
             print("load sequence completed (status class and loader-sensor bit matched the "
@@ -76,7 +96,9 @@ def main() -> int:
                   "is latched before scanning -- the sensor reports presence, not latching.")
             return 0
     except KeyboardInterrupt:
-        print("\ninterrupted.", file=sys.stderr)
+        # Even at the reinsert prompt (jog complete, session armed) the
+        # rule holds: no new session on top of an aborted one.
+        print(f"\ninterrupted. {POWER_CYCLE_INSTRUCTION}", file=sys.stderr)
         _report(scanner)
         return 130
     except SafetyError as e:

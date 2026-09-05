@@ -1079,3 +1079,58 @@ Mechanical note (Christian, Test 14): QuickScan required the magazine
 taken FULLY out and reinserted; it latched the moment it hit the stop.
 So full insertion to the stop IS correct — the earlier trigger-point
 idea was wrong; the missing piece was always the feed's register block.
+
+## 2026-09-05 — Test 15: LOAD with the full register block, no jog — feed done, cassette not engaged
+
+Scanner power-cycled overnight, found cold (0x01=0x00, status 0x4055,
+magazine absent). Magazine inserted fresh to the stop, orange LED
+(`hw-2026-09-05-load2/doctor-1-magazine-in.json`: 0x4855, sensor set).
+`tools/load_magazine.py` with the LOAD table regenerated from the
+clean-load capture (commit 80e76c9: feed with the vendor's full
+126-register block, masked completion test).
+
+Sequence: cold_init (3 homing rounds, magazine in the slot, no
+abnormal sound), base table, armed 0x22; LED went blue with no motor
+sound at the feed's register write, then motor sound (the feed). The
+feed's completion poll ended **0xfc55**: done class, loader-sensor bit
+0x08 still SET (capture: 0xf455, clear). The strict poll stopped the
+flow before the traverse, session FAILED, nothing further sent, exit 1
+(`load-1.log`). Registers afterwards (`doctor-2-after-failed-feed.json`):
+0x01=0x22, 0x35=0xbb, 0x32=0x1d, status 0xfc55. Magazine LOOSE, LED
+went out. Power-cycled.
+
+**Conclusion: the register block was not the missing piece.** With the
+feed programmed exactly as the vendor programs it, the transport still
+ran without taking the cassette (same symptom as Tests 11b/12b/13).
+The masked completion test and the fail-closed poll worked as designed.
+
+### What all three engaging vendor loads have in common
+Re-reading the captures (eject-from-loaded 2026-09-02 ops 137-193 →
+load 292; load-only 2026-08-30 ops 108-169 → load 794; clean-load ops
+107-168 → load 199): **every engaging feed is preceded by the vendor's
+app-start jog** — feed 6690 (short batch), 0x35=0xbb, feed 6690
+(19-register batch), eject 3090, all with the loader profile — and
+then either the operator's reinsert (clean-load, load-only) or nothing
+(eject-from-loaded, magazine already in: its feed had only the
+19-register batch and still engaged, 0xf055). The jog's own feeds
+never clear the sensor bit (0xf855 after each). None of our loads ever
+ran the jog: cold_init's homing rounds (8730/8730/4620) and the base
+table are what preceded our feeds (Test 12: 0xec55; Test 15: 0xfc55).
+Working hypothesis: the eject 3090 positions the loader mechanism so
+that the next feed catches the cassette.
+
+### Driver change (offline, 89 tests green, NOT hardware-verified)
+- `tables_load.JOG` generated from clean-load ops 88-170 (acks, motor
+  enable, feed, 0x35=0xbb, feed, eject 3090, motor disable), replayed
+  by `Scanner.jog_magazine()` with four strict masked polls (0xf855:
+  done, sensor SET, busy clear).
+- `initialize(prep=False)`: base table + AFE values only — the vendor's
+  device-open state; its load flow never runs the scan preparation.
+- `tools/load_magazine.py` now runs the vendor's order: initialize
+  (prep=False) → JOG → operator takes the magazine fully out and
+  reinserts it to the stop (Enter) → LOAD. reg 0x32 is logged before
+  and after the reinsert (clean-load showed 0x1f → 0x5b → 0x1f).
+
+### Next (Test 16): one run of that flow from a power-cycled scanner
+with the magazine loose in the slot at the stop. Expect the jog to
+move the magazine, 0xf455 after the engaging feed, latched magazine.

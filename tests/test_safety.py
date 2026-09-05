@@ -343,20 +343,26 @@ class FakeUsbDevice:
 
 
 def vendor_like_load_status(fake: FakeUsbDevice, after_traverse: int = 0xDC,
-                            after_feed: int = 0xF4, later: int | None = None) -> None:
+                            after_feed: int = 0xF4, later: int | None = None,
+                            jog: bool = False, jog_value: int = 0xF8) -> None:
     """Make the fake answer the LOAD flow's status-word polls like the
     clean-load capture (Test 14): `after_feed` once the first GO (feed
     6690) has completed (captured 0xf4: done class, loader-sensor bit
     0x08 CLEAR), `after_traverse` after the second (traverse 71490;
     captured 0xdc: done class, sensor bit SET again); `later`, if
     given, replaces after_traverse from the second status read on
-    (models a value that settles differently after the poll)."""
+    (models a value that settles differently after the poll). ``jog``:
+    the flow starts with jog_magazine() (three GO pulses, each
+    completing at ``jog_value``, captured 0xf8) before the load."""
     state = {"reads_after_traverse": 0}
+    n_jog = 3 if jog else 0
 
     def high(f):
         if f.pulses == 0:
             return 0xE8
-        if f.pulses == 1:
+        if f.pulses <= n_jog:
+            return jog_value
+        if f.pulses == n_jog + 1:
             return after_feed
         state["reads_after_traverse"] += 1
         if later is not None and state["reads_after_traverse"] > 1:
@@ -972,14 +978,17 @@ def test_load_magazine_requires_initialize_and_matches_trace():
     if trace.exists():
         import gzip
         import json
-        raw = json.load(gzip.open(trace, "rt"))[tables_load.OP_RANGE[0]:tables_load.OP_RANGE[1]]
-        assert len(raw) == len(tables_load.LOAD.ops)
-        for o, op in zip(raw, tables_load.LOAD.ops):
-            assert o["t"] == op.kind
-            if op.kind in ("cw", "bo"):
-                assert (bytes.fromhex(o["data"]) if o.get("data") else b"") == op.data
-            if op.kind == "cw":
-                assert (o["bm"], o["br"], o["wv"], o["wi"]) == (op.bm, op.br, op.wv, op.wi)
+        full = json.load(gzip.open(trace, "rt"))
+        for phase in (tables_load.JOG, tables_load.LOAD):
+            raw = full[phase.op_range[0]:phase.op_range[1]]
+            assert len(raw) == len(phase.ops), phase.name
+            for o, op in zip(raw, phase.ops):
+                assert o["t"] == op.kind
+                if op.kind in ("cw", "bo"):
+                    assert (bytes.fromhex(o["data"]) if o.get("data") else b"") == op.data
+                if op.kind == "cw":
+                    assert (o["bm"], o["br"], o["wv"], o["wi"]) == (op.bm, op.br, op.wv, op.wi)
+        assert tables_load.OP_RANGE == tables_load.LOAD_OP_RANGE == tables_load.LOAD.op_range
         note = "trace verified"
     else:
         note = "trace absent, table self-check only"
@@ -1172,6 +1181,102 @@ def test_short_transfer_leaving_engine_running_blocks_driver_restart():
     print("test_short_transfer_leaving_engine_running_blocks_driver_restart OK")
 
 
+def test_jog_magazine_is_the_vendor_jog_and_fails_closed():
+    """Scanner.jog_magazine() replays tables_load.JOG (the vendor's
+    app-start jog: feed 6690, feed 6690, eject 3090) verbatim after
+    initialize(), never before it, and its four status-word polls are
+    strict under the masked test: a move that does not complete
+    (wrong class, sensor bit lost, busy) fails the session before the
+    next move and sends nothing more."""
+    ops = tables_load.JOG.ops
+    gos = [i for i, op in enumerate(ops)
+           if op.kind == "cw" and op.wv == 0x83 and op.data == bytes.fromhex("0f01")]
+    assert len(gos) == 3
+    # The three moves, in order: feed 6690, feed 6690, eject 3090 (regs 3e/3f).
+    moves = []
+    for g in gos:
+        regs = {}
+        for op in ops[:g]:
+            if op.kind == "cw" and op.wv == 0x83:
+                regs.update(zip(op.data[0::2], op.data[1::2]))
+        moves.append((regs[0x02], regs[0x3E], regs[0x3F]))
+    assert moves == [(0x18, 0x1A, 0x22), (0x18, 0x1A, 0x22), (0x18, 0x0C, 0x12)], moves
+    polls = [op for op in ops if op.kind == "poll" and op.wv == 0x018E]
+    assert len(polls) == 4 and all(op.resp == bytes.fromhex("f855") for op in polls)
+
+    fake = FakeUsbDevice(reg01=0x22)
+    vendor_like_load_status(fake, jog=True)
+    scanner = make_scanner(fake)
+    with fast_time():
+        expect(OperationNotAllowedError, scanner.jog_magazine)
+        assert fake.out_count == 0
+        scanner.initialize(prep=False)
+        n = fake.out_count
+        scanner.jog_magazine()
+    emitted = fake.out_log[n:]
+    expected = [op for op in ops if op.kind in ("cw", "bo")]
+    assert len(emitted) == len(expected), (len(emitted), len(expected))
+    for ev, op in zip(emitted, expected):
+        if op.kind == "cw":
+            assert ev["kind"] == "ctrl_out" and (ev["bm"], ev["br"], ev["wv"], ev["wi"], ev["data"]) == \
+                (op.bm, op.br, op.wv, op.wi, op.data)
+        else:
+            assert ev["kind"] == "bulk_out" and ev["length"] == len(op.data)
+    assert fake.pulses == 3 and scanner.session.state is SessionState.ARMED
+    n_full = fake.out_count - n
+
+    for label, value, pulses in (("wrong class after a move (0xe8)", 0xE8, 1),
+                                 ("sensor bit lost during the jog (0xf0)", 0xF0, 1),
+                                 ("busy bit never clears (0xf9)", 0xF9, 1)):
+        fake = FakeUsbDevice(reg01=0x22)
+        vendor_like_load_status(fake, jog=True, jog_value=value)
+        scanner = make_scanner(fake)
+        with fast_time():
+            scanner.initialize(prep=False); n_init = fake.out_count
+            e = expect(safety.StrictPollTimeoutError, scanner.jog_magazine)
+        assert fake.pulses == pulses, (label, fake.pulses)
+        assert 0 < fake.out_count - n_init < n_full, label
+        assert "mask 0xfb55" in str(e) and e.last.hex() == f"{value:02x}55", (label, str(e))
+        _assert_failed_and_frozen(fake, scanner, e, operation="jog_magazine", phase_prefix="jog")
+    print("test_jog_magazine_is_the_vendor_jog_and_fails_closed OK")
+
+
+def _base_open_writes() -> int:
+    """OUT transfers of initialize(prep=False) on a warm fake: the base
+    table batches + the AFE values."""
+    fake = FakeUsbDevice(reg01=0x22)
+    with fast_time():
+        make_scanner(fake).initialize(prep=False)
+    return fake.out_count
+
+
+def test_initialize_prep_false_is_the_vendor_device_open_state():
+    """initialize(prep=False) writes the base table + AFE values and
+    nothing else (no PREP/AFE_BASE scan preparation): the vendor's
+    device-open state, from which its jog and load run. A later
+    initialize() in the same session adds the preparation without
+    rewriting the base table."""
+    fake = FakeUsbDevice(reg01=0x22)
+    scanner = make_scanner(fake)
+    with fast_time():
+        scanner.initialize(prep=False)
+    n_base = fake.out_count
+    n_afe = len(tables_base.AFE_BASE_PAIRS)
+    # Register batches only (the base table, then one write per AFE value).
+    assert all(ev["kind"] == "ctrl_out" and ev["wv"] == 0x83 for ev in fake.out_log), fake.out_log
+    assert [ev["data"][:2] for ev in fake.out_log[-n_afe:]] == \
+        [bytes([0x51, adr]) for adr, _ in tables_base.AFE_BASE_PAIRS]
+    assert n_base == _base_open_writes(), n_base
+    assert not scanner._prepared_for_scan and scanner._base_initialized
+    assert fake.pulses == 0
+    with fast_time():
+        scanner.initialize()
+    assert scanner._prepared_for_scan
+    assert fake.out_count > n_base
+    assert fake.out_log[n_base]["data"] != fake.out_log[0]["data"]   # base table not rewritten
+    print("test_initialize_prep_false_is_the_vendor_device_open_state OK")
+
+
 def test_load_status_matches_is_class_and_sensor_bit():
     """The masked completion test (device.LOAD_STATUS_MASK = 0xfb):
     state class AND loader-sensor bit 0x08 AND busy bit, only bit 0x04
@@ -1278,22 +1383,60 @@ def test_load_completion_is_verified_not_assumed():
     # The tool: exit 1 with FAILED text and the power-cycle instruction
     # on the hardware-observed sequence; exit 0 with an honest message
     # on a vendor-like one.
-    for label, model, want_code in (("hardware", lambda f: vendor_like_load_status(f, after_feed=0xEC), 1),
-                                    ("vendor-like", vendor_like_load_status, 0)):
+    # The tool runs the vendor's order: initialize(prep=False), the
+    # JOG (3 pulses), the operator's reinsert prompt, then the LOAD.
+    for label, model, want_code in (
+            ("hardware", lambda f: vendor_like_load_status(f, after_feed=0xEC, jog=True), 1),
+            ("vendor-like", lambda f: vendor_like_load_status(f, jog=True), 0)):
         fake = FakeUsbDevice(reg01=0x22)
         model(fake)
+        asked = []
+
+        def ask(prompt, fake=fake):
+            asked.append((prompt, fake.pulses))
+            return ""
         with cli_over(fake):
             with quiet():
-                code = tool.main()
+                code = tool.main([], ask=ask)
             so, se = _STDOUT.getvalue(), _STDERR.getvalue()
         assert code == want_code, (label, code, se)
+        assert asked == [(tool.REINSERT_PROMPT, 3)], (label, asked)   # asked once, after the jog
+        # Nothing but the base table + AFE values precedes the jog's first write.
+        first_jog = next(op for op in tables_load.JOG.ops if op.kind == "cw")
+        idx = next(i for i, ev in enumerate(fake.out_log)
+                   if ev["kind"] == "ctrl_out" and ev["data"] == first_jog.data)
+        assert idx == _base_open_writes(), (label, idx)
         if want_code:
             assert "FAILED" in se and "did not reach" in se, se
             _assert_power_cycle_message(se)
             assert "completed" not in so, so
-            assert fake.pulses == 1
+            assert fake.pulses == 4, fake.pulses
         else:
             assert "load sequence completed" in so and "presence, not latching" in so, so
+            assert fake.pulses == 5, fake.pulses
+
+    # Jog failure: the operator is never asked, no load is attempted.
+    fake = FakeUsbDevice(reg01=0x22)
+    vendor_like_load_status(fake, jog=True, jog_value=0xE8)
+    asked = []
+    with cli_over(fake):
+        with quiet():
+            code = tool.main([], ask=lambda p: asked.append(p))
+        se = _STDERR.getvalue()
+    assert code == 1 and not asked and fake.pulses == 1 and "FAILED" in se, (code, asked, fake.pulses)
+
+    # Ctrl-C at the prompt: exit 130, no load, power-cycle text.
+    fake = FakeUsbDevice(reg01=0x22)
+    vendor_like_load_status(fake, jog=True)
+
+    def interrupt(prompt):
+        raise KeyboardInterrupt
+    with cli_over(fake):
+        with quiet():
+            code = tool.main([], ask=interrupt)
+        se = _STDERR.getvalue()
+    assert code == 130 and fake.pulses == 3 and "interrupted" in se, (code, fake.pulses, se)
+    _assert_power_cycle_message(se)
     print("test_load_completion_is_verified_not_assumed OK")
 
 
@@ -1860,6 +2003,8 @@ def main() -> int:
         test_full_length_and_legitimate_zero_length_out_succeed,
         test_short_transfer_leaving_engine_running_blocks_driver_restart,
         test_load_magazine_requires_initialize_and_matches_trace,
+        test_jog_magazine_is_the_vendor_jog_and_fails_closed,
+        test_initialize_prep_false_is_the_vendor_device_open_state,
         test_load_status_matches_is_class_and_sensor_bit,
         test_load_completion_is_verified_not_assumed,
         test_sensor_probe_is_strictly_read_only,

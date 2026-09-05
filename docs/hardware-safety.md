@@ -278,11 +278,12 @@ sensor bit still set) and 0xcc55 after the traverse; both fail the
 test. Neither an exact value (it rejected the correct vendor load),
 nor a state-class range (0xf855 would pass with the cassette still in
 front of the sensor), nor the sensor bit alone (a running engine would
-pass) is acceptable. The root cause of the unengaged loads — the LOAD
-table had been cut from an eject capture and lacked the feed's
-register block — is in Test 14 of [`test-log.md`](test-log.md); the
-table is now generated from the clean standalone load and is **not yet
-hardware-verified**. Background in
+pass) is acceptable. The unengaged loads are analysed in Tests 14 and 15 of
+[`test-log.md`](test-log.md): the table is now generated from the clean
+standalone load, and the load is preceded by the vendor's app-start
+jog (`Scanner.jog_magazine()`, `tables_load.JOG`, same strict masked
+polls), which every engaging vendor load had and none of ours did. The
+jog + reinsert + load flow is **not yet hardware-verified**. Background in
 [`load-analysis.md`](load-analysis.md).
 
 `--assume-locked` (in `tools/hwblock.py`) is for controlled development
