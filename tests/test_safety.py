@@ -1719,6 +1719,38 @@ def test_interrupt_overflow_is_named_and_never_fatal():
         se = _STDERR.getvalue()
     assert code == 1 and "cannot watch" in se, (code, se)
     assert fake.out_count == 0
+
+    # Any other USB error on the endpoint is a driver error too (nothing
+    # hidden, nothing retried): status exits 1 with a message, the load
+    # tool takes its normal error path (exit 1, session report) instead
+    # of an unhandled pyusb exception, and drain_events() propagates it.
+    from of135i.usbio import InterruptReadError
+    import load_magazine as tool
+
+    def io_error():
+        return usb.core.USBError("[Errno 5] Input/Output Error", errno=5)
+    fake = FakeUsbDevice(reg01=0x22)
+    fake.button_events.append(io_error())
+    io_ = UsbIo(fake, readonly=True)
+    e = expect(InterruptReadError, io_.read_button)
+    assert "Input/Output" in str(e) and isinstance(e, Of135iError)
+    fake.button_events.append(io_error())
+    expect(InterruptReadError, io_.drain_events)
+    fake = FakeUsbDevice(reg01=0x22)
+    fake.button_events.append(io_error())
+    with cli_over(fake):
+        with quiet():
+            code = cli.main(["status"])
+        se = _STDERR.getvalue()
+    assert code == 1 and "error:" in se and "EP 0x83" in se, (code, se)
+    fake = FakeUsbDevice(reg01=0x22)
+    vendor_like_load_status(fake, jog=True)
+    fake.button_events.append(io_error())          # hit by the drain after the jog
+    with cli_over(fake):
+        with quiet():
+            code = tool.main([], ask=lambda p: "")
+        se = _STDERR.getvalue()
+    assert code == 1 and "error:" in se and "EP 0x83" in se and fake.pulses == 3, (code, se, fake.pulses)
     print("test_interrupt_overflow_is_named_and_never_fatal OK")
 
 

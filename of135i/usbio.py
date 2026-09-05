@@ -39,6 +39,15 @@ EP_BULK_OUT = 0x02
 EP_INT_IN = 0x83
 
 
+class InterruptReadError(Of135iError):
+    """A read of the interrupt endpoint (EP 0x83) failed with a USB error
+    other than a timeout or the overflow case: the error is reported as
+    a driver error so every caller (status, doctor, watch, the load
+    tool) takes its normal error path instead of an unhandled pyusb
+    exception. Reads change no scanner state; nothing is hidden and
+    nothing is retried."""
+
+
 class InterruptOverflowError(Of135iError):
     """The interrupt endpoint (EP 0x83, wMaxPacketSize 1) answered a
     read with more data than its packet size (usbfs EOVERFLOW, errno
@@ -344,7 +353,7 @@ class UsbIo:
         except usb.core.USBError as e:
             if getattr(e, "errno", None) == 75 or "Overflow" in str(e):
                 raise InterruptOverflowError() from e
-            raise
+            raise InterruptReadError(f"interrupt endpoint (EP 0x83) read failed: {e}") from e
         return int(data[0]) if len(data) else None
 
     def drain_events(self, max_events: int = 8, timeout_ms: int = 50) -> list[int] | str:
