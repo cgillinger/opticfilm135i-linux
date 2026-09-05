@@ -1233,3 +1233,27 @@ jog (four polls 0xf855), reinsert, engaging feed **0xf455**, traverse
 **0xdc55**, final 0xdc55, exit 0. Doctor (`doctor-8-after-load-2.json`):
 0x01=0x22, status 0xdc55, 0x32=0x05 — the same LOADED_READY signature
 as Test 17. Two for two from power-on.
+
+### Test 18, continued: batch 1-4 with IR and eject from the driver-loaded magazine
+`scan --frames 1-4 --ir --positive --rotate 90 --eject` (start state
+0x22; `hw-2026-09-05-load2/scan-2-batch.log`, `test18-f1..4.tiff`,
+sidecars). Gain/offset identical for all four frames (0x2d/0x21/0x27,
+0x010a/0x0109/0x010a), warmup 1. Frames 1-3 visually correct. Eject at
+the end: "ejected", doctor 0x22 / 0xe855 / 0x32=0x9f.
+
+**Frame 4 shows a frame edge across the middle of the image** (top
+strip: a different picture; lower part: the building scene). In the
+log, the POSITION completion poll for frame 4 (FEEDL 39026) timed out
+after 4.9 s with the status still **0xd555 (busy)**, captured 0xf455 —
+and the scan started anyway (the poll is not strict). Frames 1-3 had
+no such timeout (their moves are shorter: 6746/17506/28266). The
+POSITION poll's budget is 3x the captured duration of the frame-1 move
+(1.61 s), which a 39026-step move exceeds. Hypothesis: the scan of
+frame 4 began while the transport was still moving, hence the shifted
+frame. Not yet checked: whether this strip's frame 4 is a whole
+picture (Christian), and whether the earlier verified batch (b4,
+another strip, no sidecars) had the same timeout. Candidate fix for a
+clean session: scale the POSITION completion budget with FEEDL, or
+wait for the busy bit to clear before SCAN (strict). Poll timeouts per
+frame: 1/3/4/3, the others being the known benign state-class
+mismatches (9c vs ad/bd, 8155 vs 9555 on reg 0x32).
