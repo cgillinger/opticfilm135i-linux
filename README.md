@@ -76,21 +76,20 @@ The rough edges you should know about:
   (real read-modify-write and condition waits instead of captured
   pacing); it is off by default until it has been A/B-tested on
   hardware.
-- **Cold-start initialization is handled.** The driver detects a freshly
+- **After a power-on, load first.** The driver detects a freshly
   power-cycled scanner (reg 0x01 = 0x00) and runs the vendor's cold-start
-  homing sequence automatically — no VM or vendor software needed.
-  Scanning immediately after a cold start used to produce flat images
-  (lamp not yet warmed up, AFE gain clipped at maximum). The driver now
-  waits for the lamp when the first white-line measurement says it is
-  not ready: it re-measures every 5 s until two consecutive
-  measurements are usable and agree within 3 %, within a bounded budget
-  (60 s by default, `--warmup-budget` to change), and **fails the scan
-  instead of scanning flat** if the lamp never gets there. Every
-  measurement and its time go into the scan's `.diag.json`, so a scan
-  from bare power-on with a generous budget is also the measurement of
-  the real warmup curve. The bounded wait has not yet been exercised on
-  hardware; every verified scan so far started with a warm lamp (the
-  magazine load flow alone gives it about a minute).
+  homing sequence automatically inside the magazine load flow — no VM or
+  vendor software needed. What it does not do is scan straight after
+  that: the load's traverse is what puts the transport at the scan
+  reference position, and a scan attempted right after the cold homing
+  reads a dark white line (51 measurements over five minutes on
+  2026-09-05, not a warming lamp — no light at the sensor). Earlier
+  "flat images after a cold start" had the same cause. `scan` therefore
+  refuses in a cold-started session until `tools/load_magazine.py` has
+  run, exactly as the vendor application always loads after a power-on.
+  The white-line check that caught this stays as a guard: a scan whose
+  lamp never reaches a stable usable level fails instead of producing a
+  flat image (`--warmup-budget`, 60 s by default).
 - **After an interrupted scan, power-cycle before anything else.** A
   session that is aborted inside a phase (Ctrl-C, a crash, a USB
   timeout) can leave the scan engine running (reg 0x01 reads 0x23

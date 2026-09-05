@@ -1497,3 +1497,43 @@ timeout), phase seconds, the doctor register dump after the block, and
 a following batch/eject. Not to become the default after one run.
 
 Offline suite at this point: 96 tests, all passing.
+
+## 2026-09-05 — Test 22: bare cold-start scan — the white line is DARK, not warming; a cold session must load first
+
+Load #6 attempt (`load-9.log`) failed at the feed (fc55, sensor bit still
+set) — operator error at the reinsert prompt (magazine not taken out);
+the guard stopped before the traverse, power cycle. Then load #6 proper
+(latched), power OFF with the magazine in, power ON: the Test 11
+situation. `hwblock cold --warmup-budget 300 --eject` (5274963+, at
+fceafb0): cold_init clean (three rounds, normal sound), base table,
+PREP, calibration — and the first white line maxed the gain. The
+bounded warmup loop then took **51 measurements over 295 s**:
+
+per-channel white peaks (99.9th pct, of 65535), first / middle / last:
+11.0 58.8 41.0 / 18.5 63.6 52.8 / 24.0 63.0 53.6 — every one of the 51
+between 10 and 27 (R), 59 and 75 (G), 41 and 57 (B). **Flat. Not
+rising. Dark.** LampWarmupError, no scan, no motor command, session
+FAILED, block stopped at C3 (`hwblock-20260905-cold/`). Eject afterwards
+from the power-cycled cold scanner: cold_init + eject, fine.
+
+Reading: this is not a lamp warming up (a warming lamp rises; Test 21's
+warm lamp drifted +2 % in 11 minutes, here nothing moved in 5). The
+lamp register 0x03 is written 0x30 in PREP on this path exactly as on
+the working path. What differs is where the transport stands: every
+working scan ran from the position the load's 71490-step traverse
+leaves the transport in (the frame FEEDLs are absolute from it, and a
+re-load is what resets the DPI drift). After cold_init alone the
+transport is at the jog's home, and the white-line read sees no light
+at the sensor. The vendor never scans after a power-on without loading
+(app-start jog, reinsert, load). Tests 1/9/11's "flat cold-start
+images" had this cause; the "lamp warmup" reading was wrong.
+
+Decisions (offline, 98 tests green):
+- `scan()` refuses (`OperationNotAllowedError`, nothing sent) in a
+  session that ran cold_init until `load_magazine()` has completed in
+  it. Warm sessions unaffected.
+- `hwblock cold` retired (exits 2, touches nothing); cold-start
+  verification = power-cycle → load tool → warm block, i.e. Tests 17-21.
+- The bounded warmup wait stays as the guard that produced this result
+  instead of a flat image; the budget question is closed (never
+  triggered in a load-first session).

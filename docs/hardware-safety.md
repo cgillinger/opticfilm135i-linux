@@ -312,6 +312,21 @@ has taken. Offline-verified (fault injection for a dark lamp, gradual
 warmup, a never-stable lamp, saturation, malformed data, Ctrl-C and USB
 errors); the bounded wait itself has not yet been seen on hardware.
 
+## A cold-started session loads before it scans
+
+The vendor never scans after a power-on without loading: its app start
+runs the jog, the user reinserts the magazine, the load's feed and
+traverse put the transport at the scan reference position. Test 22
+(2026-09-05) showed what a scan straight after `cold_init` sees: 51
+white-line measurements over 295 s, all dark (~15/65/50 of 65535) —
+not a lamp warming up, no light at the sensor at all; the same cause as
+the "flat cold-start images" of Tests 1/9/11. `scan()` therefore raises
+`OperationNotAllowedError` (nothing sent) in a session that ran
+`cold_init` until `load_magazine()` has completed in that session. A
+warm session (0x22) is unaffected: the reference position survives an
+eject and a session change, not a power cycle. The former `hwblock
+cold` block is retired for the same reason.
+
 ## Recovery after an interrupted scan
 
 An interrupted or failed writing operation (Ctrl-C, a crash, a USB
