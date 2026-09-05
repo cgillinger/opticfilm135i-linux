@@ -1771,6 +1771,38 @@ def test_cli_eject_and_watch_paths():
 # ============================================================== doctor
 
 
+def test_cli_load_and_version():
+    """`of135i load` runs the shared load flow (of135i.loadflow) in the
+    vendor's order with input() as the reinsert prompt, exit 0 on a
+    vendor-like load and 1 on a failed feed; `of135i version` prints the
+    version and revision without touching USB."""
+    import builtins
+    from of135i import loadflow, __version__
+    fake = FakeUsbDevice(reg01=0x22)
+    vendor_like_load_status(fake, jog=True)
+    asked = []
+    with cli_over(fake), patched(builtins, "input", lambda p="": asked.append((p, fake.pulses)) or ""):
+        with quiet():
+            code = cli.main(["load"])
+        so = _STDOUT.getvalue()
+    assert code == 0 and asked == [(loadflow.REINSERT_PROMPT, 3)] and fake.pulses == 5, (code, asked, fake.pulses)
+    assert "load sequence completed" in so
+    fake = FakeUsbDevice(reg01=0x22)
+    vendor_like_load_status(fake, jog=True, after_feed=0xEC)
+    with cli_over(fake), patched(builtins, "input", lambda p="": ""):
+        with quiet():
+            code = cli.main(["load"])
+        se = _STDERR.getvalue()
+    assert code == 1 and "FAILED" in se and fake.pulses == 4, (code, se)
+    fake = FakeUsbDevice(reg01=0x22)
+    with cli_over(fake):
+        with quiet():
+            code = cli.main(["version"])
+        so = _STDOUT.getvalue()
+    assert code == 0 and __version__ in so and "driver revision" in so and fake.in_count == 0 and fake.out_count == 0, so
+    print("test_cli_load_and_version OK")
+
+
 def test_interrupt_overflow_is_named_and_never_fatal():
     """EP 0x83 answering with more than its 1-byte packet (usbfs
     EOVERFLOW, seen after every driver-run load 2026-09-05): read_button
@@ -2260,6 +2292,7 @@ def main() -> int:
         test_cli_scan_eject_watch_refuse_unsafe_states_with_zero_writes,
         test_cli_scan_normal_path_and_failure_reporting,
         test_cli_eject_and_watch_paths,
+        test_cli_load_and_version,
         test_interrupt_overflow_is_named_and_never_fatal,
         test_doctor_and_status_are_strictly_read_only,
         test_open_refuses_unsafe_states_before_any_state_change,

@@ -348,6 +348,22 @@ def _write_diag_sidecar(args: argparse.Namespace, scanner: Scanner, out: str, fr
     )
 
 
+def _cmd_load(args: argparse.Namespace) -> int:
+    """The magazine load flow (of135i.loadflow). Interactive: it asks the
+    operator to take the magazine out and reinsert it to the stop, so it
+    needs a real terminal (a piped stdin ends it at the prompt, exit 130)."""
+    from . import loadflow
+    return loadflow.run(ask=input)
+
+
+def _cmd_version(args: argparse.Namespace) -> int:
+    from . import __version__, diag
+    host = diag._collect_host()
+    rev = host.get("driver_revision") or "unknown"
+    print(f"of135i {__version__} (driver revision {rev}, python {host.get('python')}, pyusb {host.get('pyusb')})")
+    return 0
+
+
 def _cmd_eject(args: argparse.Namespace) -> int:
     def body(scanner: Scanner) -> int:
         scanner.eject()
@@ -446,6 +462,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_preview = sub.add_parser("preview", help="run a quick preview sweep")
     p_preview.add_argument("-o", "--output", help="output file path")
     p_preview.set_defaults(func=_not_wired_yet)
+
+    p_load = sub.add_parser("load", help="load the film magazine (the vendor's insert flow; interactive)")
+    p_load.set_defaults(func=_cmd_load)
+
+    p_version = sub.add_parser("version", help="print the driver version and git revision")
+    p_version.set_defaults(func=_cmd_version)
 
     p_eject = sub.add_parser("eject", help="eject the film magazine")
     p_eject.set_defaults(func=_cmd_eject)
