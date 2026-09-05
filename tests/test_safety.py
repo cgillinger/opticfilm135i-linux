@@ -1341,6 +1341,48 @@ def test_position_wait_is_strict_and_scaled_with_feedl():
     print("test_position_wait_is_strict_and_scaled_with_feedl OK")
 
 
+def test_position_wait_is_strict_for_every_dpi_profile():
+    """The POSITION completion rule (strict on the state class, budget
+    scaled from the profile's own frame-1 FEEDL) holds for every DPI
+    profile and for frame 4: a transport still moving (0xd5) fails the
+    scan before SCAN's GO; a settled one (0xf8/0xf4) scans."""
+    from of135i import tables as t3600
+    profiles = [("3600", t3600, False)] + [(str(d), device.dual_tables(d), True) for d in (600, 1200, 2400, 7200)]
+    for name, t, ir in profiles:
+        polls = [op for op in t.POSITION.ops if op.kind == "poll" and op.wv == 0x018E]
+        assert len(polls) == 1 and (polls[0].resp[0] & 0xF0) == 0xF0, (name, polls)
+        f1, f4 = t.feedl_for_frame(1), t.feedl_for_frame(4)
+        assert device.position_timeout_scale(t, f1) == 1.0
+        assert abs(device.position_timeout_scale(t, f4) - f4 / f1) < 1e-9 and f4 / f1 > 5, (name, f4 / f1)
+        patched = t.POSITION.patched(feedl_hi=bytes([(f4 >> 16) & 0xFF]), feedl_mid=bytes([(f4 >> 8) & 0xFF]),
+                                     feedl_lo=bytes([f4 & 0xFF]))
+        feed = next(op.data for op in patched if op.kind == "cw" and op.wv == 0x83
+                    and op.data[:2] == bytes([0x01, 0x22]) and b"\x3d" in op.data)
+        scan_go_idx = next(i for i, op in enumerate(t.SCAN.ops) if op.kind == "cw" and op.data == bytes.fromhex("0f01"))
+        assert scan_go_idx >= 0
+
+        def still_moving(f, feed=feed):
+            return 0xD5 if any(ev["kind"] == "ctrl_out" and ev["data"] == feed for ev in f.out_log) else 0xF8
+        fake = FakeUsbDevice(reg01=0x22)
+        fake.status_high = still_moving
+        scanner = make_scanner(fake)
+        with fast_time():
+            scanner.initialize(ir=ir, dpi=int(name))
+            e = expect(safety.StrictPollTimeoutError, scanner.scan, frame=4, ir=ir, dpi=int(name))
+        assert e.last.hex() == "d555" and "mask 0xf055" in str(e), (name, str(e))
+        n_fail = fake.out_count
+        assert sum(1 for ev in fake.out_log if ev["kind"] == "ctrl_out" and ev["data"] == feed) == 1, name
+        _assert_failed_and_frozen(fake, scanner, e, operation="scan", phase_prefix="position")
+        assert fake.out_count == n_fail
+        fake = FakeUsbDevice(reg01=0x22)
+        scanner = make_scanner(fake)
+        with fast_time():
+            scanner.initialize(ir=ir, dpi=int(name))
+            scanner.scan(frame=4, ir=ir, dpi=int(name))
+        assert scanner.session.state is SessionState.ARMED, name
+    print(f"test_position_wait_is_strict_for_every_dpi_profile OK ({len(profiles)} profiles)")
+
+
 def test_load_status_matches_is_class_and_sensor_bit():
     """The masked completion test (device.LOAD_STATUS_MASK = 0xfb):
     state class AND loader-sensor bit 0x08 AND busy bit, only bit 0x04
@@ -2152,6 +2194,7 @@ def main() -> int:
         test_jog_magazine_is_the_vendor_jog_and_fails_closed,
         test_initialize_prep_false_is_the_vendor_device_open_state,
         test_position_wait_is_strict_and_scaled_with_feedl,
+        test_position_wait_is_strict_for_every_dpi_profile,
         test_load_status_matches_is_class_and_sensor_bit,
         test_load_completion_is_verified_not_assumed,
         test_sensor_probe_is_strictly_read_only,
