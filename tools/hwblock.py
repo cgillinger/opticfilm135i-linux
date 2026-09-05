@@ -31,7 +31,7 @@ HARD SAFETY RULES (see the module's own code, not just this comment):
 Usage:
     .venv/bin/python tools/hwblock.py warm --out DIR [--frame N]
         [--repeat N] [--eject] [--skip-dpi-change]
-    .venv/bin/python tools/hwblock.py cold --out DIR [--frame N] [--eject]
+    (the former 'cold' block is retired -- see _COLD_RETIRED)
 
 Run with -h/--help for the full option list; that is handled by
 argparse before any of this module's own code runs, and the script
@@ -694,184 +694,22 @@ def run_warm(args: argparse.Namespace, out_dir: Path) -> int:
 
 
 # =====================================================================
-# cold block
+# cold block -- RETIRED 2026-09-05 (Test 22)
 # =====================================================================
 
+_COLD_RETIRED = """\
+The 'cold' block is retired. It scanned straight after cold_init, a path
+the vendor never takes: after a power-on the vendor always runs its
+app-start jog and then loads the magazine, and the load's traverse is
+what puts the transport at the scan reference position. Test 22
+(2026-09-05) showed why: 51 white-line measurements over 295 s after a
+bare cold start stayed dark (peaks ~15/65/50 of 65535) -- not a warming
+lamp, no light at the sensor at all. The driver now refuses scan() in a
+cold-started session until load_magazine() has run.
 
-def _print_cold_steps(args: argparse.Namespace) -> None:
-    eject_line = (
-        "  - Eject the magazine at the very end."
-        if args.eject else
-        "  - Leave the magazine loaded at the end."
-    )
-    print(textwrap.dedent(f"""
-        ============================================================
-        of135i AUTONOMOUS HARDWARE TEST BLOCK -- COLD
-        ============================================================
-        Before you continue:
-          1. Power the scanner OFF, wait 10 seconds, then power it back ON.
-          2. Do NOT touch the film magazine.
-          3. Press Enter below once the scanner is powered back on.
-
-        STOP RULE: a scraping or grinding noise means cut the power
-        immediately. Do not wait to see what happens next.
-
-        This block will then run, WITHOUT further prompts:
-          - Wait for the scanner to re-enumerate on the USB bus (up to
-            90 seconds; this only enumerates, no register writes).
-          - Read a baseline health report (no motor movement).
-          - Run the normal cold-start path (initialize() triggers
-            cold_init() itself) and scan frame {args.frame} at 3600 dpi
-            -- this exercises the lamp-warmup retry and the dark-
-            bracket AFE offset.
-          - Scan frame {args.frame} again in the same session (lamp now
-            warmer).
-        {eject_line}
-
-        All output goes to: {args.out}
-        ============================================================
-        """))
-
-
-def run_cold(args: argparse.Namespace, out_dir: Path) -> int:
-    summary = _new_summary("cold", args)
-    _save(out_dir, summary)
-
-    _print_cold_steps(args)
-    input("Press Enter once the scanner has been power-cycled... ")
-
-    step = "C0"
-    scanner = None
-    try:
-        # ---- C0: wait for re-enumeration (read-only open/close only) ----
-        print("Waiting for the scanner to re-enumerate on the USB bus (up to 90s)...")
-        deadline = time.monotonic() + 90.0
-        enumerated = False
-        while True:
-            try:
-                io = UsbIo.open(readonly=True)
-                io.close()
-                enumerated = True
-                break
-            except Of135iError:
-                if time.monotonic() > deadline:
-                    break
-                time.sleep(2.0)
-        summary["steps"]["C0"] = {"enumerated": enumerated}
-        _save(out_dir, summary)
-        if not enumerated:
-            summary["status"] = "FAILED at step C0 (scanner did not re-enumerate within 90s)"
-            summary["finished_utc"] = datetime.now(timezone.utc).isoformat()
-            _save(out_dir, summary)
-            print(_SAFETY_STOP_MESSAGE, file=sys.stderr)
-            print(render_report(summary))
-            return 1
-
-        with Scanner.open() as scanner:
-            scanner.park_mode = args.park
-            # ---- C1: doctor (read-only) -----------------------------------
-            step = "C1"
-            doctor = diag.collect_doctor(scanner.io)
-            print(diag.format_doctor(doctor))
-            diag.write_sidecar(str(out_dir / "doctor-cold.json"), doctor)
-            summary["driver_revision"] = (doctor.get("host") or {}).get("driver_revision")
-            summary.update(_git_state())
-            try:
-                verdict = scanner.check_start_state()
-            except safety.UnsafeStartStateError as e:
-                print(f"error: {e}", file=sys.stderr)
-                summary["steps"]["C1"] = {"state": "unsafe", "refused": str(e)}
-                summary["session"] = scanner.session_report()
-                summary["status"] = f"FAILED at step C1 (unsafe start state, reg 0x01 = {e.observed!r}; power-cycle first)"
-                _save(out_dir, summary)
-                return 1
-            c1 = {"state": verdict.value}
-            if verdict is safety.StartState.IDLE:
-                c1["note"] = "scanner was not actually power-cycled?"
-                print("note: scanner reports idle-homed -- was it actually "
-                      "power-cycled? Continuing anyway.")
-            summary["steps"]["C1"] = c1
-            _save(out_dir, summary)
-
-            # ---- C2: magazine check -----------------------------------------
-            step = "C2"
-            present = scanner.is_magazine_present()
-            summary["steps"]["C2"] = {"magazine_present": present}
-            _save(out_dir, summary)
-            if not present:
-                summary["status"] = "FAILED at step C2 (no magazine detected)"
-                summary["finished_utc"] = datetime.now(timezone.utc).isoformat()
-                _save(out_dir, summary)
-                return 1
-
-            # ---- C3: cold-start scan (initialize() triggers cold_init) -----
-            step = "C3"
-            if getattr(args, "warmup_budget", None) is not None:
-                scanner.warmup_budget_s = float(args.warmup_budget)
-            scanner.initialize(ir=True, dpi=3600)
-            raw, width, _meta = scanner.scan(frame=args.frame, ir=True, dpi=3600)
-            visible = _save_scan(out_dir, "cold-scan", raw, width, 3600, scanner)
-            del raw
-            d1 = dict(scanner.last_diag)
-            stats1 = image_stats(visible)
-            stats1.update(film_rows(visible))
-            del visible
-            gain1 = tuple(d1.get("gain_codes") or ())
-            summary["steps"]["C3"] = {
-                "warmup_attempts": d1.get("warmup_attempts"),
-                "warmup_gain_history": d1.get("warmup_gain_history"),
-                "warmup_exhausted": d1.get("warmup_exhausted"),
-                "gain_codes": d1.get("gain_codes"),
-                "offset_codes": d1.get("offset_codes"),
-                "image_stats": stats1,
-                "verdict_warmup_retry": "triggered" if (d1.get("warmup_attempts") or 0) > 1 else "not triggered",
-                "verdict_gain_clipped": "yes" if gain1 == (0x3F, 0x3F, 0x3F) else "no",
-                "verdict_image": "flat" if stats1["flat"] else "real",
-            }
-            _save(out_dir, summary)
-
-            # ---- C4: second scan, same session (lamp now warm) -------------
-            step = "C4"
-            scanner.initialize(ir=True, dpi=3600)
-            raw, width, _meta = scanner.scan(frame=args.frame, ir=True, dpi=3600)
-            visible2 = _save_scan(out_dir, "cold-scan-2", raw, width, 3600, scanner)
-            del raw
-            d2 = dict(scanner.last_diag)
-            stats2 = image_stats(visible2)
-            stats2.update(film_rows(visible2))
-            del visible2
-            gain2 = tuple(d2.get("gain_codes") or ())
-            summary["steps"]["C4"] = {
-                "warmup_attempts": d2.get("warmup_attempts"),
-                "gain_codes": d2.get("gain_codes"),
-                "offset_codes": d2.get("offset_codes"),
-                "image_stats": stats2,
-                "verdict_gain_clipped": "yes" if gain2 == (0x3F, 0x3F, 0x3F) else "no",
-                "verdict_image": "flat" if stats2["flat"] else "real",
-            }
-            _save(out_dir, summary)
-
-            # ---- C5: optional eject -----------------------------------------
-            if args.eject:
-                step = "C5"
-                scanner.eject()
-                summary["steps"]["C5"] = {"ejected": True}
-                _save(out_dir, summary)
-
-    except (Exception, KeyboardInterrupt):
-        return _fail(summary, out_dir, step, scanner)
-
-    summary["status"] = "COMPLETED"
-    summary["session"] = scanner.session_report() if scanner is not None else None
-    summary["finished_utc"] = datetime.now(timezone.utc).isoformat()
-    _save(out_dir, summary)
-    print(render_report(summary))
-    return 0
-
-
-# =====================================================================
-# argument handling
-# =====================================================================
+Cold-start verification is therefore: power-cycle, tools/load_magazine.py
+in a real terminal (cold_init runs inside it), then the 'warm' block.
+"""
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -912,17 +750,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_cold = sub.add_parser(
         "cold",
-        help="verify cold-start lamp warmup + AFE offset after a power cycle",
+        help="RETIRED (Test 22): cold-start verification is the load tool + the warm block",
     )
-    p_cold.add_argument("--out", required=True, metavar="DIR", help="output directory (required)")
-    p_cold.add_argument("--frame", type=int, default=1, help="frame number to scan (default 1)")
-    p_cold.add_argument("--eject", action="store_true", help="eject the magazine at the very end")
-    p_cold.add_argument("--warmup-budget", type=float, default=None, metavar="SECONDS",
-                        help="lamp warmup budget for the cold-start scan (default: the "
-                             "driver's 60 s); the sidecar records every measurement")
-    p_cold.add_argument("--park", choices=("verbatim", "semantic"), default="verbatim",
-                         help="PARK phase implementation (default verbatim; see "
-                              "of135i scan --park's help / docs/replay-analysis.md)")
+    p_cold.add_argument("--out", required=False, metavar="DIR", help="ignored (retired)")
 
     return parser
 
@@ -933,6 +763,10 @@ def main(argv: list | None = None) -> int:
 
     if not getattr(args, "command", None):
         parser.print_help()
+        return 2
+
+    if args.command == "cold":
+        print(_COLD_RETIRED, file=sys.stderr)
         return 2
 
     if args.command == "warm" and args.repeat < 2:
@@ -946,9 +780,7 @@ def main(argv: list | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
-    if args.command == "warm":
-        return run_warm(args, out_dir)
-    return run_cold(args, out_dir)
+    return run_warm(args, out_dir)
 
 
 if __name__ == "__main__":

@@ -207,6 +207,21 @@ def test_main_no_subcommand_returns_2_without_touching_hardware():
     print("test_main_no_subcommand_returns_2_without_touching_hardware OK")
 
 
+def test_cold_block_is_retired_and_touches_nothing():
+    """`hwblock cold` exits 2 with the retirement note, creates no output
+    directory and opens no device (Test 22: scanning straight after
+    cold_init is not a vendor path)."""
+    import io, contextlib, tempfile, os
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "never-created")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = hwblock.main(["cold", "--out", out])
+        assert code == 2 and "retired" in err.getvalue().lower(), (code, err.getvalue())
+        assert not os.path.exists(out)
+    print("test_cold_block_is_retired_and_touches_nothing OK")
+
+
 def test_main_repeat_too_low_rejected():
     code = hwblock.main(["warm", "--out", "/tmp/does-not-matter", "--repeat", "1"])
     assert code == 2
@@ -228,6 +243,7 @@ def main() -> int:
         test_argparse_missing_subcommand,
         test_argparse_missing_out,
         test_main_no_subcommand_returns_2_without_touching_hardware,
+        test_cold_block_is_retired_and_touches_nothing,
         test_main_repeat_too_low_rejected,
     ]
     for t in tests:
