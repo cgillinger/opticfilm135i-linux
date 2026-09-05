@@ -1282,3 +1282,24 @@ transport that has not settled fails the scan before SCAN sends
 anything (session FAILED, power cycle), instead of scanning a moving
 frame. Verification: Test 19 = batch 1-4 from a fresh driver load,
 compared frame by frame against `batch-test/vendor/ref-20260905-f-*`.
+
+## 2026-09-05 — Test 19: batch 1-4 with the scaled POSITION wait — all four frames match the vendor reference
+
+Power cycle, driver load (`load-6.log`: f455 / dc55, latched), then
+`scan --frames 1-4 --ir --positive --rotate 90 --eject`
+(`scan-3-batch.log`, `test19-f1..4.tiff`, `test19-vs-vendor.jpg`).
+POSITION completion times: frame 1 settled within the paced 1.6 s,
+frame 2 after 2.0 s, frame 3 after 4.2 s, **frame 4 after 6.3 s** —
+frames 3 and 4 beyond the old fixed 4.9 s budget. All four frames
+match `batch-test/vendor/ref-20260905-f-0001..0004` frame for frame;
+frame 4 is the lion-statue street scene, whole. Gain 0x2c-2d/0x21/0x27,
+warmup 1, eject fine, doctor 0x22 / 0xe855 / 0x32=0x9f afterwards.
+
+Note: the polls for frames 2-4 settled at **0xf555** (class F, bit 0x01
+still set) and were accepted under mask 0xf0; the images are correct,
+so the class transition is a sufficient completion signal here. The
+captured value is 0xf455; tightening to bit 0x01 clear (mask 0xf1)
+would be an unverified change on top of a verified one — left as is,
+noted for a future A/B. Remaining poll timeouts (22) are the known
+benign state-class mismatches (9c vs ad/bd, 8155 vs 9555, e8/ec vs
+f8/fc at session start).
