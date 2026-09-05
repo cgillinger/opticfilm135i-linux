@@ -2,17 +2,21 @@
 """Load the film magazine the way the vendor driver does.
 
 Thin command-line wrapper around Scanner.load_magazine() (the vendor's
-plain insert flow, compiled into of135i/tables_load.py from the
-2026-09-02 capture and hardware-verified end to end that day: load ->
-scan -> eject). The user inserts the cassette only until the loader
-sensor trips -- NOT to the mechanical stop: pushed past the trigger
-point the feed does not engage it and the magazine ends loose with a
-blue LED (Test 12, docs/load-analysis.md). The driver acks the loader
-sensor (reg 0x32), then feed (mode 0x18, FEEDL 0x1a22, loader speed
-regs + loader slope tables) and the slow prescan traverse (mode 0x1c,
-FEEDL 71490). Nothing else. Both motor completions are verified
-strictly against the capture (0xf055, 0xd855) and the flow stops --
-session failed, power cycle -- at the first that does not match.
+standalone insert flow, compiled into of135i/tables_load.py from the
+2026-09-05 clean-load capture, Test 14 in docs/test-log.md). The user
+takes the magazine fully out and inserts the cassette fresh, all the
+way to the mechanical stop -- that is where the vendor app loads from
+(Test 14; the earlier trigger-point idea was wrong). The driver acks
+the loader sensor (reg 0x32), then runs the engaging feed (mode 0x18,
+FEEDL 0x1a22, the vendor's full register block, loader slope tables)
+and the slow prescan traverse (mode 0x1c, FEEDL 71490). Nothing else.
+Both motor completions and a final status read are verified with the
+masked completion test (state class AND loader-sensor bit 0x08; feed
+0xf455 = cassette pulled past the sensor, traverse 0xdc55) and the
+flow stops -- session failed, power cycle -- at the first that does
+not pass. This table is NOT yet hardware-verified as a load: the
+previous one (cut from an eject capture, feed without its register
+block) ran the transport without engaging the cassette (Tests 11b-13).
 
 Safety (docs/hardware-safety.md): the start-state guard in the driver
 refuses to send anything unless reg 0x01 reads 0x22 (idle-homed) or
@@ -21,8 +25,8 @@ Any failure or Ctrl-C leaves the hardware state unknown; the only
 recovery is a power cycle. The loader sensor is checked BEFORE
 initialize() because the base register table makes it unreliable
 afterwards -- and a "present" sensor does not prove the magazine is
-fed or latched (observed 2026-09-04): check the magazine by hand and
-the LED colour before scanning.
+fed or latched: check the magazine by hand and the LED colour before
+scanning.
 
 The former --full flow (the 2026-08-30 preview-preparation capture)
 was removed in the 2026-09-05 safety pass: its end state is one the
@@ -66,7 +70,8 @@ def main() -> int:
             scanner.initialize()
             print("running the vendor load sequence...")
             scanner.load_magazine()      # raises LoadIncompleteError -> exit 1 below
-            print("load sequence completed (status word matched the capture). This sets "
+            print("load sequence completed (status class and loader-sensor bit matched the "
+                  "capture after the feed, the traverse and a final read). This sets "
                   "the vendor's 'loaded' indication only: check by hand that the magazine "
                   "is latched before scanning -- the sensor reports presence, not latching.")
             return 0

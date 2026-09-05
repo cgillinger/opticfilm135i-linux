@@ -145,11 +145,39 @@ _PARK_WAIT_TIMEOUT = 15.0
 _PARK_POLL_INTERVAL = 0.02
 
 
+# Masked completion test for the LOAD flow (docs/test-log.md Test 14,
+# docs/load-analysis.md). The status word (reg 0x101 high byte, ack
+# 0x55 low byte) is compared against the captured completion value
+# under LOAD_STATUS_MASK, so the check requires BOTH the finished state
+# class (upper nibble) AND the loader-sensor bit 0x08 in its captured
+# state (feed: CLEAR, cassette pulled past the sensor; traverse: SET,
+# cassette back in front of it), plus the busy bit 0x01 clear and the
+# never-observed bit 0x02 clear. Only bit 0x04 is masked out: it is
+# session-variable in every vendor capture (f0/f4 after the feed,
+# d8/dc after the traverse) and carries no completion meaning.
+#
+# Not an exact match (0xf055/0xd855 rejected the correct vendor load),
+# not a range or "upper nibble only" (0xf855 -- feed finished but the
+# cassette still in front of the sensor -- would pass), and not the
+# sensor bit alone (a still-running or wrong-class engine would pass).
+LOAD_STATUS_MASK = 0xFB
+
+
+def load_status_matches(got: bytes, want: bytes) -> bool:
+    """True when status-word reply ``got`` completes like captured
+    reply ``want`` under LOAD_STATUS_MASK (see above). The ack byte
+    must match exactly; a short or malformed reply never matches."""
+    if len(got) != 2 or len(want) != 2 or got[1] != want[1]:
+        return False
+    return (got[0] & LOAD_STATUS_MASK) == (want[0] & LOAD_STATUS_MASK)
+
+
 def load_completion_target() -> int:
     """The status word the vendor capture settled on after the LOAD
-    flow's final wait: the last coalesced status-word poll in
-    tables_load.LOAD (op 321 of the source trace, 0xd855). Derived from
-    the table so it cannot drift from it."""
+    flow's traverse: the last coalesced status-word poll in
+    tables_load.LOAD (0xdc55 in the clean-load capture). Derived from
+    the table so it cannot drift from it; compared under
+    LOAD_STATUS_MASK via load_status_matches()."""
     from . import tables_load
     polls = [op for op in tables_load.LOAD.ops if op.kind == "poll" and op.wv == 0x018E]
     if not polls or len(polls[-1].resp) != 2:
@@ -354,10 +382,13 @@ class Scanner:
 
     def _poll_one(self, op: Op, strict: bool = False) -> None:
         """Poll until the captured settled value (with the documented
-        leniencies) or the deadline. ``strict``: exact match only, and a
-        timeout raises safety.StrictPollTimeoutError instead of logging
-        -- for completion waits an operation must not continue past
-        (load_magazine's two motor-completion polls)."""
+        leniencies) or the deadline. ``strict``: for completion waits an
+        operation must not continue past (load_magazine's two motor-
+        completion polls): a status-word poll (wValue 0x018e) must
+        satisfy load_status_matches() -- state class AND loader-sensor
+        bit, mask LOAD_STATUS_MASK -- any other poll must match exactly,
+        and a timeout raises safety.StrictPollTimeoutError instead of
+        logging."""
         want = op.resp
         # Most captured polls settled in < 0.03 s; the previous 10 s
         # floor added ~200 s of wasted timeouts per scan when dynamic
@@ -372,11 +403,15 @@ class Scanner:
             if got == want:
                 return
             if strict:
+                if op.wv == 0x018E and load_status_matches(got, want):
+                    return
                 if time.monotonic() > deadline:
                     self._diag_poll_timeouts += 1
                     raise safety.StrictPollTimeoutError(
                         f"completion poll wv={op.wv:#06x} wi={op.wi:#06x} did not reach the "
-                        f"captured value: last {got.hex()}, want {want.hex()} after {timeout:.1f}s. "
+                        f"captured value: last {got.hex()}, want {want.hex()}"
+                        f"{f' (mask {LOAD_STATUS_MASK:#04x}55)' if op.wv == 0x018E else ''} "
+                        f"after {timeout:.1f}s. "
                         f"The hardware did not complete this step; the operation stops here. "
                         f"{safety.NO_RECOVERY_ATTEMPTED} {safety.POWER_CYCLE_INSTRUCTION}",
                         last=got, want=want, observed=self.session.start_reg01,
@@ -948,29 +983,36 @@ class Scanner:
             self._motor_run(0x30, 1)
 
     def load_magazine(self) -> None:
-        """Run the vendor's magazine insert flow (tables_load.LOAD: the
-        2026-09-02 capture's loader-sensor ack, feed and prescan
-        traverse). The cassette must already be pushed in by hand.
-        Requires initialize() first in this session, as the vendor
-        flow does (the tool tools/load_magazine.py does both).
+        """Run the vendor's standalone magazine insert flow
+        (tables_load.LOAD, from the 2026-09-05 clean-load capture, Test
+        14): loader-sensor ack, the engaging feed with the vendor's full
+        register block, the prescan traverse and one idle housekeeping
+        cycle. The cassette must already be pushed in by hand, fully,
+        to the stop (Test 14: the vendor loads from there). Requires
+        initialize() first in this session, as the vendor flow does
+        (the tool tools/load_magazine.py does both).
 
-        Completion is verified, not assumed, at three points: the two
-        motor-completion polls of the flow (after the feed: 0xf055;
-        after the traverse: 0xd855) are STRICT -- exact match, and a
-        timeout stops the flow right there (safety.StrictPollTimeout
-        Error; a feed that did not engage the cassette never gets a
-        traverse) -- and after the replay the status word (reg 0x101,
-        wValue 0x018e) must read exactly ``load_completion_target()``
-        (0xd855), else LoadIncompleteError. Either failure marks the
-        session FAILED: the transport state is then unknown and the
-        magazine may not be latched (Test 12: the real scanner
-        answered 0xec55 then 0xcc55 twice, with a loose magazine and a
-        blue LED -- docs/load-analysis.md). No recovery is attempted; a
-        power cycle is required.
+        Completion is verified, not assumed, at three points, each with
+        the masked test load_status_matches() (state class AND loader-
+        sensor bit 0x08, mask LOAD_STATUS_MASK -- see the module-level
+        note): the feed's completion poll must reach the done class
+        with the sensor bit CLEAR (captured 0xf455: the cassette was
+        pulled past the sensor; 0xec55/0xf855 fail), the traverse's
+        poll the done class with the sensor bit SET (captured 0xdc55;
+        0xcc55 fails), and after the replay the status word is read
+        once more and must still match the traverse target
+        (load_completion_target()), else LoadIncompleteError. A poll
+        that does not get there stops the flow right there (safety.
+        StrictPollTimeoutError: a feed that did not engage the cassette
+        never gets a traverse). Either failure marks the session
+        FAILED: the transport state is then unknown and the magazine
+        may not be latched. No recovery is attempted; a power cycle is
+        required.
 
         Even a completed load only sets the vendor's "loaded"
         indication (blue LED); the loader sensor reports presence,
-        not latching (docs/hardware-safety.md).
+        not latching (docs/hardware-safety.md). This table has NOT yet
+        been hardware-verified as a load.
         """
         from . import tables_load
         self.session.write_allowed_or_final()
@@ -985,10 +1027,11 @@ class Scanner:
             self._run_phase(tables_load.LOAD, strict_polls=strict)
             self.session.phase = "load_verify"
             word = self.io.read_status_word()
-            if word != expected:
+            if not load_status_matches(word.to_bytes(2, "big"), expected.to_bytes(2, "big")):
                 raise safety.LoadIncompleteError(
                     f"magazine load did NOT complete: status word {word:#06x}, expected "
-                    f"{expected:#06x} (the vendor capture's completion value). The transport "
+                    f"{expected:#06x} under mask {LOAD_STATUS_MASK:#04x}55 (the vendor capture's "
+                    f"completion class with the loader-sensor bit). The transport "
                     f"state is unknown and the magazine may not be latched. "
                     f"{safety.NO_RECOVERY_ATTEMPTED} {safety.POWER_CYCLE_INSTRUCTION}",
                     status_word=word, expected=expected, observed=self.session.start_reg01,

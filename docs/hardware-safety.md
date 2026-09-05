@@ -253,26 +253,37 @@ So distinguish, and do not conflate:
 |---|---|
 | **present** | loader sensor bit set (before first `initialize()` only) — inserted, nothing more |
 | **physically inserted** | a person pushed the cassette in |
-| **fed / load completed** | `load_magazine()` ran AND the status word matched the capture's completion value (0xd855); otherwise the load has failed and the session with it |
+| **fed / load completed** | `load_magazine()` ran AND both motor completions and the final status read passed the masked completion test (state class AND loader-sensor bit 0x08, `device.load_status_matches`); otherwise the load has failed and the session with it |
 | **fully seated / latched** | a person confirmed it by hand — no register signal is known for this |
 | **sensor before `initialize()`** | the only point the sensor bit is trusted |
 | **sensor after `initialize()`** | unreliable — do not use as a safety signal |
 | **current transport state** | register 0x01 / status word, not the sensor |
 
 **Load completion is verified, not assumed.** The two motor-completion
-polls of the LOAD replay (after the feed: 0xf055; after the traverse:
-0xd855) are strict — exact match, and a timeout stops the flow right
-there (`StrictPollTimeoutError`): a feed that did not engage the
-cassette never gets a traverse. After the replay the status word must
-equal the table's completion value (0xd855) or `LoadIncompleteError` is
-raised. Either way the session is FAILED, nothing further is sent, and
-a power cycle is required. On the real scanner the replay has answered
-0xec55 after the feed and 0xcc55 after the traverse twice (Test 12)
-with a loose magazine; that is now a failed load, not success. The
-analysis of why — the cassette is not engaged by the feed when it has
-been pushed past the sensor-trigger point — is in
-[`load-analysis.md`](load-analysis.md), with the read-only
-`tools/sensor_probe.py` for the next hardware step.
+polls of the LOAD replay are strict under a masked test
+(`device.load_status_matches`, mask 0xfb on the status byte): the reply
+must have the captured *state class* (upper nibble) AND the captured
+*loader-sensor bit* 0x08 AND the busy bit clear; only bit 0x04, which
+differs between vendor sessions (0xf0/0xf4, 0xd8/0xdc), is ignored.
+After the feed the capture reads 0xf455 — done, sensor bit CLEAR, the
+cassette pulled past the sensor; after the traverse 0xdc55 — done,
+sensor bit SET again. A timeout stops the flow right there
+(`StrictPollTimeoutError`): a feed that did not engage the cassette
+never gets a traverse. After the replay the status word is read again
+and must pass the same test against the traverse target, or
+`LoadIncompleteError` is raised. Either way the session is FAILED,
+nothing further is sent, and a power cycle is required. On the real
+scanner the old table answered 0xec55 after the feed (Tests 12/13,
+sensor bit still set) and 0xcc55 after the traverse; both fail the
+test. Neither an exact value (it rejected the correct vendor load),
+nor a state-class range (0xf855 would pass with the cassette still in
+front of the sensor), nor the sensor bit alone (a running engine would
+pass) is acceptable. The root cause of the unengaged loads — the LOAD
+table had been cut from an eject capture and lacked the feed's
+register block — is in Test 14 of [`test-log.md`](test-log.md); the
+table is now generated from the clean standalone load and is **not yet
+hardware-verified**. Background in
+[`load-analysis.md`](load-analysis.md).
 
 `--assume-locked` (in `tools/hwblock.py`) is for controlled development
 use only, when a person has physically confirmed the magazine is seated
@@ -321,8 +332,8 @@ program is not recovery.
   and after an execute pulse, during calibration bulk-in, during image
   bulk-in, during PARK (verbatim and semantic), between batch frames,
   during eject and during magazine load, a load whose completion
-  status word does not match the capture (0xcc55, 0xe855, 0xdc55:
-  failed operation, failed session, tool exit 1), plus `KeyboardInterrupt` —
+  status fails the masked completion test (0xec55, 0xf855, 0xcc55,
+  0xd455: failed operation, failed session, tool exit 1), plus `KeyboardInterrupt` —
   each asserting the session fails, records phase and write/execute
   history, sends no recovery command, refuses every further operation
   with zero writes, and rejects a new session over the left-behind

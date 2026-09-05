@@ -7,8 +7,10 @@ loader sensor (reg 0x101 bit 0x08), the full status byte, reg 0x32
 and the interrupt endpoint, and prints every transition with a
 timestamp. Purpose (docs/load-analysis.md, TODO 9b): with the scanner
 powered on and NO driver activity, insert the magazine slowly by hand
-and note where the sensor trips relative to the mechanical stop -- the
-vendor's load runs from that trigger point, not from the stop.
+and note where the sensor trips relative to the mechanical stop.
+(Test 13 located it ~1 cm short of the stop; Test 14 then showed the
+vendor loads from the STOP -- the insertion depth was never the
+variable. Kept as a diagnostic.)
 
 Zero USB writes by construction (safety.GuardedDevice refuses them in
 a read-only session); proven offline in tests/test_safety.py.

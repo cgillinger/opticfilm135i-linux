@@ -342,11 +342,13 @@ class FakeUsbDevice:
         self.kernel_driver_active = False
 
 
-def vendor_like_load_status(fake: FakeUsbDevice, after_traverse: int = 0xD8,
-                            after_feed: int = 0xF0, later: int | None = None) -> None:
+def vendor_like_load_status(fake: FakeUsbDevice, after_traverse: int = 0xDC,
+                            after_feed: int = 0xF4, later: int | None = None) -> None:
     """Make the fake answer the LOAD flow's status-word polls like the
-    capture: `after_feed` once the first GO (feed 6690) has completed,
-    `after_traverse` after the second (traverse 71490); `later`, if
+    clean-load capture (Test 14): `after_feed` once the first GO (feed
+    6690) has completed (captured 0xf4: done class, loader-sensor bit
+    0x08 CLEAR), `after_traverse` after the second (traverse 71490;
+    captured 0xdc: done class, sensor bit SET again); `later`, if
     given, replaces after_traverse from the second status read on
     (models a value that settles differently after the poll)."""
     state = {"reads_after_traverse": 0}
@@ -946,8 +948,27 @@ def test_load_magazine_requires_initialize_and_matches_trace():
         else:
             assert ev["kind"] == "bulk_out" and ev["length"] == len(op.data)
     assert fake.pulses == 2
-    # Byte identity against the trace slice the old tool replayed.
-    trace = REPO / "traces" / "20260902-vendor-eject-from-loaded.trace.json.gz"
+    # The engaging feed (Test 14): every register batch between the
+    # loader-sensor ack and the first GO, taken together, must program
+    # the vendor's full block -- the values the old (eject-cut) table
+    # left to the base table are exactly the ones that decided whether
+    # the cassette engaged. Checked on the table itself, trace or not.
+    ops = tables_load.LOAD.ops
+    first_go = next(i for i, op in enumerate(ops)
+                    if op.kind == "cw" and op.wv == 0x83 and op.data == bytes.fromhex("0f01"))
+    feed_regs: dict[int, int] = {}
+    for op in ops[:first_go]:
+        if op.kind == "cw" and op.wv == 0x83:
+            feed_regs.update(zip(op.data[0::2], op.data[1::2]))
+    assert len(feed_regs) >= 126, len(feed_regs)
+    for reg, val in ((0x02, 0x18), (0x3E, 0x1A), (0x3F, 0x22),      # feed 6690, loader mode
+                     (0x01, 0x22), (0x03, 0x30), (0x15, 0x90), (0x35, 0xBB)):
+        assert feed_regs.get(reg) == val, (hex(reg), feed_regs.get(reg))
+    # Exactly two motor completions (feed, traverse), captured f455 / dc55.
+    polls = [op for op in ops if op.kind == "poll" and op.wv == 0x018E]
+    assert [op.resp.hex() for op in polls] == ["f455", "dc55"], polls
+    # Byte identity against the trace slice.
+    trace = REPO / "traces" / "20260905-vendor-clean-load.trace.json.gz"
     if trace.exists():
         import gzip
         import json
@@ -956,7 +977,7 @@ def test_load_magazine_requires_initialize_and_matches_trace():
         for o, op in zip(raw, tables_load.LOAD.ops):
             assert o["t"] == op.kind
             if op.kind in ("cw", "bo"):
-                assert bytes.fromhex(o["data"]) if o.get("data") else b"" == op.data
+                assert (bytes.fromhex(o["data"]) if o.get("data") else b"") == op.data
             if op.kind == "cw":
                 assert (o["bm"], o["br"], o["wv"], o["wi"]) == (op.bm, op.br, op.wv, op.wi)
         note = "trace verified"
@@ -1151,41 +1172,88 @@ def test_short_transfer_leaving_engine_running_blocks_driver_restart():
     print("test_short_transfer_leaving_engine_running_blocks_driver_restart OK")
 
 
+def test_load_status_matches_is_class_and_sensor_bit():
+    """The masked completion test (device.LOAD_STATUS_MASK = 0xfb):
+    state class AND loader-sensor bit 0x08 AND busy bit, only bit 0x04
+    ignored. Both vendor captures pass (f0/f4 after the feed, d8/dc
+    after the traverse); every hardware failure value and every
+    single-condition shortcut is rejected."""
+    m = device.load_status_matches
+    feed, trav = bytes.fromhex("f455"), bytes.fromhex("dc55")
+    assert device.LOAD_STATUS_MASK == 0xFB
+    # After the feed: done class with the sensor bit CLEAR.
+    for ok in ("f455", "f055"):
+        assert m(bytes.fromhex(ok), feed), ok
+    for bad in ("ec55",   # Tests 12/13 on hardware: class E, sensor still set
+                "f855",   # done class, but the cassette still in front of the sensor
+                "f555",   # busy bit still set
+                "e455",   # sensor clear but wrong class (sensor bit alone must not pass)
+                "dc55",   # the traverse's value is not the feed's
+                "f4",     # short reply
+                "f400"):  # wrong ack byte
+        assert not m(bytes.fromhex(bad), feed), bad
+    # After the traverse: done class with the sensor bit SET again.
+    for ok in ("dc55", "d855"):
+        assert m(bytes.fromhex(ok), trav), ok
+    for bad in ("cc55",   # Test 12 on hardware
+                "d455",   # sensor clear: the cassette did not come back in front of it
+                "dd55",   # busy bit
+                "f455",   # the feed's value is not the traverse's
+                "de55"):  # never-observed bit 0x02
+        assert not m(bytes.fromhex(bad), trav), bad
+    assert not m(b"", feed) and not m(feed, b"")
+    print("test_load_status_matches_is_class_and_sensor_bit OK")
+
+
 def test_load_completion_is_verified_not_assumed():
-    """Test 12: the real scanner answered 0xec55 after the feed (capture:
-    0xf055) and 0xcc55 after the traverse (capture: 0xd855), and the
-    tool reported success. Now: both completion polls are strict, the
-    flow stops at the first one that fails (a feed that did not engage
-    the cassette never gets a traverse), the session is FAILED with
+    """Test 12: the real scanner answered 0xec55 after the feed and
+    0xcc55 after the traverse, and the tool reported success. Now: both
+    completion polls are strict under the masked test, the flow stops
+    at the first one that fails (a feed that did not engage the
+    cassette never gets a traverse), the session is FAILED with
     phase/history recorded, nothing further is sent, the operator is
     told to power-cycle, and the tool exits non-zero. The final status
-    read is checked too."""
+    read is checked the same way. Test 14: both vendor captures'
+    values complete (the exact-match check rejected the correct load)."""
     import load_magazine as tool
-    assert device.load_completion_target() == 0xD855
+    assert device.load_completion_target() == 0xDC55
     n_full = None
 
-    # Reference: a vendor-like load completes; remember its write count.
-    fake = FakeUsbDevice(reg01=0x22)
-    vendor_like_load_status(fake)
-    scanner = make_scanner(fake)
-    with fast_time():
-        scanner.initialize(); n_init = fake.out_count
-        scanner.load_magazine()
-    n_full = fake.out_count - n_init
-    assert fake.pulses == 2 and scanner.session.state is SessionState.ARMED
+    # Reference: vendor-like loads complete -- the clean-load capture's
+    # values (default), the eject-from-loaded capture's, and a final
+    # read that settles on the other done value.
+    for label, model in (("clean load f4/dc", vendor_like_load_status),
+                         ("eject-from-loaded f0/d8",
+                          lambda f: vendor_like_load_status(f, after_feed=0xF0, after_traverse=0xD8)),
+                         ("final read d8 after dc", lambda f: vendor_like_load_status(f, later=0xD8))):
+        fake = FakeUsbDevice(reg01=0x22)
+        model(fake)
+        scanner = make_scanner(fake)
+        with fast_time():
+            scanner.initialize(); n_init = fake.out_count
+            scanner.load_magazine()
+        assert fake.pulses == 2 and scanner.session.state is SessionState.ARMED, label
+        assert n_full in (None, fake.out_count - n_init), label
+        n_full = fake.out_count - n_init
 
     cases = [
-        # (label, status model, expected exception, pulses sent, phase)
+        # (label, status model, expected exception, pulses sent, final status word)
         ("feed did not engage (0xec after feed, as on hardware)",
-         lambda f: vendor_like_load_status(f, after_feed=0xEC), safety.StrictPollTimeoutError, 1),
+         lambda f: vendor_like_load_status(f, after_feed=0xEC), safety.StrictPollTimeoutError, 1, None),
+        ("feed finished but the sensor bit is still set (0xf8): cassette not pulled past",
+         lambda f: vendor_like_load_status(f, after_feed=0xF8), safety.StrictPollTimeoutError, 1, None),
+        ("feed busy bit never clears (0xf5)",
+         lambda f: vendor_like_load_status(f, after_feed=0xF5), safety.StrictPollTimeoutError, 1, None),
         ("traverse did not settle (0xcc after traverse, as on hardware)",
-         lambda f: vendor_like_load_status(f, after_traverse=0xCC), safety.StrictPollTimeoutError, 2),
-        ("polls matched but the final read differs (0xdc)",
-         lambda f: vendor_like_load_status(f, later=0xDC), safety.LoadIncompleteError, 2),
-        ("state-class leniency is OFF for strict polls (0xd9 vs 0xd8)",
-         lambda f: vendor_like_load_status(f, after_traverse=0xD9), safety.StrictPollTimeoutError, 2),
+         lambda f: vendor_like_load_status(f, after_traverse=0xCC), safety.StrictPollTimeoutError, 2, None),
+        ("traverse done class but sensor bit clear (0xd4)",
+         lambda f: vendor_like_load_status(f, after_traverse=0xD4), safety.StrictPollTimeoutError, 2, None),
+        ("polls matched but the final read is a different class (0xcc)",
+         lambda f: vendor_like_load_status(f, later=0xCC), safety.LoadIncompleteError, 2, 0xCC55),
+        ("polls matched but the final read lost the sensor bit (0xd4)",
+         lambda f: vendor_like_load_status(f, later=0xD4), safety.LoadIncompleteError, 2, 0xD455),
     ]
-    for label, model, exc_type, pulses in cases:
+    for label, model, exc_type, pulses, final_word in cases:
         fake = FakeUsbDevice(reg01=0x22)
         model(fake)
         scanner = make_scanner(fake)
@@ -1200,8 +1268,10 @@ def test_load_completion_is_verified_not_assumed():
         _assert_power_cycle_message(msg)
         if exc_type is safety.StrictPollTimeoutError:
             assert "did not reach the captured value" in msg and e.want.hex() in msg and e.last.hex() in msg, (label, msg)
+            assert "mask 0xfb55" in msg, msg
         else:
-            assert "did NOT complete" in msg and "may not be latched" in msg and e.status_word == 0xDC55, (label, msg)
+            assert "did NOT complete" in msg and "may not be latched" in msg and e.status_word == final_word, (label, msg)
+            assert "mask 0xfb55" in msg, msg
         _assert_failed_and_frozen(fake, scanner, e, operation="load_magazine",
                                   phase_prefix="load")
 
@@ -1790,6 +1860,7 @@ def main() -> int:
         test_full_length_and_legitimate_zero_length_out_succeed,
         test_short_transfer_leaving_engine_running_blocks_driver_restart,
         test_load_magazine_requires_initialize_and_matches_trace,
+        test_load_status_matches_is_class_and_sensor_bit,
         test_load_completion_is_verified_not_assumed,
         test_sensor_probe_is_strictly_read_only,
         test_cli_scan_eject_watch_refuse_unsafe_states_with_zero_writes,
