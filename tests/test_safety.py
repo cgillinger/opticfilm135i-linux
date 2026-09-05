@@ -358,7 +358,8 @@ class FakeUsbDevice:
 
 def vendor_like_load_status(fake: FakeUsbDevice, after_traverse: int = 0xDC,
                             after_feed: int = 0xF4, later: int | None = None,
-                            jog: bool = False, jog_value: int = 0xF8) -> None:
+                            jog: bool = False, jog_value: int = 0xF8,
+                            pulses_before: int = 0, scan_value: int = 0xF8) -> None:
     """Make the fake answer the LOAD flow's status-word polls like the
     clean-load capture (Test 14): `after_feed` once the first GO (feed
     6690) has completed (captured 0xf4: done class, loader-sensor bit
@@ -370,14 +371,17 @@ def vendor_like_load_status(fake: FakeUsbDevice, after_traverse: int = 0xDC,
     completing at ``jog_value``, captured 0xf8) before the load."""
     state = {"reads_after_traverse": 0}
     n_jog = 3 if jog else 0
+    n0 = pulses_before      # pulses issued before the flow (e.g. cold_init's 9)
 
     def high(f):
-        if f.pulses == 0:
+        if f.pulses <= n0:
             return 0xE8
-        if f.pulses <= n_jog:
+        if f.pulses <= n0 + n_jog:
             return jog_value
-        if f.pulses == n_jog + 1:
+        if f.pulses == n0 + n_jog + 1:
             return after_feed
+        if f.pulses > n0 + n_jog + 2:
+            return scan_value          # after the load: scan-phase reads
         state["reads_after_traverse"] += 1
         if later is not None and state["reads_after_traverse"] > 1:
             return later
@@ -652,9 +656,13 @@ def test_cold_state_permits_only_the_cold_init_path():
     base_idx = _find_table(fake.out_log, tables_base.BASE_INIT_PAIRS)
     assert cold_idx is not None and base_idx is not None and cold_idx < base_idx, (cold_idx, base_idx)
     assert fake.pulses == 9, fake.pulses   # 3 rounds x 3 homing moves
+    # A scan straight after cold_init is refused (Test 22): the load
+    # flow must run first in a cold-started session. Covered in depth by
+    # test_cold_session_must_load_before_it_scans.
+    n = fake.out_count
     with fast_time():
-        scanner.scan(frame=1)
-    assert scanner.session.state is SessionState.ARMED
+        expect(OperationNotAllowedError, scanner.scan, frame=1)
+    assert fake.out_count == n and scanner.session.state is SessionState.ARMED
 
     # cold_init a second time in the same session: refused, zero writes.
     n = fake.out_count
@@ -1132,10 +1140,14 @@ def test_full_length_and_legitimate_zero_length_out_succeed():
     # The cold path issues zero-length control OUTs (0x8b end-of-access
     # style requests); pyusb reports 0 for them, which is complete.
     fake = FakeUsbDevice(reg01=0x00, cal_buffers=_cal_buffers())
+    vendor_like_load_status(fake, jog=True, pulses_before=9)
     scanner = make_scanner(fake)
     with fast_time():
+        scanner.initialize(prep=False)      # cold_init + the vendor open sequence
+        scanner.jog_magazine()
+        scanner.load_magazine()
         scanner.initialize()
-        scanner.scan(frame=1)
+        scanner.scan(frame=1)               # the full cold-start flow of Tests 17-21
     zero = [ev for ev in fake.out_log if ev["kind"] == "ctrl_out" and len(ev["data"]) == 0]
     assert zero, "expected zero-length control OUTs in the cold path"
     assert fake.short_count == 0
@@ -1395,6 +1407,37 @@ def test_position_wait_is_strict_for_every_dpi_profile():
             scanner.scan(frame=4, ir=ir, dpi=int(name))
         assert scanner.session.state is SessionState.ARMED, name
     print(f"test_position_wait_is_strict_for_every_dpi_profile OK ({len(profiles)} profiles)")
+
+
+def test_cold_session_must_load_before_it_scans():
+    """Test 22: a scan straight after cold_init reads a dark white line
+    (the transport is not at the load's reference position). In a
+    cold-started session scan() is refused until load_magazine() has
+    completed -- nothing sent, session still usable -- and allowed
+    right after a completed load. A warm (0x22) session is unaffected."""
+    fake = FakeUsbDevice(reg01=0x00, cal_buffers=_cal_buffers())
+    vendor_like_load_status(fake, jog=True, pulses_before=9)
+    scanner = make_scanner(fake)
+    with fast_time():
+        scanner.initialize()                       # cold_init (9 pulses) + base + prep
+        assert scanner.session.cold_init_done and fake.pulses == 9, fake.pulses
+        n = fake.out_count
+        e = expect(OperationNotAllowedError, scanner.scan, frame=1)
+        assert "load flow first" in str(e) and fake.out_count == n and fake.pulses == 9
+        assert scanner.session.state is SessionState.ARMED
+        scanner.initialize(prep=False)
+        scanner.jog_magazine()
+        scanner.load_magazine()
+        assert scanner._loaded_this_session and fake.pulses == 14
+        scanner.initialize()
+        scanner.scan(frame=1)
+    assert scanner.session.state is SessionState.ARMED
+    fake = FakeUsbDevice(reg01=0x22, cal_buffers=_cal_buffers())
+    scanner = make_scanner(fake)
+    with fast_time():
+        scanner.initialize(); scanner.scan(frame=1)
+    assert not scanner.session.cold_init_done and scanner.session.state is SessionState.ARMED
+    print("test_cold_session_must_load_before_it_scans OK")
 
 
 def test_load_status_matches_is_class_and_sensor_bit():
@@ -2121,10 +2164,11 @@ def test_hwblock_uses_central_guard_and_writes_nothing_when_unsafe():
         assert code == 1 and fake.out_count == 0, (reg01, code, fake.out_count)
         assert "unsafe start state" in summary["status"], summary["status"]
         assert summary["session"]["state"] == "refused"
+        # The retired cold block exits 2 before touching USB or --out.
         fake = FakeUsbDevice(reg01=reg01)
-        code, summary = run(["cold"], fake)
-        assert code == 1 and fake.out_count == 0, (reg01, code, fake.out_count)
-        assert "unsafe start state" in summary["status"], summary["status"]
+        with cli_over(fake), quiet():
+            code = hwblock.main(["cold", "--out", "/nonexistent/never-created"])
+        assert code == 2 and fake.out_count == 0 and fake.in_count == 0, (reg01, code)
 
     # warm on a cold scanner: policy refusal, zero writes.
     fake = FakeUsbDevice(reg01=0x00)
@@ -2209,6 +2253,7 @@ def main() -> int:
         test_initialize_prep_false_is_the_vendor_device_open_state,
         test_position_wait_is_strict_and_scaled_with_feedl,
         test_position_wait_is_strict_for_every_dpi_profile,
+        test_cold_session_must_load_before_it_scans,
         test_load_status_matches_is_class_and_sensor_bit,
         test_load_completion_is_verified_not_assumed,
         test_sensor_probe_is_strictly_read_only,

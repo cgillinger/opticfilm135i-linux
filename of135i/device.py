@@ -266,6 +266,10 @@ class Scanner:
         self._diag_cr_mismatches: int = 0
         self._diag_poll_timeout_details: list[dict] = []
         self._diag_warmup: dict | None = None
+        # Set by a completed load_magazine(): the transport is at the
+        # vendor's scan reference position (the load's traverse). A
+        # session that started cold must load before it scans (Test 22).
+        self._loaded_this_session = False
         # Lamp warmup budget for this scanner object (see _WARMUP_BUDGET_S).
         self.warmup_budget_s: float = _WARMUP_BUDGET_S
         self._diag_park_waits: dict | None = None
@@ -1176,6 +1180,7 @@ class Scanner:
                     status_word=word, expected=expected, observed=self.session.start_reg01,
                     session=self.session.snapshot())
             log.info("load_magazine: complete, status word %#06x", word)
+            self._loaded_this_session = True
 
     def eject(self) -> None:
         """Eject the film magazine the way the vendor driver does it from
@@ -1384,6 +1389,14 @@ class Scanner:
         t = dual_tables(dpi) if (ir or dpi != 3600) else None
         if self.park_mode not in ("verbatim", "semantic"):
             raise ValueError(f"unknown park_mode {self.park_mode!r} (want 'verbatim' or 'semantic')")
+        if self.session.cold_init_done and not self._loaded_this_session:
+            raise OperationNotAllowedError(
+                "scan() after a cold start requires the magazine load flow first "
+                "(tools/load_magazine.py): the load's traverse puts the transport at the "
+                "vendor's scan reference position, and a scan straight after cold_init reads "
+                "a dark white line -- 51 measurements over 295 s in Test 22 -- and can only "
+                "end flat or fail. The vendor never scans after a power-on without loading. "
+                f"{safety.NO_COMMANDS_SENT}", session=self.session.snapshot())
         if not self._prepared_for_scan:
             raise OperationNotAllowedError(
                 "scan() requires initialize() first (before every frame) in this session. "
