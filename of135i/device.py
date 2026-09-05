@@ -155,6 +155,10 @@ _WARMUP_STABLE_PCT = 3.0      # consecutive peaks must agree within this
 # "Conversion order" step 1): timeout and poll interval for the two
 # condition waits that replace the captured trace's pacing.
 _PARK_WAIT_TIMEOUT = 15.0
+# Wait B (status word idle after the carriage return): the longest observed
+# return is the frame-4 park, 15.6 s in the verbatim phase incl. captured
+# pacing; 30 s is a generous, explicit hard stop (park-completion-analysis.md).
+_PARK_WAIT_B_TIMEOUT = 30.0
 _PARK_POLL_INTERVAL = 0.02
 
 
@@ -199,6 +203,42 @@ def status_matches(got: bytes, want: bytes, mask: int) -> bool:
 def load_status_matches(got: bytes, want: bytes) -> bool:
     """status_matches() under LOAD_STATUS_MASK (see above)."""
     return status_matches(got, want, LOAD_STATUS_MASK)
+
+
+# Semantic PARK's completion after the carriage-return write (0x02=0x30):
+# the status word reads IDLE. Derived in docs/park-completion-analysis.md
+# from the six captured PARK phases, the raw traces and Tests 18-21:
+#   0x80 required set   -- set in every status read ever seen here
+#   0x40 required set   -- set in every idle value (f8, e8, ec, d8, dc),
+#                          clear in the busy ones (a1, a5, a9, 81, 9c)
+#   0x20, 0x10 ignored  -- the "class" bits vary between sessions for the
+#                          same physical idle state (capture f8, our e8/d8)
+#   0x08 ignored        -- loader sensor = magazine presence, not completion
+#   0x04 ignored        -- session-variable (f0/f4, d8/dc, e8/ec; Test 14)
+#   0x02 required clear -- never observed set; a set bit is unknown state
+#   0x01 required clear -- busy: set in EVERY busy value (d1, d5, a1, a5,
+#                          a9, 81), clear in every idle one
+# Not the LOAD mask (which requires the sensor bit in a captured state) and
+# not the POSITION mask (class F only): those semantics are different.
+PARK_IDLE_REQUIRED_MASK = 0xC3
+PARK_IDLE_REQUIRED_VALUE = 0xC0
+PARK_IDLE_ACK = 0x55
+
+
+def park_idle_status_matches(reply) -> bool:
+    """True when a raw status-word reply (wValue 0x018e, wIndex 0x0122)
+    says the engine is idle after the carriage return -- the completion
+    rule of semantic PARK's Wait B. Anything but a 2-byte reply with the
+    0x55 ack and (byte & PARK_IDLE_REQUIRED_MASK) == PARK_IDLE_REQUIRED_
+    VALUE is a rejection: short, empty, long, malformed, busy (a1, a9,
+    81, d1, d5 ...), scanning (9c, ad, bd) and unknown-bit values."""
+    try:
+        b = bytes(reply)
+    except Exception:
+        return False
+    if len(b) != 2 or b[1] != PARK_IDLE_ACK:
+        return False
+    return (b[0] & PARK_IDLE_REQUIRED_MASK) == PARK_IDLE_REQUIRED_VALUE
 
 
 def position_timeout_scale(t, feedl: int) -> float:
@@ -569,11 +609,14 @@ class Scanner:
             are only correct on the capture unit/session;
           - Wait A: poll reg 0x35 until bit 0x40 is set (replaces the
             captured 0.74 + 2.06 s pacing before the RMW clear);
-          - Wait B: poll reg 0x32 until (v & ~0x18) == (0x95 & ~0x18)
-            -- bits 0x18 are loader-sensor/transport bits that
-            legitimately differ between sessions, same mask
-            _poll_one() already applies to 0x32 polls elsewhere
-            (replaces the captured poll + 2.07 s pause + poll);
+          - Wait B: poll the status word (reg 0x101) until it reads
+            idle -- park_idle_status_matches(): bits 0x80/0x40 set,
+            busy bit 0x01 and never-seen bit 0x02 clear, the session-
+            variable bits 0x20/0x10/0x08/0x04 ignored (docs/park-
+            completion-analysis.md). Until 2026-09-05 this waited for
+            reg 0x32 to equal the captured 0x95 (masked 0x18), which
+            Test 23 showed to be a session-variable value (0xb5 on
+            hardware, 0x81/0x95/0x8d/0x15 across captures);
           - exactly ONE idle-loop round afterwards (heartbeat only,
             no 2 s pause), instead of five.
 
@@ -626,7 +669,7 @@ class Scanner:
         dev = self.io.dev
         waits = {
             "a_seconds": None, "a_timed_out": False,
-            "b_seconds": None, "b_timed_out": False,
+            "b_seconds": None, "b_timed_out": False, "b_last": None,
         }
 
         # ---- real park/teardown sequence (captured ops 0-55) -----------
@@ -677,30 +720,36 @@ class Scanner:
         )
         self.io.write_regs([(0x35, v35 & ~0x40 & 0xFF)])
 
-        # ---- Wait B: reg 0x32 reaches state 0x95 (masked 0x18) ----------
+        # ---- Wait B: the status word reads idle after the carriage return
+        # (park_idle_status_matches: bits 0x80/0x40 set, 0x02/0x01 clear;
+        # docs/park-completion-analysis.md). Replaces the former target
+        # "reg 0x32 == 0x95 masked 0x18", a session-variable value that
+        # stopped Test 23 on 0xb5. Bounded by _PARK_WAIT_B_TIMEOUT; a
+        # timeout, a malformed reply that never clears, a USB error or
+        # Ctrl-C ends the operation here -- nothing is written after.
         _t = time.monotonic()
-        deadline = _t + _PARK_WAIT_TIMEOUT
-        target = 0x95 & ~0x18 & 0xFF
-        v32 = self.io.read_reg(0x32)
-        while (v32 & ~0x18 & 0xFF) != target:
+        deadline = _t + _PARK_WAIT_B_TIMEOUT
+        reply = bytes(dev.ctrl_transfer(0xC0, 0x04, 0x018E, 0x0122, 2))
+        while not park_idle_status_matches(reply):
             if time.monotonic() > deadline:
                 waits["b_timed_out"] = True
                 waits["b_seconds"] = time.monotonic() - _t
+                waits["b_last"] = reply.hex()
                 self._diag_park_waits = waits
                 raise safety.StrictPollTimeoutError(
-                    f"park_semantic: wait B (reg 0x32 -> 0x95 masked 0x18) did not complete "
-                    f"within {_PARK_WAIT_TIMEOUT:.0f}s: last 0x{v32:02x}. The park stops here. "
+                    f"park_semantic: wait B (status word idle after the carriage return: "
+                    f"(byte & {PARK_IDLE_REQUIRED_MASK:#04x}) == {PARK_IDLE_REQUIRED_VALUE:#04x}, "
+                    f"ack {PARK_IDLE_ACK:#04x}) did not complete within {_PARK_WAIT_B_TIMEOUT:.0f}s: "
+                    f"last {reply.hex() or '(empty)'}. The park stops here. "
                     f"{safety.NO_RECOVERY_ATTEMPTED} {safety.POWER_CYCLE_INSTRUCTION}",
-                    last=bytes([v32]), want=bytes([0x95]), observed=self.session.start_reg01,
-                    session=self.session.snapshot())
+                    last=reply, want=bytes([PARK_IDLE_REQUIRED_VALUE, PARK_IDLE_ACK]),
+                    observed=self.session.start_reg01, session=self.session.snapshot())
             time.sleep(_PARK_POLL_INTERVAL)
-            v32 = self.io.read_reg(0x32)
+            reply = bytes(dev.ctrl_transfer(0xC0, 0x04, 0x018E, 0x0122, 2))
         waits["b_seconds"] = time.monotonic() - _t
-        log.debug(
-            "park_semantic: wait B (reg 0x32 -> 0x95 masked 0x18) done in "
-            "%.3fs (last 0x%02x, timed_out=%s)",
-            waits["b_seconds"], v32, waits["b_timed_out"],
-        )
+        waits["b_last"] = reply.hex()
+        log.debug("park_semantic: wait B (status word idle) done in %.3fs (last %s)",
+                  waits["b_seconds"], reply.hex())
 
         # ---- one idle-loop round (heartbeat), no captured 2 s pause -----
         self.io.write_regs([(0x36, 0xFC), (0x3A, 0x00), (0x36, 0xFC), (0x33, 0x0E)])
