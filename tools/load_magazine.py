@@ -95,7 +95,7 @@ def main(argv: list[str] | None = None, ask=input) -> int:
                   "the vendor's 'loaded' indication only: check by hand that the magazine "
                   "is latched before scanning -- the sensor reports presence, not latching.")
             return 0
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, EOFError):
         # Even at the reinsert prompt (jog complete, session armed) the
         # rule holds: no new session on top of an aborted one.
         print(f"\ninterrupted. {POWER_CYCLE_INSTRUCTION}", file=sys.stderr)
