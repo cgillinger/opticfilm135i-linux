@@ -207,6 +207,22 @@ def test_main_no_subcommand_returns_2_without_touching_hardware():
     print("test_main_no_subcommand_returns_2_without_touching_hardware OK")
 
 
+def test_park_wait_summary_and_finding():
+    """Semantic PARK's per-scan wait record is summarised for the report;
+    verbatim parks (no record) are counted as absent; a timed-out wait
+    becomes a finding."""
+    sc_verbatim = {"park_waits": None}
+    sc_ok = {"park_waits": {"a_seconds": 0.4, "a_timed_out": False, "b_seconds": 3.9, "b_timed_out": False, "b_last": "e855"}}
+    sc_bad = {"park_waits": {"a_seconds": 0.4, "a_timed_out": False, "b_seconds": 30.0, "b_timed_out": True, "b_last": "a955"}}
+    out = hwblock.park_wait_summary([sc_verbatim, sc_ok])
+    assert out["n_semantic"] == 1 and out["b_last"] == ["e855"] and not out["any_park_wait_timed_out"]
+    out = hwblock.park_wait_summary([sc_ok, sc_bad])
+    assert out["n_semantic"] == 2 and out["any_park_wait_timed_out"] and out["b_last"] == ["e855", "a955"]
+    findings = hwblock._collect_findings({"steps": {"W3": {"park": out}}})
+    assert any("PARK wait timed out" in f for f in findings), findings
+    print("test_park_wait_summary_and_finding OK")
+
+
 def test_cold_block_is_retired_and_touches_nothing():
     """`hwblock cold` exits 2 with the retirement note, creates no output
     directory and opens no device (Test 22: scanning straight after
@@ -243,6 +259,7 @@ def main() -> int:
         test_argparse_missing_subcommand,
         test_argparse_missing_out,
         test_main_no_subcommand_returns_2_without_touching_hardware,
+        test_park_wait_summary_and_finding,
         test_cold_block_is_retired_and_touches_nothing,
         test_main_repeat_too_low_rejected,
     ]

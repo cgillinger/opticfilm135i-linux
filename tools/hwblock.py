@@ -261,6 +261,22 @@ def _warmup_flags(list_of_sidecars: list) -> dict:
     }
 
 
+def park_wait_summary(list_of_sidecars: list) -> dict:
+    """Semantic PARK's wait record per scan (sidecar key "park_waits":
+    a/b seconds, timed_out flags, b_last), so an A/B run can be read
+    from the report. Verbatim parks carry no record (None)."""
+    waits = [sc.get("park_waits") for sc in list_of_sidecars]
+    present = [w for w in waits if isinstance(w, dict)]
+    return {
+        "park_waits": waits,
+        "n_semantic": len(present),
+        "a_seconds": [w.get("a_seconds") for w in present],
+        "b_seconds": [w.get("b_seconds") for w in present],
+        "b_last": [w.get("b_last") for w in present],
+        "any_park_wait_timed_out": any(w.get("a_timed_out") or w.get("b_timed_out") for w in present),
+    }
+
+
 def dpi_shift(start_row: int, reference_rows: list, dpi: int) -> dict:
     """Position shift of a frame's detected film-start row against a
     reference set (typically the W1 reproducibility set's film_start_
@@ -312,6 +328,7 @@ def _collect_findings(summary: dict) -> list:
         ("bottom_cut_any", "at least one bottom-cut image in the set"),
         ("any_exhausted", "lamp warmup retries exhausted on at least one scan"),
         ("any_gain_clipped", "gain clipped to maximum on at least one scan"),
+        ("any_park_wait_timed_out", "a semantic PARK wait timed out on at least one scan"),
     )
 
     def walk(path: str, obj) -> None:
@@ -618,6 +635,7 @@ def run_warm(args: argparse.Namespace, out_dir: Path) -> int:
             # ---- W3: warmup counters (from W1 sidecars) ------------------
             step = "W3"
             summary["steps"]["W3"] = _warmup_flags(sidecars)
+            summary["steps"]["W3"]["park"] = park_wait_summary(sidecars)
             _save(out_dir, summary)
 
             # ---- W4: cross-scan image analysis (from W1 stats) -----------
