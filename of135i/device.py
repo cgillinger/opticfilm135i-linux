@@ -665,12 +665,21 @@ class Scanner:
 
     def _park_semantic_body(self, ctrl_8b, has_0x19) -> None:
         self.session.phase = "park"
-        t0 = time.monotonic()
-        dev = self.io.dev
         waits = {
             "a_seconds": None, "a_timed_out": False,
             "b_seconds": None, "b_timed_out": False, "b_last": None,
         }
+        # The wait record survives every exit -- timeout, USB error,
+        # Ctrl-C -- so the sidecar/report shows how far the park got.
+        self._diag_park_waits = waits
+        try:
+            self._park_semantic_steps(ctrl_8b, has_0x19, waits)
+        finally:
+            self._diag_park_waits = waits
+
+    def _park_semantic_steps(self, ctrl_8b, has_0x19, waits: dict) -> None:
+        t0 = time.monotonic()
+        dev = self.io.dev
 
         # ---- real park/teardown sequence (captured ops 0-55) -----------
         dev.ctrl_transfer(0x40, 0x0C, 0x8D, 0, b"\x00")

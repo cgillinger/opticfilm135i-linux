@@ -1581,3 +1581,50 @@ session/dpi-dependent values (81 → 85/95/8d/15, b5 on hardware); the
 vendor app's own loop watches its bit 0x04 transition, not 0x95. Rule
 derived: status word idle = (byte & 0xc3) == 0xc0 with a valid 2-byte
 0x55-ack reply; Wait B budget 30 s. Not hardware-verified.
+
+## 2026-09-05 — Semantic PARK Wait B: implementation and simulated tests (offline)
+
+Clearly separated:
+
+**Earlier hardware observations (real):** Tests 18-21 verbatim parks
+(post-park status e8/ec on our unit, park phase 13.6-15.6 s, next frames
+correct); Test 23 semantic park (Wait A completed, Wait B stopped on
+0x32 = 0xb5, fail-closed, nothing written after).
+
+**Today's offline analysis:** `docs/park-completion-analysis.md` — the
+rule (status word idle: (byte & 0xc3) == 0xc0 on a valid 2-byte 0x55-ack
+reply) derived from six captured PARK phases, the raw traces with timing
+and the Tests 18-21 logs.
+
+**Today's simulated tests (fake transport, scripted status replies,
+controllable clock; `tests/test_park.py`, 12 tests, all passing):**
+predicate truth table (every observed idle and busy value, cold values,
+malformed replies, and that the mask is neither LOAD's nor POSITION's);
+observed sequences complete (a1→a9→e8, immediate idle, repeated a1
+before a9, the captured d1→f8 and 81→e8, the hardware variants ec/dc/f0)
+with the idle round written after and no timeout recorded; stuck a1,
+stuck a9, wrong class 9c, busy bit on an idle-looking value (e9), the
+undocumented bit 0x02 (ea) and a cold 48 all fail closed with
+StrictPollTimeoutError, operation park, session FAILED, no write after
+the last status read, later writing operations refused; the total
+budget ends after a bounded number of reads; short, empty, too-long,
+wrong-ack and swapped replies are never accepted (and a malformed reply
+followed by a real idle one completes); a USB timeout, another USB
+error and KeyboardInterrupt during the wait propagate untouched, fail
+the session and freeze it; the new Wait B completes for all six table
+variants with their 0x8b payloads untouched; Wait A still fails closed on
+its own before any status read; park_mode still defaults to verbatim;
+the verbatim tables are byte-identical (A/B equivalence tests unchanged);
+RMW still reads live values. The wait record (`park_waits`) now survives
+every exit path for the sidecar.
+
+**Still without hardware evidence:** a complete semantic PARK on the
+scanner with the new rule; whether Wait B's 30 s budget is right in
+practice; the status word's exact progression on our unit during the
+return (the vendor captures read it sparsely; our verbatim parks never
+read it). `--park semantic` remains off by default and must not be
+described as hardware-verified.
+
+Offline suite after this work: test_safety 47, test_hwblock 15,
+test_calibrate 14, test_park 12, test_offline 6, test_diag 4, test_dpi 3,
+test_ir 3 — **104 tests, all passing**.

@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from of135i import device, tables, tables_ir
 from of135i.device import Scanner
+from of135i.safety import SessionState
 
 # ------------------------------------------------------------- fake io/dev
 
@@ -39,12 +40,29 @@ class _FakeDev:
     """Records every OUT control transfer (bm, br, wv, wi, data) into
     the shared `events` list, tagged ("ctrl", ...), so relative
     ordering against register writes (also recorded into `events`,
-    tagged ("reg", ...)) can be checked."""
+    tagged ("reg", ...)) can be checked. IN transfers of the status
+    word (wValue 0x018e, wIndex 0x0122) are served from `status_seq`:
+    one entry per read, the last entry repeating once exhausted; an
+    entry may be bytes (any length, to model short/empty/long replies)
+    or an exception instance, which is raised. Each read is recorded
+    as ("status", reply-or-exception)."""
 
-    def __init__(self, events: list):
+    def __init__(self, events: list, status_seq=None):
         self._events = events
+        self._status_seq = list(status_seq) if status_seq is not None else [b"\xe8\x55"]
+        self._status_calls = 0
 
     def ctrl_transfer(self, bm, br, wv, wi, data):
+        if bm & 0x80:                                  # IN transfer
+            if wv == 0x018E and wi == 0x0122:
+                idx = min(self._status_calls, len(self._status_seq) - 1)
+                self._status_calls += 1
+                entry = self._status_seq[idx]
+                self._events.append(("status", entry))
+                if isinstance(entry, BaseException):
+                    raise entry
+                return bytes(entry)
+            return bytes(int(data))
         b = bytes(data)
         self._events.append(("ctrl", bm, br, wv, wi, b))
         return len(b)
@@ -56,13 +74,14 @@ class _FakeIo:
     read_reg(0x15)/(0x35) return fixed scripted values; read_reg(0x32)
     is served from `reg32_seq`, one value per call (clamped to the
     last entry once exhausted) -- park_semantic() calls it once for
-    the pre-wait RMW, repeatedly during Wait B, and once more for the
-    idle-loop round's write-back.
+    the pre-wait RMW and once more for the idle-loop round's write-
+    back. Wait B reads the STATUS WORD, scripted via `status_seq`
+    (see _FakeDev); the default is an immediately idle 0xe855.
     """
 
-    def __init__(self, reg15=0x90, reg35=0xFB, reg32_seq=(0x81, 0x81, 0x95)):
+    def __init__(self, reg15=0x90, reg35=0xFB, reg32_seq=(0x81, 0x95), status_seq=None):
         self.events: list = []
-        self.dev = _FakeDev(self.events)
+        self.dev = _FakeDev(self.events, status_seq)
         self._reg15 = reg15
         self._reg35 = reg35
         self._reg32_seq = list(reg32_seq)
@@ -98,6 +117,14 @@ class _FakeIo:
 
     def ctrl_events(self) -> list[tuple]:
         return [e for e in self.events if e[0] == "ctrl"]
+
+    def status_reads(self) -> list:
+        return [e[1] for e in self.events if e[0] == "status"]
+
+    def writes_after_last_status(self) -> list[tuple]:
+        """Every write event recorded after the last status read."""
+        last = max((i for i, e in enumerate(self.events) if e[0] == "status"), default=-1)
+        return [e for e in self.events[last + 1:] if e[0] in ("reg", "ctrl")]
 
 
 class _FakeClock:
@@ -295,23 +322,204 @@ def test_waits_time_out_fail_closed():
     assert waits["a_timed_out"] is True and waits["b_seconds"] is None, waits
     assert scanner.session.state is SessionState.FAILED
 
-    io = _FakeIo(reg15=0x90, reg35=0xFB, reg32_seq=(0x81, 0x00))
+    io = _FakeIo(reg15=0x90, reg35=0xFB, status_seq=[b"\xa1\x55"])   # stuck busy
     scanner = Scanner(io)
     clock = _FakeClock()
     with _Monkeypatch(sleep=_no_sleep, monotonic=clock.monotonic):
         try:
             scanner.park_semantic(ir=False)
         except safety.StrictPollTimeoutError as e:
-            assert "wait B" in str(e)
+            assert "wait B" in str(e) and e.last == b"\xa1\x55"
         else:
             raise AssertionError("wait B timeout did not raise")
     pairs = io.reg_pairs()
     assert pairs[-1] == (0x35, 0xFB & ~0x40), pairs[-1]                        # RMW clear done, nothing after
-    assert (0x36, 0xFC) not in pairs[pairs.index(pairs[-1]) + 1:], "heartbeat after a failed wait"
+    assert io.writes_after_last_status() == [], "writes after a failed wait B"
     waits = scanner._diag_park_waits
-    assert waits["a_timed_out"] is False and waits["b_timed_out"] is True, waits
+    assert waits["a_timed_out"] is False and waits["b_timed_out"] is True and waits["b_last"] == "a155", waits
     assert scanner.session.state is SessionState.FAILED
     print("test_waits_time_out_fail_closed OK")
+
+
+# ------------------------------------------ Wait B: the idle-status predicate
+
+
+def _run_park(status_seq, reg32_seq=(0x81, 0x81), clock=None, ir=False, mod=None):
+    """Run park_semantic() over a fake with the given status script and
+    return (io, scanner, exception-or-None)."""
+    from of135i import safety
+    io = _FakeIo(reg15=0x90, reg35=0xFB, reg32_seq=reg32_seq, status_seq=status_seq)
+    scanner = Scanner(io)
+    clock = clock or _FakeClock(step=0.001)     # a normal clock: waits do not time out
+    exc = None
+    with _Monkeypatch(sleep=_no_sleep, monotonic=clock.monotonic):
+        try:
+            if mod is not None:
+                scanner.park_semantic(mod)
+            else:
+                scanner.park_semantic(ir=ir)
+        except BaseException as e:            # KeyboardInterrupt included
+            exc = e
+    return io, scanner, exc
+
+
+def _assert_park_failed_closed(io, scanner, exc, exc_type):
+    """Common checks for every Wait B failure: the right exception, the
+    park operation recorded, session FAILED, no write after the last
+    status read, and the next writing operation refused."""
+    from of135i import safety
+    from of135i.safety import OperationNotAllowedError, SessionFailedError
+    assert isinstance(exc, exc_type), (type(exc), exc)
+    assert scanner.session.state is SessionState.FAILED, scanner.session.state
+    snap = scanner.session.snapshot()
+    assert snap.get("failed_in") in ("operation park", None) or "park" in str(snap), snap
+    assert io.writes_after_last_status() == [], io.writes_after_last_status()
+    waits = scanner._diag_park_waits
+    assert waits is not None and waits["a_timed_out"] is False, waits
+    # No recovery of any kind, and every later write is refused.
+    n = len(io.events)
+    try:
+        scanner.park_semantic(ir=False)
+    except (SessionFailedError, OperationNotAllowedError, safety.SafetyError):
+        pass
+    else:
+        raise AssertionError("a writing operation ran on a FAILED session")
+    assert len([e for e in io.events[n:] if e[0] in ("reg", "ctrl")]) == 0, "wrote on a FAILED session"
+
+
+def test_park_idle_predicate_truth_table():
+    """park_idle_status_matches(): required bits 0x80/0x40 set and
+    0x02/0x01 clear; 0x20/0x10/0x08/0x04 ignored; anything else rejected."""
+    m = device.park_idle_status_matches
+    assert device.PARK_IDLE_REQUIRED_MASK == 0xC3 and device.PARK_IDLE_REQUIRED_VALUE == 0xC0
+    for ok in ("e855", "e055", "ec55", "f855", "f055", "f455", "d855", "dc55", "c855", "cc55"):
+        assert m(bytes.fromhex(ok)), ok                       # every idle value observed, and its variants
+    for bad in ("a155", "a955", "a555", "8155", "d155", "d555",   # busy, all observed
+                "9c55", "ad55", "bd55",                            # scanning classes
+                "ea55", "e955",                                    # bit 0x02 / 0x01 set on an idle-looking value
+                "4855", "4055", "0055"):                           # cold power-on values (0x80 clear)
+        assert not m(bytes.fromhex(bad)), bad
+    for malformed in (b"", b"\xe8", b"\xe8\x00", b"\xe8\x55\x00", b"\x55\xe8", None, "e855"):
+        assert not m(malformed), malformed
+    # Not the LOAD or POSITION rule: the load mask needs the sensor bit in
+    # its captured state, the position mask needs class F.
+    assert device.LOAD_STATUS_MASK != device.PARK_IDLE_REQUIRED_MASK
+    assert device.POSITION_STATUS_MASK != device.PARK_IDLE_REQUIRED_MASK
+    print("test_park_idle_predicate_truth_table OK")
+
+
+def test_wait_b_observed_sequences_complete():
+    """1) the observed return a1 -> a9 -> e8; 2) immediately idle;
+    3) several a1 before a9 and idle; 8) session-variable bits (f8, ec,
+    dc, f0) all complete, with the idle-loop round written afterwards
+    and no timeout recorded."""
+    cases = {
+        "a1->a9->e8": [b"\xa1\x55", b"\xa9\x55", b"\xe8\x55"],
+        "immediate e8": [b"\xe8\x55"],
+        "a1 x5 -> a9 x2 -> e8": [b"\xa1\x55"] * 5 + [b"\xa9\x55"] * 2 + [b"\xe8\x55"],
+        "capture 3600 plain d1 -> f8": [b"\xd1\x55", b"\xd1\x55", b"\xf8\x55"],
+        "capture dual 81 -> e8": [b"\x81\x55", b"\x81\x55", b"\xe8\x55"],
+        "hardware variant ec": [b"\xa1\x55", b"\xec\x55"],
+        "loaded-idle dc": [b"\xa9\x55", b"\xdc\x55"],
+        "f0": [b"\xa1\x55", b"\xf0\x55"],
+    }
+    for label, seq in cases.items():
+        io, scanner, exc = _run_park(seq)
+        assert exc is None, (label, exc)
+        assert len(io.status_reads()) == len(seq), (label, io.status_reads())
+        pairs = io.reg_pairs()
+        assert pairs[-5:-1] == _IDLE_BLOCK and pairs[-1][0] == 0x32, (label, pairs[-6:])   # idle round after
+        waits = scanner._diag_park_waits
+        assert waits["b_timed_out"] is False and waits["b_last"] == seq[-1].hex(), (label, waits)
+        assert scanner.session.state is SessionState.ARMED, label
+    print(f"test_wait_b_observed_sequences_complete OK ({len(cases)} sequences)")
+
+
+def test_wait_b_rejects_stuck_and_wrong_states():
+    """4) stuck in a1; 5) stuck in a9; 6) wrong class (9c, scanning);
+    7) idle-looking but busy bit set (e9); 9) a bit that is not
+    documented variable (0x02: ea); 16) the total budget: each fails
+    closed with StrictPollTimeoutError and nothing written after."""
+    from of135i import safety
+    for label, value in (("stuck a1", "a155"), ("stuck a9", "a955"), ("wrong class 9c", "9c55"),
+                         ("busy bit on idle-looking e9", "e955"), ("undocumented bit 0x02: ea", "ea55"),
+                         ("cold 4855", "4855")):
+        io, scanner, exc = _run_park([bytes.fromhex(value)], clock=_FakeClock())   # fast clock: budget exhausted
+        _assert_park_failed_closed(io, scanner, exc, safety.StrictPollTimeoutError)
+        assert exc.last == bytes.fromhex(value) and "wait B" in str(exc) and "Power the scanner OFF" in str(exc), (label, str(exc))
+        assert scanner._diag_park_waits["b_timed_out"] is True and scanner._diag_park_waits["b_last"] == value, label
+    # 16) total budget: with a real-ish clock stepping 1 s per call, the
+    # 30 s budget ends after a bounded number of reads, never a hang.
+    io, scanner, exc = _run_park([b"\xa9\x55"], clock=_FakeClock(step=1.0))
+    _assert_park_failed_closed(io, scanner, exc, safety.StrictPollTimeoutError)
+    n_reads = len(io.status_reads())
+    assert 2 <= n_reads <= 40, n_reads
+    print("test_wait_b_rejects_stuck_and_wrong_states OK")
+
+
+def test_wait_b_malformed_replies_fail_closed():
+    """10) short reply; 11) empty reply; 12) too long / wrong ack: each
+    is never accepted -- the wait keeps polling until the budget ends,
+    then fails closed; a malformed reply is never a completion."""
+    from of135i import safety
+    for label, reply in (("short", b"\xe8"), ("empty", b""), ("too long", b"\xe8\x55\x00"),
+                         ("wrong ack", b"\xe8\x00"), ("swapped", b"\x55\xe8")):
+        io, scanner, exc = _run_park([reply], clock=_FakeClock())
+        _assert_park_failed_closed(io, scanner, exc, safety.StrictPollTimeoutError)
+        assert exc.last == reply, (label, exc.last)
+    # A malformed reply followed by a real idle one completes: malformed
+    # is "not yet", not "accept".
+    io, scanner, exc = _run_park([b"", b"\xe8", b"\xe8\x55"])
+    assert exc is None and scanner.session.state is SessionState.ARMED
+    print("test_wait_b_malformed_replies_fail_closed OK")
+
+
+def test_wait_b_usb_errors_and_ctrl_c_propagate_and_fail_the_session():
+    """13) USB timeout during the wait; 14) another USB error;
+    15) KeyboardInterrupt: each propagates untouched out of the park
+    operation, the session is FAILED, nothing is written after, and
+    every later writing operation is refused."""
+    import usb.core
+    timeout = usb.core.USBTimeoutError("[Errno 110] Operation timed out", errno=110)
+    io, scanner, exc = _run_park([b"\xa1\x55", timeout])
+    _assert_park_failed_closed(io, scanner, exc, usb.core.USBTimeoutError)
+    pipe = usb.core.USBError("[Errno 32] Pipe error", errno=32)
+    io, scanner, exc = _run_park([b"\xa9\x55", pipe])
+    _assert_park_failed_closed(io, scanner, exc, usb.core.USBError)
+    io, scanner, exc = _run_park([b"\xa1\x55", KeyboardInterrupt()])
+    _assert_park_failed_closed(io, scanner, exc, KeyboardInterrupt)
+    print("test_wait_b_usb_errors_and_ctrl_c_propagate_and_fail_the_session OK")
+
+
+def test_wait_b_for_every_table_and_wait_a_unchanged():
+    """The new Wait B completes for all six table variants on the
+    observed a1 -> a9 -> e8 sequence (regression: the table-specific
+    0x8b payloads / 0x19 write are untouched), Wait A is still the
+    bounded 0x35 bit-0x40 wait (fails closed on its own), and
+    park_mode still defaults to verbatim."""
+    import importlib
+    from of135i import safety
+    mods = [tables, tables_ir] + [importlib.import_module(f"of135i.tables_dpi{d}") for d in (600, 1200, 2400, 7200)]
+    for mod in mods:
+        captured_32 = next(v for r, v in _flatten_reg_pairs(mod.PARK.ops) if r == 0x32)
+        io, scanner, exc = _run_park([b"\xa1\x55", b"\xa9\x55", b"\xe8\x55"], reg32_seq=(captured_32, 0x95), mod=mod)
+        assert exc is None, (mod.__name__, exc)
+        ctrl = io.ctrl_events()
+        assert len(ctrl) == 3 and ctrl[1][3] == 0x8B and ctrl[2][3] == 0x8B, (mod.__name__, ctrl)
+        assert scanner._diag_park_waits["b_last"] == "e855"
+    # Wait A unchanged: 0x35 never sets bit 0x40 -> fails before any status read.
+    io = _FakeIo(reg15=0x90, reg35=0x00, status_seq=[b"\xe8\x55"])
+    scanner = Scanner(io)
+    with _Monkeypatch(sleep=_no_sleep, monotonic=_FakeClock().monotonic):
+        try:
+            scanner.park_semantic(ir=False)
+        except safety.StrictPollTimeoutError as e:
+            assert "wait A" in str(e)
+        else:
+            raise AssertionError("wait A did not fail closed")
+    assert io.status_reads() == [] and scanner.session.state is SessionState.FAILED
+    assert Scanner(_FakeIo()).park_mode == "verbatim"
+    print("test_wait_b_for_every_table_and_wait_a_unchanged OK (6 tables)")
 
 
 # --------------------------------------------------------- test 5: dispatch
@@ -376,6 +584,12 @@ def main() -> int:
         test_ab_equivalence_ir,
         test_rmw_reads_live_values,
         test_waits_time_out_fail_closed,
+        test_park_idle_predicate_truth_table,
+        test_wait_b_observed_sequences_complete,
+        test_wait_b_rejects_stuck_and_wrong_states,
+        test_wait_b_malformed_replies_fail_closed,
+        test_wait_b_usb_errors_and_ctrl_c_propagate_and_fail_the_session,
+        test_wait_b_for_every_table_and_wait_a_unchanged,
         test_park_mode_default_and_dispatch,
         test_ab_equivalence_all_tables,
     ]
