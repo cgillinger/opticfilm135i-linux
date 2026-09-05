@@ -1537,3 +1537,31 @@ Decisions (offline, 98 tests green):
 - The bounded warmup wait stays as the guard that produced this result
   instead of a flat image; the budget question is closed (never
   triggered in a load-first session).
+
+## 2026-09-05 — Test 23: semantic PARK A/B — Wait B's condition is not a completion signal
+
+Power cycle, driver load #7 (`load-11.log`: f455/dc55, latched), then
+`hwblock warm --repeat 3 --skip-dpi-change --eject --park semantic`
+(`hwblock-20260905-semantic/`, at 8007dcd). Scan 1 of frame 1 ran
+normally: gain 0x2c/0x20/0x27, offsets 0x010a/0x0109/0x010a, POSITION
+settled f455. Semantic PARK: Wait A (reg 0x35 bit 0x40 after the
+carriage-return write) completed; **Wait B (reg 0x32 → 0x95 masked
+0x18) timed out after 15 s with 0x32 = 0xb5** (bit 0x20 set where the
+capture had it clear). The fail-closed rule stopped the park there:
+StrictPollTimeoutError, nothing further written, session FAILED, block
+FAILED at W1, power cycle, cold eject (fine). No abnormal sound.
+
+Reading: the verbatim PARK never reaches 0x95 either — Test 21's
+sidecars show the same poll as one of the benign timeouts ("8155 vs
+9555", log-and-continue after 1 s) on every scan. Wait B's target was a
+captured value that varies between sessions (0x81, 0x95, 0xb5 seen), so
+it was never a completion signal; the verbatim path masked that by
+tolerating the timeout, the semantic path exposed it by being strict.
+Wait A is sound so far (1/1). What the park should wait for after the
+carriage-return write is the status word settling in the idle class
+with the busy bit clear (the a1 → a9 → e8 progression VueScan's returns
+show, e855 after every verbatim park in doctor) — an offline change and
+a new A/B. `--park semantic` stays off; the fail-closed rule stays.
+
+Loads today: 7/7 latched from power-on (one operator-error attempt in
+between, stopped by the guard). Offline suite: 98 tests.
