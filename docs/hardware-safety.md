@@ -350,7 +350,8 @@ program is not recovery.
   permits cold-init only, once, post-verified); fault injection before
   the first write, after the first register write, immediately before
   and after an execute pulse, during calibration bulk-in, during image
-  bulk-in, during PARK (verbatim and semantic), between batch frames,
+  bulk-in, during PARK (verbatim and semantic; the semantic PARK's two
+  waits fail closed on timeout), between batch frames,
   during eject and during magazine load, a load whose completion
   status fails the masked completion test (0xec55, 0xf855, 0xcc55,
   0xd455: failed operation, failed session, tool exit 1), plus `KeyboardInterrupt` —

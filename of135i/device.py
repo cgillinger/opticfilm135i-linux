@@ -573,11 +573,16 @@ class Scanner:
           - exactly ONE idle-loop round afterwards (heartbeat only,
             no 2 s pause), instead of five.
 
-        Both waits are logged at DEBUG with what they waited for and
-        how long it took, and never raise on timeout (15 s each,
-        _PARK_WAIT_TIMEOUT) -- a WARNING is logged and the method
-        continues, since everything left after Wait A/B is a status/
-        heartbeat write, not a motor command.
+        Both waits are bounded (15 s each, _PARK_WAIT_TIMEOUT) and
+        FAIL CLOSED: a timeout records the wait in the diagnostics and
+        raises safety.StrictPollTimeoutError inside the "park"
+        operation -- the session is FAILED, nothing further is written
+        (no heartbeat, no RMW clear), a power cycle is required. Wait A
+        follows the carriage-return write (0x02=0x30): a transport that
+        has not reported home by then must not be handed to the next
+        frame's absolute POSITION move (Test 18's frame-4 lesson).
+        Earlier revisions logged and continued here; changed 2026-09-05
+        (P3 review) before any hardware A/B.
 
         The table-specific constants come from `t.PARK` itself (`t`
         defaults to tables_ir when `ir` else tables): the 0x8b
@@ -650,12 +655,15 @@ class Scanner:
         while not (v35 & 0x40):
             if time.monotonic() > deadline:
                 waits["a_timed_out"] = True
-                log.warning(
-                    "park_semantic: wait A (reg 0x35 bit 0x40) timed out "
-                    "after %.1fs (last 0x%02x) -- continuing",
-                    _PARK_WAIT_TIMEOUT, v35,
-                )
-                break
+                waits["a_seconds"] = time.monotonic() - _t
+                self._diag_park_waits = waits
+                raise safety.StrictPollTimeoutError(
+                    f"park_semantic: wait A (reg 0x35 bit 0x40, carriage home after 0x02=0x30) "
+                    f"did not complete within {_PARK_WAIT_TIMEOUT:.0f}s: last 0x{v35:02x}. The "
+                    f"transport state is unknown; the park stops here. "
+                    f"{safety.NO_RECOVERY_ATTEMPTED} {safety.POWER_CYCLE_INSTRUCTION}",
+                    last=bytes([v35]), want=bytes([0x40]), observed=self.session.start_reg01,
+                    session=self.session.snapshot())
             time.sleep(_PARK_POLL_INTERVAL)
             v35 = self.io.read_reg(0x35)
         waits["a_seconds"] = time.monotonic() - _t
@@ -673,12 +681,14 @@ class Scanner:
         while (v32 & ~0x18 & 0xFF) != target:
             if time.monotonic() > deadline:
                 waits["b_timed_out"] = True
-                log.warning(
-                    "park_semantic: wait B (reg 0x32 -> 0x95 masked 0x18) "
-                    "timed out after %.1fs (last 0x%02x) -- continuing",
-                    _PARK_WAIT_TIMEOUT, v32,
-                )
-                break
+                waits["b_seconds"] = time.monotonic() - _t
+                self._diag_park_waits = waits
+                raise safety.StrictPollTimeoutError(
+                    f"park_semantic: wait B (reg 0x32 -> 0x95 masked 0x18) did not complete "
+                    f"within {_PARK_WAIT_TIMEOUT:.0f}s: last 0x{v32:02x}. The park stops here. "
+                    f"{safety.NO_RECOVERY_ATTEMPTED} {safety.POWER_CYCLE_INSTRUCTION}",
+                    last=bytes([v32]), want=bytes([0x95]), observed=self.session.start_reg01,
+                    session=self.session.snapshot())
             time.sleep(_PARK_POLL_INTERVAL)
             v32 = self.io.read_reg(0x32)
         waits["b_seconds"] = time.monotonic() - _t

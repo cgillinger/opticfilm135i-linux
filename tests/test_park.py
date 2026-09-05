@@ -270,22 +270,48 @@ def test_rmw_reads_live_values():
 # --------------------------------------------------- test 4: timeouts
 
 
-def test_waits_time_out_without_raising():
-    """0x35 never sets bit 0x40 and 0x32 never reaches the masked
-    target: both waits must time out (logged, not raised) and report
-    timed_out=True in the diagnostics."""
+def test_waits_time_out_fail_closed():
+    """0x35 never sets bit 0x40: Wait A times out, raises
+    StrictPollTimeoutError inside the park operation (session FAILED),
+    writes nothing after the timeout (no 0x35 RMW clear, no heartbeat)
+    and leaves the wait recorded in the diagnostics. Same for Wait B
+    when 0x32 never reaches the masked target."""
+    from of135i import safety
+    from of135i.safety import SessionState
     io = _FakeIo(reg15=0x90, reg35=0x00, reg32_seq=(0x00,))
     scanner = Scanner(io)
     clock = _FakeClock()
     with _Monkeypatch(sleep=_no_sleep, monotonic=clock.monotonic):
-        scanner.park_semantic(ir=False)  # must return normally, not raise
-
+        try:
+            scanner.park_semantic(ir=False)
+        except safety.StrictPollTimeoutError as e:
+            assert "wait A" in str(e) and "Power the scanner OFF" in str(e)
+        else:
+            raise AssertionError("wait A timeout did not raise")
+    pairs = io.reg_pairs()
+    assert (0x35, 0x00) not in pairs and (0x35, 0xBB) not in pairs, pairs      # no RMW clear
+    assert pairs[-1] in ((0x32, 0x00), (0x19, 0x00)), pairs[-1]               # last write = pre-wait
     waits = scanner._diag_park_waits
-    assert waits is not None
-    assert waits["a_timed_out"] is True, waits
-    assert waits["b_timed_out"] is True, waits
-    assert isinstance(waits["a_seconds"], float) and isinstance(waits["b_seconds"], float), waits
-    print("test_waits_time_out_without_raising OK")
+    assert waits["a_timed_out"] is True and waits["b_seconds"] is None, waits
+    assert scanner.session.state is SessionState.FAILED
+
+    io = _FakeIo(reg15=0x90, reg35=0xFB, reg32_seq=(0x81, 0x00))
+    scanner = Scanner(io)
+    clock = _FakeClock()
+    with _Monkeypatch(sleep=_no_sleep, monotonic=clock.monotonic):
+        try:
+            scanner.park_semantic(ir=False)
+        except safety.StrictPollTimeoutError as e:
+            assert "wait B" in str(e)
+        else:
+            raise AssertionError("wait B timeout did not raise")
+    pairs = io.reg_pairs()
+    assert pairs[-1] == (0x35, 0xFB & ~0x40), pairs[-1]                        # RMW clear done, nothing after
+    assert (0x36, 0xFC) not in pairs[pairs.index(pairs[-1]) + 1:], "heartbeat after a failed wait"
+    waits = scanner._diag_park_waits
+    assert waits["a_timed_out"] is False and waits["b_timed_out"] is True, waits
+    assert scanner.session.state is SessionState.FAILED
+    print("test_waits_time_out_fail_closed OK")
 
 
 # --------------------------------------------------------- test 5: dispatch
@@ -349,7 +375,7 @@ def main() -> int:
         test_ab_equivalence_plain,
         test_ab_equivalence_ir,
         test_rmw_reads_live_values,
-        test_waits_time_out_without_raising,
+        test_waits_time_out_fail_closed,
         test_park_mode_default_and_dispatch,
         test_ab_equivalence_all_tables,
     ]

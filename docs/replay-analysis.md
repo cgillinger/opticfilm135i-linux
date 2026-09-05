@@ -86,7 +86,11 @@ chunks) but the control skeleton is identical.
      direct evidence that this register must be read live, not replayed.
      `tests/test_park.py` proves pair-for-pair equivalence against all
      six tables' captured PARK, truncated after the first idle-loop
-     round.
+     round. Since 2026-09-05 (P3 review) both waits FAIL CLOSED on
+     timeout (`StrictPollTimeoutError` inside the park operation, no
+     further write, session FAILED) instead of logging and continuing:
+     Wait A follows the carriage-return write, and a transport not home
+     must never be handed to the next absolute POSITION move.
 2. **PREP** → semantic (RMW 0x31/0x32, waits on 0x101/0x32).
 3. **Calibration skeleton** → one helper
    `measure(afe_writes, extra_regs, read_len)` used by dark A/B, white,

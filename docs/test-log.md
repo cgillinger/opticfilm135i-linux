@@ -1469,3 +1469,31 @@ power-on, magazine in, `hwblock cold --warmup-budget 300` — the
 cold-start scan records the warmup curve; the second scan in the same
 session checks the lamp is then warm. Only after that is a real budget
 chosen.
+
+## 2026-09-05 — P3 (offline): semantic PARK reviewed; waits now fail closed
+
+Review of `park_semantic` against the P3 list: real read-modify-write
+on 0x15/0x32/0x35 (tested against scripted live values); explicit,
+bounded waits (15 s each); runs inside the "park" operation with the
+same session guard and bookkeeping as every other write path; the
+0x8b payloads and the 0x19 write taken from each table's own PARK
+(pair-for-pair equivalence proven against all six tables).
+
+One gap, fixed: both waits used to log a timeout and CONTINUE. Wait A
+follows the carriage-return write (`0x02=0x30`); a transport that has
+not reported home must not be handed to the next frame's absolute
+POSITION move — the frame-4 lesson of Test 18. Now a timeout records
+the wait in the diagnostics and raises `StrictPollTimeoutError` inside
+the park operation: nothing further is written (no RMW clear, no
+heartbeat), session FAILED, power cycle. Test rewritten (Wait A and
+Wait B cases, writes after the timeout asserted absent). `--park
+semantic` stays off by default.
+
+Not verified on hardware. Proposed A/B (needs approval): driver load,
+then `hwblock warm --repeat 3 --skip-dpi-change --park semantic` against
+Test 21's verbatim data — same magazine, film, frame 1 and start state:
+compare gain/offset codes, film start row, park_waits (a/b seconds, no
+timeout), phase seconds, the doctor register dump after the block, and
+a following batch/eject. Not to become the default after one run.
+
+Offline suite at this point: 96 tests, all passing.
