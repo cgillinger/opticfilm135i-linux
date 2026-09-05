@@ -1559,9 +1559,25 @@ it was never a completion signal; the verbatim path masked that by
 tolerating the timeout, the semantic path exposed it by being strict.
 Wait A is sound so far (1/1). What the park should wait for after the
 carriage-return write is the status word settling in the idle class
-with the busy bit clear (the a1 → a9 → e8 progression VueScan's returns
-show, e855 after every verbatim park in doctor) — an offline change and
-a new A/B. `--park semantic` stays off; the fail-closed rule stays.
+with the busy bit clear (a1 → a9 → e8 in a private capture of the vendor
+driver's own returns, e855 after every verbatim park on our hardware) —
+an offline change and a new A/B. `--park semantic` stays off; the
+fail-closed rule stays.
 
 Loads today: 7/7 latched from power-on (one operator-error attempt in
 between, stopped by the guard). Offline suite: 98 tests.
+
+
+## 2026-09-05 — Semantic PARK Wait B: evidence analysis (offline)
+
+`docs/park-completion-analysis.md`. From the six captured PARK phases,
+the raw traces with timing, and the scan logs/sidecars of Tests 18-21:
+every busy status during the return (d1, d5, a1, a5, a9, 81) has bit
+0x01 set; every idle status after it (f8, e8, ec, and the loaded-idle
+d8/dc) has bit 0x01 clear and bit 0x40 set. Bits 0x20/0x10/0x08/0x04
+vary between sessions for the same physical idle state; bit 0x02 was
+never seen set. Register 0x32's captured 0x95 is one of several
+session/dpi-dependent values (81 → 85/95/8d/15, b5 on hardware); the
+vendor app's own loop watches its bit 0x04 transition, not 0x95. Rule
+derived: status word idle = (byte & 0xc3) == 0xc0 with a valid 2-byte
+0x55-ack reply; Wait B budget 30 s. Not hardware-verified.
