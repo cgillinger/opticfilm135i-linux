@@ -1173,3 +1173,41 @@ latched at insertion, before any feed.
 Per-move logging added: every strict completion poll logs its settled
 value and elapsed time. Test 17 = the full OPEN → JOG → reinsert → LOAD
 flow from a power-cycled scanner, run from a real terminal.
+
+## 2026-09-05 — Test 17: OPEN → JOG → reinsert → LOAD — the magazine LATCHED (first driver load that engaged)
+
+Scanner power-cycled, cold (0x4855), magazine loose at the stop.
+`tools/load_magazine.py` (commit a679224) from a real terminal, log
+`hw-2026-09-05-load2/load-4-open-jog.log`:
+
+- cold_init: three rounds, normal sound. OPEN (vendor device-open
+  sequence, loader profile in the table). JOG: four polls settled at
+  0xf855, sound normal this time ("lät bra") — the Test 16 noise was
+  the scan profile, as analysed.
+- Prompt: magazine fully out, reinserted to the stop, Enter. reg 0x32
+  read 0x1f before and after.
+- LOAD: engaging feed settled **0xf455** (done, loader-sensor bit
+  CLEAR — the cassette was pulled past the sensor), traverse **0xdc55**,
+  final read 0xdc55. Exit 0.
+- Christian: **magazine latched, button blue.**
+
+Doctor afterwards (`doctor-5-after-load-ok.json`, read-only): reg
+0x01=0x22, status word 0xdc55, 0x32=0x05, 0x35=0xbb, 0x31=0xfc — the
+same values the vendor's clean-load capture shows in its idle loop
+after the load (0x0555 / 0xbb55 / 0xdc55). This is the observed
+**LOADED_READY signature**: 0x01=0x22 (a normal start state), status
+class 0xD with the sensor bit set, 0x32=0x05. The 0x02 loaded-idle
+value from Tests 12/15 was an artefact of the unengaged loads; the
+parked `wip/loaded-idle-start-state` branch is moot.
+
+What made the difference, in the end: replaying the vendor's session
+byte for byte from device open — its own register table (loader motor
+profile), the jog, the operator's fresh insert to the stop, the feed
+with its full register block — instead of our scan-session base table
+followed by a feed cut out of context. Which single element is
+necessary was NOT isolated (Test 15 lacked the jog and the OPEN table,
+Test 16 lacked the OPEN table); the working flow is the vendor's, kept
+whole.
+
+Next: one scan from this state (frame 1, 3600 dpi) and an eject, both
+already hardware-verified from a vendor-loaded magazine.

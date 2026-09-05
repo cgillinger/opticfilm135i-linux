@@ -95,9 +95,10 @@ one invocation. The rough edges you should know about:
   (`tools/load_magazine.py`; the tool verifies each motor completion
   against the vendor capture's state class and loader-sensor bit and
   fails, requiring a power cycle, if the scanner answers anything else.
-  The load table was regenerated from a clean vendor capture on
-  2026-09-05 and is awaiting its hardware verification, see the test
-  log) — the
+  The flow replays the vendor's own session from device open — its
+  register table, app-start jog, a fresh insert to the stop by the
+  operator, then the feed and traverse — and latched the magazine on
+  hardware on 2026-09-05, see the test log) — the
   autoloader is driver-managed and the
   hardware buttons are dead without a driver process. The loader sensor
   reports magazine *presence*, not that it is mechanically locked — see
