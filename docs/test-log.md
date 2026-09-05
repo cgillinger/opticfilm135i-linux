@@ -27,7 +27,10 @@ single developer on one Linux host.
 
 ### Test volume summary
 
-Total hardware scan count has not been systematically tracked.
+Total hardware scan count has not been systematically tracked. Offline
+suite as of 2026-09-05 evening: 105 tests (test_safety 47, test_hwblock
+16, test_calibrate 14, test_park 12, test_offline 6, test_diag 4, test_dpi
+3, test_ir 3).
 
 | Test area | Volume | Status |
 |---|---|---|
@@ -39,13 +42,13 @@ Total hardware scan count has not been systematically tracked.
 | 7200 dpi scans | At least 1 | Hardware-verified |
 | A3 reproducibility | 2 rounds × 10 scans (6 warm + 4 cold) | Repeated |
 | Whole-strip batches (4 frames) | 4 documented (1 on 09-02, 3 on 09-05 incl. 1 raw), the last two frame-for-frame against the vendor app's output | Repeated |
-| Cold-start initializations | >=9 documented (cold eject 09-02, Test 1, Test 9, Tests 15-20) | Repeated — warmup retry never needed after the load flow (lamp warm by then); cold-scan warmup budget still unmeasured |
+| Cold-start initializations | >=13 documented (cold eject 09-02, Test 1, Test 9, Tests 15-23) | Repeated — a cold-started session must load before it scans (Test 22); the 'bare cold scan' path is retired |
 | Post-cold-start scans | >=5 (Test 1 + Test 9 scans 6–9) | Partial — gain clips to 0x3F without warmup retry |
 | Eject cycles | Multiple, incl. 4 from driver-loaded magazines on 09-05 | Repeated |
-| Magazine load cycles (driver, vendor flow replayed whole) | 4/4 latched from power-on (Tests 17-20); 5 earlier attempts with out-of-context tables failed safely | Repeated |
+| Magazine load cycles (driver, vendor flow replayed whole) | 7/7 latched from power-on (Tests 17-23); 5 earlier attempts with out-of-context tables and 1 operator-error attempt failed safely | Repeated |
 | IR scans (dual-light) | Standard mode in nearly all scans | Repeated |
 | Dust removal (IR inpainting) | Used in most scans with `--ir` | Repeated |
-| USB hosts / controllers | 1 | Limited |
+| USB hosts / controllers | 1 (a second Fedora laptop is set up for B5 — same xHCI controller class, different chipset/kernel — not yet run) | Limited |
 | Linux hosts | 1 | Limited |
 | Film strips / film types | Not systematically counted | Limited |
 | Cross-unit testing | 0 additional units | **NOT VERIFIED** |
