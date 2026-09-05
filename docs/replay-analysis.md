@@ -93,7 +93,8 @@ chunks) but the control skeleton is identical.
      must never be handed to the next absolute POSITION move. Test 23
      (hardware) then showed Wait B's target `0x32 == 0x95` is a session-
      variable value, not a completion signal; the rule now is the status
-     word reading idle — see `park-completion-analysis.md`.
+     word reading like every observed park end (class E/F, busy bit
+     clear) — see `park-completion-analysis.md`.
 2. **PREP** → semantic (RMW 0x31/0x32, waits on 0x101/0x32).
 3. **Calibration skeleton** → one helper
    `measure(afe_writes, extra_regs, read_len)` used by dark A/B, white,

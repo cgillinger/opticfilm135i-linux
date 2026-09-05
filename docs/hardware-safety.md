@@ -367,8 +367,8 @@ program is not recovery.
   and after an execute pulse, during calibration bulk-in, during image
   bulk-in, during PARK (verbatim and semantic; the semantic PARK's two
   waits fail closed on timeout, and its Wait B — the status word reading
-  idle, `park_idle_status_matches`, see docs/park-completion-analysis.md —
-  is offline-verified only), between batch frames,
+  like every observed park end, class E/F, `park_complete_status_matches`,
+  see docs/park-completion-analysis.md — is offline-verified only), between batch frames,
   during eject and during magazine load, a load whose completion
   status fails the masked completion test (0xec55, 0xf855, 0xcc55,
   0xd455: failed operation, failed session, tool exit 1), plus `KeyboardInterrupt` —

@@ -387,25 +387,29 @@ def _assert_park_failed_closed(io, scanner, exc, exc_type):
     assert len([e for e in io.events[n:] if e[0] in ("reg", "ctrl")]) == 0, "wrote on a FAILED session"
 
 
-def test_park_idle_predicate_truth_table():
-    """park_idle_status_matches(): required bits 0x80/0x40 set and
-    0x02/0x01 clear; 0x20/0x10/0x08/0x04 ignored; anything else rejected."""
-    m = device.park_idle_status_matches
-    assert device.PARK_IDLE_REQUIRED_MASK == 0xC3 and device.PARK_IDLE_REQUIRED_VALUE == 0xC0
-    for ok in ("e855", "e055", "ec55", "f855", "f055", "f455", "d855", "dc55", "c855", "cc55"):
-        assert m(bytes.fromhex(ok)), ok                       # every idle value observed, and its variants
-    for bad in ("a155", "a955", "a555", "8155", "d155", "d555",   # busy, all observed
-                "9c55", "ad55", "bd55",                            # scanning classes
-                "ea55", "e955",                                    # bit 0x02 / 0x01 set on an idle-looking value
-                "4855", "4055", "0055"):                           # cold power-on values (0x80 clear)
+def test_park_complete_predicate_truth_table():
+    """park_complete_status_matches(): required bits 0x80/0x40/0x20 set and
+    0x02/0x01 clear; 0x10/0x08/0x04 ignored; everything else rejected --
+    in particular the class-D/C values never observed after a park."""
+    m = device.park_complete_status_matches
+    assert device.PARK_COMPLETE_REQUIRED_MASK == 0xE3 and device.PARK_COMPLETE_REQUIRED_VALUE == 0xE0
+    for ok in ("e855", "ec55", "f855",             # every observed successful park end
+               "e055", "f055", "f455", "fc55"):    # their 0x10/0x08/0x04 variants (E/F class, 0x20 set)
+        assert m(bytes.fromhex(ok)), ok
+    for bad in ("d855", "dc55", "c855", "cc55",                    # class D/C: observed only after LOAD or never
+                "a155", "a955", "a555", "8155", "d155", "d555",    # busy during the return, all observed
+                "9c55", "ad55", "bd55",                             # scanning classes
+                "ea55", "e955", "fa55", "f955",                     # bit 0x02 / 0x01 set on an E/F value
+                "c055", "c455",                                     # 0x20 missing
+                "4855", "4055", "0055"):                            # cold power-on values (0x80 clear)
         assert not m(bytes.fromhex(bad)), bad
     for malformed in (b"", b"\xe8", b"\xe8\x00", b"\xe8\x55\x00", b"\x55\xe8", None, "e855"):
         assert not m(malformed), malformed
     # Not the LOAD or POSITION rule: the load mask needs the sensor bit in
     # its captured state, the position mask needs class F.
-    assert device.LOAD_STATUS_MASK != device.PARK_IDLE_REQUIRED_MASK
-    assert device.POSITION_STATUS_MASK != device.PARK_IDLE_REQUIRED_MASK
-    print("test_park_idle_predicate_truth_table OK")
+    assert device.LOAD_STATUS_MASK != device.PARK_COMPLETE_REQUIRED_MASK
+    assert device.POSITION_STATUS_MASK != device.PARK_COMPLETE_REQUIRED_MASK
+    print("test_park_complete_predicate_truth_table OK")
 
 
 def test_wait_b_observed_sequences_complete():
@@ -420,8 +424,7 @@ def test_wait_b_observed_sequences_complete():
         "capture 3600 plain d1 -> f8": [b"\xd1\x55", b"\xd1\x55", b"\xf8\x55"],
         "capture dual 81 -> e8": [b"\x81\x55", b"\x81\x55", b"\xe8\x55"],
         "hardware variant ec": [b"\xa1\x55", b"\xec\x55"],
-        "loaded-idle dc": [b"\xa9\x55", b"\xdc\x55"],
-        "f0": [b"\xa1\x55", b"\xf0\x55"],
+        "f0 (E/F variant, sensor bit clear)": [b"\xa1\x55", b"\xf0\x55"],
     }
     for label, seq in cases.items():
         io, scanner, exc = _run_park(seq)
@@ -443,6 +446,8 @@ def test_wait_b_rejects_stuck_and_wrong_states():
     from of135i import safety
     for label, value in (("stuck a1", "a155"), ("stuck a9", "a955"), ("wrong class 9c", "9c55"),
                          ("busy bit on idle-looking e9", "e955"), ("undocumented bit 0x02: ea", "ea55"),
+                         ("loaded-idle d8 (never a park end)", "d855"), ("loaded-idle dc", "dc55"),
+                         ("class C c8 (never observed)", "c855"), ("class C cc", "cc55"),
                          ("cold 4855", "4855")):
         io, scanner, exc = _run_park([bytes.fromhex(value)], clock=_FakeClock())   # fast clock: budget exhausted
         _assert_park_failed_closed(io, scanner, exc, safety.StrictPollTimeoutError)
@@ -584,7 +589,7 @@ def main() -> int:
         test_ab_equivalence_ir,
         test_rmw_reads_live_values,
         test_waits_time_out_fail_closed,
-        test_park_idle_predicate_truth_table,
+        test_park_complete_predicate_truth_table,
         test_wait_b_observed_sequences_complete,
         test_wait_b_rejects_stuck_and_wrong_states,
         test_wait_b_malformed_replies_fail_closed,

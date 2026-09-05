@@ -37,59 +37,70 @@ post-park 0x101 values on our hardware come from the *next* frame's first
 status polls in the scan logs, which is the last read before the next
 POSITION — exactly the point that matters.
 
-## 2. What is invariant
+## 2. Status values by phase — PARK evidence kept apart from everything else
 
-Busy (carriage moving or engine running), every observation:
-`d1, d5, a1, a5, a9, 81` — **bit 0x01 set** in all; bit 0x40 clear in all
-but d1/d5.
+Only rows marked "PARK end" are evidence for what Wait B may accept.
+Counts are independent observations (one per capture or per park on
+hardware). "Next op" is what followed and whether it succeeded.
 
-Idle after the return, every observation: `f8` (trace 03), `e8` (traces
-04, 600-7200, load-only, our hardware ×40+, doctor), `ec` (our hardware,
-bit 0x04 variant), and the loaded-idle values `d8/dc` after a load —
-**bit 0x01 clear and bit 0x40 set** in all; bit 0x80 set in all.
+| value | class | observed in | physical meaning (if known) | next op / result | n | PARK evidence? |
+|---|---|---|---|---|---|---|
+| d1 | D | during the return (trace 03, right after 0x02=0x30) | carriage returning, busy | → f8 | 2 reads | busy, negative |
+| 81 | 8 | during the return (traces 04, 600-7200, load-only) | returning, busy | → e8 | 12 reads | busy, negative |
+| a1 | A | during the return (trace 1200 at 5 s; private capture) | returning, busy | → e8 | 4 | busy, negative |
+| a9 | A | during the return (private capture) | returning, busy | → e8 | 3 | busy, negative |
+| d5, a5 | D, A | end of the SCAN pass, before the park write | engine busy | → park | 6 | busy, negative |
+| **f8** | F | **PARK end** (trace 03, 3600 plain, read 5.2 s after the write) | idle, home, magazine present | session ended | 1 | **yes** |
+| **e8** | E | **PARK end** (traces 04, 600, 1200, 2400, 7200, load-only; our hardware Tests 18-21: the next frame's first status read after 20+ verbatim parks) | idle, home, magazine present | next POSITION + scan correct (hardware) | 6 captures + 20+ parks | **yes** |
+| **ec** | E | **PARK end** (our hardware, same reads, the 0x04 variant) | as e8 | next POSITION + scan correct | 20+ | **yes** |
+| d8, dc | D | after LOAD only (captures: traverse end; our hardware: loaded-idle before the first frame) | loaded, idle at the load's reference position | POSITION + scan correct — but never reached via a park | many | **no** — a different phase |
+| e8, e0 | E | after EJECT (doctor) | idle, magazine in slot / absent | — | several | not PARK evidence (same value as a park end, different phase) |
+| f0, f4 | F | after the LOAD feed / POSITION completion | done class of a feed/position move | — | many | not PARK evidence; accepted by the rule as E/F variants with 0x08/0x04 varied |
+| 9c, ad, bd | 9, A, B | during the scan pass | data transfer | — | many | negative |
+| c8, cc | C | cc: once, after an UNENGAGED load's traverse (Test 12); c8: never | not a park state | — | 1 / 0 | **no** |
+| 48, 40, 00 | 4, 0 | cold power-on | never homed | — | many | negative |
 
-Bits that vary between sessions for the same physical idle state:
-0x20 and 0x10 (f8 vs e8 vs d8 for "idle, home, magazine in"), 0x04
-(f0/f4, d8/dc, e8/ec — documented since Test 14), 0x08 (loader sensor
-= magazine presence, not a completion signal).
+## 3. The decisive question, and the rule
 
-Bit 0x02: never observed set in any status read in this project.
+**Is there any evidence that a successful PARK ends in class C or D?
+No.** Every observed park end is e8, ec or f8 (class E or F). d8/dc
+belong to the post-LOAD state; c8/cc were never seen after a park (cc
+once after a failed load). The first version of this analysis accepted
+class C/D on the reasoning "idle is idle" — that mixed phases, and a
+value being inactive after a load does not show the carriage is home
+for the next absolute POSITION. Withdrawn.
 
-Register 0x32: the vendor's idle loop keeps reading it after the return
-and its value changes from 81 (or 01) to a value with **bit 0x04 set**
-(85/95/8d/15; Test 23's b5 also has it) — that transition, not 0x95, is
-what the vendor app watches. The rest of its bits (0x10, 0x20, 0x80,
-0x18) vary by session and dpi. It is an application-loop event flag
-with several unexplained bits; it is recorded here as supporting
-evidence and NOT used as the completion condition.
+Bits across the observed park ends: 0x80, 0x40, 0x20 and 0x08 set in
+all; 0x10 varies (f8 vs e8, between captures); 0x04 varies (e8 vs ec,
+on our hardware); 0x02 and 0x01 clear in all. No capture contradicts
+class E/F at the park end.
 
-## 3. The rule
+**Rule (PARK_COMPLETE):** a 2-byte reply with the 0x55 ack whose status
+byte satisfies (byte & 0xe3) == 0xe0 — bits 0x80, 0x40, 0x20 set; 0x02
+and 0x01 clear. Ignored: 0x10 and 0x04 (vary within the park-end
+evidence itself) and 0x08 (the loader sensor, vendor INI LoaderSensorReg
+= 0x101,0x08 — magazine presence, a documented meaning; it is set in
+every observed park end because a magazine is always present in a scan
+session, and it is ignored on that meaning, not on variation; requiring
+it would also match every observation).
 
-**PARK is complete when the status word (0x101) reads idle: bit 0x80
-and bit 0x40 set, bit 0x01 (busy) and bit 0x02 clear; bits 0x20, 0x10,
-0x08, 0x04 ignored; reply exactly two bytes with the 0x55 ack.**
+Accepts e8, ec, f8 (observed) and their 0x10/0x08/0x04 variants (e0, f0,
+f4, fc). Rejects d8, dc, c8, cc, every busy value (a1, a5, a9, 81, d1,
+d5), the scanning classes (9c, ad, bd), any value with 0x01 or 0x02 set,
+any value without 0x20, cold values, and every short, empty, long or
+wrongly-acked reply. Timeout 30 s as before.
 
-Required mask 0xc3, required value 0xc0. Accepts f8, f0, e8, ec, e0, d8,
-dc, c8 …; rejects a1, a9, a5, 81, d1, d5, 9c, ad, bd and every short,
-empty, long or malformed reply.
-
-Why not more: requiring a specific class (E or F) would have rejected our
-own hardware's d8/dc after a load and would rest on bits shown to vary;
-requiring 0x08 set would tie completion to magazine presence. Why not
-less: bit 0x01 alone would accept 9c (scan-in-progress class); bit 0x40
-alone would accept d1/d5 (busy). The two together are what every busy
-observation lacks and every idle observation has.
-
-Timeout: the longest observed return is the frame-4 park (15.6 s in the
-verbatim phase, which includes captured pacing) and the vendor's 600-7200
-captures read idle at 15 s because that is when the app looked. Wait B's
-budget is 30 s — explicit, bounded, generous against the observations,
-and still a hard stop.
+Consequence: a park that ends in class D on hardware would be an
+unobserved state and stops fail-closed (StrictPollTimeoutError with the
+value in the diagnostics). That is a report to read, not a fault to
+work around, and it is what the pending hardware A/B is for.
 
 ## 4. Status
 
 Offline only. The predicate and the new Wait B are verified against fake
-transports with scripted status sequences and a controllable clock.
+transports with scripted status sequences and a controllable clock;
+the first version (mask 0xc3) was withdrawn the same day for accepting
+class C/D without park evidence.
 Test 23 verified that the fail-closed timeout stops safely; it did not
 verify a complete semantic PARK, and neither does this analysis. Verbatim
 PARK remains the default; `--park semantic` stays experimental until a

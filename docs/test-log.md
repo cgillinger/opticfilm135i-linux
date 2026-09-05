@@ -1628,3 +1628,20 @@ described as hardware-verified.
 Offline suite after this work: test_safety 47, test_hwblock 15,
 test_calibrate 14, test_park 12, test_offline 6, test_diag 4, test_dpi 3,
 test_ir 3 — **104 tests, all passing**.
+
+## 2026-09-05 — Semantic PARK Wait B tightened to the observed park ends (offline)
+
+Review finding, accepted: the first rule ((byte & 0xc3) == 0xc0) mixed
+phases — it accepted class D (d8/dc, observed only after a LOAD) and
+class C (c8/cc, never observed after a park) as "idle". PARK-specific
+evidence only (docs/park-completion-analysis.md §2-3): every observed
+successful park ends in e8, ec or f8 — class E/F, bit 0x20 set in all,
+0x10 and 0x04 varying within that evidence, 0x08 the loader sensor
+(ignored on its documented meaning). Is there evidence for a park
+ending in class C or D? **No.** Rule now `park_complete_status_matches`:
+(byte & 0xe3) == 0xe0 on a 2-byte 0x55-ack reply; d8, dc, c8, cc
+rejected explicitly, a1 → a9 → e8, d1 → f8 and 81 → e8 accepted, the
+busy/scanning/malformed/USB-error/Ctrl-C cases as before. A hardware
+park ending in class D would now stop fail-closed as an unobserved
+state. Offline-verified only; Test 23 verified safe rejection, not a
+full semantic PARK; verbatim PARK remains the default.
