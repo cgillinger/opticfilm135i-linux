@@ -5,9 +5,10 @@ Command-line wrapper around the vendor's insert flow (of135i/tables_load.py,
 compiled from the 2026-09-05 clean-load capture, Test 14 in docs/test-log.md),
 in the vendor's order:
 
-  1. base register table + AFE values (Scanner.initialize(prep=False);
-     on a cold scanner cold_init() runs first) -- magazine loose in the
-     slot, as at the vendor's app start;
+  1. the vendor's device-open sequence (Scanner.initialize(prep=False)
+     = tables_load.OPEN: app-start register table with the loader
+     motor profile, AFE bring-up; on a cold scanner cold_init() runs
+     first) -- magazine loose in the slot, as at the vendor's app start;
   2. the app-start JOG (Scanner.jog_magazine(): feed 6690, feed 6690,
      eject 3090). Every vendor load that engaged the cassette was
      preceded by it; every load of ours that did not engage lacked it

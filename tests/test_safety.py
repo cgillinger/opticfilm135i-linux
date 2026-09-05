@@ -979,7 +979,7 @@ def test_load_magazine_requires_initialize_and_matches_trace():
         import gzip
         import json
         full = json.load(gzip.open(trace, "rt"))
-        for phase in (tables_load.JOG, tables_load.LOAD):
+        for phase in (tables_load.OPEN, tables_load.JOG, tables_load.LOAD):
             raw = full[phase.op_range[0]:phase.op_range[1]]
             assert len(raw) == len(phase.ops), phase.name
             for o, op in zip(raw, phase.ops):
@@ -1242,38 +1242,46 @@ def test_jog_magazine_is_the_vendor_jog_and_fails_closed():
 
 
 def _base_open_writes() -> int:
-    """OUT transfers of initialize(prep=False) on a warm fake: the base
-    table batches + the AFE values."""
-    fake = FakeUsbDevice(reg01=0x22)
-    with fast_time():
-        make_scanner(fake).initialize(prep=False)
-    return fake.out_count
+    """OUT transfers of initialize(prep=False) on a warm fake: the
+    vendor's OPEN sequence."""
+    return sum(1 for op in tables_load.OPEN.ops if op.kind in ("cw", "bo"))
 
 
 def test_initialize_prep_false_is_the_vendor_device_open_state():
-    """initialize(prep=False) writes the base table + AFE values and
-    nothing else (no PREP/AFE_BASE scan preparation): the vendor's
-    device-open state, from which its jog and load run. A later
-    initialize() in the same session adds the preparation without
-    rewriting the base table."""
+    """initialize(prep=False) replays tables_load.OPEN (the vendor's
+    device-open sequence, loader motor profile in the table) verbatim
+    and nothing else -- not BASE_INIT_PAIRS (scan profile: the jog's
+    first move ran at scan speed on top of it, Test 16), no PREP. Its
+    table carries the loader profile; jog/load are then permitted. A
+    later initialize() writes BASE_INIT_PAIRS + PREP as for a scan."""
+    ops = tables_load.OPEN.ops
+    regs = {}
+    for op in ops:
+        if op.kind == "cw" and op.wv == 0x83:
+            regs.update(zip(op.data[0::2], op.data[1::2]))
+    assert (regs[0x7E], regs[0x7F], regs[0x02], regs[0x4F]) == (0x75, 0x30, 0x78, 0x63), regs
+    base = dict(tables_base.BASE_INIT_PAIRS)
+    assert (base[0x7E], base[0x7F]) != (0x75, 0x30)   # the scan profile: why OPEN exists
+
     fake = FakeUsbDevice(reg01=0x22)
     scanner = make_scanner(fake)
     with fast_time():
+        expect(OperationNotAllowedError, scanner.jog_magazine)
+        expect(OperationNotAllowedError, scanner.load_magazine)
+        assert fake.out_count == 0
         scanner.initialize(prep=False)
-    n_base = fake.out_count
-    n_afe = len(tables_base.AFE_BASE_PAIRS)
-    # Register batches only (the base table, then one write per AFE value).
-    assert all(ev["kind"] == "ctrl_out" and ev["wv"] == 0x83 for ev in fake.out_log), fake.out_log
-    assert [ev["data"][:2] for ev in fake.out_log[-n_afe:]] == \
-        [bytes([0x51, adr]) for adr, _ in tables_base.AFE_BASE_PAIRS]
-    assert n_base == _base_open_writes(), n_base
-    assert not scanner._prepared_for_scan and scanner._base_initialized
+    expected = [op for op in ops if op.kind in ("cw", "bo")]
+    assert len(fake.out_log) == len(expected), (len(fake.out_log), len(expected))
+    for ev, op in zip(fake.out_log, expected):
+        assert ev["kind"] == "ctrl_out" and (ev["bm"], ev["br"], ev["wv"], ev["wi"], ev["data"]) == \
+            (op.bm, op.br, op.wv, op.wi, op.data)
     assert fake.pulses == 0
+    assert scanner._vendor_open and not scanner._base_initialized and not scanner._prepared_for_scan
+    n_open = fake.out_count
     with fast_time():
         scanner.initialize()
-    assert scanner._prepared_for_scan
-    assert fake.out_count > n_base
-    assert fake.out_log[n_base]["data"] != fake.out_log[0]["data"]   # base table not rewritten
+    assert scanner._prepared_for_scan and scanner._base_initialized
+    assert fake.out_count > n_open
     print("test_initialize_prep_false_is_the_vendor_device_open_state OK")
 
 
@@ -1401,7 +1409,7 @@ def test_load_completion_is_verified_not_assumed():
             so, se = _STDOUT.getvalue(), _STDERR.getvalue()
         assert code == want_code, (label, code, se)
         assert asked == [(tool.REINSERT_PROMPT, 3)], (label, asked)   # asked once, after the jog
-        # Nothing but the base table + AFE values precedes the jog's first write.
+        # Nothing but the vendor's OPEN sequence precedes the jog's first write.
         first_jog = next(op for op in tables_load.JOG.ops if op.kind == "cw")
         idx = next(i for i, ev in enumerate(fake.out_log)
                    if ev["kind"] == "ctrl_out" and ev["data"] == first_jog.data)

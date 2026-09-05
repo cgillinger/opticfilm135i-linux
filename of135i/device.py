@@ -195,6 +195,9 @@ class Scanner:
         # PREP/AFE_BASE equivalent before every frame, and a scan
         # without it is not a verified sequence.
         self._prepared_for_scan = False
+        # Set by initialize(prep=False): the vendor's device-open
+        # sequence (tables_load.OPEN) has been replayed this session.
+        self._vendor_open = False
 
         # Hardware-safety session (safety.py). A real UsbIo brings its
         # own; a duck-typed transport (tests) gets one attached here,
@@ -396,14 +399,20 @@ class Scanner:
         # the capture.  1 s is generous for state checks; real motor
         # waits (POSITION dur ~1.6 s) still get 3× their captured time.
         timeout = max(3 * op.dur, 1.0)
-        deadline = time.monotonic() + timeout
+        t_start = time.monotonic()
+        deadline = t_start + timeout
         dev = self.io.dev
         while True:
             got = bytes(dev.ctrl_transfer(op.bm, op.br, op.wv, op.wi, op.length))
             if got == want:
+                if strict:
+                    log.info("completion poll settled %s (exact) after %.2fs",
+                             got.hex(), time.monotonic() - t_start)
                 return
             if strict:
                 if op.wv == 0x018E and load_status_matches(got, want):
+                    log.info("completion poll settled %s (captured %s) after %.2fs",
+                             got.hex(), want.hex(), time.monotonic() - t_start)
                     return
                 if time.monotonic() > deadline:
                     self._diag_poll_timeouts += 1
@@ -667,18 +676,31 @@ class Scanner:
         is accepted: any other value, or an unreadable one, refuses
         the whole session with zero writes.
 
-        ``prep=False``: stop after the base table + AFE values -- the
-        vendor's device-open state, from which its app-start jog and
-        the magazine load run (clean-load capture ops 40-86, then JOG
-        at 88). The scan preparation phases (PREP/AFE_BASE) are never
-        part of the vendor's load flow; jog_magazine()/load_magazine()
-        callers pass prep=False. scan() still requires a prep=True
-        initialize() in the same session.
+        ``prep=False``: the vendor's device-open state for the magazine
+        flow -- replays tables_load.OPEN (clean-load capture ops 37-88:
+        chip-id ack, the app-start register table with the LOADER motor
+        profile, acks, AFE enable, EEPROM reads, AFE reset, AFE base
+        values) verbatim instead of BASE_INIT_PAIRS + AFE values, after
+        cold_init() if the scanner is cold. BASE_INIT_PAIRS carries the
+        scan motor profile (0x7e/0x7f) and the jog's first move takes
+        its profile from the table: on top of BASE_INIT_PAIRS it ran at
+        scan speed (Test 16). No scan preparation is run; scan() still
+        requires a prep=True initialize() in the same session, which
+        then writes BASE_INIT_PAIRS as usual.
         """
         # Validate parameters before entering the operation, so a bad
         # argument is a plain error and not a hardware-session failure.
         t = _tables_for(dpi, ir)
         with self._operation("initialize", cold_ok=True):
+            if not prep:
+                from . import tables_load
+                if self.session.state is SessionState.COLD:
+                    log.info("initialize: reg 0x01=0x00 -- cold-start state, running cold_init() first")
+                    self.cold_init()
+                self.session.phase = "vendor_open"
+                self._run_phase(tables_load.OPEN)
+                self._vendor_open = True
+                return
             if not self._base_initialized:
                 if self.session.state is SessionState.COLD:
                     log.info(
@@ -691,8 +713,6 @@ class Scanner:
                 for adr, val in tables_base.AFE_BASE_PAIRS:
                     self.io.write_regs([(0x51, adr), (0x5D, 0x00), (0x5E, val)])
                 self._base_initialized = True
-            if not prep:
-                return
             # IR mode: trace 04's own prep carries IR-LED setup that the
             # plain prep lacks (a dim IR pass was observed without it,
             # 2026-08-30) -- run the matching phase set. Other resolutions:
@@ -1012,7 +1032,9 @@ class Scanner:
         feeds never clear the sensor bit (0xf855 after each move);
         it positions the mechanism for the load that follows. The
         vendor runs it with the magazine loose in the slot, right
-        after the base table + AFE values (initialize(prep=False)),
+        after its device-open sequence (initialize(prep=False) =
+        tables_load.OPEN, LOADER motor profile in the table: the jog's
+        first move takes 0x7e/0x7f from it),
         and then has the operator take the magazine out and reinsert
         it to the stop before load_magazine().
 
@@ -1024,7 +1046,7 @@ class Scanner:
         """
         from . import tables_load
         self.session.write_allowed_or_final()
-        if not self._base_initialized:
+        if not (self._base_initialized or self._vendor_open):
             raise OperationNotAllowedError(
                 "jog_magazine() requires initialize() first in this session. "
                 f"{safety.NO_COMMANDS_SENT}", session=self.session.snapshot())
@@ -1070,7 +1092,7 @@ class Scanner:
         """
         from . import tables_load
         self.session.write_allowed_or_final()
-        if not self._base_initialized:
+        if not (self._base_initialized or self._vendor_open):
             raise OperationNotAllowedError(
                 "load_magazine() requires initialize() first in this session. "
                 f"{safety.NO_COMMANDS_SENT}", session=self.session.snapshot())

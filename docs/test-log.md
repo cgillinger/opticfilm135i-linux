@@ -1134,3 +1134,42 @@ that the next feed catches the cassette.
 ### Next (Test 16): one run of that flow from a power-cycled scanner
 with the magazine loose in the slot at the stop. Expect the jog to
 move the magazine, 0xf455 after the engaging feed, latched magazine.
+
+## 2026-09-05 — Test 16: JOG on top of BASE_INIT_PAIRS — a harsh noise; aborted at the prompt (stdin)
+
+Scanner still cold from the Test 15 power cycle, magazine loose at the
+stop. `tools/load_magazine.py` (commit 1d38cf5): cold_init (three
+rounds, normal sound), base table + AFE, then the JOG. Christian: a
+rather loud, "nasty" sound that stopped abruptly, unlike QuickScan's
+start. The jog's four polls all settled at 0xf855 (as captured), so the
+guard let it through. The reinsert prompt then got EOF (the tool was
+run through the session's `!` prefix, which gives no stdin): abort,
+exit 130, nothing sent after the jog, session armed. Doctor: 0x01=0x22,
+status 0xf855. Magazine loose the whole time. Scanner off, magazine out.
+
+### Cause of the noise (offline)
+`BASE_INIT_PAIRS` differs from the vendor's app-start table in five
+registers: 0x3b/0x3c, 0x4f (0x03 vs 0x63) and the motor speed profile
+**0x7e/0x7f = 0x15/0x7c (scan) vs 0x75/0x30 (loader)**. The jog's
+first move (capture op 109) is a 6-register batch that takes 0x7e/0x7f
+from the table — on top of BASE_INIT_PAIRS it ran 6690 steps at scan
+speed. The LOAD feed and the jog's later moves set the profile
+explicitly, which is why Test 15 sounded normal. Fix: the load flow now
+replays the vendor's device-open sequence verbatim (`tables_load.OPEN`,
+clean-load ops 37-88: chip-id ack, app-start table with the loader
+profile, acks, AFE bring-up) via `initialize(prep=False)`, instead of
+BASE_INIT_PAIRS. The flow is then byte-identical to the vendor's
+clean-load session from device open to loaded, minus the operator gap.
+
+### Second finding
+cold_init's three "homing rounds" are, on the wire, the same jog as the
+vendor's app-start jog (feed 6690, feed 6690, eject 3090; the 8730/4620
+in the code are the same FEEDL bytes read the other way round). So Test
+15 had three jogs before its feed and still did not engage; the jog
+alone is not the explanation. What remains different from Test 14 is
+the register context (now fixed) and that in Test 14 the magazine
+latched at insertion, before any feed.
+
+Per-move logging added: every strict completion poll logs its settled
+value and elapsed time. Test 17 = the full OPEN → JOG → reinsert → LOAD
+flow from a power-cycled scanner, run from a real terminal.
