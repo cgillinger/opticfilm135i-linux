@@ -1272,3 +1272,13 @@ timeout there as a failure (no scan on a moving transport). Also
 visible in the comparison: a pink/magenta cast in our --positive
 output against the vendor's neutral rendering — separate topic
 (image processing), not part of this pass.
+
+**Fix implemented (offline, 90 tests green, awaiting the hardware batch):**
+the POSITION completion poll is now strict on the state class
+(`POSITION_STATUS_MASK` 0xf0: 0xf455/0xf055 pass, 0xd555 fails) with a
+budget scaled by FEEDL relative to the captured frame-1 move
+(`position_timeout_scale`: frame 4 at 3600 dpi = 5.8x, ~28 s). A
+transport that has not settled fails the scan before SCAN sends
+anything (session FAILED, power cycle), instead of scanning a moving
+frame. Verification: Test 19 = batch 1-4 from a fresh driver load,
+compared frame by frame against `batch-test/vendor/ref-20260905-f-*`.

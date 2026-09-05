@@ -163,13 +163,37 @@ _PARK_POLL_INTERVAL = 0.02
 LOAD_STATUS_MASK = 0xFB
 
 
-def load_status_matches(got: bytes, want: bytes) -> bool:
+# POSITION (the per-frame carriage move before SCAN): the captured
+# completion is 0xf455 and a still-moving transport reads class 0xD
+# (Test 18: 0xd555 after 4.9 s on the 39026-step move to frame 4, and
+# the scan then started on a moving transport -- the frame held mostly
+# frame 3). Only the state class is required here: the loader-sensor
+# bit is not a positioning signal, and bit 0x01 is not proven to be a
+# motor flag in the scan states (the SCAN phase settles at 0xad with
+# it set).
+POSITION_STATUS_MASK = 0xF0
+
+
+def status_matches(got: bytes, want: bytes, mask: int) -> bool:
     """True when status-word reply ``got`` completes like captured
-    reply ``want`` under LOAD_STATUS_MASK (see above). The ack byte
+    reply ``want`` under ``mask`` on the status byte. The ack byte
     must match exactly; a short or malformed reply never matches."""
     if len(got) != 2 or len(want) != 2 or got[1] != want[1]:
         return False
-    return (got[0] & LOAD_STATUS_MASK) == (want[0] & LOAD_STATUS_MASK)
+    return (got[0] & mask) == (want[0] & mask)
+
+
+def load_status_matches(got: bytes, want: bytes) -> bool:
+    """status_matches() under LOAD_STATUS_MASK (see above)."""
+    return status_matches(got, want, LOAD_STATUS_MASK)
+
+
+def position_timeout_scale(t, feedl: int) -> float:
+    """How much longer than the captured POSITION move (frame 1 of the
+    table's capture) a move of ``feedl`` steps may take: the completion
+    budget is 3x the captured duration times this. Linear in FEEDL,
+    never below 1 (frame 4 at 3600 dpi: 39026/6743 = 5.8x, ~28 s)."""
+    return max(1.0, feedl / t.feedl_for_frame(1))
 
 
 def load_completion_target() -> int:
@@ -299,7 +323,9 @@ class Scanner:
 
     # ------------------------------------------------------- op execution
 
-    def _exec_ops(self, ops: list[Op], strict_polls: frozenset[int] = frozenset()) -> list[bytes]:
+    def _exec_ops(self, ops: list[Op], strict_polls: frozenset[int] = frozenset(),
+                  strict_mask: int = LOAD_STATUS_MASK,
+                  poll_timeout_scale: float = 1.0) -> list[bytes]:
         """Execute a verbatim op list with replay_trace.py semantics:
 
           - cw: ctrl_transfer verbatim; if it's a wv=0x82 buffer
@@ -370,7 +396,8 @@ class Scanner:
                         op.wv, op.wi, got.hex(), op.resp.hex(),
                     )
             elif op.kind == "poll":
-                self._poll_one(op, strict=idx in strict_polls)
+                self._poll_one(op, strict=idx in strict_polls, mask=strict_mask,
+                               timeout_scale=poll_timeout_scale)
             elif op.kind == "bo":
                 dev.write(EP_BULK_OUT, op.data, timeout=5000)
             elif op.kind == "bi":
@@ -383,22 +410,25 @@ class Scanner:
         flush()
         return collected
 
-    def _poll_one(self, op: Op, strict: bool = False) -> None:
+    def _poll_one(self, op: Op, strict: bool = False, mask: int = LOAD_STATUS_MASK,
+                  timeout_scale: float = 1.0) -> None:
         """Poll until the captured settled value (with the documented
         leniencies) or the deadline. ``strict``: for completion waits an
         operation must not continue past (load_magazine's two motor-
-        completion polls): a status-word poll (wValue 0x018e) must
-        satisfy load_status_matches() -- state class AND loader-sensor
-        bit, mask LOAD_STATUS_MASK -- any other poll must match exactly,
-        and a timeout raises safety.StrictPollTimeoutError instead of
-        logging."""
+        completion polls, scan's POSITION move): a status-word poll
+        (wValue 0x018e) must satisfy status_matches() under ``mask``
+        (LOAD_STATUS_MASK: state class AND loader-sensor bit;
+        POSITION_STATUS_MASK: state class), any other poll must match
+        exactly, and a timeout raises safety.StrictPollTimeoutError
+        instead of logging. ``timeout_scale`` stretches the budget for
+        a move longer than the captured one (position_timeout_scale)."""
         want = op.resp
         # Most captured polls settled in < 0.03 s; the previous 10 s
         # floor added ~200 s of wasted timeouts per scan when dynamic
         # register bits (magazine presence, sensor state) differed from
         # the capture.  1 s is generous for state checks; real motor
         # waits (POSITION dur ~1.6 s) still get 3× their captured time.
-        timeout = max(3 * op.dur, 1.0)
+        timeout = max(3 * op.dur * timeout_scale, 1.0)
         t_start = time.monotonic()
         deadline = t_start + timeout
         dev = self.io.dev
@@ -410,7 +440,7 @@ class Scanner:
                              got.hex(), time.monotonic() - t_start)
                 return
             if strict:
-                if op.wv == 0x018E and load_status_matches(got, want):
+                if op.wv == 0x018E and status_matches(got, want, mask):
                     log.info("completion poll settled %s (captured %s) after %.2fs",
                              got.hex(), want.hex(), time.monotonic() - t_start)
                     return
@@ -419,7 +449,7 @@ class Scanner:
                     raise safety.StrictPollTimeoutError(
                         f"completion poll wv={op.wv:#06x} wi={op.wi:#06x} did not reach the "
                         f"captured value: last {got.hex()}, want {want.hex()}"
-                        f"{f' (mask {LOAD_STATUS_MASK:#04x}55)' if op.wv == 0x018E else ''} "
+                        f"{f' (mask {mask:#04x}55)' if op.wv == 0x018E else ''} "
                         f"after {timeout:.1f}s. "
                         f"The hardware did not complete this step; the operation stops here. "
                         f"{safety.NO_RECOVERY_ATTEMPTED} {safety.POWER_CYCLE_INSTRUCTION}",
@@ -463,6 +493,7 @@ class Scanner:
             time.sleep(0.004)
 
     def _run_phase(self, phase: Phase, strict_polls: frozenset[int] = frozenset(),
+                   strict_mask: int = LOAD_STATUS_MASK, poll_timeout_scale: float = 1.0,
                    **inject) -> list[bytes]:
         """Execute a phase's full op stream (with injections applied),
         returning its collected read buffers.
@@ -475,7 +506,8 @@ class Scanner:
         self.session.phase = phase.name
         t0 = time.monotonic()
         try:
-            return self._exec_ops(ops, strict_polls=strict_polls)
+            return self._exec_ops(ops, strict_polls=strict_polls, strict_mask=strict_mask,
+                                  poll_timeout_scale=poll_timeout_scale)
         finally:
             dt = time.monotonic() - t0
             self._diag_phase_seconds[phase.name] = self._diag_phase_seconds.get(phase.name, 0.0) + dt
@@ -1369,8 +1401,13 @@ class Scanner:
         # ---- position: relative feed from current carriage position ------
         feedl = tables.feedl_for_frame(frame)
         log.info("positioning to frame %d (FEEDL=%d)", frame, feedl)
+        # Strict completion (class F, budget scaled with FEEDL): never
+        # start SCAN on a moving transport (Test 18, frame 4).
         self._run_phase(
             tables.POSITION,
+            strict_polls=self._strict_status_polls(tables.POSITION),
+            strict_mask=POSITION_STATUS_MASK,
+            poll_timeout_scale=position_timeout_scale(tables, feedl),
             feedl_hi=bytes([(feedl >> 16) & 0xFF]),
             feedl_mid=bytes([(feedl >> 8) & 0xFF]),
             feedl_lo=bytes([feedl & 0xFF]),
@@ -1571,8 +1608,13 @@ class Scanner:
         # command would fix this, but requires hardware testing.
         feedl = t.feedl_for_frame(frame)
         log.info("positioning to frame %d (FEEDL=%d, %d dpi dual)", frame, feedl, dpi)
+        # Strict completion (class F, budget scaled with FEEDL): never
+        # start SCAN on a moving transport (Test 18, frame 4).
         self._run_phase(
             t.POSITION,
+            strict_polls=self._strict_status_polls(t.POSITION),
+            strict_mask=POSITION_STATUS_MASK,
+            poll_timeout_scale=position_timeout_scale(t, feedl),
             feedl_hi=bytes([(feedl >> 16) & 0xFF]),
             feedl_mid=bytes([(feedl >> 8) & 0xFF]),
             feedl_lo=bytes([feedl & 0xFF]),

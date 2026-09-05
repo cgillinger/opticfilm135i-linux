@@ -171,7 +171,7 @@ class FakeUsbDevice:
         self.events: list[str] = []
         self.kernel_driver_active = False
         # High byte of the status word (reg 0x101): an int, or a callable
-        # (fake) -> int. None = the Pass-16 idle values 0xE8/0xE0 by
+        # (fake) -> int. None = done-class idle values 0xF8/0xF0 by
         # magazine presence. Load tests use vendor_like_load_status()
         # (0xF0 after the feed, 0xD8 after the traverse, as captured) or
         # 0xEC/0xCC (what the real scanner answered in Test 12).
@@ -268,7 +268,7 @@ class FakeUsbDevice:
                 if callable(hi):
                     hi = hi(self)
                 if hi is None:
-                    hi = 0xE8 if self.magazine else 0xE0
+                    hi = 0xF8 if self.magazine else 0xF0
                 return bytes([hi, 0x55])
             return bytes([0xF8, 0x55])
         return bytes(length or 0)
@@ -1285,6 +1285,62 @@ def test_initialize_prep_false_is_the_vendor_device_open_state():
     print("test_initialize_prep_false_is_the_vendor_device_open_state OK")
 
 
+def test_position_wait_is_strict_and_scaled_with_feedl():
+    """Test 18: the POSITION poll for frame 4 (FEEDL 39026) timed out
+    after 3x the captured frame-1 move with the transport still moving
+    (0xd555) and SCAN started anyway. Now the budget scales with FEEDL
+    and the poll is strict on the state class: a transport that has
+    not settled fails the operation before SCAN sends anything."""
+    from of135i import tables
+    assert device.POSITION_STATUS_MASK == 0xF0
+    assert device.position_timeout_scale(tables, tables.feedl_for_frame(1)) == 1.0
+    s4 = device.position_timeout_scale(tables, tables.feedl_for_frame(4))
+    assert 5.5 < s4 < 6.0, s4
+    poll = [op for op in tables.POSITION.ops if op.kind == "poll" and op.wv == 0x018E]
+    assert len(poll) == 1 and poll[0].resp == bytes.fromhex("f455")
+    assert 3 * poll[0].dur * s4 > 25, 3 * poll[0].dur * s4
+    m = device.status_matches
+    assert m(bytes.fromhex("f455"), poll[0].resp, 0xF0) and m(bytes.fromhex("f055"), poll[0].resp, 0xF0)
+    assert not m(bytes.fromhex("d555"), poll[0].resp, 0xF0) and not m(bytes.fromhex("dd55"), poll[0].resp, 0xF0)
+
+    feedl = tables.feedl_for_frame(4)
+    patched = tables.POSITION.patched(feedl_hi=bytes([(feedl >> 16) & 0xFF]),
+                                      feedl_mid=bytes([(feedl >> 8) & 0xFF]),
+                                      feedl_lo=bytes([feedl & 0xFF]))
+    position_feed = next(op.data for op in patched if op.kind == "cw" and op.wv == 0x83
+                         and op.data[:2] == bytes([0x01, 0x22]) and b"\x3d" in op.data)
+    assert bytes([0x3E, (feedl >> 8) & 0xFF, 0x3F, feedl & 0xFF]) in position_feed, position_feed.hex()
+
+    def still_moving(f):
+        if any(ev["kind"] == "ctrl_out" and ev["data"] == position_feed for ev in f.out_log):
+            return 0xD5
+        return 0xF8
+    fake = FakeUsbDevice(reg01=0x22)
+    fake.status_high = still_moving
+    scanner = make_scanner(fake)
+    with fast_time():
+        scanner.initialize()
+        e = expect(safety.StrictPollTimeoutError, scanner.scan, frame=4)
+    assert "mask 0xf055" in str(e) and e.last.hex() == "d555", str(e)
+    n_at_fail = fake.out_count
+    scan_go = [op for op in tables.SCAN.ops if op.kind == "cw" and op.wv == 0x83
+               and op.data == bytes.fromhex("0f01")]
+    assert scan_go, "SCAN has a GO pulse"
+    # The position feed was written (with frame 4's FEEDL), SCAN's ops were not.
+    feeds = [ev for ev in fake.out_log if ev["kind"] == "ctrl_out" and ev["data"] == position_feed]
+    assert len(feeds) == 1, len(feeds)
+    _assert_failed_and_frozen(fake, scanner, e, operation="scan", phase_prefix="position")
+    assert fake.out_count == n_at_fail
+    # A settled transport (default fake: 0xf8) lets the same scan complete.
+    fake = FakeUsbDevice(reg01=0x22)
+    scanner = make_scanner(fake)
+    with fast_time():
+        scanner.initialize()
+        scanner.scan(frame=4)
+    assert scanner.session.state is SessionState.ARMED
+    print("test_position_wait_is_strict_and_scaled_with_feedl OK")
+
+
 def test_load_status_matches_is_class_and_sensor_bit():
     """The masked completion test (device.LOAD_STATUS_MASK = 0xfb):
     state class AND loader-sensor bit 0x08 AND busy bit, only bit 0x04
@@ -2013,6 +2069,7 @@ def main() -> int:
         test_load_magazine_requires_initialize_and_matches_trace,
         test_jog_magazine_is_the_vendor_jog_and_fails_closed,
         test_initialize_prep_false_is_the_vendor_device_open_state,
+        test_position_wait_is_strict_and_scaled_with_feedl,
         test_load_status_matches_is_class_and_sensor_bit,
         test_load_completion_is_verified_not_assumed,
         test_sensor_probe_is_strictly_read_only,
