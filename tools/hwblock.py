@@ -353,7 +353,8 @@ def render_report(summary: dict) -> str:
     args = summary.get("args") or {}
     if isinstance(args, dict) and args:
         lines.append("- Arguments: " + ", ".join(f"{k}={v}" for k, v in sorted(args.items())))
-    lines.append(f"- Driver revision: {summary.get('driver_revision') or 'unknown'}")
+    lines.append(f"- Driver revision: {summary.get('driver_revision') or 'unknown'}"
+                 f"{' (uncommitted changes in the checkout)' if summary.get('driver_dirty') else ''}")
     lines.append("")
 
     steps = summary.get("steps") or {}
@@ -437,6 +438,39 @@ def _fail(summary: dict, out_dir: Path, step: str, scanner) -> int:
     return 1
 
 
+def _save_scan(out_dir: Path, tag: str, raw: bytes, width: int, dpi: int, scanner) -> np.ndarray:
+    """Split a dual-light scan, write BOTH channels (visible aligned
+    16-bit TIFF + the IR channel as <tag>-ir.tiff, same as the CLI) and
+    the per-scan .diag.json sidecar, and return the visible image.
+    The raw buffer is the concatenation of these two channels; keeping
+    them as TIFFs keeps the data inspectable without the driver."""
+    visible, ir = image.split_ir(raw, width=width)
+    visible = image.align_channels(visible, dpi=dpi)
+    image.write_tiff16(visible, str(out_dir / f"{tag}.tiff"))
+    image.write_tiff16(np.stack([ir, ir, ir], axis=-1), str(out_dir / f"{tag}-ir.tiff"))
+    diag.write_sidecar(str(out_dir / f"{tag}.diag.json"), dict(scanner.last_diag))
+    return visible
+
+
+def _git_state() -> dict:
+    """Commit SHA and dirty flag of the driver checkout, for the report."""
+    import subprocess
+    root = Path(__file__).resolve().parent.parent
+    out = {"driver_revision": None, "driver_dirty": None}
+    try:
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=root,
+                             capture_output=True, text=True, timeout=5)
+        st = subprocess.run(["git", "status", "--porcelain"], cwd=root,
+                            capture_output=True, text=True, timeout=5)
+        if sha.returncode == 0:
+            out["driver_revision"] = sha.stdout.strip()
+        if st.returncode == 0:
+            out["driver_dirty"] = bool(st.stdout.strip())
+    except Exception:
+        pass
+    return out
+
+
 # =====================================================================
 # warm block
 # =====================================================================
@@ -460,8 +494,10 @@ def _print_warm_steps(args: argparse.Namespace) -> None:
         of135i AUTONOMOUS HARDWARE TEST BLOCK -- WARM
         ============================================================
         Before you continue, confirm:
-          1. The film magazine is already loaded (tools/load_magazine.py
-             has already been run) and the scanner is idle/homed.
+          1. The film magazine is loaded through the driver flow
+             (tools/load_magazine.py in its own terminal: jog, take the
+             magazine out and reinsert it to the stop, load) and you have
+             checked BY HAND that it is latched (blue LED).
           2. Nothing else is using the scanner (no VM, no other process
              holding the USB device).
           3. You will stay nearby for the whole block to listen for
@@ -504,6 +540,7 @@ def run_warm(args: argparse.Namespace, out_dir: Path) -> int:
             print(diag.format_doctor(doctor))
             diag.write_sidecar(str(out_dir / "doctor-baseline.json"), doctor)
             summary["driver_revision"] = (doctor.get("host") or {}).get("driver_revision")
+            summary.update(_git_state())
             # The verdict comes from the driver's own guard (read-only
             # here; it is enforced again at the first write regardless).
             try:
@@ -548,14 +585,10 @@ def run_warm(args: argparse.Namespace, out_dir: Path) -> int:
             for i in range(args.repeat):
                 scanner.initialize(ir=True, dpi=3600)
                 raw, width, _meta = scanner.scan(frame=args.frame, ir=True, dpi=3600)
-                visible, _ir = image.split_ir(raw, width=width)
-                visible = image.align_channels(visible, dpi=3600)
-                del raw, _ir
-
                 tag = f"repro-{i:02d}"
-                image.write_tiff16(visible, str(out_dir / f"{tag}.tiff"))
+                visible = _save_scan(out_dir, tag, raw, width, 3600, scanner)
+                del raw
                 sidecar = dict(scanner.last_diag)
-                diag.write_sidecar(str(out_dir / f"{tag}.diag.json"), sidecar)
 
                 stats = image_stats(visible)
                 stats.update(film_rows(visible))
@@ -598,13 +631,9 @@ def run_warm(args: argparse.Namespace, out_dir: Path) -> int:
             for frame in range(1, 5):
                 scanner.initialize(ir=True, dpi=3600)
                 raw, width, _meta = scanner.scan(frame=frame, ir=True, dpi=3600)
-                visible, _ir = image.split_ir(raw, width=width)
-                visible = image.align_channels(visible, dpi=3600)
-                del raw, _ir
-
                 tag = f"batch-frame-{frame}"
-                image.write_tiff16(visible, str(out_dir / f"{tag}.tiff"))
-                diag.write_sidecar(str(out_dir / f"{tag}.diag.json"), dict(scanner.last_diag))
+                visible = _save_scan(out_dir, tag, raw, width, 3600, scanner)
+                del raw
 
                 frame_stats = image_stats(visible)
                 frame_stats.update(film_rows(visible))
@@ -631,20 +660,13 @@ def run_warm(args: argparse.Namespace, out_dir: Path) -> int:
                 scanner.park_mode = args.park
                 scanner.initialize(ir=True, dpi=2400)
                 raw, width, _meta = scanner.scan(frame=args.frame, ir=True, dpi=2400)
-                visible_2400, _ir = image.split_ir(raw, width=width)
-                visible_2400 = image.align_channels(visible_2400, dpi=2400)
-                del raw, _ir
-                image.write_tiff16(visible_2400, str(out_dir / "dpichange-2400.tiff"))
-                diag.write_sidecar(str(out_dir / "dpichange-2400.diag.json"), dict(scanner.last_diag))
-                del visible_2400
+                visible_2400 = _save_scan(out_dir, "dpichange-2400", raw, width, 2400, scanner)
+                del raw, visible_2400
 
                 scanner.initialize(ir=True, dpi=3600)
                 raw, width, _meta = scanner.scan(frame=args.frame, ir=True, dpi=3600)
-                visible_3600, _ir = image.split_ir(raw, width=width)
-                visible_3600 = image.align_channels(visible_3600, dpi=3600)
-                del raw, _ir
-                image.write_tiff16(visible_3600, str(out_dir / "dpichange-3600.tiff"))
-                diag.write_sidecar(str(out_dir / "dpichange-3600.diag.json"), dict(scanner.last_diag))
+                visible_3600 = _save_scan(out_dir, "dpichange-3600", raw, width, 3600, scanner)
+                del raw
 
                 fr = film_rows(visible_3600)
                 del visible_3600
@@ -753,6 +775,7 @@ def run_cold(args: argparse.Namespace, out_dir: Path) -> int:
             print(diag.format_doctor(doctor))
             diag.write_sidecar(str(out_dir / "doctor-cold.json"), doctor)
             summary["driver_revision"] = (doctor.get("host") or {}).get("driver_revision")
+            summary.update(_git_state())
             try:
                 verdict = scanner.check_start_state()
             except safety.UnsafeStartStateError as e:
@@ -785,12 +808,9 @@ def run_cold(args: argparse.Namespace, out_dir: Path) -> int:
             step = "C3"
             scanner.initialize(ir=True, dpi=3600)
             raw, width, _meta = scanner.scan(frame=args.frame, ir=True, dpi=3600)
-            visible, _ir = image.split_ir(raw, width=width)
-            visible = image.align_channels(visible, dpi=3600)
-            del raw, _ir
-            image.write_tiff16(visible, str(out_dir / "cold-scan.tiff"))
+            visible = _save_scan(out_dir, "cold-scan", raw, width, 3600, scanner)
+            del raw
             d1 = dict(scanner.last_diag)
-            diag.write_sidecar(str(out_dir / "cold-scan.diag.json"), d1)
             stats1 = image_stats(visible)
             stats1.update(film_rows(visible))
             del visible
@@ -812,12 +832,9 @@ def run_cold(args: argparse.Namespace, out_dir: Path) -> int:
             step = "C4"
             scanner.initialize(ir=True, dpi=3600)
             raw, width, _meta = scanner.scan(frame=args.frame, ir=True, dpi=3600)
-            visible2, _ir = image.split_ir(raw, width=width)
-            visible2 = image.align_channels(visible2, dpi=3600)
-            del raw, _ir
-            image.write_tiff16(visible2, str(out_dir / "cold-scan-2.tiff"))
+            visible2 = _save_scan(out_dir, "cold-scan-2", raw, width, 3600, scanner)
+            del raw
             d2 = dict(scanner.last_diag)
-            diag.write_sidecar(str(out_dir / "cold-scan-2.diag.json"), d2)
             stats2 = image_stats(visible2)
             stats2.update(film_rows(visible2))
             del visible2
