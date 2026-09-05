@@ -737,8 +737,10 @@ while loading, so a backlog the device can no longer deliver in one
 packet is the working hypothesis. `read_button()` raises
 `InterruptOverflowError` (status/doctor report it, `watch` exits 1),
 and `tools/load_magazine.py` now drains the endpoint after the jog,
-the reinsert and the load, logging what it finds. Whether a power
-cycle clears it: to be confirmed.
+the reinsert and the load, logging what it finds. Test 20 confirmed
+both halves: a power cycle clears the state, and a load that drains
+the endpoint does not produce it (doctor read the button normally
+after the load and after the eject).
 
 ## Pass 17 — DPI register analysis (2026-09-02)
 

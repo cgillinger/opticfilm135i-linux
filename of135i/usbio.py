@@ -43,19 +43,20 @@ class InterruptOverflowError(Of135iError):
     """The interrupt endpoint (EP 0x83, wMaxPacketSize 1) answered a
     read with more data than its packet size (usbfs EOVERFLOW, errno
     75), so no event can be read from it. Observed 2026-09-05 after
-    every magazine load run by this driver (Tests 17-19: present from
-    the first doctor after the load, through eject and idle), never
-    before a load and never after the vendor application's own load.
-    The vendor polls the endpoint continuously during its session; we
-    do not, so the state may be an event backlog the device can no
-    longer deliver in one packet. Harmless for scanning; it only
-    blocks the button/sensor event reads (status, watch, doctor)."""
+    magazine loads run by this driver while it never read the endpoint
+    (Tests 17-19: present from the first doctor after the load, through
+    eject and idle), never before a load and never after the vendor
+    application's own load. Test 20 settled it: a power cycle clears
+    the state, and draining the endpoint during the load (as the vendor
+    does continuously; tools/load_magazine.py now does after the jog,
+    the reinsert and the load) prevents it. Harmless for scanning; it
+    only blocks the button/sensor event reads (status, watch, doctor)."""
 
     def __init__(self, msg: str | None = None):
         super().__init__(msg or (
             "interrupt endpoint (EP 0x83) overflow: the scanner answers with more than its "
-            "1-byte packet size, so no button/sensor event can be read (seen after every "
-            "driver-run magazine load, 2026-09-05; cleared by a power cycle -- to be confirmed)"))
+            "1-byte packet size, so no button/sensor event can be read (an event backlog "
+            "from a load that did not drain the endpoint; a power cycle clears it)"))
 
 _WRITE_CHUNK = 64          # bytes = 32 (reg, val) pairs
 _BUF_CHUNK = 16384         # bulk transfer chunk size

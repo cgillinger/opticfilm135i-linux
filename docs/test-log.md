@@ -1303,3 +1303,36 @@ would be an unverified change on top of a verified one — left as is,
 noted for a future A/B. Remaining poll timeouts (22) are the known
 benign state-class mismatches (9c vs ad/bd, 8155 vs 9555, e8/ec vs
 f8/fc at session start).
+
+## 2026-09-05 — Test 20: raw batch of the strip; interrupt-endpoint overflow explained
+
+Power cycle → `doctor` BEFORE any load (`doctor-11-...json`): EP 0x83
+healthy, one pending sensor event (0x04) read normally — **a power
+cycle clears the overflow state.** Driver load #4 (`load-7.log`: f455 /
+dc55, latched) with the tool now draining EP 0x83 after the jog, the
+reinsert and the load (all three: no events, no overflow). `doctor`
+after the load and again after the eject: button reads normally.
+**The overflow state is caused by our not reading the interrupt
+endpoint during the load; draining it as the vendor does prevents it.**
+
+Raw batch (`scan --frames 1-4 --ir --eject`, no --positive; `raw20-f1..4.tiff`
++ IR + sidecars; positioning 2.0/4.2/6.3 s again, gain 0x2d/0x21/0x27):
+
+| frame | p0.1 (R G B) | p50 | p99.9 | clipped |
+|---|---|---|---|---|
+| 1 | 1379 1541 1133 | 13375 9246 6926 | 40801 28807 18499 | 0 % |
+| 2 | 1373 1614 1120 | 10465 7374 5395 | 42939 30237 19358 | 0 % |
+| 3 | 1379 1549 1130 | 10241 6837 4725 | 20818 13563 8607 | 0 % |
+| 4 | 1378 1553 1131 | 9016 6322 4716 | 34217 23139 13445 | 0 % |
+
+(central 80 % of each frame, 16-bit linear.) No pixel at 0 or 65535
+in any channel; the black floor (~1100-1600, from the AFE offset) is
+identical across frames; the red channel carries the orange mask as
+expected. The raw negative is what the driver promises: linear,
+unclipped, reproducible.
+
+Preview (`to_positive`, per-frame density inversion, gamma 2.2) against
+the vendor references (`raw20-preview-vs-vendor.jpg`): all four frames
+neutral (R/G 0.96, vendor 0.85-0.94), correctly oriented, composition
+identical; ours flatter and less saturated than the vendor's rendering
+— acceptable for a preview, and colour work starts from the raw file.
