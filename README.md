@@ -139,63 +139,112 @@ The rough edges you should know about:
 git clone https://github.com/cgillinger/opticfilm135i-linux.git
 cd opticfilm135i-linux
 python3 -m venv .venv
-.venv/bin/pip install pyusb numpy
+.venv/bin/pip install pyusb numpy pillow
+# USB access without root: install the udev rule, then re-plug or power-cycle the scanner
+sudo cp udev/60-of135i.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
 ```
 
-## Usage
+Nothing below needs `sudo` once the udev rule is in place. Check the
+install without touching the scanner's state:
 
 ```bash
-# scan frame 1 at 3600 dpi to a raw 16-bit negative TIFF (needs USB access)
-sudo .venv/bin/python -m of135i scan --frame 1 -o frame1.tiff
-
-# display-ready positive with vendor-like colors, correctly oriented
-sudo .venv/bin/python -m of135i scan --frame 1 --positive -o frame1-positive.tiff
-
-# batch: scan a whole strip in one go (rulle-f1.tiff ... rulle-f4.tiff)
-sudo .venv/bin/python -m of135i scan --frames 1-4 --ir --positive --rotate 90 -o rulle.tiff
-
-# other resolutions
-sudo .venv/bin/python -m of135i scan --frame 1 --dpi 2400 --positive -o frame1-2400.tiff
+.venv/bin/python -m of135i version          # driver version + git revision, no USB
+.venv/bin/python -m of135i doctor           # read-only hardware report (scanner on)
 ```
 
-Add `--park semantic` to any of the above for an experimental faster park phase (see docs/replay-analysis.md); the default remains the captured replay.
+## Usage — the normal workflow
+
+The scanner is driver-managed: after every power-on the magazine must
+be loaded through the driver before anything can be scanned, exactly as
+the vendor application does it.
 
 ```bash
-# eject the film magazine / check device status
-sudo .venv/bin/python -m of135i eject
-sudo .venv/bin/python -m of135i status
+# 1. Load. Interactive: run it in a terminal window. It runs the
+#    vendor's app-start jog, then asks you to take the magazine fully
+#    OUT and reinsert it to the stop, then feeds and positions it.
+.venv/bin/python -m of135i load
 
-# watch mode: ejects on hardware button press, reports magazine events
-sudo .venv/bin/python -m of135i watch
+# 2. Check by hand: the magazine is latched (does not pull out) and the
+#    button LED is blue. The driver cannot sense the latch.
 
-# read-only hardware health report
-sudo .venv/bin/python -m of135i doctor --json doctor-report.json
+# 3. Scan. Raw 16-bit linear negative (the driver's product) ...
+.venv/bin/python -m of135i scan --frame 1 --ir -o frame1.tiff
+#    ... or a preview positive, correctly oriented
+.venv/bin/python -m of135i scan --frame 1 --ir --positive --rotate 90 -o frame1-positive.tiff
+#    ... or the whole strip in one go (rulle-f1.tiff ... rulle-f4.tiff), ejecting at the end
+.venv/bin/python -m of135i scan --frames 1-4 --ir --positive --rotate 90 --eject -o rulle.tiff
+#    other resolutions
+.venv/bin/python -m of135i scan --frame 1 --dpi 2400 --positive -o frame1-2400.tiff
+
+# 4. Eject (if not done by --eject). The magazine then sits loose in the slot.
+.venv/bin/python -m of135i eject
+```
+
+`--park semantic` on `scan` selects an experimental park phase (see
+docs/replay-analysis.md); it is off by default and not hardware-verified.
+`--warmup-budget SECONDS` bounds how long a scan waits for the lamp.
+
+### What the driver knows about the magazine
+
+| term | meaning | how it is known |
+|---|---|---|
+| **present** | something is in the slot | loader sensor (reg 0x101 bit 0x08), trusted before the first write of a session only |
+| **load completed** | the feed pulled the cassette past the sensor and the traverse finished | the load flow's verified completions (f455, dc55) |
+| **latched** | mechanically locked, blue LED | **only you can tell** — check by hand before scanning |
+| **start state** | what the transport was doing when the session opened | reg 0x01: `0x22` idle-homed (normal), `0x00` cold (a load must follow), anything else refused |
+
+### Other commands
+
+```bash
+.venv/bin/python -m of135i status                  # registers, loader sensor, button (read-only)
+.venv/bin/python -m of135i doctor --json report.json   # full read-only health report
+.venv/bin/python -m of135i watch                   # ejects on a hardware button press
 ```
 
 `doctor` is strictly read-only on the wire (USB control reads and
 descriptor queries only — no register writes, no motor commands, no
 `initialize()`/`cold_init()`): it prints USB descriptor info, the
-GL chip id, the derived engine state (idle-homed / cold-never-homed /
-unknown from register 0x01), a dump of every register the vendor
-driver itself is observed reading, magazine/button status, and host
-info (Python/pyusb versions, driver git revision). `--json PATH` also
-saves the report as JSON. Every `scan` additionally writes a
-`<output>.diag.json` sidecar alongside each frame with the computed
-calibration values (gain/offset/shading), phase timings, and poll/
-mismatch counters for that frame — disable it with `--no-diag`.
+GL chip id, the derived engine state, a dump of every register the
+vendor driver itself is observed reading, magazine/button status, and
+host info. Every `scan` additionally writes a `<output>.diag.json`
+sidecar per frame with the computed calibration values, phase timings,
+lamp-warmup measurements and poll/mismatch counters — disable with
+`--no-diag`.
 
-To run without `sudo`, install the udev rule (see the file for the
-commands): [`udev/60-of135i.rules`](udev/60-of135i.rules).
+### When something goes wrong
+
+Every error message ends with the next safe action. The rules behind them:
+
+- A refusal before the first write ("No commands were sent") means the
+  scanner was not in a known start state, another process holds it, or
+  an operation was asked for out of order (a scan before the load in a
+  cold session). Nothing happened; fix the cause and run again.
+- A failure after writes ("Power the scanner OFF …") means an operation
+  stopped part-way: a motor completion that did not arrive, a USB error,
+  Ctrl-C. The driver never sends recovery commands. Power-cycle, then
+  start again with `load`.
+- The scanner leaves the USB bus about five minutes after a session
+  ends and does not come back by itself; a power cycle wakes it.
+
+Exit codes: `0` success, `1` refused or failed (details on stderr),
+`2` usage error, `130` interrupted (Ctrl-C).
+
+### Release check
+
+```bash
+.venv/bin/python tools/release_check.py     # runs every offline test file, requires a clean checkout
+```
 
 ### Autonomous hardware test block
 
 ```bash
-# magazine already loaded, scanner idle/homed
-sudo .venv/bin/python tools/hwblock.py warm --out results/warm-01
-
-# after a power cycle (verifies cold-start lamp warmup + AFE offset)
-sudo .venv/bin/python tools/hwblock.py cold --out results/cold-01
+# magazine loaded through `of135i load` and checked latched, scanner idle/homed
+.venv/bin/python tools/hwblock.py warm --repeat 10 --skip-dpi-change --eject --out results/warm-01
 ```
+
+(The former `cold` block is retired: a cold-started session loads
+before it scans, so cold-start verification is `of135i load` followed
+by the warm block.)
 
 `tools/hwblock.py` runs a long, unattended block of already-verified
 `scan`/`eject` operations (reproducibility, batch, DPI-change, and

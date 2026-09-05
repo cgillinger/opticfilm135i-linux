@@ -1648,3 +1648,21 @@ busy/scanning/malformed/USB-error/Ctrl-C cases as before. A hardware
 park ending in class D would now stop fail-closed as an unobserved
 state. Offline-verified only; Test 23 verified safe rejection, not a
 full semantic PARK; verbatim PARK remains the default.
+
+## 2026-09-05 — P4 (offline): the CLI workflow productised
+
+- `of135i load`: the magazine load flow is now a driver module
+  (`of135i/loadflow.py`) shared by the CLI subcommand and
+  `tools/load_magazine.py`; same order, same checks, interactive
+  reinsert prompt (real terminal).
+- `of135i version`: driver version (0.1.0, aligned with pyproject) and
+  git revision without touching USB.
+- `tools/release_check.py`: runs every offline test file, requires a
+  clean checkout, prints version, revision and per-file counts.
+- README: install with the udev rule first (no sudo anywhere else), the
+  normal workflow load → check latch → scan → eject, a table of what
+  the driver knows about the magazine (present / load completed /
+  latched / start state), what refusals and failures mean and the exit
+  codes (0/1/2/130), the retired cold block.
+- Tests: `of135i load` order and exit codes on the fake, `version`
+  touches no USB. Offline suite: 106 tests, all passing.
