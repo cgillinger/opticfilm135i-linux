@@ -604,12 +604,12 @@ Windows VM.
    capture shows 10 -- an extra short move between rounds 2->3 which
    we omit). Each round: pre-move sensor prep (0x32 bit manipulation,
    0x36=0xfc, 0x33=0x8e), then:
-   - Move 1: feedl=8730 (0x3e=0x1a, 0x3f=0x22), loader slope table to
+   - Move 1: feed 6690 = 0x1a22 (0x3e=0x1a, 0x3f=0x22; earlier notes said 8730 = the same bytes read backwards), loader slope table to
      0x1000c000 + 0x10010000, GO, poll ~1.6 s
    - Resync: 0x09=0x00, 0x35 bit 0x40 clear (0xfb->0xbb), 0x32 bit 1
      dance
-   - Move 2: same feedl=8730, full 19-reg speed profile rewrite
-   - Move 3: feedl=4620 (0x3e=0x0c, 0x3f=0x12), poll ~0.9 s
+   - Move 2: same feed 6690, full 19-reg speed profile rewrite
+   - Move 3: eject 3090 = 0x0c12 (0x3e=0x0c, 0x3f=0x12; earlier: 4620), poll ~0.9 s
    - Settle: motor disable, poll 0x35/0x32 alternating until 0xbb/0x1f
      (~30 iterations)
    Between rounds: full register table + AFE sequence rewritten.

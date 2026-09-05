@@ -894,7 +894,7 @@ class Scanner:
         self.io.write_regs([(0x09, 0x08)])
         move_regs = [
             (0x02, 0x18), (0xAE, 0x00), (0xAF, 0xFF),
-            (0x3D, 0x00), (0x3E, feedl & 0xFF), (0x3F, (feedl >> 8) & 0xFF),
+            (0x3D, 0x00), (0x3E, (feedl >> 8) & 0xFF), (0x3F, feedl & 0xFF),
         ]
         if full_speed_regs:
             self.io.write_regs(list(tables_base.LOADER_SPEED_PAIRS) + move_regs)
@@ -907,11 +907,18 @@ class Scanner:
 
     def _cold_homing_round(self) -> None:
         """One of cold_init()'s three homing rounds: pre-move sensor/
-        int-ack prep, move 1 (feedl=8730, minimal regs), a resync
-        interstitial + move 2 (feedl=8730, full speed-profile rewrite),
-        move 3 (feedl=4620), then a settle poll on regs 0x35/0x32."""
-        FEEDL_1_2 = 8730
-        FEEDL_3 = 4620
+        int-ack prep, move 1 (feed 6690, minimal regs), a resync
+        interstitial + move 2 (feed 6690, full speed-profile rewrite),
+        move 3 (eject 3090), then a settle poll on regs 0x35/0x32.
+
+        On the wire these three moves are the vendor's app-start jog
+        (feed 0x1a22, feed 0x1a22, eject 0x0c12 -- the same bytes as
+        tables_load.JOG), run three times with the cold table between
+        rounds. Earlier revisions called them 8730/4620: the same bytes
+        read in the other order (0x221a/0x120c), written swapped again
+        in _cold_motor_move -- byte-identical output, misleading names."""
+        FEEDL_1_2 = 0x1A22   # feed 6690
+        FEEDL_3 = 0x0C12     # eject 3090
 
         # ---- pre-move setup -----------------------------------------
         val32 = self.io.read_reg(0x32)
