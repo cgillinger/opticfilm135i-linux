@@ -1400,3 +1400,36 @@ checkout's SHA and dirty flag, the precheck text describes the driver
 load flow. No gate loosened; prechecks (start-state verdict via the
 driver, loader sensor before initialize, --assume-locked only as a
 documented override) unchanged.
+
+## 2026-09-05 — Test 21: hwblock warm, 10× reproducibility + batch + eject from a driver-loaded magazine (P1)
+
+Power cycle → driver load #5 (`load-8.log`: f455/dc55, latched, blue LED)
+→ `tools/hwblock.py warm --repeat 10 --skip-dpi-change --eject` at
+493ebb8 (`hwblock-20260905-warm/`, 18 min, status COMPLETED, findings:
+none). A first attempt on the cold, unloaded scanner was refused at W0
+(read-only) as designed.
+
+**W1/W4, ten scans of frame 1 at 3600 dpi dual-light:**
+
+| metric | result |
+|---|---|
+| film start row | 1856-1860 (spread 4 rows = 0.03 mm) |
+| film end row | 5130-5134 |
+| gain codes | 0x2d / 0x21 / 0x27 on all ten |
+| offset codes | R 0x010a, G 0x0109-0x010a, B 0x010a-0x010b (vendor ref 0x010b/0x010a/0x010b) |
+| channel mean drift first→last | +1.6 % R, +2.3 % G, +2.1 % B (monotonic; lamp/temperature) |
+| pair RMS (8-bit) between consecutive scans | 0.22-0.45, except 2.67 and 2.17 at the two scans where the start row shifted by 3-4 rows |
+| warmup retries | none; gain never clipped |
+| time per frame | 63-67 s (scan 40.6 s, PARK 13.6 s, POSITION 1.8 s) |
+
+**W5, batch 1-4:** start rows 1856 / 2159 / 6 / 0 — frames 1-4 correct
+(visually: portrait, square, Trafalgar, lion; same as Test 19).
+POSITION 1.8 / 3.8 / 6.0 / 8.1 s. **W7:** eject OK; doctor afterwards
+0x22 / 0xe855. Session record: 13 196 writes, 127 execute pulses, no
+failure. Remaining poll timeouts per scan 1-5 (the known benign
+state-class mismatches), cr mismatches 7-33.
+
+Verdict: the calibration and the geometry are reproducible to one code
+and four rows over ten consecutive scans; the slow monotonic brightness
+drift (~2 % over 11 minutes) is the one thing to keep an eye on (lamp
+warming — consistent with the cold-start warmup topic, P2).
