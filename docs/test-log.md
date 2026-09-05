@@ -1257,3 +1257,18 @@ clean session: scale the POSITION completion budget with FEEDL, or
 wait for the busy bit to clear before SCAN (strict). Poll timeouts per
 frame: 1/3/4/3, the others being the known benign state-class
 mismatches (9c vs ad/bd, 8155 vs 9555 on reg 0x32).
+
+**Vendor reference settles frame 4** (`batch-test/vendor/ref-20260905-f-0001..0005.tif`,
+QuickScan on the same strip, 5 slots scanned, slot 5 empty): the
+vendor's frame 4 is a whole picture (lion statue, street towards Big
+Ben). Our frame 4 holds mostly frame 3's scene with only the top of
+frame 4 — the transport had not reached the frame-4 position when the
+scan began. **Positioning, not film.** Consistent with the POSITION
+poll timing out busy (0xd555) after 4.9 s on the 39026-step move.
+Fix for a clean session (offline first): the POSITION completion wait
+must not be a fixed 3x of the frame-1 move; wait for the done class /
+busy bit clear with a budget that scales with FEEDL, and treat a
+timeout there as a failure (no scan on a moving transport). Also
+visible in the comparison: a pink/magenta cast in our --positive
+output against the vendor's neutral rendering — separate topic
+(image processing), not part of this pass.
