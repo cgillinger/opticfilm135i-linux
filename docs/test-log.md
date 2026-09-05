@@ -1362,3 +1362,41 @@ Single unit, single host, as before.
 Safe to test automatically next: hwblock warm from a driver-loaded
 magazine (repeatability of gain/offset/levels), semantic PARK A/B.
 Not to be varied: anything in the OPEN/JOG/LOAD tables.
+
+## 2026-09-05 — P0 review of the verified main flow (offline)
+
+External review asked for a regression-protection pass over
+`power-on → driver load (OPEN/JOG/LOAD) → batch 1-4 → eject`. Findings:
+
+- Already covered by the suite: byte identity of OPEN/JOG/LOAD against the
+  clean capture; the masked completion test with 0xec55/0xf855/0xf555/
+  0xcc55/0xd455 rejected; stop after a failed feed (no traverse); freeze
+  after a failed traverse; POSITION timeout before SCAN; Ctrl-C, EOF, USB
+  errors, short OUT transfers and timeouts failing the session with zero
+  recovery commands; doctor/status strictly read-only; the process lock
+  covering read-only sessions; the load tool's order (open, jog, prompt,
+  load).
+- Gap 1 (fixed, adce3d6): a non-timeout, non-overflow USB error on the
+  interrupt endpoint surfaced as an unhandled pyusb exception in status
+  and in the load tool's drain step. Now `InterruptReadError`
+  (Of135iError): uniform error path, nothing hidden, nothing retried.
+- Gap 2 (fixed, e21ce67): the POSITION completion rule was only tested
+  at 3600 dpi. Now tested for 3600 plain and the 600/1200/2400/7200
+  dual-light profiles at frame 4: budget scaled from each profile's own
+  frame-1 FEEDL, class F accepted, busy (0xd5) refused before SCAN's GO
+  with the session frozen.
+- Not changed, deliberately: Ctrl-C/EOF at the reinsert prompt leaves the
+  session ARMED (the jog is complete, nothing is in progress) while the
+  tool still demands a power cycle; marking that state FAILED would
+  misdescribe it.
+
+Offline suite after P0: test_safety 46, test_hwblock 14, test_calibrate
+10, test_offline 6, test_park 6, test_diag 4, test_dpi 3, test_ir 3 —
+**92 tests, all passing**, at e21ce67.
+
+P1 preparation (hwblock reviewed against the current API): every scan
+now keeps visible + IR TIFFs and its sidecar, the report records the
+checkout's SHA and dirty flag, the precheck text describes the driver
+load flow. No gate loosened; prechecks (start-state verdict via the
+driver, loader sensor before initialize, --assume-locked only as a
+documented override) unchanged.
