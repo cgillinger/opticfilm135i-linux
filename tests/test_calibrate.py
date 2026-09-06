@@ -899,6 +899,71 @@ def test_cal_capture_no_disk_io_during_scan():
     print("test_cal_capture_no_disk_io_during_scan OK")
 
 
+# ---------------------------- residual dark_b detection + fix (Test 33)
+
+
+def test_dark_is_residual_classification():
+    """dark_is_residual: a short repeating block (a few distinct values,
+    like the Test 32 residual) is residual; healthy noise, an all-constant
+    buffer (unique==1, owned by the slope fallback), and empty are not."""
+    residual = np.tile(np.array([[100, 200, 300], [400, 500, 600]],
+                                dtype=np.uint16), (512, 1))   # 6 distinct
+    assert calibrate.dark_is_residual(residual) is True
+    healthy = np.random.default_rng(0).integers(20000, 26000, (1024, 3),
+                                                dtype=np.uint16)
+    assert calibrate.dark_is_residual(healthy) is False
+    assert calibrate.dark_is_residual(np.zeros((1024, 3), np.uint16)) is False  # unique==1
+    assert calibrate.dark_is_residual(np.full((1024, 3), 7, np.uint16)) is False
+    assert calibrate.dark_is_residual(np.zeros((0, 3), np.uint16)) is False
+    print("test_dark_is_residual_classification OK")
+
+
+def test_healthy_dark_b_substitute_and_fail_closed():
+    """_healthy_dark_b: a healthy dark_b passes through and is remembered;
+    a later residual one is replaced by the remembered healthy buffer
+    (substituted=True); a residual one with none remembered fails closed
+    with CalibrationError."""
+    from of135i import safety
+    scanner = Scanner(MockUsbIo(_build_cal_buffers()))
+    healthy = np.random.default_rng(1).integers(20000, 26000, (1024, 3),
+                                                dtype=np.uint16)
+    residual = np.tile(np.array([[10, 20, 30], [40, 50, 60]], dtype=np.uint16),
+                       (512, 1))
+    # residual with nothing healthy yet -> fail closed
+    try:
+        scanner._healthy_dark_b(residual)
+        assert False, "expected CalibrationError"
+    except safety.CalibrationError:
+        pass
+    # healthy passes through, remembered
+    out, sub = scanner._healthy_dark_b(healthy)
+    assert sub is False and out is healthy
+    # later residual -> substituted with the remembered healthy one
+    out2, sub2 = scanner._healthy_dark_b(residual)
+    assert sub2 is True and np.array_equal(out2, healthy)
+    print("test_healthy_dark_b_substitute_and_fail_closed OK")
+
+
+def test_residual_dark_b_fails_closed_through_scan():
+    """Integration: if the device returns a residual dark_b on frame 1
+    (nothing healthy to substitute), the scan fails closed with
+    CalibrationError, the session is FAILED, and no USB writes follow."""
+    from of135i import safety
+    residual_bytes = np.tile(
+        np.arange(100, 108, dtype="<u2"), 384).tobytes()   # 6144 B, 8 distinct
+
+    def hook(scanner, real, ep, length, timeout=0):
+        data = real(ep, length, timeout)
+        if scanner.session.phase == tables.CAL_DARK_B.name:
+            return residual_bytes
+        return data
+
+    mock, err = _plain_scan(None, hook)
+    assert isinstance(err, safety.CalibrationError), err
+    assert mock.session.state is _device.safety.SessionState.FAILED, mock.session.state
+    print("test_residual_dark_b_fails_closed_through_scan OK")
+
+
 def main() -> int:
     tests = [
         test_gain_codes_against_capture,
@@ -923,6 +988,9 @@ def main() -> int:
         test_cal_capture_failure_preserves_data_and_sends_nothing_after,
         test_cal_capture_flush_error_does_not_mask_scan_error,
         test_cal_capture_no_disk_io_during_scan,
+        test_dark_is_residual_classification,
+        test_healthy_dark_b_substitute_and_fail_closed,
+        test_residual_dark_b_fails_closed_through_scan,
     ]
     for t in tests:
         t()

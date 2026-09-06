@@ -397,6 +397,12 @@ class Scanner:
         self._cal_capture: _CalCapture | None = (
             _CalCapture(_cal_dir) if _cal_dir else None)
 
+        # Last healthy dark_b of this session, for substituting a residual
+        # one on a later batch frame (Test 32/33). A dark measurement is
+        # frame-independent, so reusing a healthy one is a proven fix, not
+        # a cover-up. Reset naturally per Scanner (a new session = None).
+        self._last_good_dark_b: np.ndarray | None = None
+
     @classmethod
     def open(cls) -> "Scanner":
         return cls(UsbIo.open())
@@ -1603,6 +1609,31 @@ class Scanner:
                 return self._scan_dual(t, frame=frame, lines=lines)
             return self._scan_plain(frame=frame, lines=lines)
 
+    def _healthy_dark_b(self, dark_b):
+        """Return a trustworthy dark_b and whether it was substituted.
+
+        If ``dark_b`` is residual (Test 32: the device returned the frame's
+        own dark_a tail instead of measuring), substitute this session's
+        last healthy dark_b -- a dark measurement is frame-independent, so
+        this is a proven correction, not a cover-up. A healthy dark_b is
+        remembered for later frames. Fails closed (CalibrationError, scan
+        FAILED, no motor command) if dark_b is residual and none healthy
+        has been seen this session (frame 1 is empirically always healthy,
+        so this is a defensive branch)."""
+        if not calibrate.dark_is_residual(dark_b):
+            self._last_good_dark_b = dark_b
+            return dark_b, False
+        log.warning("dark_b is residual (Test 32: repeated block, not a "
+                    "measurement); substituting this session's healthy dark_b")
+        if self._last_good_dark_b is None:
+            raise safety.CalibrationError(
+                "dark_b is residual and no healthy dark_b has been measured "
+                "this session; cannot compute AFE offset. The scan stops "
+                f"here. {safety.NO_RECOVERY_ATTEMPTED} "
+                f"{safety.POWER_CYCLE_INSTRUCTION}",
+                session=self.session.snapshot())
+        return self._last_good_dark_b, True
+
     def _scan_plain(self, frame: int, lines: int | None) -> tuple[bytes, int]:
         # No homing move here. The vendor flow has none (protocol-notes.md
         # pass 14): positioning below is an absolute mode-0x18 feed that
@@ -1632,6 +1663,7 @@ class Scanner:
             self._cal_capture.note_buffer("dark_b", tables.CAL_DARK_B.name, dark_b_raw)
         dark_a = np.frombuffer(dark_a_raw, dtype="<u2").reshape(-1, 3)
         dark_b = np.frombuffer(dark_b_raw, dtype="<u2").reshape(-1, 3)
+        dark_b, dark_b_substituted = self._healthy_dark_b(dark_b)
 
         # ---- white line (gain=0) -> compute AFE gain -------------------
         gain_r, gain_g, gain_b = self._gain_with_warmup(
@@ -1726,6 +1758,7 @@ class Scanner:
             "chunk_count": tables.IMAGE_CHUNK_COUNT,
             "dark_a_mean": [float(x) for x in dark_a.astype(np.float64).mean(axis=0)],
             "dark_b_mean": [float(x) for x in dark_b.astype(np.float64).mean(axis=0)],
+            "dark_b_substituted": dark_b_substituted,
             "white_mean": warmup.get("white_mean"),
             "white_max": warmup.get("white_max"),
             "gain_codes": [gain_r, gain_g, gain_b],
@@ -1814,6 +1847,7 @@ class Scanner:
             self._cal_capture.note_buffer("dark_b", t.CAL_DARK_B.name, dark_b_raw)
         dark_a = np.frombuffer(dark_a_raw, dtype="<u2").reshape(-1, 3)
         dark_b = np.frombuffer(dark_b_raw, dtype="<u2").reshape(-1, 3)
+        dark_b, dark_b_substituted = self._healthy_dark_b(dark_b)
 
         # ---- white line (gain=0) -> compute AFE gain -------------------
         # 2 raw lines (alternating): index 0 = IR, index 1 = visible --
@@ -1944,6 +1978,7 @@ class Scanner:
             "chunk_count": n_chunks,
             "dark_a_mean": [float(x) for x in dark_a.astype(np.float64).mean(axis=0)],
             "dark_b_mean": [float(x) for x in dark_b.astype(np.float64).mean(axis=0)],
+            "dark_b_substituted": dark_b_substituted,
             "white_mean": warmup.get("white_mean"),
             "white_max": warmup.get("white_max"),
             "gain_codes": [gain_r, gain_g, gain_b],

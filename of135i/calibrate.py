@@ -104,6 +104,31 @@ _OFFSET_DEFAULT = (0x010B, 0x010A, 0x010B)
 # fall back to the hardcoded default.
 _OFFSET_MIN_SLOPE = 1.0
 
+# A healthy dark buffer is sensor noise: hundreds to thousands of distinct
+# raw values (~2500 in the reference measurements). A residual dark_b --
+# returned by the device without a real exposure on a later batch frame --
+# is a short repeating block, ~8 distinct values (docs/test-log.md Test 32:
+# the frame's own dark_a tail, repeated). This threshold sits far below any
+# healthy buffer and far above any residual, so the classification has a
+# wide margin either way.
+_DARK_MIN_UNIQUE = 32
+
+
+def dark_is_residual(arr: np.ndarray) -> bool:
+    """True when a dark buffer looks like residual/canned data rather than
+    a real measurement: a short repeating block of a few distinct values.
+    ``arr`` is a uint16 dark buffer, (N, 3) or flat. Content-based, not
+    timing-based (timing is host-dependent). See Test 32.
+
+    Range is ``1 < unique < _DARK_MIN_UNIQUE``: the proven residual (Test
+    32, the dark_a tail repeated) has ~8 distinct values, well inside it.
+    A *single* distinct value (unique == 1: an all-constant buffer, e.g. a
+    dead AFE or a zero-filled mock) is deliberately NOT treated as residual
+    -- offset_codes()'s slope<1 fallback already owns that case, and
+    substituting there would change long-standing behaviour."""
+    a = np.asarray(arr)
+    return 1 < int(np.unique(a).size) < _DARK_MIN_UNIQUE
+
 
 def offset_codes(
     dark_a: np.ndarray, dark_b: np.ndarray

@@ -160,6 +160,13 @@ class ScannerBusyError(SafetyError):
     """Another process holds the scanner lock."""
 
 
+class CalibrationError(SafetyError):
+    """A calibration buffer is invalid and cannot be trusted or repaired.
+    Raised fail-closed (the scan operation is FAILED, no motor command
+    follows) when dark_b is residual (docs/test-log.md Test 32) and no
+    healthy dark_b from this session is available to substitute."""
+
+
 class LampWarmupError(SafetyError):
     """The lamp did not reach a usable, stable white level within the
     warmup budget (or the white measurement was implausible: saturated

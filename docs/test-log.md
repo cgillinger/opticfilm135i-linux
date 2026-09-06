@@ -1722,6 +1722,13 @@ PARK rises monotonically 13.20 → 15.20 s, ending 1.6 s above the mintuu
 figure.
 
 **The finding: the dark_b measurement collapses on even frames.**
+[Corrected 2026-09-06, see Test 32: "even frames" is wrong as a rule. The
+mechanism is now proven — dark_b on an affected frame is residual data
+(that frame's own dark_a tail, repeated), not a measurement. Which frames
+are affected VARIES between runs (this batch: f2/f4; the Test 32 batch:
+f2/f3/f4). The only constant is that frame 1 is always healthy. Read the
+"even frames" wording throughout this entry as "affected frames in this
+particular run".]
 
     f1  dark_b_mean = [23898.75390625, 26731.1650390625, 25680.232421875]
     f2  dark_b_mean = [26177.375, 26177.375, 26177.375]
@@ -2198,3 +2205,111 @@ wait is needed. Optionally an explicit 0xf1 A/B: do frames 2–4 then settle
 to f455 given more time (bit 0x01 = motion) or time out (bit 0x01 never
 clears = benign)? No mask change is made now (the external review said to
 keep f555 an open question and not to change POSITION speculatively).
+
+
+## 2026-09-06 — Test 32: dark_b's cause is PROVEN — residual data (the frame's own dark_a tail), not a measurement
+
+Hardware collection on B5 with the hardened diagnostic (Test 30,
+`OF135I_DUMP_CAL`), then offline analysis. The Test 29 evidence gap is
+closed: the cause is established, and the diagnostic's per-transfer log was
+what settled it.
+
+**The mechanism.** On an affected frame, dark_b is not a measurement — it
+is residual data: **that same frame's dark_a last 8 words (16 bytes),
+repeated 384 times** to fill the 3072-word buffer. Identical on 3 of 3
+affected frames (f2/f3/f4 this run):
+
+    f2: dark_b's 8-word period == dark_a[-8:]  (29127,25860,22039,29418,26230,22131,28476,26323)
+    f3: same, == dark_a[-8:]
+    f4: same, == dark_a[-8:]
+
+**The transfer is complete, not short.** The new per-transfer log:
+requested = returned = 6144 on every read, exception None everywhere. No
+truncation, no USB error. But the degenerate reads come back **3–4× too
+fast**: cal_dark_b 0.5–0.7 ms on the affected frames vs 1.9 ms for a
+healthy dark_b and 1.7–3.9 ms for dark_a. So the device returns a full,
+error-free transfer whose content is stale — it did not perform the dark_b
+exposure on those frames. **It is the device's response, not a driver bug
+(reshape/mean) and not a USB transport fault.**
+
+**Why the means looked identical, and why "collapse" was the wrong word.**
+The period is 8 words, the reshape channel stride is 3, gcd(8,3)=1, so each
+channel cycles through all 8 values equally often → identical per-channel
+mean/min/max. But no triplet is R=G=B (`triplets_rgb_equal = 0`) and
+`channels_bit_identical = False` (the three per-channel sha256 differ — the
+channels see the 8 values in different rotations). This confirms Test 30's
+correction: the mean lied; only the per-channel checksum told the truth. It
+is a 16-byte repetition, not a collapse.
+
+**Test 24's "even frames" is wrong.** This run degenerated f2, f3 AND f4;
+the morning batch degenerated f2 and f4 (f3 healthy). The only constant is
+that **frame 1 is always healthy**. Correct characterisation: frame 1's
+dark_b is a real measurement; later frames in a batch may instead get back
+the previous dark_a's tail; how many are affected varies between runs. A
+reliable automatic discriminator is the read time (~1.9 ms real vs
+~0.5–0.7 ms residual) or the content (very few unique values — ~8 vs
+~2500 healthy).
+
+**f555 confirmed on B5.** frames 2/3/4 settle `f555`, settle time scaling
+with FEEDL (2.01/4.17/6.33 s); frame 1 is `f455` exact. So Test 31's f555
+is host-independent (reference host and B5 both). Geometry (positive,
+grov, not comparable): B5 1836/2141/6/0 ≈ Test 21 W5 1856/2159/6/0 — same
+structure, logged as observation. f555's benignity (frame 2–4 geometry)
+will be taken on the reference host without --positive, on the same strip.
+
+Collection was complete: `dropped_buffers = 0`, all 8 buffers saved
+(6144 B each), reshape_ok on all.
+
+**Fix follows in Test 33:** detect a residual dark_b (few unique values)
+and substitute the session's healthy dark_b before offset_codes — dark_b
+is a frame-independent dark measurement, so this is a proven correction,
+not a cover-up. offset_codes, register tables, POSITION/PARK and recovery
+are untouched.
+
+
+## 2026-09-06 — Test 33: fix — detect a residual dark_b and substitute the session's healthy one (offline)
+
+Acts on Test 32's proven cause. Offline; no hardware.
+
+**Detection (content-based, not timing).** `calibrate.dark_is_residual()`
+flags a dark buffer whose distinct-value count is `1 < unique <
+_DARK_MIN_UNIQUE` (32). The proven residual (Test 32: the dark_a tail
+repeated) has ~8 distinct values; a healthy dark is sensor noise (~2500).
+Timing (0.5–0.7 ms vs 1.9 ms) is recorded by the diagnostic but NOT used
+to decide — it is host-dependent. A single distinct value (unique == 1: a
+dead AFE or a zero-filled mock) is deliberately excluded; offset_codes()'s
+slope<1 fallback already owns that case.
+
+**Substitution.** `Scanner._healthy_dark_b()` remembers each session's
+healthy dark_b and, when a later frame's dark_b is residual, substitutes
+the remembered one before `offset_codes()`. A dark measurement (gain=0,
+offset=0xff) is frame-independent — the reference data shows it stable to
+<1 % across a batch — so reusing a healthy one is a proven correction, not
+a cover-up. `last_diag["dark_b_substituted"]` records when it happened, and
+the raw residual buffer is still captured (note_buffer runs before
+substitution) so nothing is hidden.
+
+**Fail-closed.** If dark_b is residual and no healthy one has been measured
+this session (frame 1 is empirically always healthy, so this is a
+defensive branch), it raises `safety.CalibrationError` — the scan operation
+is FAILED, no motor command follows, and no recovery is attempted.
+
+**Constraints held:** offset_codes, register tables, POSITION/PARK
+predicates and recovery paths are untouched. The fix only replaces a
+proven-invalid *input* (residual dark_b) with a healthy measurement before
+the existing offset computation, or fails closed.
+
+**Tests (offline suite):** test_calibrate +3 — dark_is_residual
+classification (residual / healthy / unique==1 / constant / empty),
+_healthy_dark_b (pass-through + remember, substitute, fail-closed), and an
+integration test that a residual dark_b on frame 1 fails the scan closed
+with the session FAILED. The scan-sequence mocks (zero-filled dark,
+unique==1) are unaffected, confirming the unique>1 boundary. Full suite
+green.
+
+**Outcome for the dark_b row:** closed. The residual dark_b is now
+detected and corrected (or fails closed if unrepairable), so it no longer
+reaches the AFE offset as a silent error. Cause proven (Test 32), fix in
+place (Test 33). The residual is the device's own response on later batch
+frames; that behaviour is a documented property of the hardware, now
+handled.
