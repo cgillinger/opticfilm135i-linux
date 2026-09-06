@@ -1970,15 +1970,18 @@ Both settled from collected diag (test18/19, all eight batch frames,
 
 **TODO 10 — POSITION mask 0xf1 vs 0xf0.** The question was whether the
 POSITION completion should also require bit 0x01 (mask 0xf1) rather than
-the state class alone (0xf0). The data answers it:
-- Successful POSITION completions are always `f455` (bit 0x01 = 0).
+the state class alone (0xf0).
 - Still-moving reads are always class 9 or D (`9c55`, `d555`), already
   rejected by the 0xf0 class mask.
 
-No observed case has class F with bit 0x01 set, so 0xf1 would behave
-identically to 0xf0 on all data — no discrimination gain, only the risk
-of a false timeout if a settled transport ever read `f5`. Keep 0xf0.
-TODO 10 closed.
+[Corrected 2026-09-06, see Test 31: this entry then claimed "successful
+POSITION completions are always f455 (bit 0x01 = 0)" and closed TODO 10 on
+that basis. **That was wrong** — it was drawn from `poll_timeout_details`
+(the 1 s intermediate polls that timed out), which does NOT contain the
+final "settled" value. The scan logs show POSITION actually settled on
+`f555` (class F, **bit 0x01 SET**) for every move longer than frame 1
+(frames 2/3/4). So 0xf1 would NOT behave identically to 0xf0, and TODO 10
+is reopened as the f555 question — see Test 31.]
 
 **Frame 4's POSITION budget is already sufficient.** The earlier worry
 (position-poll-budget-frame4, 2026-09-05: "frame 4 scanned while still
@@ -2146,3 +2149,52 @@ predicate, or recovery path changed. No hardware run.
 cause. dark_b's cause stays open until a hardware collection (Test 29).
 POSITION's f555 acceptance remains a separate open safety question,
 untouched.
+
+
+## 2026-09-06 — Test 31: POSITION settles on f555 (bit 0x01 set) on every long move — corrects Test 28 (offline)
+
+Offline log review (hw-2026-09-05-load2/scan-3-batch.log, scan-4-raw.log,
+identical across both). The POSITION completion value scales with move
+length:
+
+| frame | FEEDL | settled | time |
+|---|---|---|---|
+| 1 | 6746 | `f455` (exact) | 0.00 s |
+| 2 | 17506 | **`f555`** (captured f455) | 2.01 s |
+| 3 | 28266 | **`f555`** | 4.17 s |
+| 4 | 39026 | **`f555`** | 6.33 s |
+
+So POSITION settles on `f555` — class F but **bit 0x01 set** — on every
+move longer than frame 1, systematically and reproducibly, and the settle
+time scales with FEEDL. The 0xf0 mask accepts it (class match). The vendor
+capture's `f455` is from frame 1 only; there is no vendor capture for the
+longer moves, so `f555` is not necessarily a deviation *from the vendor*.
+
+This corrects Test 28's "successful completions are always f455": that was
+read from `poll_timeout_details` (intermediate 1 s polls), which never
+holds the final settled value. The settled value lives only in the scan
+log's "completion poll settled" line.
+
+**The open question (unchanged in kind, sharper in fact):** does bit 0x01
+at a class-F completion mean the transport is still settling (so 0xf0
+accepts a not-fully-stopped transport on long moves — a real safety
+issue), or is it a benign status bit (class F is the done class per Test
+27/28's still-moving = class D finding; the code comment notes bit 0x01 is
+set in the 0xad scan state, i.e. not a motion flag there)? The functional
+threshold is "scan never starts on a moving transport → the frame is
+geometrically correct".
+
+**Not resolvable offline** with the files on hand: the b4 batch
+(2026-09-02) is an older format (different dimensions, f3 flat) and not
+trustworthy; the actual f555 frames' TIFFs are not available here (the B5
+batch's are on the laptop). So this stays open.
+
+**Next step (hardware, folds into the laptop pass):** in the dark_b
+collection batch (Test 29), also (a) log the POSITION completion value per
+frame and (b) check frames 2–4's film geometry — if they are correctly
+positioned, f555 is a functionally safe completion and the row closes 📄
+(bit 0x01 benign, keep 0xf0); if shifted, it is motion and 0xf1 / a longer
+wait is needed. Optionally an explicit 0xf1 A/B: do frames 2–4 then settle
+to f455 given more time (bit 0x01 = motion) or time out (bit 0x01 never
+clears = benign)? No mask change is made now (the external review said to
+keep f555 an open question and not to change POSITION speculatively).
