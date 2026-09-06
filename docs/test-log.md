@@ -1907,3 +1907,48 @@ subsumes the B5-vs-mintuu geometry gap Test 25 had read as a host
 difference. The one open question this leaves is the DPI-change position
 shift (Test 7, ~1059 rows) — an order of magnitude larger than
 load-to-load, so still a real and separate effect to test.
+
+
+## 2026-09-06 — Test 27: the DPI-change position shift (Test 7) does not reproduce on 058f3a8
+
+The cheapest experiment from docs/dpi-drift-analysis.md, run on mintuu,
+driver 058f3a8, one load, frame 1, default (verbatim) park throughout.
+Two variants, separate `of135i scan` processes (each its own session, so
+each 3600 scan is a fresh session after the previous DPI's park — Test 7's
+condition).
+
+**Variant a — 3600 → 2400 → doctor → 3600.**
+film_start_row 3600a **1836**, 3600b (after the 2400 session) **1842** —
+6 rows, within a single load's drift. The `doctor` read taken immediately
+after the 2400 park: reg 0x01 = 0x22, **status word 0xf855** (f8 & 0xe3 =
+0xe0 → the park-complete idle class), not busy. So the park had completed
+before the next session opened.
+
+**Variant b — 3600 → 2400 → 3600 → 2400 → 3600 (five scans, one load).**
+The three 3600 scans: film_start **1841 → 1838 → 1833**, i.e. ~4 rows
+per scan monotonic, the same magnitude as within-load drift (Test 26).
+The 2400 scans were consistent (1223 / 1218). The DPI changes add no
+extra position drift.
+
+So Test 7's ~1059-row (7.5 mm) shift does NOT reproduce on the current
+code, with either one DPI change or five. The doctor read shows the 2400
+park reaches idle before the next session, which contradicts hypothesis 1
+(verbatim park ends mid-return). The most likely explanation is that a
+fix landed since Test 7 (2026-09-03, older code) — the POSITION-budget
+and park work — and incidentally settled the DPI drift too. No firm
+"fixed" claim from one day's data, but the shift is not observable now.
+
+Consequence: the step-4 fix that dpi-drift-analysis.md sketched (wait for
+PARK_COMPLETE at session start) is not warranted — there is no shift to
+fix. The "re-load after a DPI change" workaround is no longer reproducibly
+necessary; keep it noted but no longer required in practice.
+
+Side observation: the 2400 park polls 0x32 far longer than the 3600 park
+— about 50 iterations of the benign 9555-vs-8155 pair, ~1 s each, so a
+2400 park runs ~50 s where a 3600 park is a few seconds. Benign (the pair
+is in the documented benign set) but it dominates the 2400 scan time.
+
+Verdict: DPI→DPI position is stable on 058f3a8; Test 7's shift is not
+reproducible; no PARK_COMPLETE session-start fix is needed. TODO 9 can be
+closed as "not reproducible on current code", pending re-check if it ever
+resurfaces.
