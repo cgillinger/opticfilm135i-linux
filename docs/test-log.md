@@ -2455,3 +2455,44 @@ propagating exception; the plain/dual dispatch via `_cmd_digitize` with a
 mock scanner; and that a `--positive` preview does not alter the main
 pixels. Full suite green (133). CLI help, README and ROADMAP (A12)
 synchronised. A12 stays offline-verified; next is release packaging.
+
+## 2026-09-06 — Test 38: digitize (A12) — second audit, seven more fixes (offline)
+
+A second offline audit (Fable 5) of the Test-37 work found seven items.
+One was a real bug I had shipped (and my own test had codified it); the
+rest hardened resume. All fixed offline. No protocol/calibration/POSITION/
+PARK/safety change.
+
+- **A — preview orientation (real bug).** The Test-37 `--positive` preview
+  was built straight from the un-mirrored visible, so it came out mirrored
+  and text read backwards — unlike `scan --positive`, which applies the
+  vendor orientation (HorizontalMirror=1: `rot90(·,3)` then a column
+  flip) *before* `to_positive`. Worse, `test_digitize_preview_does_not_
+  alter_main` asserted the buggy result, so it was green on a wrong image.
+  Fixed: the preview now applies the vendor orientation before
+  `to_positive`; `--rotate` is then applied to visible/IR/preview
+  separately. The main `fN.tiff` stays the raw negative (unrotated,
+  unmirrored). The test now asserts against the oriented positive.
+- **C — prefix sequences independent.** `next_roll`/`rolls_done`/
+  `roll_is_done` looked at every manifest record regardless of `prefix`, so
+  a second box (`--prefix boxB-`) would inherit boxA's numbering and
+  done-marks. All three now filter on `prefix` (a record with no prefix
+  field counts as `""`).
+- **D — overwrite guard on any non-empty dir.** The guard checked for
+  `*.tiff` only; a partial/crashed run that left just a `.diag.json` was
+  not protected. It now triggers on any non-empty roll directory.
+- **E — docs.** `--roll`/`--force` help and the module docstring now say
+  auto-numbering and the guard consult BOTH the manifest and on-disk dirs.
+- **F — success-path manifest tolerance.** A manifest write failing on the
+  success path would crash a scan whose images were already on disk. It now
+  warns (stderr) and returns the scan's rc.
+- **G — richer record.** The manifest record now carries `ir`, `no_clean`
+  and `rotate`.
+- **B — tests.** Added: a manifest error on the *failure* path does not
+  mask the original scan error; the success path tolerates a manifest
+  error; prefix sequences are independent.
+
+Tests (offline, test_offline): +3 new (18 in the file); full suite 136.
+`release_check` green on a clean checkout. A12 stays offline-verified
+(its scanning is A2/A3, already hardware-verified); next is release
+packaging. Pushed as 67612bc; Fable 5 asked to re-audit the diff.
