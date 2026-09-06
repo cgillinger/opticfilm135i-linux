@@ -2313,3 +2313,46 @@ reaches the AFE offset as a silent error. Cause proven (Test 32), fix in
 place (Test 33). The residual is the device's own response on later batch
 frames; that behaviour is a documented property of the hardware, now
 handled.
+
+
+## 2026-09-06 — Test 34: f555 is benign — settled it offline from existing raw data
+
+The f555 question (Test 31/32: does bit 0x01 at a class-F POSITION
+completion mean a not-fully-stopped transport?) turned out to be
+answerable offline after all. `hw-2026-09-05-load2/raw20-f1..f4` are a
+1–4 batch scanned **raw** (`positive: False, rotate: 0`) whose log
+(scan-4-raw.log) shows exactly the f555 pattern: frame 1 `f455`, frames
+2/3/4 `f555`. So these are the f555 frames, in raw orientation, and
+film_rows is directly measurable — no --positive inversion, no extra
+hardware pass.
+
+film_start_row (green, hwblock.film_rows verbatim):
+
+| frame | completion | film_start | film_end | len |
+|---|---|---|---|---|
+| 1 | f455 | 1875 | 5117 | 3242 |
+| 2 | f555 | 2181 | 5073 | 2892 |
+| 3 | f555 | 6 | 5093 | 5087 |
+| 4 | f555 | 19 | 5102 | 5083 |
+
+The f555 frames land on the **normal batch position structure** — 2181 /
+6 / 19 matches Test 21's W5 (1856 / 2159 / 6 / 0) and Test 32's positive
+geometry (1836 / 2141 / 6 / 0) to within ~20 rows. If bit 0x01 meant the
+transport was still moving, these frames would be shifted or smeared (as
+in Test 18's frame 4, which read class **D** `d555` and held mostly the
+previous frame). They are not: the geometry is the expected one.
+
+**Conclusion:** f555 is a valid class-F completion. bit 0x01 set on the
+long moves is a benign status bit, not motion — class F is the done class
+(Test 27/28: motion is class D), and the frames scanned after an f555
+completion are correctly positioned. The functional threshold ("scan
+never starts on a moving transport → frame geometrically correct") is
+met. The 0xf0 mask accepts f555 correctly; **no mask change** (0xf1 would
+have falsely rejected a valid completion). TODO 10 / the f555 safety
+question is closed. bit 0x01's exact semantics remain unknown but are
+geometrically harmless.
+
+With this, M3's frozen list has no open rows: dark_b solved (Test 32/33),
+f555 benign (this), DPI drift not reproducible (Test 27), frame-4 budget
+fine (Test 28), geometry/load-to-load within the frame-fits threshold,
+cross-unit a documented limitation.
