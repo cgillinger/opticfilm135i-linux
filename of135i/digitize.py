@@ -19,6 +19,12 @@ Raw (unclipped, un-inverted) TIFF is the archival product; colour
 interpretation is the application's job. The manifest makes the run
 auditable (per-frame gain/offset, dark_b substitution flag, status) and
 lets a re-run skip rolls already done.
+
+Auto-numbering and the overwrite guard consult BOTH the manifest and the
+directories on disk: a scan writes its frames before it appends a manifest
+record, so a run that crashed in between still owns its roll number and its
+files are protected. Each ``prefix`` is an independent roll sequence within
+one ``--out``.
 """
 
 from __future__ import annotations
@@ -71,10 +77,14 @@ def append_manifest(out_dir: str, record: dict) -> None:
         f.write(json.dumps(record, sort_keys=True) + "\n")
 
 
-def rolls_done(out_dir: str) -> set[int]:
-    """Roll numbers already recorded with status 'ok'."""
+def rolls_done(out_dir: str, prefix: str = "") -> set[int]:
+    """Roll numbers already recorded with status 'ok' for this ``prefix``.
+    Each prefix is its own roll sequence inside a shared --out, so the
+    manifest is filtered on it (a record without a prefix field counts as
+    prefix "")."""
     return {int(r["roll"]) for r in read_manifest(out_dir)
-            if r.get("status") == "ok" and "roll" in r}
+            if r.get("status") == "ok" and "roll" in r
+            and r.get("prefix", "") == prefix}
 
 
 def existing_roll_numbers(out_dir: str, prefix: str = "") -> set[int]:
@@ -96,22 +106,28 @@ def existing_roll_numbers(out_dir: str, prefix: str = "") -> set[int]:
 
 
 def next_roll(out_dir: str, prefix: str = "") -> int:
-    """The next roll number to scan: one past the highest roll seen in
-    EITHER the manifest (any status) or an existing output directory, or 1
-    if none. Consulting both means a scan that wrote frames but never
-    recorded a manifest entry (a crash between the two) does not get its
-    number reused and its files overwritten. A failed roll's number is not
-    silently reused either; the operator can still target one with --roll."""
-    rolls = {int(r["roll"]) for r in read_manifest(out_dir) if "roll" in r}
+    """The next roll number to scan for this ``prefix``: one past the highest
+    roll seen in EITHER the manifest (any status, this prefix) or an existing
+    ``<prefix>roll-NNN`` directory, or 1 if none. Consulting both means a scan
+    that wrote frames but never recorded a manifest entry (a crash between the
+    two) does not get its number reused and its files overwritten. A failed
+    roll's number is not silently reused either; the operator can still target
+    one with --roll. Filtering on prefix keeps two prefixes in one --out as
+    independent sequences."""
+    rolls = {int(r["roll"]) for r in read_manifest(out_dir)
+             if "roll" in r and r.get("prefix", "") == prefix}
     rolls |= existing_roll_numbers(out_dir, prefix)
     return max(rolls) + 1 if rolls else 1
 
 
 def roll_dir_has_output(out_dir: str, prefix: str, roll: int) -> bool:
-    """True if this roll's directory already holds a scan (any .tiff) --
-    the check that guards against overwriting existing results."""
+    """True if this roll's directory already exists and is non-empty -- the
+    check that guards against overwriting existing results. Any content
+    counts (not just ``*.tiff``): a partial or crashed run may have left a
+    ``.diag.json`` or a half-written file, and clobbering that is exactly
+    what the guard exists to prevent."""
     d = roll_dir(out_dir, prefix, roll)
-    return d.is_dir() and any(d.glob("*.tiff"))
+    return d.is_dir() and any(d.iterdir())
 
 
 def roll_dirname(prefix: str, roll: int) -> str:
@@ -128,5 +144,5 @@ def frame_path(out_dir: str, prefix: str, roll: int, frame: int) -> Path:
     return roll_dir(out_dir, prefix, roll) / f"f{frame}.tiff"
 
 
-def roll_is_done(out_dir: str, roll: int) -> bool:
-    return roll in rolls_done(out_dir)
+def roll_is_done(out_dir: str, roll: int, prefix: str = "") -> bool:
+    return roll in rolls_done(out_dir, prefix)

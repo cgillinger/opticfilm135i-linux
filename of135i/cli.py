@@ -386,11 +386,27 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
     dust_cleaned = bool(dual and args.ir and not args.no_clean)
     if dust_cleaned:
         visible = image.remove_dust(visible, ir)
+
+    # Preview (positive): built with the SAME vendor orientation the scan
+    # command applies before to_positive -- mirror + rot90(·,3) (vendor ini
+    # HorizontalMirror=1). Without it the preview is mirrored and text reads
+    # backwards. Built from the un-rotated visible; --rotate is applied to
+    # it below too, so it matches `scan --positive` on the same raw data.
+    prev = None
+    if args.positive:
+        prev = _np.ascontiguousarray(_np.rot90(visible, 3)[:, ::-1])
+        prev = image.to_positive(prev)
+
+    # Rotate the archival negative (and IR, and the preview) if requested.
+    # The negative is only rotated, never mirrored -- the mirror belongs to
+    # the positive path -- matching scan's raw output.
     if args.rotate:
         k = args.rotate // 90
         visible = _np.ascontiguousarray(_np.rot90(visible, k=k))
         if ir is not None:
             ir = _np.ascontiguousarray(_np.rot90(ir, k=k))
+        if prev is not None:
+            prev = _np.ascontiguousarray(_np.rot90(prev, k=k))
 
     _write_image(visible, out, positive=False)   # raw negative, never inverted
     print(f"wrote {out} ({visible.shape[1]}x{visible.shape[0]}, 16-bit RGB "
@@ -402,8 +418,7 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
         image.write_tiff16(ir_rgb, ir_file)
         print(f"wrote {ir_file} ({ir.shape[1]}x{ir.shape[0]}, 16-bit, IR channel)")
 
-    if args.positive:
-        prev = image.to_positive(visible)   # from the same visible; no rescan
+    if prev is not None:
         preview_file = str(Path(out).with_name(Path(out).stem + "-preview.tiff"))
         _write_image(prev, preview_file, positive=True)
         print(f"wrote {preview_file} ({prev.shape[1]}x{prev.shape[0]}, "
@@ -433,7 +448,7 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
     # between scanning and recording is caught) or is recorded done, unless
     # --force.
     if not args.force and (digitize.roll_dir_has_output(args.out, args.prefix, roll)
-                           or digitize.roll_is_done(args.out, roll)):
+                           or digitize.roll_is_done(args.out, roll, args.prefix)):
         print(f"error: roll {roll} already has output in {rdir} (or is recorded "
               f"done); use --roll for a different one, or --force to redo it.",
               file=sys.stderr)
@@ -446,7 +461,8 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
     started = datetime.now(timezone.utc).isoformat()
     record: dict = {"roll": roll, "prefix": args.prefix, "dir": str(rdir),
                     "started_utc": started, "dpi": args.dpi,
-                    "positive": args.positive}
+                    "positive": args.positive, "ir": args.ir,
+                    "no_clean": args.no_clean, "rotate": args.rotate}
 
     def record_failed(stage: str, **extra) -> None:
         """Record this roll as failed, tolerating a manifest write that
@@ -523,7 +539,16 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
                   per_frame=per_frame,
                   status="ok" if rc == 0 else "failed",
                   stage=None if rc == 0 else "scan")
-    digitize.append_manifest(args.out, record)
+    # The images are already on disk; a manifest write that fails here must
+    # not turn a successful scan into a crash. Warn loudly instead -- the
+    # disk-based overwrite guard still protects the roll on the next run.
+    try:
+        digitize.append_manifest(args.out, record)
+    except Exception as me:
+        print(f"warning: roll {roll} scanned OK but the manifest write failed "
+              f"({me!r}); the images are saved in {rdir}. The manifest is out "
+              f"of date -- record it by hand or re-run with --force.",
+              file=sys.stderr)
 
     if rc == 0:
         subs = [pf["frame"] for pf in per_frame if pf.get("dark_b_substituted")]
@@ -674,9 +699,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_dig.add_argument("--prefix", default="",
         help="roll-directory name prefix, e.g. 'boxA-' -> boxA-roll-001/ (default none)")
     p_dig.add_argument("--roll", type=int, default=None,
-        help="roll number (default: one past the highest in the manifest)")
+        help="roll number (default: one past the highest for this prefix, "
+             "counting BOTH the manifest and existing roll dirs on disk)")
     p_dig.add_argument("--force", action="store_true",
-        help="scan even if this roll is already recorded as done")
+        help="scan even if this roll already has files on disk or is "
+             "recorded done (overwrites existing output)")
     p_dig.add_argument("--assume-loaded", action="store_true",
         help="skip the load flow (the magazine is already latched)")
     p_dig.add_argument("--dpi", type=int, default=3600, choices=SUPPORTED_DPIS,

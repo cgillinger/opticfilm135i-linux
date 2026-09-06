@@ -263,6 +263,83 @@ def test_digitize_records_failed_on_write_error():
     print("test_digitize_records_failed_on_write_error OK")
 
 
+def test_digitize_manifest_error_does_not_mask_original():
+    """If the manifest write ITSELF fails while recording a failed roll, the
+    original scan error must still propagate (the manifest failure is
+    swallowed with a warning, not raised over the real cause). (Fix B.)"""
+    import argparse
+    from of135i import cli, digitize
+
+    class _Boom(Exception):
+        pass
+
+    with tempfile.TemporaryDirectory() as d:
+        args = argparse.Namespace(
+            out=d, prefix="", roll=1, force=True, assume_loaded=True,
+            dpi=3600, positive=False, rotate=0, ir=True, no_clean=False,
+            no_diag=True, park="verbatim", warmup_budget=None)
+        orig_rws = cli._run_writing_session
+        orig_app = digitize.append_manifest
+        cli._run_writing_session = lambda body: (_ for _ in ()).throw(_Boom("disk full"))
+        digitize.append_manifest = lambda out, rec: (_ for _ in ()).throw(
+            OSError("manifest unwritable"))
+        try:
+            raised = None
+            try:
+                cli._cmd_digitize(args)
+            except _Boom as e:
+                raised = e
+            except OSError as e:      # the manifest error must NOT surface here
+                raised = e
+            assert isinstance(raised, _Boom), (
+                "the original scan error must propagate, not the manifest error")
+        finally:
+            cli._run_writing_session = orig_rws
+            digitize.append_manifest = orig_app
+    print("test_digitize_manifest_error_does_not_mask_original OK")
+
+
+def test_digitize_success_tolerates_manifest_error():
+    """A manifest write that fails on the SUCCESS path must not turn a good
+    scan into a crash: the images are on disk, so digitize warns and returns
+    the scan's rc (0) instead of raising. (Fix F.)"""
+    import argparse
+    from of135i import cli, digitize
+
+    class _MockScanner:
+        park_mode = "verbatim"
+        warmup_budget_s = 60.0
+        last_diag = {"gain_codes": None, "offset_codes": None,
+                     "dark_b_substituted": False}
+
+        def check_start_state(self): pass
+        def is_magazine_present(self): return True
+        def initialize(self, ir, dpi): pass
+        def scan(self, frame, ir=None, dpi=None): return (b"", 0)
+        def eject(self): pass
+
+    with tempfile.TemporaryDirectory() as d:
+        args = argparse.Namespace(
+            out=d, prefix="", roll=1, force=True, assume_loaded=True,
+            dpi=3600, positive=False, rotate=0, ir=False, no_clean=False,
+            no_diag=True, park="verbatim", warmup_budget=None)
+        orig_rws = cli._run_writing_session
+        orig_fin = cli._finish_digitize_frame
+        orig_app = digitize.append_manifest
+        cli._run_writing_session = lambda body: body(_MockScanner())
+        cli._finish_digitize_frame = lambda a, raw, w, out, dual: (out, None, None, False)
+        digitize.append_manifest = lambda out, rec: (_ for _ in ()).throw(
+            OSError("manifest unwritable"))
+        try:
+            rc = cli._cmd_digitize(args)     # must not raise
+        finally:
+            cli._run_writing_session = orig_rws
+            cli._finish_digitize_frame = orig_fin
+            digitize.append_manifest = orig_app
+        assert rc == 0, rc
+    print("test_digitize_success_tolerates_manifest_error OK")
+
+
 def test_digitize_dispatch_plain_on_no_ir():
     """--no-ir + 3600 uses the PLAIN flow: initialize(ir=False) and scan()
     without ir=True (matching the scan command). Verified through
@@ -331,9 +408,14 @@ def test_digitize_preview_does_not_alter_main():
     main_arr, main_pos = written[main]
     prev_arr, prev_pos = written[prev]
     expected = image.align_channels(image.assemble(raw, W), dpi=3600)
+    # The preview carries the vendor orientation (mirror + rot90(·,3)) applied
+    # BEFORE to_positive, matching `scan --positive`; rotate=0 here so no extra
+    # rotation follows. The main image is the raw negative, unrotated/mirrored.
+    expected_prev = image.to_positive(
+        np.ascontiguousarray(np.rot90(expected, 3)[:, ::-1]))
     assert main_pos is False, "main must not be written as positive"
     assert np.array_equal(main_arr, expected), "main must be the raw negative, unchanged"
-    assert np.array_equal(prev_arr, image.to_positive(expected)), "preview is the positive"
+    assert np.array_equal(prev_arr, expected_prev), "preview is the oriented positive"
     assert not np.array_equal(main_arr, prev_arr), "preview must differ from main"
     print("test_digitize_preview_does_not_alter_main OK")
 
@@ -365,6 +447,29 @@ def test_digitize_records_failed_load():
     print("test_digitize_records_failed_load OK")
 
 
+def test_digitize_prefix_sequences_are_independent():
+    """Two prefixes in one --out are independent roll sequences: next_roll,
+    rolls_done and roll_is_done are all filtered on prefix, so boxA's rolls
+    don't advance or 'done'-mark boxB. (Fix C.)"""
+    from of135i import digitize
+    with tempfile.TemporaryDirectory() as d:
+        digitize.append_manifest(d, {"roll": 1, "status": "ok", "prefix": "boxA-"})
+        digitize.append_manifest(d, {"roll": 2, "status": "ok", "prefix": "boxA-"})
+        # boxB has nothing recorded: its sequence starts at 1, not 3
+        assert digitize.next_roll(d, "boxB-") == 1, digitize.next_roll(d, "boxB-")
+        assert digitize.next_roll(d, "boxA-") == 3
+        # done-ness is per prefix
+        assert digitize.rolls_done(d, "boxA-") == {1, 2}
+        assert digitize.rolls_done(d, "boxB-") == set()
+        assert digitize.roll_is_done(d, 1, "boxA-") is True
+        assert digitize.roll_is_done(d, 1, "boxB-") is False
+        # a record with no prefix field counts as prefix ""
+        digitize.append_manifest(d, {"roll": 5, "status": "ok"})
+        assert digitize.roll_is_done(d, 5, "") is True
+        assert digitize.roll_is_done(d, 5, "boxA-") is False
+    print("test_digitize_prefix_sequences_are_independent OK")
+
+
 def main() -> int:
     tests = [
         test_assemble_shape_and_endianness,
@@ -380,8 +485,11 @@ def main() -> int:
         test_digitize_append_after_torn_line,
         test_digitize_overwrite_guard,
         test_digitize_records_failed_on_write_error,
+        test_digitize_manifest_error_does_not_mask_original,
+        test_digitize_success_tolerates_manifest_error,
         test_digitize_dispatch_plain_on_no_ir,
         test_digitize_preview_does_not_alter_main,
+        test_digitize_prefix_sequences_are_independent,
     ]
     for t in tests:
         t()
