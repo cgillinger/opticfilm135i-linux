@@ -130,6 +130,25 @@ def roll_dir_has_output(out_dir: str, prefix: str, roll: int) -> bool:
     return d.is_dir() and any(d.iterdir())
 
 
+def clear_roll_outputs(out_dir: str, prefix: str, roll: int) -> list[str]:
+    """Delete this roll's per-frame output files (``f*.tiff`` -- visible, IR
+    and preview -- and ``f*.diag.json``) so a --force re-scan cannot leave a
+    previous run's sidecars mixed in beside the new ones. Returns the names
+    removed. The manifest is untouched (append-only; the re-run appends a
+    fresh record). Only frame outputs are removed, not unrelated files an
+    operator may have put in the dir."""
+    d = roll_dir(out_dir, prefix, roll)
+    if not d.is_dir():
+        return []
+    removed: list[str] = []
+    for pat in ("f*.tiff", "f*.diag.json"):
+        for f in sorted(d.glob(pat)):
+            if f.is_file():
+                f.unlink()
+                removed.append(f.name)
+    return removed
+
+
 def roll_dirname(prefix: str, roll: int) -> str:
     return f"{prefix}roll-{roll:03d}"
 

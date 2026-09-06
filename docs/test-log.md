@@ -2494,5 +2494,20 @@ PARK/safety change.
 
 Tests (offline, test_offline): +3 new (18 in the file); full suite 136.
 `release_check` green on a clean checkout. A12 stays offline-verified
-(its scanning is A2/A3, already hardware-verified); next is release
-packaging. Pushed as 67612bc; Fable 5 asked to re-audit the diff.
+(its scanning is A2/A3, already hardware-verified). Pushed as 67612bc;
+Fable 5 re-audited the diff and confirmed all seven fixed and verified,
+no blocker, with one further low note (below).
+
+**Follow-up from the re-audit — `--force` now clears stale outputs.**
+`--force` re-did a roll's scan but did not remove the previous run's
+per-frame files, so a re-run could leave e.g. an old `f1-preview.tiff`
+beside a new negative scanned without `--positive` — a roll dir that is a
+mix of two runs, with the sidecar looking as fresh as the rest. Added
+`digitize.clear_roll_outputs`, called on `--force` before any hardware:
+it deletes the roll's `f*.tiff` (visible/IR/preview) and `f*.diag.json`,
+leaves unrelated files and the append-only manifest alone, and prints how
+many it removed. Test: it removes exactly the frame outputs, keeps an
+unrelated file, and is a no-op on a missing dir. Full suite 137
+(test_offline 19). (The re-audit's other note — a test through the real
+`_run_writing_session` — is left out: it needs a device open and maps to
+no open A12 requirement; the re-raise branch is guaranteed by code.)

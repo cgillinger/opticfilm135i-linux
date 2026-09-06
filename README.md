@@ -236,7 +236,9 @@ leaves the negative untouched; `--roll N` targets a specific roll,
 `--no-ir` drops the IR output (non-3600 profiles still capture dual-light).
 Resume is **between strips**: the roll number advances past the highest
 recorded or on-disk roll, an existing roll is not overwritten without
-`--force`, and an interrupted strip is recorded failed and re-run whole
+`--force` (which first clears that roll's previous `f*.tiff`/`.diag.json`
+so the dir is not a mix of two runs), and an interrupted strip is recorded
+failed and re-run whole
 (there is no mid-strip resume). The manifest records per-frame calibration
 and whether a residual dark_b was auto-corrected (docs/test-log.md
 Test 32–33).

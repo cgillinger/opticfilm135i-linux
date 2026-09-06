@@ -455,6 +455,15 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
         return 2
     print(f"=== digitize roll {roll} -> {rdir} ===")
 
+    # --force redoes a roll: clear the previous run's frame outputs first, so
+    # the dir can't end up a mix of two runs (e.g. an old f1-preview.tiff left
+    # beside a new negative scanned without --positive). Done before hardware.
+    if args.force:
+        removed = digitize.clear_roll_outputs(args.out, args.prefix, roll)
+        if removed:
+            print(f"--force: removed {len(removed)} existing file(s) in {rdir} "
+                  f"before re-scanning")
+
     args.frames = "1-4"   # for _write_diag_sidecar's cli metadata
     args.eject = True
 
@@ -703,7 +712,8 @@ def build_parser() -> argparse.ArgumentParser:
              "counting BOTH the manifest and existing roll dirs on disk)")
     p_dig.add_argument("--force", action="store_true",
         help="scan even if this roll already has files on disk or is "
-             "recorded done (overwrites existing output)")
+             "recorded done; clears the roll's previous f*.tiff/.diag.json "
+             "first so the dir is not a mix of two runs")
     p_dig.add_argument("--assume-loaded", action="store_true",
         help="skip the load flow (the magazine is already latched)")
     p_dig.add_argument("--dpi", type=int, default=3600, choices=SUPPORTED_DPIS,

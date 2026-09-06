@@ -447,6 +447,29 @@ def test_digitize_records_failed_load():
     print("test_digitize_records_failed_load OK")
 
 
+def test_digitize_force_clears_stale_outputs():
+    """clear_roll_outputs removes a roll's f*.tiff and f*.diag.json (visible,
+    IR, preview and diag), so a --force re-scan can't leave a previous run's
+    sidecars mixed in. Unrelated files are left alone; the manifest is not
+    touched here. (Audit note 1.)"""
+    from of135i import digitize
+    with tempfile.TemporaryDirectory() as d:
+        rd = digitize.roll_dir(d, "boxA-", 1)
+        rd.mkdir(parents=True)
+        for name in ("f1.tiff", "f1-ir.tiff", "f1-preview.tiff", "f1.diag.json",
+                     "f2.tiff"):
+            (rd / name).write_bytes(b"x")
+        (rd / "notes.txt").write_bytes(b"keep me")     # unrelated, must stay
+        removed = digitize.clear_roll_outputs(d, "boxA-", 1)
+        assert set(removed) == {"f1.tiff", "f1-ir.tiff", "f1-preview.tiff",
+                                "f1.diag.json", "f2.tiff"}, removed
+        assert (rd / "notes.txt").exists()
+        assert not any(rd.glob("f*.tiff")) and not any(rd.glob("f*.diag.json"))
+        # a missing dir is a no-op, not an error
+        assert digitize.clear_roll_outputs(d, "boxA-", 9) == []
+    print("test_digitize_force_clears_stale_outputs OK")
+
+
 def test_digitize_prefix_sequences_are_independent():
     """Two prefixes in one --out are independent roll sequences: next_roll,
     rolls_done and roll_is_done are all filtered on prefix, so boxA's rolls
@@ -489,6 +512,7 @@ def main() -> int:
         test_digitize_success_tolerates_manifest_error,
         test_digitize_dispatch_plain_on_no_ir,
         test_digitize_preview_does_not_alter_main,
+        test_digitize_force_clears_stale_outputs,
         test_digitize_prefix_sequences_are_independent,
     ]
     for t in tests:
