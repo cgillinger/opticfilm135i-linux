@@ -102,17 +102,16 @@ the evidence was produced against where it matters.
 and closed. A12 is offline-complete (its scanning is A2/A3). No new test
 series is required for these merely because this plan was written.
 
-**What must remain before A can be declared complete:**
+**What was required before A could be declared complete — both done:**
 1. ~~A10 hardware confirmation~~ — **done (Test 36):** frame 3's residual
    dark_b was detected and substituted, all four frames got the reference
    offset, raw image sound. The fix is hardware-verified on the host that
    produces the fault.
-2. **Release packaging** — a version tag, and confirming the install +
-   usage instructions (README) are complete and current. Documentation/
-   build only; no hardware.
+2. ~~Release packaging~~ — **done:** tagged **v0.1.0** on e78a4fe; README
+   install + usage confirmed complete and current.
 
-Every acceptance-matrix row is now met. The only thing between here and A
-is packaging (2) — no hardware, no further testing.
+Every acceptance-matrix row is met and A is packaged. **Milestone A is
+complete.**
 
 ## A — Accepted limitations
 
@@ -158,10 +157,10 @@ request flow at submission time). Delivered = submitted, review-ready.
 - **M3 — robustness:** ✅ **complete.** Every row of the A-matrix is met;
   A10 (the residual-dark_b fix) is hardware-verified on B5 (Test 36). No
   open rows.
-- **A — own driver:** all acceptance criteria met. **Remaining: release
-  packaging only** (version tag + confirm README install/usage) —
-  documentation/build, no hardware, no further testing.
-- **B1 / B2 — SANE:** not started; begin after A is packaged.
+- **A — own driver:** ✅ **complete.** All acceptance criteria met and
+  packaged: tagged **v0.1.0** (e78a4fe), README install/usage confirmed.
+- **B1 / B2 — SANE:** not started; B1 (local SANE backend) is the next
+  milestone.
 
-Next action toward A is packaging, then A is complete — then B1 (local
-SANE backend). Not further general testing.
+Milestone A is done. The next action is B1 — a local `genesys`-family
+SANE backend — not further general testing of A.
