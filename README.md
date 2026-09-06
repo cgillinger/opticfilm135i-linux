@@ -13,6 +13,24 @@ required (yet).
 Keywords: *Plustek OpticFilm 135i Linux driver, film scanner Linux, 35mm
 negative scanner Linux, SANE OpticFilm 135i, GL126, pyusb scanner driver*.
 
+## Project status
+
+The driver scans on Linux today via its CLI (details below). The end goal
+is a **SANE backend** so the scanner also works in standard SANE frontends
+(`scanimage`, digiKam, …). How "done" is measured — by criteria with
+functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md](docs/ROADMAP.md)**.
+
+- **M1 — Protocol reverse-engineered** ✅
+- **M2 — Driver drives the hardware** ✅ (load, 1–4 batch, all DPI, IR + dust removal, eject)
+- **M3 — Robustness and honest limits** — in progress (short frozen list of open items)
+- **M4 — SANE backend** — not started yet (skeleton only)
+
+Today you scan from the command line to TIFF/PNM and can import the files
+into any tool (including digiKam). Scanning *from inside* a SANE frontend
+needs M4. The SANE backend can be **built and installed locally** — it does
+not depend on the SANE project accepting it upstream; upstreaming is a
+separate, later step for wider distribution.
+
 ## What works today
 
 - Full scan flow over raw USB (pyusb): initialization, magazine handling,

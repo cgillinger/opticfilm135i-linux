@@ -55,10 +55,24 @@ Closing the remaining risks, each to a functional threshold:
 
 ### M4 — SANE backend
 A `genesys`-family backend (using the gl124 backend as the template),
-brought to the point where it builds, scans a frame via `scanimage`,
-passes the SANE backend test suite, and is ready for upstream review.
-Started only once M3's list is complete. "Done" here is defined by SANE's
-own contribution requirements, not by an internal test count.
+brought to the point where it builds, scans a frame via `scanimage`, and
+works in SANE frontends such as digiKam. Started only once M3's list is
+complete.
+
+Two distinct steps — the first does not depend on the second:
+
+- **Local backend (self-contained):** build the backend against
+  sane-backends, install the `.so`, register it in `dll.conf`. SANE and
+  its frontends then see the scanner. This needs no approval from anyone —
+  it is entirely under our control.
+- **Upstream contribution (optional, later):** getting the backend merged
+  into the SANE project so it ships with distributions. Defined by SANE's
+  own contribution requirements. Wider reach and shared maintenance, but
+  not required to use the scanner.
+
+Meanwhile the CLI already scans batches to raw 16-bit TIFF — a sound
+workflow for bulk-digitising film to the best possible starting point,
+with colour interpretation done later in the application.
 
 ## Where we are now
 
