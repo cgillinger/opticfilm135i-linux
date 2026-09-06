@@ -34,6 +34,10 @@ from pathlib import Path
 
 MANIFEST_NAME = "manifest.jsonl"
 
+# The frames one strip holds; digitize scans all four per run. Kept here
+# so the cleaner below and the scan loop in cli.py cannot drift apart.
+FRAMES = (1, 2, 3, 4)
+
 
 def manifest_path(out_dir: str) -> Path:
     return Path(out_dir) / MANIFEST_NAME
@@ -131,21 +135,27 @@ def roll_dir_has_output(out_dir: str, prefix: str, roll: int) -> bool:
 
 
 def clear_roll_outputs(out_dir: str, prefix: str, roll: int) -> list[str]:
-    """Delete this roll's per-frame output files (``f*.tiff`` -- visible, IR
-    and preview -- and ``f*.diag.json``) so a --force re-scan cannot leave a
-    previous run's sidecars mixed in beside the new ones. Returns the names
-    removed. The manifest is untouched (append-only; the re-run appends a
-    fresh record). Only frame outputs are removed, not unrelated files an
-    operator may have put in the dir."""
+    """Delete this roll's per-frame output files -- for each frame exactly
+    ``fN.tiff``, ``fN-ir.tiff``, ``fN-preview.tiff`` and ``fN.diag.json`` --
+    so a --force re-scan cannot leave a previous run's sidecars mixed in
+    beside the new ones. Returns the names removed. The manifest is
+    untouched (append-only; the re-run appends a fresh record).
+
+    The names are built and matched EXACTLY, never globbed: an ``f*.tiff``
+    pattern also takes an operator's own ``family.tiff`` out of the
+    directory, and this function must only ever remove files the driver
+    itself wrote."""
     d = roll_dir(out_dir, prefix, roll)
     if not d.is_dir():
         return []
     removed: list[str] = []
-    for pat in ("f*.tiff", "f*.diag.json"):
-        for f in sorted(d.glob(pat)):
+    for frame in FRAMES:
+        for name in (f"f{frame}.tiff", f"f{frame}-ir.tiff",
+                     f"f{frame}-preview.tiff", f"f{frame}.diag.json"):
+            f = d / name
             if f.is_file():
                 f.unlink()
-                removed.append(f.name)
+                removed.append(name)
     return removed
 
 

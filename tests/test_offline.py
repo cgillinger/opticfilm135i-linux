@@ -361,7 +361,8 @@ def test_digitize_success_tolerates_manifest_error():
         orig_fin = cli._finish_digitize_frame
         orig_app = digitize.append_manifest
         cli._run_writing_session = lambda body: body(_MockScanner())
-        cli._finish_digitize_frame = lambda a, raw, w, out, dual: (out, None, None, False)
+        cli._finish_digitize_frame = (
+            lambda a, raw, w, out, dual, progress=None: (out, None, None, False))
         digitize.append_manifest = lambda out, rec: (_ for _ in ()).throw(
             OSError("manifest unwritable"))
         try:
@@ -404,7 +405,8 @@ def test_digitize_dispatch_plain_on_no_ir():
         orig_rws = cli._run_writing_session
         orig_fin = cli._finish_digitize_frame
         cli._run_writing_session = lambda body: body(_MockScanner())
-        cli._finish_digitize_frame = lambda a, raw, w, out, dual: (out, None, None, False)
+        cli._finish_digitize_frame = (
+            lambda a, raw, w, out, dual, progress=None: (out, None, None, False))
         try:
             rc = cli._cmd_digitize(args)
         finally:
@@ -527,6 +529,84 @@ def test_digitize_prefix_sequences_are_independent():
     print("test_digitize_prefix_sequences_are_independent OK")
 
 
+def test_clear_roll_outputs_only_frame_files():
+    """--force clears the roll's own frame outputs and NOTHING else. The
+    names are matched exactly, so an operator's own file in the same
+    directory survives -- an `f*.tiff` glob would delete family.tiff."""
+    from of135i import digitize
+    with tempfile.TemporaryDirectory() as d:
+        rd = digitize.roll_dir(d, "", 1)
+        rd.mkdir(parents=True)
+        ours = ["f1.tiff", "f2-ir.tiff", "f3-preview.tiff", "f4.diag.json"]
+        theirs = ["family.tiff", "favourite.diag.json", "f10.tiff",
+                  "f1-crop.tiff", "notes.txt"]
+        for name in ours + theirs:
+            (rd / name).write_bytes(b"x")
+        removed = digitize.clear_roll_outputs(d, "", 1)
+        assert sorted(removed) == sorted(ours), removed
+        left = sorted(p.name for p in rd.iterdir())
+        assert left == sorted(theirs), left
+    print("test_clear_roll_outputs_only_frame_files OK")
+
+
+def test_digitize_records_partial_frame_progress():
+    """A failure part-way through a frame must still record which frame fell,
+    what had been saved and which step was running: per_frame is filled in as
+    each file lands, not only once the whole frame succeeded."""
+    import argparse
+    from of135i import cli, digitize
+
+    class _Boom(Exception):
+        pass
+
+    class _MockScanner:
+        park_mode = "verbatim"
+        warmup_budget_s = 60.0
+        last_diag = {"gain_codes": None, "offset_codes": None,
+                     "dark_b_substituted": False}
+
+        def check_start_state(self): pass
+        def is_magazine_present(self): return True
+        def initialize(self, ir, dpi): pass
+        def scan(self, frame, ir=None, dpi=None): return (b"", 0)
+        def eject(self): pass
+
+    def _fake_finish(a, raw, w, out, dual, progress=None):
+        if progress is not None:      # the main image landed, the rest did not
+            progress["main"] = out
+        return out, None, None, False
+
+    with tempfile.TemporaryDirectory() as d:
+        args = argparse.Namespace(
+            out=d, prefix="", roll=1, force=True, assume_loaded=True,
+            dpi=3600, positive=False, rotate=0, ir=False, no_clean=False,
+            no_diag=False, park="verbatim", warmup_budget=None)
+        orig = (cli._run_writing_session, cli._finish_digitize_frame,
+                cli._write_diag_sidecar)
+        cli._run_writing_session = lambda body: body(_MockScanner())
+        cli._finish_digitize_frame = _fake_finish
+        cli._write_diag_sidecar = lambda a, s, out, frame: (
+            _ for _ in ()).throw(_Boom("sidecar unwritable"))
+        try:
+            raised = None
+            try:
+                cli._cmd_digitize(args)
+            except _Boom as e:
+                raised = e
+        finally:
+            (cli._run_writing_session, cli._finish_digitize_frame,
+             cli._write_diag_sidecar) = orig
+        assert isinstance(raised, _Boom), "the original error must propagate"
+        recs = digitize.read_manifest(d)
+        assert len(recs) == 1 and recs[0]["status"] == "failed", recs
+        pf = recs[0]["per_frame"]
+        assert len(pf) == 1, pf                    # the frame is recorded...
+        assert pf[0]["frame"] == 1
+        assert pf[0]["main"].endswith("f1.tiff"), pf[0]   # ...with what was saved
+        assert pf[0]["stage"] == "diag", pf[0]            # ...and where it fell
+    print("test_digitize_records_partial_frame_progress OK")
+
+
 def main() -> int:
     tests = [
         test_assemble_shape_and_endianness,
@@ -549,6 +629,8 @@ def main() -> int:
         test_digitize_preview_does_not_alter_main,
         test_digitize_force_clears_stale_outputs,
         test_digitize_prefix_sequences_are_independent,
+        test_clear_roll_outputs_only_frame_files,
+        test_digitize_records_partial_frame_progress,
     ]
     for t in tests:
         t()

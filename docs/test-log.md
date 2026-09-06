@@ -2546,3 +2546,46 @@ profile, plus the no-dpi fallback) and checks the pixel block did not move;
 ImageMagick, an independent reader, reports `Resolution: 3600x3600`,
 `Units: PixelsPerInch`. No protocol, calibration, POSITION, PARK or safety
 change; no hardware involved.
+
+## 2026-09-06 — Test 40: digitize — --force deleted more than its own files (offline)
+
+Post-release review of 45305a4, three points; all offline, no hardware.
+
+1. **`--force` could delete an operator's files.** `clear_roll_outputs()`
+   removed `f*.tiff` and `f*.diag.json` by glob, while its own docstring
+   promised "only frame outputs are removed, not unrelated files an operator
+   may have put in the dir". The glob does not keep that promise: in a
+   directory holding `f1.tiff`, `family.tiff`, `f1-crop.tiff`, `f10.tiff`
+   and `favourite.diag.json`, `f*.tiff` matches all four TIFFs and
+   `f*.diag.json` matches the sidecar — so a `--force` re-scan of roll 1
+   deleted `family.tiff` and `favourite.diag.json` too. The names are now
+   built exactly, per frame (`fN.tiff`, `fN-ir.tiff`, `fN-preview.tiff`,
+   `fN.diag.json`) from a shared `digitize.FRAMES`, which the scan loop in
+   cli.py now uses as well so the two cannot drift apart. This is the only
+   place in the driver that deletes anything, which is why it gets exact
+   names rather than a tighter pattern.
+2. **A frame's record is written as the files land.** `per_frame` was
+   appended only after the image, the IR file, the preview AND the diag
+   sidecar had all been written, so a failure at any of those steps left the
+   failed record with `per_frame: []` — even though the negative was on
+   disk. The entry is now appended before the writes and filled in as each
+   file lands (`_finish_digitize_frame` takes a `progress` dict), with a
+   `stage` field naming the step in progress (`scan` / `write` / `diag`,
+   None once the frame completed). A failed roll now says which frame fell,
+   what had been saved and where. Resume semantics are unchanged: an
+   interrupted strip is still re-run whole; this is diagnostic detail, not
+   a mid-strip resume.
+3. **ROADMAP said v0.1.0 → e78a4fe.** The tag was moved to 45305a4 (Test 39)
+   after that line was written. Corrected in both places.
+
+The tag was deliberately NOT moved a second time: v0.1.0 stays on 45305a4.
+These are quality fixes in digitize's file bookkeeping, not a broken
+release; a release tag should stop moving.
+
+Verified offline: `test_clear_roll_outputs_only_frame_files` puts the
+driver's four frame files next to `family.tiff`, `favourite.diag.json`,
+`f1-crop.tiff`, `f10.tiff` and `notes.txt` and asserts exactly the four are
+removed and the other five survive; `test_digitize_records_partial_frame_progress`
+fails the diag write after the main image landed and asserts the failed
+record carries frame 1, its `main` path and `stage: "diag"`. Suite 140 OK.
+No protocol, calibration, POSITION, PARK or safety change.

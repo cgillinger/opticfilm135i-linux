@@ -107,7 +107,7 @@ series is required for these merely because this plan was written.
    dark_b was detected and substituted, all four frames got the reference
    offset, raw image sound. The fix is hardware-verified on the host that
    produces the fault.
-2. ~~Release packaging~~ — **done:** tagged **v0.1.0** on e78a4fe; README
+2. ~~Release packaging~~ — **done:** tagged **v0.1.0** on 45305a4; README
    install + usage confirmed complete and current.
 
 Every acceptance-matrix row is met and A is packaged. **Milestone A is
@@ -158,7 +158,7 @@ request flow at submission time). Delivered = submitted, review-ready.
   A10 (the residual-dark_b fix) is hardware-verified on B5 (Test 36). No
   open rows.
 - **A — own driver:** ✅ **complete.** All acceptance criteria met and
-  packaged: tagged **v0.1.0** (e78a4fe), README install/usage confirmed.
+  packaged: tagged **v0.1.0** (45305a4), README install/usage confirmed.
 - **B1 / B2 — SANE:** not started; B1 (local SANE backend) is the next
   milestone.
 

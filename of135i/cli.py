@@ -360,7 +360,7 @@ def _cmd_load(args: argparse.Namespace) -> int:
 
 
 def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
-                           out: str, dual: bool):
+                           out: str, dual: bool, progress: dict | None = None):
     """digitize's per-frame writer. The MAIN image (`out`, fN.tiff) is
     always the raw NEGATIVE -- never inverted -- so it is the archival
     product. With --positive a SEPARATE preview (fN-preview.tiff, positive,
@@ -371,8 +371,16 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
     Note: with IR (and unless --no-clean) the main negative is
     dust-cleaned; it is calibrated, channel-aligned linear data, not an
     untouched sensor dump. Returns (main, ir_file, preview_file,
-    dust_cleaned)."""
+    dust_cleaned).
+
+    `progress`, if given, is filled in as each file lands ("main", "ir",
+    "preview"), so a failure part-way through a frame leaves a record of
+    what was actually written."""
     import numpy as _np
+
+    def _note(key: str, value) -> None:
+        if progress is not None:
+            progress[key] = value
 
     ir_file = None
     preview_file = None
@@ -412,6 +420,7 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
             prev = _np.ascontiguousarray(_np.rot90(prev, k=k))
 
     _write_image(visible, out, positive=False, dpi=args.dpi)  # raw negative, never inverted
+    _note("main", out)
     print(f"wrote {out} ({visible.shape[1]}x{visible.shape[0]}, 16-bit RGB "
           f"negative{', dust-cleaned' if dust_cleaned else ''})")
 
@@ -419,11 +428,13 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
         ir_rgb = _np.stack([ir, ir, ir], axis=-1)
         ir_file = str(Path(out).with_name(Path(out).stem + "-ir.tiff"))
         image.write_tiff16(ir_rgb, ir_file, dpi=args.dpi)
+        _note("ir", ir_file)
         print(f"wrote {ir_file} ({ir.shape[1]}x{ir.shape[0]}, 16-bit, IR channel)")
 
     if prev is not None:
         preview_file = str(Path(out).with_name(Path(out).stem + "-preview.tiff"))
         _write_image(prev, preview_file, positive=True, dpi=args.dpi)
+        _note("preview", preview_file)
         print(f"wrote {preview_file} ({prev.shape[1]}x{prev.shape[0]}, "
               f"16-bit RGB, positive preview)")
 
@@ -514,26 +525,35 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
         if not scanner.is_magazine_present():
             print("error: no magazine detected after load", file=sys.stderr)
             return 1
-        for frame in (1, 2, 3, 4):
+        for frame in digitize.FRAMES:
             scanner.initialize(ir=dual, dpi=args.dpi)
             out = str(digitize.frame_path(args.out, args.prefix, roll, frame))
             log.info("scanning frame %d @ %d dpi%s", frame, args.dpi,
                      " (dual-light pass)" if dual else "")
+            # The frame is recorded BEFORE its writes and filled in as each
+            # file lands, so a failure part-way through still says which
+            # frame fell, what had been saved, and which step was running
+            # (`stage`); an entry that completed has stage None.
+            entry: dict = {"frame": frame, "main": None, "ir": None,
+                           "preview": None, "dust_cleaned": None,
+                           "stage": "scan"}
+            per_frame.append(entry)
             if dual:
                 raw, width, _meta = scanner.scan(frame=frame, ir=True, dpi=args.dpi)
             else:
                 raw, width = scanner.scan(frame=frame)
-            main, irf, prev, cleaned = _finish_digitize_frame(args, raw, width, out, dual)
+            entry["stage"] = "write"
+            main, irf, prev, cleaned = _finish_digitize_frame(
+                args, raw, width, out, dual, progress=entry)
+            entry.update(main=main, ir=irf, preview=prev, dust_cleaned=cleaned)
             del raw
+            entry["stage"] = "diag"
             _write_diag_sidecar(args, scanner, out, frame)
             d = scanner.last_diag or {}
-            per_frame.append({
-                "frame": frame, "main": main, "ir": irf, "preview": prev,
-                "dust_cleaned": cleaned,
-                "gain_codes": d.get("gain_codes"),
-                "offset_codes": d.get("offset_codes"),
-                "dark_b_substituted": d.get("dark_b_substituted"),
-            })
+            entry.update(stage=None,
+                         gain_codes=d.get("gain_codes"),
+                         offset_codes=d.get("offset_codes"),
+                         dark_b_substituted=d.get("dark_b_substituted"))
         scanner.eject()
         print("ejected")
         return 0
