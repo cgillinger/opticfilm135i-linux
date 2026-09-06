@@ -22,10 +22,14 @@ functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md]
 
 - **M1 — Protocol reverse-engineered** ✅
 - **M2 — Driver drives the hardware** ✅ (load, 1–4 batch, all DPI, IR + dust removal, eject)
-- **M3 — Robustness and honest limits** ✅ (frozen list closed: calibration
-  anomalies diagnosed and handled, positioning verified, cross-unit a
-  documented limitation)
+- **M3 — Robustness and honest limits** — offline-complete; one hardware
+  confirmation outstanding (the residual-dark_b fix is offline-verified,
+  its cause hardware-proven — see A10 in the roadmap). Positioning
+  verified, cross-unit a documented limitation.
 - **M4 — SANE backend** — not started yet (skeleton only)
+
+See **[docs/ROADMAP.md](docs/ROADMAP.md)** for the acceptance matrix,
+frozen scope, and exactly what remains before the driver is "complete".
 
 Today you scan from the command line to raw 16-bit TIFF — including a
 resumable **bulk-digitisation** workflow (`of135i digitize`) for working

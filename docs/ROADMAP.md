@@ -2,80 +2,166 @@
 
 An independent Linux driver for the Plustek OpticFilm 135i film scanner
 (USB 07b3:1436, GL126 controller), reverse-engineered from USB captures.
-The end goal is a SANE backend so the scanner works with standard Linux
-scanning tools.
+The goal is a SANE backend so the scanner works with standard Linux
+scanning tools (`scanimage`, digiKam, …).
 
-## How "done" is measured (and how we avoid endless testing)
+This document is the **single source of truth for status and done-ness**.
+The test log (`docs/test-log.md`) keeps the history and evidence.
 
-Progress is measured by **criteria, not test count**. Every item on the
-lists below gets exactly one outcome:
+## How "done" is measured
 
-- **Done** — works, verified on hardware against a threshold set in advance.
-- **Documented limitation** — accepted, written down, moved past.
-- **Parked** — deliberately deferred, with the condition to revisit it.
+By **functional acceptance criteria, not test count**. Each requirement in
+the matrices below has one status. A milestone is delivered when its
+mandatory criteria are met — the next action is then the *delivery*, not
+more general testing.
 
-A phase is finished when every item has an outcome. Two rules keep testing
-from feeding on itself:
+**Stop / reopen rules.**
+- A finished item reopens **only** on a concrete regression, new relevant
+  failure evidence, or a change that affects its earlier verification. A
+  wish for more repetitions or a larger safety margin is **not** a reason.
+  New capability belongs to a later milestone.
+- Every additional test must map to an **open** requirement or a documented
+  reopen reason. After a code change, re-test only the affected
+  requirements plus necessary regression checks.
+- A limitation may be **accepted** only if it is outside the release's
+  promised function **or** has a verified, safe handling. A safety fault,
+  or a fault that makes the promised **raw image** untrustworthy, **blocks**
+  the affected function — it cannot be parked as a "documented limitation"
+  while it is also a mandatory requirement of the same release.
 
-1. **Acceptance thresholds are functional and set before the test** — "at
-   what deviation does it stop working", not "how close to zero can we
-   get". A measurement inside the threshold closes the item; it does not
-   spawn more tests. (Example: frame-positioning tolerance is on the order
-   of millimetres — the frame must fit the scan window with margin — so
-   chasing tenth-of-a-millimetre transport variation is out of scope.)
-2. **A new test is in scope only if it maps to an open item and has a
-   pre-defined functional threshold.** Otherwise it is not run.
+**Verification levels** (kept distinct): *observed* (a symptom seen) →
+*root cause proven* → *fix implemented* → *offline-verified* (tests, no
+hardware) → *hardware-verified*. A fix is not hardware-verified just
+because the original anomaly was seen on hardware. Documentation and build
+requirements never need hardware.
 
-## Milestones
+---
 
-### M1 — Protocol understood ✅
-USB captures decoded: init, calibration (AFE gain/offset, shading), the
-per-frame position/scan/park sequence, IR channel. See `docs/protocol-notes.md`.
+## Milestones and their definitions of done
 
-### M2 — Driver drives the hardware ✅
-Hardware-verified: magazine load, single-frame and 1–4 batch scans at all
-supported DPI, IR capture + dust removal, eject, cold-start init,
-read-only `doctor`/`status`, and the safety guards that refuse unsafe
-states. A positive-preview mode is available; colour interpretation is
-left to the application (the driver delivers correct raw data).
+| Milestone | Done when |
+|---|---|
+| **A — Own driver complete** | A versioned release with a frozen support scope, all mandatory acceptance criteria met, install + user instructions, and accepted limitations listed. |
+| **B1 — Local SANE backend complete** | An installable backend that performs the agreed scanning workflow and preserves the driver's safety model. |
+| **B2 — SANE contribution delivered** | Code, documentation and verification evidence **submitted** per the SANE project's current contribution process. |
 
-### M3 — Robustness and honest limits (in progress)
-Closing the remaining risks, each to a functional threshold:
+B1 and B2 are explicit project goals, not optional future ideas. B2 is
+scoped to **delivery**: we control *prepared → submitted*, not the
+recipients' *accepted → published* decisions or timeline. Post-submission
+feedback is handled as a bounded follow-up (address review comments on the
+submitted work); it is not an open-ended maintenance commitment. This plan
+does not authorize contacting recipients or sending material.
 
-- **Done:** DPI-change position stability; frame-to-frame and load-to-load
-  position variation (well within the frame-fits threshold); calibration
-  reproducibility.
-- **Documented limitation:** only one physical unit exists, so cross-unit
-  behaviour is compensated by run-time calibration and honestly labelled,
-  not claimed as verified.
-- **Open:** an even-frame calibration anomaly seen on one host — under
-  investigation with a dedicated diagnostic; it will resolve to either a
-  fix or a documented, application-correctable limitation. A separate
-  completion-mask safety question on the longest positioning move.
+---
 
-### M4 — SANE backend
-A `genesys`-family backend (using the gl124 backend as the template),
-brought to the point where it builds, scans a frame via `scanimage`, and
-works in SANE frontends such as digiKam. Started only once M3's list is
-complete.
+## A — Own driver: frozen support scope
 
-Two distinct steps — the first does not depend on the second:
+**In scope (what the release promises):**
+- **Host:** one unit (07b3:1436, GL126) on Linux over xHCI (pyusb).
+- **DPI:** 600 / 1200 / 2400 / 3600 / 7200.
+- **Frames:** 1–4 (one magazine); single-frame and 1–4 batch in one session.
+- **IR:** dual-light IR pass + IR-based dust/scratch removal.
+- **Transport:** driver-managed load (vendor insert flow), per-frame
+  positioning, eject from a loaded magazine, cold-start init.
+- **Output:** raw 16-bit linear negative (the product); optional preview
+  positive; resumable bulk-digitisation (`of135i digitize`).
+- **Safety:** fail-closed start-state guard, process lock, read-only
+  `doctor`/`status`.
 
-- **Local backend (self-contained):** build the backend against
-  sane-backends, install the `.so`, register it in `dll.conf`. SANE and
-  its frontends then see the scanner. This needs no approval from anyone —
-  it is entirely under our control.
-- **Upstream contribution (optional, later):** getting the backend merged
-  into the SANE project so it ships with distributions. Defined by SANE's
-  own contribution requirements. Wider reach and shared maintenance, but
-  not required to use the scanner.
+**Deferred to a later version (explicitly out of scope for A):**
+- Speed tuning of the replayed command stream.
+- Cross-unit support (only one physical unit exists — a documented
+  limitation, compensated by run-time calibration).
+- Hardware-button daemon / auto-load on insert.
+- Any GUI or SANE frontend integration (that is B1+).
 
-Meanwhile the CLI already scans batches to raw 16-bit TIFF — a sound
-workflow for bulk-digitising film to the best possible starting point,
-with colour interpretation done later in the application.
+Scope is not reduced silently to mark A done. Any change here is a
+recorded scope decision.
 
-## Where we are now
+## A — Acceptance matrix
 
-M1–M2 complete; M3 in progress with a short, frozen list of open items
-(above). The test log (`docs/test-log.md`) records each hardware and
-offline pass. M4 has a skeleton but is not active work yet.
+Evidence refers to `docs/test-log.md` entries; "rev" is the driver commit
+the evidence was produced against where it matters.
+
+| ID | Requirement (function / safety) | Pass criterion | Evidence | Remaining check | Verified |
+|---|---|---|---|---|---|
+| A1 | Magazine load via the driver flow | Latched (drag test holds, blue LED) from a power-on | Test 17–23 (7/7) | — | hardware |
+| A2 | Single-frame 3600 dpi calibrated scan | Calibration reproduces the vendor within ±1 gain code / 0.03 % shading gain on this unit; render on par with vendor | Test log 2026-09-05; README | — | hardware |
+| A3 | 1–4 batch in one session | Four frames, each correctly positioned | Test 24, 18/19 | — | hardware |
+| A4 | All five DPI | Each scans and assembles | Test log (dpi profiles) | — | hardware |
+| A5 | IR pass + dust removal | IR channel written; visible cleaned without color ghosts | Test log; test_ir | — | hardware |
+| A6 | Eject from a loaded magazine | Magazine released to loose-in-slot, reg 0x01=0x22 | Test log (ejects) | — | hardware |
+| A7 | Cold-start init | reg 0x01=0x00 → cold homing inside the load flow | Test 22; test log | — | hardware |
+| A8 | Positioning never starts a scan on a moving transport | Long-move completion is class F; frame lands on the normal batch position structure (fits the scan window with margin — **scope decision: tolerance is on the order of mm, not rows**) | Test 28 (d555 budget), Test 34 (f555 benign) | — | hardware |
+| A9 | Safety model | Refuses writes unless start state known (0x22/0x00), read before configure (zero writes on refusal), process lock, short transfer = unknown state, no auto-recovery | Test 12–16 (guard held); hardware-safety.md | — | hardware |
+| A10 | Residual dark_b handled | A residual dark_b (device returns a stale buffer on a later batch frame) is detected and the session's healthy dark_b substituted, else fail-closed; the delivered raw image's calibration is trustworthy | Cause: Test 32 (hardware, proven). Fix: Test 33 (offline: detection + substitution + fail-closed) | **1 hardware run: batch with the fix active, confirm a residual frame is corrected and its raw image is sound** | offline (fix); cause hardware |
+| A11 | Raw output integrity | Linear, unclipped, channel-aligned negative | Test 20 (no clipping, black floor stable) | — | hardware |
+| A12 | Bulk-digitisation workflow | `of135i digitize`: resumable staging + append-only manifest, one strip per run | Test 35 | — | offline (build/logic; the scan it calls is A2/A3) |
+
+**What already counts as sufficient:** A1–A7, A9, A11 are hardware-verified
+and closed. A12 is offline-complete (its scanning is A2/A3). No new test
+series is required for these merely because this plan was written.
+
+**What must remain before A can be declared complete:**
+1. **A10 hardware confirmation** — one batch run with the residual-dark_b
+   fix active, confirming a residual frame is corrected (or fails closed)
+   and its raw image is sound. One run, tied to A10 — not a series.
+2. **Release packaging** — a version tag, and confirming the install +
+   usage instructions (README) are complete and current. Documentation/
+   build only; no hardware.
+
+When those two are done, A is complete.
+
+## A — Accepted limitations
+
+Each is outside the promised function or has a verified safe handling:
+- **Cross-unit:** only one unit exists; behaviour is compensated by
+  run-time calibration and honestly labelled. (Out of scope.)
+- **Colour interpretation:** the driver delivers correct raw data; colour
+  is the application's job. (Out of scope by design.)
+- **Speed:** correct but not tuned. (Out of scope for A; a functional scan
+  is not blocked.)
+
+---
+
+## B1 — Local SANE backend (definition of done)
+
+A `genesys`-family backend (gl124 template) that:
+- builds against sane-backends and installs (the `.so` + `dll.conf`);
+- performs the agreed workflow via `scanimage` and a SANE frontend
+  (digiKam): load, scan a frame, deliver the image;
+- **preserves the driver's safety model** — no writes from an unknown
+  start state, no automatic recovery after a fault.
+
+Scope for B1 mirrors A's in-scope list (single unit, the DPI set, 1–4
+frames, IR). Frontend niceties beyond "scan a frame correctly" are
+deferred. B1 needs no upstream approval — it is entirely under our control.
+
+## B2 — SANE contribution delivered (definition of done)
+
+Code + documentation + verification evidence **submitted** to the SANE
+project per its current contribution process (its CONTRIBUTING / merge-
+request flow at submission time). Delivered = submitted, review-ready.
+- We control *prepared → submitted*. *Accepted → published* is the SANE
+  maintainers' decision and timeline, not a gate we can close.
+- Post-submission: address review feedback on the submitted work as a
+  bounded follow-up. Not an open-ended maintenance pledge (SANE's own
+  "unmaintained" status exists for backends whose author steps back).
+
+---
+
+## Current status (2026-09-06)
+
+- **M1 — protocol** ✅ and **M2 — driver drives the hardware** ✅.
+- **M3 — robustness:** offline-complete. The frozen A-matrix has **one open
+  item: A10's hardware confirmation** of the residual-dark_b fix (offline-
+  verified; cause hardware-proven). Everything else in A is
+  hardware-verified or offline-complete. (This resolves the earlier
+  wording that called M3 either "in progress" or "no open rows": M3 is
+  offline-done with a single, named hardware confirmation outstanding.)
+- **A — own driver:** near complete — remaining: A10 hardware run + release
+  packaging (version tag, docs check).
+- **B1 / B2 — SANE:** not started; begin after A is complete.
+
+Next action toward A is the A10 hardware confirmation, then packaging —
+not further general testing.

@@ -2356,3 +2356,10 @@ With this, M3's frozen list has no open rows: dark_b solved (Test 32/33),
 f555 benign (this), DPI drift not reproducible (Test 27), frame-4 budget
 fine (Test 28), geometry/load-to-load within the frame-fits threshold,
 cross-unit a documented limitation.
+
+[Status correction 2026-09-06, see docs/ROADMAP.md — the single source of
+truth for status. "No open rows" overstated it: the dark_b FIX (Test 33)
+is offline-verified only; its cause is hardware-proven but the fix has not
+been run on hardware against an active residual. So M3 is offline-complete
+with exactly ONE open row — ROADMAP A10's hardware confirmation. Do not
+read this entry as marking the dark_b fix hardware-verified.]
