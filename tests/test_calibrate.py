@@ -92,6 +92,37 @@ def test_offset_codes_from_reference_bracket():
     print(f"test_offset_codes_from_reference_bracket OK ({[hex(c) for c in codes]})")
 
 
+def test_offset_codes_synthetic_collapsed_dark_b_shifts_codes():
+    """SYNTHETIC -- NOT a reproduction of the B5 dark_b collapse.
+
+    The B5 raw dark_b buffer was never retained (docs/test-log.md Test 29),
+    so its cause cannot be reproduced. This test only demonstrates the
+    *mechanism* the analysis identified: IF dark_b's three channels
+    collapse to one common level, offset_codes() shifts, because the
+    per-channel bracket slope changes. It also pins the NORMAL per-channel
+    case so any future validity check can be shown not to reject it.
+    Values are synthetic (round numbers), not the B5 measurements."""
+    dark_a = np.tile(np.array([21600, 24400, 23350], dtype=np.uint16), (512, 1))
+    normal_b = np.tile(np.array([24000, 26750, 25790], dtype=np.uint16), (512, 1))
+    normal_codes = calibrate.offset_codes(dark_a, normal_b)
+    # Collapsed dark_b: all three channels forced to one common value.
+    collapsed_b = np.tile(np.array([26177, 26177, 26177], dtype=np.uint16), (512, 1))
+    collapsed_codes = calibrate.offset_codes(dark_a, collapsed_b)
+    # R's bracket widens (21600->26177 vs ->24000), slope rises, margin in
+    # code steps shrinks, R code drops -- the documented direction of the
+    # B5 offset drift. The normal case stays at a plausible ~0x10a.
+    assert collapsed_codes[0] < normal_codes[0], (normal_codes, collapsed_codes)
+    assert normal_codes[0] != _OFFSET_DEFAULT_R, normal_codes
+    print(f"test_offset_codes_synthetic_collapsed_dark_b_shifts_codes OK "
+          f"(normal={tuple(hex(c) for c in normal_codes)} "
+          f"collapsed={tuple(hex(c) for c in collapsed_codes)})")
+
+
+# The hardcoded fallback R code, only for the assertion above (kept local
+# so this test does not reach into calibrate internals by name elsewhere).
+_OFFSET_DEFAULT_R = 0x010B
+
+
 def test_offset_codes_adapts_to_different_slope():
     """A unit with double the slope should produce different code steps
     but the same target dark level."""
@@ -675,6 +706,7 @@ def main() -> int:
         test_gain_codes_against_capture,
         test_offset_codes_fallback_on_zero_dark,
         test_offset_codes_from_reference_bracket,
+        test_offset_codes_synthetic_collapsed_dark_b_shifts_codes,
         test_offset_codes_adapts_to_different_slope,
         test_shading_table_against_capture,
         test_warmup_no_retry_when_gain_normal,

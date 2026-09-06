@@ -33,6 +33,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import usb.util
 
 from . import safety, tables, tables_ir
@@ -352,3 +353,84 @@ def sidecar_path(out: str) -> str:
     """Per-scan diagnostics sidecar path for an output image path:
     foo.tiff -> foo.diag.json, dir/x.pnm -> dir/x.diag.json."""
     return str(Path(out).with_suffix(".diag.json"))
+
+
+# ------------------------------------------------ calibration buffer dump
+#
+# Test 28+ / dark_b-collapse investigation (docs/test-log.md Test 24-29):
+# the driver keeps only per-channel MEANS of the dark buffers, so when a
+# batch's even frames showed dark_b_mean collapsing to three identical
+# values (B5), the raw bytes needed to tell WHY (flat hardware data, a
+# short/stale transfer, or channel replication) had already been dropped.
+# This dump persists the raw dark buffers the driver ALREADY read, plus
+# the metadata that would decide it. It adds NO USB traffic and does not
+# touch the op sequence: callers invoke it after a phase's read has
+# returned, on bytes already in host memory.
+
+
+def _buffer_stats(raw: bytes) -> dict:
+    """Interpret ``raw`` the way the driver does (``<u2`` reshaped to
+    (N, 3)) and record what distinguishes the collapse hypotheses:
+    exact byte length, whole-buffer sha256, and PER-CHANNEL sha256 +
+    mean/min/max.  Three identical per-channel sha256 values prove the
+    R/G/B columns are bit-identical (not merely equal in mean); a length
+    that is not a clean (N, 3) u16 buffer flags a truncated/short read."""
+    import hashlib
+
+    out: dict = {
+        "byte_len": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "reshape_ok": len(raw) % 6 == 0,  # N * 3 channels * 2 bytes
+    }
+    if not out["reshape_ok"] or len(raw) == 0:
+        return out
+    arr = np.frombuffer(raw, dtype="<u2").reshape(-1, 3)
+    out["n_triplets"] = int(arr.shape[0])
+    chan_sha = [hashlib.sha256(np.ascontiguousarray(arr[:, ch]).tobytes()).hexdigest()
+                for ch in range(3)]
+    out["channel_sha256"] = chan_sha
+    out["channels_bit_identical"] = (chan_sha[0] == chan_sha[1] == chan_sha[2])
+    a = arr.astype(np.float64)
+    out["channel_mean"] = [float(x) for x in a.mean(axis=0)]
+    out["channel_min"] = [int(x) for x in arr.min(axis=0)]
+    out["channel_max"] = [int(x) for x in arr.max(axis=0)]
+    # Per-triplet R==G==B share: the strongest tell for [v, v, v]
+    # replication vs a genuine per-channel measurement.
+    same = int(np.count_nonzero((arr[:, 0] == arr[:, 1]) & (arr[:, 1] == arr[:, 2])))
+    out["triplets_rgb_equal"] = same
+    out["triplets_rgb_equal_frac"] = same / arr.shape[0] if arr.shape[0] else None
+    return out
+
+
+def dump_calibration_buffers(out_dir: str, base: str, meta: dict,
+                             named_buffers: dict) -> str:
+    """Write the raw calibration buffers in ``named_buffers`` (name ->
+    bytes) to ``out_dir`` as ``<base>-<name>.bin``, plus a
+    ``<base>.calbuf.json`` metadata file combining ``meta`` (frame, dpi,
+    dual, commit, host, timestamps) with per-buffer :func:`_buffer_stats`
+    and a cross-buffer ``equal_to`` map (which buffers are byte-identical
+    -- the direct test for buffer reuse/stale RAM, e.g. dark_b == dark_a).
+    Pure host-side I/O; the caller has already read every buffer.  Returns
+    the metadata file path."""
+    d = Path(out_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    record = dict(meta)
+    buffers: dict = {}
+    for name, raw in named_buffers.items():
+        raw = bytes(raw)
+        (d / f"{base}-{name}.bin").write_bytes(raw)
+        buffers[name] = _buffer_stats(raw)
+    # Cross-buffer byte-identity: the direct stale-RAM / reuse signal.
+    names = list(named_buffers)
+    equal_to: dict = {}
+    for i, a in enumerate(names):
+        eq = [b for j, b in enumerate(names)
+              if i != j and bytes(named_buffers[a]) == bytes(named_buffers[b])]
+        if eq:
+            equal_to[a] = eq
+    record["buffers"] = buffers
+    record["byte_identical_buffers"] = equal_to
+    meta_path = str(d / f"{base}.calbuf.json")
+    with open(meta_path, "w") as f:
+        json.dump(record, f, indent=2, sort_keys=True, default=_json_default)
+    return meta_path

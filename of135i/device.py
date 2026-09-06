@@ -37,13 +37,14 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
 import numpy as np
 
-from . import calibrate, safety, tables, tables_base, tables_ir
+from . import calibrate, diag, safety, tables, tables_base, tables_ir
 from .safety import (
     OperationNotAllowedError, SessionState, StartState, UnsafeStartStateError,
 )
@@ -1485,6 +1486,36 @@ class Scanner:
                 return self._scan_dual(t, frame=frame, lines=lines)
             return self._scan_plain(frame=frame, lines=lines)
 
+    # Env var: when set to a directory, dump the raw dark calibration
+    # buffers there after each scan (dark_b-collapse investigation,
+    # docs/test-log.md Test 29). Diagnostic only -- it persists bytes the
+    # driver already read; it adds no USB traffic and does not change the
+    # op sequence (the dump runs after PARK, on host memory).
+    DUMP_CAL_ENV = "OF135I_DUMP_CAL"
+
+    def _dump_cal_buffers_if_requested(self, dark_a_raw, dark_b_raw, *,
+                                       frame: int, dpi: int, dual: bool,
+                                       started_utc: str) -> None:
+        out_dir = os.environ.get(self.DUMP_CAL_ENV)
+        if not out_dir:
+            return
+        try:
+            meta = {
+                "frame": frame, "dpi": dpi, "dual": dual,
+                "park_mode": getattr(self, "park_mode", None),
+                "scan_started_utc": started_utc,
+                "dumped_utc": datetime.now(timezone.utc).isoformat(),
+                "host": diag._collect_host(),
+            }
+            base = f"cal-f{frame}-{dpi}dpi-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}"
+            path = diag.dump_calibration_buffers(
+                out_dir, base, meta,
+                {"dark_a": dark_a_raw, "dark_b": dark_b_raw},
+            )
+            log.info("dumped raw calibration buffers to %s", path)
+        except Exception as e:  # diagnostics must never break a scan
+            log.warning("calibration-buffer dump failed (ignored): %s", e)
+
     def _scan_plain(self, frame: int, lines: int | None) -> tuple[bytes, int]:
         # No homing move here. The vendor flow has none (protocol-notes.md
         # pass 14): positioning below is an absolute mode-0x18 feed that
@@ -1592,6 +1623,10 @@ class Scanner:
         # PARK's own first op is the captured end-of-access control
         # write (cw wv=0x8d) -- no separate call needed here.
         self._park(tables, ir=False)
+
+        self._dump_cal_buffers_if_requested(
+            dark_a_raw, dark_b_raw, frame=frame, dpi=3600, dual=False,
+            started_utc=started_utc)
 
         warmup = self._diag_warmup or {}
         self.last_diag = {
@@ -1806,6 +1841,10 @@ class Scanner:
 
         # ---- park ---------------------------------------------------------
         self._park(t, ir=True)
+
+        self._dump_cal_buffers_if_requested(
+            dark_a_raw, dark_b_raw, frame=frame, dpi=dpi, dual=True,
+            started_utc=started_utc)
 
         warmup = self._diag_warmup or {}
         self.last_diag = {

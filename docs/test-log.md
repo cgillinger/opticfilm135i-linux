@@ -1731,9 +1731,13 @@ figure.
 `dark_a` is per-channel on all four frames. Only `dark_b`, only the even
 frames, and the three channel means are bit-identical. `device.py`
 computes it as a plain `mean(axis=0)` over
-`np.frombuffer(dark_b_raw, "<u2").reshape(-1, 3)`; no fallback path can
-produce three identical values, so the dark_b read (gain=0, offset=0xff)
-returned degenerate data rather than a measurement.
+`np.frombuffer(dark_b_raw, "<u2").reshape(-1, 3)`; no path in that mean
+computation can turn a genuine per-channel measurement into three equal
+means. [Corrected 2026-09-06, see Test 29: the earlier wording here —
+"the dark_b read returned degenerate data rather than a measurement" —
+overstated the evidence. The raw dark_b buffer is never retained (only
+its per-channel mean is), so whether the buffer itself was degenerate,
+and why, is NOT established from a mean of three equal values.]
 `calibrate.offset_codes(dark_a, dark_b)` consumes it, which is why f2
 and f4 are the frames whose offsets deviate — R five codes low on both,
 against a reproducibility band of ±1.
@@ -1750,10 +1754,14 @@ per-channel on every frame, even ones included — test18 f2
 f4 23722/26388/25550 — and `offset_codes` 0x010a/0x0109/0x010a
 throughout, R = 266 on all eight frames with no drift.
 
-So the collapse and the R drift exist only on B5. This is a
-platform-dependent difference, not a latent driver bug that mintuu
-happened to hide: had it been in the driver, mintuu's even frames would
-show it too.
+So the collapse and the R drift are seen only on B5 in this data. That
+rules out a *deterministic* driver bug (one would show on mintuu's even
+frames too) — but NOT a timing- or host-dependent driver bug that only
+trips on B5's USB/xHCI behaviour. [Corrected 2026-09-06, see Test 29: the
+earlier wording called this "a platform-dependent difference, not a
+latent driver bug", which overstated it — a host-dependent *outcome* does
+not exclude a driver bug, and the raw buffers needed to tell them apart
+were not retained.]
 
 **Not measurable from this run:** the film start row (1856-1860 for
 frame 1 on mintuu). The outputs were written with `--positive`, and
@@ -1769,10 +1777,11 @@ vs `bd55` and `8155` vs `9555` matched it, these two did not. They
 should be verified rather than assumed benign.
 
 Verdict: B5 reproduces mintuu on timing, gain and geometry within the
-reproducibility bands. The dark_b collapse on even frames is the first
-genuine host difference the B5 track has produced, and it propagates
-into the AFE offsets. The images themselves were not assessed for
-visible impact.
+reproducibility bands. The dark_b collapse on even frames is a B5-only
+*outcome* in this data that propagates into the AFE offsets; whether its
+cause is host-specific or a timing-dependent driver bug is unresolved
+(Test 29 — the raw buffers were not retained). The images themselves were
+not assessed for visible impact.
 
 
 ## 2026-09-06 — Test 25: load from a magazine at the stop, and a same-strip geometry comparison across hosts
@@ -1981,3 +1990,78 @@ timeout. Resolved.
 
 Verdict: no POSITION code change. The mask stays 0xf0 and the FEEDL-scaled
 budget already covers the longest move — both closed offline.
+
+
+## 2026-09-06 — Test 29: dark_b collapse on even batch frames — an evidence gap, plus diagnostics to close it (offline)
+
+Full offline investigation of the B5 batch's dark_b collapse (Test 24).
+No hardware. Result: **the cause cannot be established from existing data,
+because the raw dark buffers are never retained** — so this delivers a
+precise evidence gap and tested diagnostics to capture it next time,
+rather than a proven cause.
+
+**1. Inventory — raw data vs summaries.** dark_b is read as raw bytes
+(`dark_b_raw`, device.py `_scan_plain`/`_scan_dual`) then immediately
+reduced: only `dark_b_mean` (three floats) reaches `last_diag`/the
+sidecar. Confirmed in the actual diag keys on mintuu (test18/19, hwblock:
+`dark_a_mean`, `dark_b_mean`, no `_raw`). B5 runs the same code, so its
+sidecars carry the same summaries and no raw buffer. **The raw dark_b
+bytes exist nowhere, on any host.** Every artefact here is a summary.
+
+**2. The mechanism is understood; the cause is not.** `offset_codes` is
+`slope = (mean_b − mean_a)/127`, `code = 0xFF + round(margin/slope)`. When
+`dark_b_R` collapses ~24000→26177 the R slope rises, `margin/slope`
+shrinks, and the R code falls ~5 — exactly the observed drift. That is a
+mechanical consequence of the collapse, not a second fault.
+  What the summary *can* say: `26177.375` is not an integer, so the buffer
+  is not trivially constant; and three **bit-identical** non-integer means
+  force the three channel columns to hold the same value multiset —
+  strongest reading, every u16 triplet is `[v, v, v]`.
+  What it *cannot* say: whether that came from flat hardware data, a
+  short/stale bulk transfer, buffer reuse, or channel replication. All
+  four hypotheses predict three-equal-means and can only be separated by
+  the raw bytes (whole- and per-channel checksums, exact transfer length,
+  and comparison against the preceding buffer). The mean alone is
+  insufficient. Note also `dev.read(EP_BULK_IN, op.length, …)` does not
+  verify the actual transfer length, and dark_a and dark_b use the *same*
+  `_run_phase` — so "only dark_b, only even frames" is state/timing
+  dependent, not a reshape bug (that would hit dark_a and all frames).
+  A host-dependent outcome does NOT exclude a timing-dependent driver bug.
+
+**3–5. Diagnostics (implemented, offline-verified).** New env var
+`OF135I_DUMP_CAL=<dir>` makes each scan persist the raw `dark_a` and
+`dark_b` buffers it already read, plus metadata that would decide the
+hypotheses: exact byte length, whole-buffer and **per-channel** sha256
+(three equal → columns provably bit-identical, not merely equal-mean),
+`triplets_rgb_equal` fraction, min/max/mean, and a `byte_identical_buffers`
+map (dark_b == dark_a → direct buffer-reuse/stale-RAM signal). The dump
+runs **after PARK on host memory**: it adds no USB transaction and does
+not change the op sequence (verified — the hook touches no `io`; a stub
+whose `io` access raises is left untouched). Measured write cost 1.6–12 ms
+for 61 KiB–1 MiB, after the scan is mechanically done, so no timing-
+sensitive sequence is affected.
+
+**No validity check was added (step 4).** There is no *proven* criterion
+for invalid calibration, and rejecting on "three equal means" is
+explicitly disallowed without evidence. So no offset formula, wait, or
+fallback was introduced to paper over the anomaly, and no data is
+rejected. The FEEDL-scaled POSITION path, LOAD/scan/eject flow, and all
+safety guards are unchanged; POSITION's f555 acceptance stays a separate
+open question (Test 28); no POSITION/PARK change was made.
+
+**Tests (112 total, +6):** test_calibrate +1 (SYNTHETIC: a collapsed
+dark_b drives the R offset down, with the normal per-channel case pinned
+so a future check can't reject it). test_diag +5 (dump flags bit-identical
+channels, does not flag the normal reference, flags a short/truncated
+read, detects buffer reuse, and is a no-op without the env var while
+touching no USB). Synthetic fixtures are labelled SYNTHETIC and are not
+presented as a reproduction of the B5 fault.
+
+**Remaining uncertainty:** the actual cause (flat hardware data vs stale/
+short transfer vs timing race) can only be decided by one hardware
+re-collection with `OF135I_DUMP_CAL` set on B5 — a 1–4 batch, then read
+back the even-frame `dark_b` buffers' per-channel checksums and
+byte-identity. That is the single missing datum; it needs hardware and is
+out of scope for this offline pass. Test 24's "degenerate data" and
+"platform-dependent difference" wording is corrected above to match the
+evidence.
