@@ -2,7 +2,8 @@
 
 ![License: GPL-2.0-or-later](https://img.shields.io/badge/License-GPL--2.0--or--later-blue.svg)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
-![Status: working prototype](https://img.shields.io/badge/Status-working%20prototype-green.svg)
+![Release: v0.1.1](https://img.shields.io/badge/Release-v0.1.1-blue.svg)
+![Status: CLI driver complete, SANE backend pending](https://img.shields.io/badge/Status-CLI%20driver%20complete%2C%20SANE%20backend%20pending-green.svg)
 
 **Unofficial, community-built Linux driver for the Plustek OpticFilm 135i**
 (USB `07b3:1436`, Genesys Logic GL126) — a 35 mm film scanner with motorized
@@ -81,12 +82,15 @@ step for wider distribution.
 
 ## Development status
 
-**Phase: working prototype. Magazine loading, single-frame and
-whole-strip batch scanning, and eject are the verified paths.** Scan,
-calibration, IR and dust removal are stable and hardware-verified, per
-frame and across a 4-frame strip in one invocation, frame for frame
-against the vendor application's output of the same strip (2026-09-05).
-The rough edges you should know about:
+**Status: v0.1.1 released. The standalone CLI driver is complete —
+magazine loading, single-frame and whole-strip batch scanning, all five
+resolutions, IR and dust removal, and eject. The SANE backend is not
+usable yet.** Scan, calibration, IR and dust removal are stable and
+hardware-verified, per frame and across a 4-frame strip in one
+invocation, frame for frame against the vendor application's output of
+the same strip (2026-09-05). Complete does not mean polished: this is
+early software, verified on the one unit that exists, and these are the
+rough edges you should know about:
 
 - **Eject depends on how the magazine was loaded.** Load with
   `tools/load_magazine.py` (the vendor's insert flow) and `eject` /
