@@ -1681,3 +1681,95 @@ the capture while the vendor recomputes them per pass (±2). A10's
 offset row corrected from green to yellow accordingly. No code change;
 images are unaffected (Test 20: no clipping, black floor identical
 across frames).
+
+
+## 2026-09-06 — Test 24: B5 (laptop host) — load and batch 1-4 reproduce the reference host, but dark_b collapses on even frames
+
+Host B5: Fedora 44, kernel 7.1.6-201.fc44.x86_64, Intel i5-6300U, single
+Intel Sunrise Point-LP xHCI (00:14.0), python 3.14.6, pyusb 1.3.1,
+driver c1604de. The repo was fast-forwarded fceafb0 → c1604de before the
+run (the checkout was 15 commits behind, including "a cold-started
+session must load before it scans"); `tools/release_check.py` 106/106
+green on a clean checkout.
+
+Power on with the magazine out → magazine loose in the slot →
+`of135i load` (cold path: reg 0x01 = 0x00, so cold_init, then the jog,
+the operator's reinsert to the stop, and the load) → latched, blue LED,
+drag test held → `of135i scan --frames 1-4 --ir --positive --rotate 90
+--eject`. Loaded-idle before the batch: 0x01=0x22, status word 0xdc55,
+0x32=0x05, 0x101=0xdc. After eject: 0x01=0x22, 0x32=0xdb, 0x101=0xf0,
+magazine not detected.
+
+**Batch 1-4, 3600 dpi dual-light:**
+
+| metric | B5 | the reference host (Test 21) |
+|---|---|---|
+| gain codes | 0x2d / 0x21 / 0x27 on all four | 0x2d / 0x21 / 0x27 |
+| offset codes | f1, f3: 0x010a / 0x0109 / 0x010a — f2: 0x0105 / 0x010d / 0x0109 — f4: 0x0105 / 0x010c / 0x0108 | R 0x010a, G 0x0109-0x010a, B 0x010a-0x010b |
+| warmup attempts | 1 on all four, never exhausted | none needed |
+| image dimensions | 5184x5248 on all four | 5184x5248 |
+| POSITION | 1.66 / 3.67 / 5.83 / 7.99 s | 1.8 / 3.8 / 6.0 / 8.1 s |
+| scan pass | 39.56 / 39.59 / 39.57 / 39.57 s | 40.6 s |
+| PARK | 13.20 / 14.21 / 14.42 / 15.20 s | 13.6 s |
+| poll timeouts | 1 / 5 / 4 / 6 | 1-5 per scan |
+| cr mismatches | 26 / 49 / 42 / 51 | 7-33 |
+| session record | writes 953/1894/2835/3776 cumulative, attempted = completed throughout; execute pulses 9/18/27/36; failure none, refusal none | 13 196 writes, 127 pulses, no failure |
+
+Timing, gain and geometry reproduce the reference host: the POSITION ladder has the
+same shape about 0.1-0.15 s faster per step, the scan pass is ~1 s
+faster and flat to 0.03 s across four frames, the dimensions are exact.
+PARK rises monotonically 13.20 → 15.20 s, ending 1.6 s above the the reference host
+figure.
+
+**The finding: the dark_b measurement collapses on even frames.**
+
+    f1  dark_b_mean = [23898.75390625, 26731.1650390625, 25680.232421875]
+    f2  dark_b_mean = [26177.375, 26177.375, 26177.375]
+    f3  dark_b_mean = [23942.240234375, 26745.5048828125, 25722.7666015625]
+    f4  dark_b_mean = [26194.375, 26194.375, 26194.375]
+
+`dark_a` is per-channel on all four frames. Only `dark_b`, only the even
+frames, and the three channel means are bit-identical. `device.py`
+computes it as a plain `mean(axis=0)` over
+`np.frombuffer(dark_b_raw, "<u2").reshape(-1, 3)`; no fallback path can
+produce three identical values, so the dark_b read (gain=0, offset=0xff)
+returned degenerate data rather than a measurement.
+`calibrate.offset_codes(dark_a, dark_b)` consumes it, which is why f2
+and f4 are the frames whose offsets deviate — R five codes low on both,
+against a reproducibility band of ±1.
+
+The same odd/even signature appears independently in two other places:
+the shading per-channel offsets (f1/f3 channel means ~130 / 341 / 339;
+f2/f4 ~374 / 212 / 388 and ~380 / 243 / 425) and cr_mismatches, whose
+two high values are exactly f2 and f4.
+
+The reference-host baseline (`hwblock-20260905-warm/batch-frame-*`,
+`hw-2026-09-05-load2/test18-f*`, `test19-f*`) has `dark_b_mean`
+per-channel on every frame, even ones included — test18 f2
+24016/26747/25790, f4 23850/26564/25648; hwblock f2 23705/26415/25555,
+f4 23722/26388/25550 — and `offset_codes` 0x010a/0x0109/0x010a
+throughout, R = 266 on all eight frames with no drift.
+
+So the collapse and the R drift exist only on B5. This is a
+platform-dependent difference, not a latent driver bug that the reference host
+happened to hide: had it been in the driver, the reference host's even frames would
+show it too.
+
+**Not measurable from this run:** the film start row (1856-1860 for
+frame 1 on the reference host). The outputs were written with `--positive`, and
+`to_positive()` is a per-frame percentile/log-domain inversion that
+cannot be inverted exactly; the `--rotate 90` alone would have been
+reversible. Confirming the geometry to ±4 rows needs one frame scanned
+without `--positive`.
+
+**Poll pairs outside the documented benign set:** `cc55` vs `ad55` and
+`ec55` vs `dc55` occurred on frames 2-4. The documented benign set is
+9c vs ad/bd, 8155 vs 9555, and e8/ec vs f8/fc at session start; `9c55`
+vs `bd55` and `8155` vs `9555` matched it, these two did not. They
+should be verified rather than assumed benign.
+
+Verdict: B5 reproduces the reference host on timing, gain and geometry within the
+reproducibility bands. The dark_b collapse on even frames is the first
+genuine host difference the B5 track has produced, and it propagates
+into the AFE offsets. The images themselves were not assessed for
+visible impact.
