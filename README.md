@@ -158,7 +158,7 @@ The rough edges you should know about:
 ## Requirements
 
 - Linux, Python 3.10+
-- `pyusb`, `numpy`
+- `pyusb`, `numpy`, `pillow`
 - The scanner connected via USB
 
 ## Install
@@ -217,7 +217,8 @@ docs/replay-analysis.md); it is off by default and not hardware-verified.
 `of135i digitize` runs one strip end to end — load, scan frames 1–4,
 eject — into a resumable staging tree, and records each strip in an
 append-only manifest. Run it once per strip; the roll number advances
-from the manifest, so you can stop and pick up where you left off.
+from the manifest **and** the roll directories already on disk (per
+`--prefix`), so you can stop and pick up where you left off.
 
 ```bash
 # Insert a strip, then:
