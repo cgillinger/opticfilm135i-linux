@@ -1683,7 +1683,7 @@ images are unaffected (Test 20: no clipping, black floor identical
 across frames).
 
 
-## 2026-09-06 — Test 24: B5 (laptop host) — load and batch 1-4 reproduce the reference host, but dark_b collapses on even frames
+## 2026-09-06 — Test 24: B5 (laptop host) — load and batch 1-4 reproduce mintuu, but dark_b collapses on even frames
 
 Host B5: Fedora 44, kernel 7.1.6-201.fc44.x86_64, Intel i5-6300U, single
 Intel Sunrise Point-LP xHCI (00:14.0), python 3.14.6, pyusb 1.3.1,
@@ -1702,7 +1702,7 @@ magazine not detected.
 
 **Batch 1-4, 3600 dpi dual-light:**
 
-| metric | B5 | the reference host (Test 21) |
+| metric | B5 | mintuu (Test 21) |
 |---|---|---|
 | gain codes | 0x2d / 0x21 / 0x27 on all four | 0x2d / 0x21 / 0x27 |
 | offset codes | f1, f3: 0x010a / 0x0109 / 0x010a — f2: 0x0105 / 0x010d / 0x0109 — f4: 0x0105 / 0x010c / 0x0108 | R 0x010a, G 0x0109-0x010a, B 0x010a-0x010b |
@@ -1715,10 +1715,10 @@ magazine not detected.
 | cr mismatches | 26 / 49 / 42 / 51 | 7-33 |
 | session record | writes 953/1894/2835/3776 cumulative, attempted = completed throughout; execute pulses 9/18/27/36; failure none, refusal none | 13 196 writes, 127 pulses, no failure |
 
-Timing, gain and geometry reproduce the reference host: the POSITION ladder has the
+Timing, gain and geometry reproduce mintuu: the POSITION ladder has the
 same shape about 0.1-0.15 s faster per step, the scan pass is ~1 s
 faster and flat to 0.03 s across four frames, the dimensions are exact.
-PARK rises monotonically 13.20 → 15.20 s, ending 1.6 s above the the reference host
+PARK rises monotonically 13.20 → 15.20 s, ending 1.6 s above the mintuu
 figure.
 
 **The finding: the dark_b measurement collapses on even frames.**
@@ -1743,7 +1743,7 @@ the shading per-channel offsets (f1/f3 channel means ~130 / 341 / 339;
 f2/f4 ~374 / 212 / 388 and ~380 / 243 / 425) and cr_mismatches, whose
 two high values are exactly f2 and f4.
 
-The reference-host baseline (`hwblock-20260905-warm/batch-frame-*`,
+The mintuu baseline (`hwblock-20260905-warm/batch-frame-*`,
 `hw-2026-09-05-load2/test18-f*`, `test19-f*`) has `dark_b_mean`
 per-channel on every frame, even ones included — test18 f2
 24016/26747/25790, f4 23850/26564/25648; hwblock f2 23705/26415/25555,
@@ -1751,12 +1751,12 @@ f4 23722/26388/25550 — and `offset_codes` 0x010a/0x0109/0x010a
 throughout, R = 266 on all eight frames with no drift.
 
 So the collapse and the R drift exist only on B5. This is a
-platform-dependent difference, not a latent driver bug that the reference host
-happened to hide: had it been in the driver, the reference host's even frames would
+platform-dependent difference, not a latent driver bug that mintuu
+happened to hide: had it been in the driver, mintuu's even frames would
 show it too.
 
 **Not measurable from this run:** the film start row (1856-1860 for
-frame 1 on the reference host). The outputs were written with `--positive`, and
+frame 1 on mintuu). The outputs were written with `--positive`, and
 `to_positive()` is a per-frame percentile/log-domain inversion that
 cannot be inverted exactly; the `--rotate 90` alone would have been
 reversible. Confirming the geometry to ±4 rows needs one frame scanned
@@ -1768,7 +1768,7 @@ without `--positive`.
 vs `bd55` and `8155` vs `9555` matched it, these two did not. They
 should be verified rather than assumed benign.
 
-Verdict: B5 reproduces the reference host on timing, gain and geometry within the
+Verdict: B5 reproduces mintuu on timing, gain and geometry within the
 reproducibility bands. The dark_b collapse on even frames is the first
 genuine host difference the B5 track has produced, and it propagates
 into the AFE offsets. The images themselves were not assessed for
@@ -1825,10 +1825,10 @@ Resolved by scanning the *same* strip on both hosts, `scan --frame 1
 | same physical strip | film_start | film_end | length |
 |---|---|---|---|
 | B5 (Lenovo laptop) | 1842 | 5106 | 3264 |
-| reference host | 1858 | 5114 | 3256 |
+| mintuu | 1858 | 5114 | 3256 |
 | Test 21 (different strip) | 1856-1860 | 5130-5134 | 3274 |
 
-The reference host landed at 1858 — inside Test 21's 1856-1860 band —
+mintuu landed at 1858 — inside Test 21's 1856-1860 band —
 even though Test 21 was a different strip. So film_start_row is
 host/positioning-determined, not strip-determined (two different strips
 give the same start row on the same host). That makes the ~16-row earlier
@@ -1838,14 +1838,14 @@ B5's other signature: B5 ran the POSITION ladder 0.1-0.15 s and the scan
 pass ~1 s faster (Test 24) and now also positions the film start ~16 rows
 earlier — the same marginally-faster motor/USB profile on that host.
 Caveat: one load cycle per host, so load-to-load variation is not
-formally excluded; the reference host giving 1858 on two different strips
+formally excluded; mintuu giving 1858 on two different strips
 makes chance unlikely. The algorithm is bit-depth insensitive (Pillow
 8-bit and 16-bit memmap gave identical rows), so the reading method is
 not a confound.
 
 **Sharpening of Test 24.**
 The standalone frame 1 on both hosts is clean on everything the batch
-even frames were not: dark_b per-channel (reference host
+even frames were not: dark_b per-channel (mintuu
 [24129, 26873, 25859]), offsets 0x010a/0x0109/0x010a, cr_mismatches 9 (B5
 19) — both inside the reference band. So Test 24's dark_b collapse is
 "even frames within a batch", not "B5 is broken": a lone frame 1 is clean
@@ -1853,9 +1853,9 @@ every time it has been run, on either host.
 
 **Still open, unchanged:** the cold_init settle poll reads 0x32 = 0x1d
 instead of 0x1f, 6 of 6 homing rounds over two power cycles on B5 —
-systematic and reproducible, but no reference-host settle-poll log was
+systematic and reproducible, but no mintuu settle-poll log was
 saved to compare against, so it is noted, not concluded. The earlier
-0x4855 flag is withdrawn: the reference host's cold doctor shows the same
+0x4855 flag is withdrawn: mintuu's cold doctor shows the same
 0x4855 in the same cold-never-homed state, so it is the normal cold start
 value.
 
