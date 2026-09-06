@@ -8,6 +8,56 @@ the working plan; `protocol-notes.md` remains the protocol truth.
 Working tree: a clone of sane-backends on branch `gl126-opticfilm135i`.
 Precedent for a whole new chip family: MR !418 (GL842 / OpticFilm 7200).
 
+## Where the sources live
+
+The port's own sources are version-controlled HERE, in `sane/`, not in the
+sane-backends clone -- so they are reviewed, regenerated and released with
+the driver whose tables they carry. To build, symlink them into a
+sane-backends checkout's `backend/genesys/`:
+
+```
+cd /path/to/sane-backends/backend/genesys
+for f in gl126.h gl126.cpp gl126_registers.h gl126_tables.h gl126_tables.cpp; do
+    ln -sf /path/to/opticfilm135i-linux/sane/$f $f
+done
+```
+
+Symlinks rather than copies: an edit here is picked up by the next build
+with nothing to re-sync. The eventual merge request takes copies.
+
+## Status (2026-09-06)
+
+- **Stage 2 — done (offline).** `tools/gen_sane_tables.py` emits
+  `sane/gl126_tables.{h,cpp}` from `of135i/tables*.py`: the base, AFE,
+  cold-init and loader-speed tables, the deduplicated motor slope tables,
+  and for all six scan profiles (3600 plain, 3600 IR, 600/1200/2400/7200)
+  every phase's register writes in capture order, its buffer transfers,
+  and the indices of the bytes that carry computed values. Reads and polls
+  are deliberately not emitted (decision 3). Two offline tests guard it:
+  one regenerates and fails if the checked-in output is stale, one asserts
+  each injection lands on the value byte of the expected register (gain on
+  0x5e, offsets on 0x5d/0x5e, FEEDL on 0x3d-0x3f, line count on
+  0x26/0x27) -- a mis-indexed injection would scan with the reference
+  unit's calibration and look like a working scan.
+- **Stage 1 — skeleton written, not yet built.** `sane/gl126.{h,cpp}` and
+  `sane/gl126_registers.h` declare the full `CommandSet` surface. The
+  table-driven hooks (`init`, `asic_boot`'s register phase) are
+  implemented; every hook that would move the motor throws
+  `SANE_STATUS_UNSUPPORTED` naming itself, rather than issuing a sequence
+  that has never been executed. `check_start_state()` mirrors
+  `of135i/safety.py`: reg 0x01 must read 0x22 or 0x00 or the call fails
+  having written nothing, and no recovery is attempted.
+- **Not done yet:** the model/sensor/motor/gpo entry in `tables_model.cpp`,
+  `AsicType::GL126` in `enums.{h,cpp}` and the places that special-case
+  GL124, `genesys.conf.in`, the `.desc` entry, `Makefile.am`, and an
+  actual build. Building the checkout needs `autoconf-archive` installed
+  (`./autogen.sh` stops without it).
+
+**Stage 3 is the first step that touches the scanner**, and it happens on
+the machine the unit is attached to, with the operator listening. Nothing
+in stages 1-2 may be "completed" by inferring a motor sequence from the
+tables.
+
 ## Stage plan
 
 | Stage | Content | Needs hardware |

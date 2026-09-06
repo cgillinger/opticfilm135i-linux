@@ -1,0 +1,475 @@
+#!/usr/bin/env python3
+"""Emit the GL126 register tables as C++ for the SANE genesys backend.
+
+Stage 2 of docs/sane-port.md: the Python driver replays captured phases
+verbatim; the backend writes the same registers from generated tables.
+This tool is the bridge. It reads `of135i/tables*.py` -- the single source
+of truth, verified byte-exact against the USB captures -- and writes
+`sane/gl126_tables.{h,cpp}`. Nothing here is hand-maintained: regenerate
+after any table change, never edit the output.
+
+What a phase becomes
+--------------------
+Each `Phase` is an ordered op stream (control writes, bulk writes, reads).
+Only the writes carry state the backend must reproduce:
+
+  * `cw` 0x40/0x04 wValue=0x0083 -- a register batch, `[reg][val]` pairs.
+    These are flattened, in order, into one pair array per phase.
+  * `cw` 0x40/0x04 wValue=0x0082 wIndex=1 -- a buffer descriptor,
+    `[addr u32][len u32]`, followed by the `bo` ops carrying the payload.
+    Emitted as an address/length record; the payload is either a slope
+    table (emitted once, by name) or computed at run time (shading).
+  * `cw` 0x40/0x0c -- end-of-access, emitted as its wValue/wIndex.
+
+Reads and polls are deliberately NOT emitted. Decision 3 in
+docs/sane-port.md: the C++ hooks poll explicitly with timeouts rather than
+replaying the capture's pacing, so a captured read is provenance, not
+behaviour. The generator counts them so the header can state how many ops
+each phase covered.
+
+Injection points
+----------------
+A phase's `injections` name the bytes that carry computed values (gain
+codes, offset codes, FEEDL, line count) instead of their captured ones.
+Writing the captured byte instead would scan with another unit's
+calibration, so each one is emitted as a named index into the phase's pair
+array. The backend patches those entries before writing; it must not rely
+on the captured value.
+
+Usage:  python tools/gen_sane_tables.py [--check]
+        --check regenerates into memory and fails if the checked-in
+        output differs (for the offline suite).
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from of135i import (  # noqa: E402
+    tables, tables_base, tables_ir, tables_load,
+    tables_dpi600, tables_dpi1200, tables_dpi2400, tables_dpi7200,
+)
+
+OUT_DIR = REPO / "sane"
+STEM = "gl126_tables"
+
+# The scan-table modules, in the order they are emitted. `tables` is the
+# 3600 dpi visible-only profile (the plain scan); `tables_ir` is 3600 dpi
+# dual-light. The rest are the dual-light profiles for the other four
+# resolutions. `tables_load` holds the magazine phases (no dpi).
+PROFILES = [
+    ("plain3600", tables, 3600, "3600 dpi, visible only (plain scan)"),
+    ("ir3600", tables_ir, 3600, "3600 dpi, dual-light (IR + visible)"),
+    ("dpi600", tables_dpi600, 600, "600 dpi, dual-light"),
+    ("dpi1200", tables_dpi1200, 1200, "1200 dpi, dual-light"),
+    ("dpi2400", tables_dpi2400, 2400, "2400 dpi, dual-light"),
+    ("dpi7200", tables_dpi7200, 7200, "7200 dpi, dual-light"),
+]
+
+# Wire constants (of135i/usbio.py).
+REQ_WRITE = 0x04
+REQ_END_ACCESS = 0x0C
+WV_REGS = 0x0083
+WV_BUF_DESC = 0x0082
+
+
+@dataclass
+class BufWrite:
+    """One buffer transfer: descriptor plus the payload's total length."""
+    addr: int
+    length: int
+    payload: bytes
+
+
+@dataclass
+class PhaseTables:
+    """A phase reduced to what the backend has to reproduce."""
+    name: str
+    pairs: list[tuple[int, int]]            # (reg, val), in write order
+    injections: dict[str, int]              # name -> index into `pairs`
+    bo_injections: dict[str, tuple[int, int]]   # name -> (buf index, length)
+    buffers: list[BufWrite]
+    end_access: list[tuple[int, int]]       # (wValue, wIndex)
+    op_count: int
+    read_count: int
+    split_at: int | None
+
+
+def decode_phase(phase) -> PhaseTables:
+    """Reduce one `Phase` op stream to register pairs, buffers and the
+    indices its injection points land on.
+
+    The injection specs address `(op_index, byte_offset)` in the captured
+    op data. A register batch is `[reg][val]` pairs, so an even offset is a
+    register number and an odd one is its value; every injection in the
+    tables targets a value byte. The mapping from op/offset to pair index
+    is therefore `pairs_before_this_op + byte_offset // 2`, and it is
+    computed here rather than assumed, so a table change that moves a byte
+    is caught by the assertion below instead of silently mis-indexing.
+    """
+    pairs: list[tuple[int, int]] = []
+    buffers: list[BufWrite] = []
+    end_access: list[tuple[int, int]] = []
+    reads = 0
+    # op index -> index in `pairs` where that op's pairs start
+    pair_base: dict[int, int] = {}
+    # op index -> index in `buffers` for that op's descriptor
+    buf_of_op: dict[int, int] = {}
+    pending_buf: int | None = None
+
+    for i, op in enumerate(phase.ops):
+        if op.kind == "cw" and op.br == REQ_WRITE and op.wv == WV_REGS:
+            pair_base[i] = len(pairs)
+            data = op.data
+            if len(data) % 2:
+                raise ValueError(
+                    f"{phase.name}: register write op {i} has an odd length "
+                    f"({len(data)} B); it is not whole [reg][val] pairs")
+            pairs.extend((data[k], data[k + 1]) for k in range(0, len(data), 2))
+        elif op.kind == "cw" and op.br == REQ_WRITE and op.wv == WV_BUF_DESC:
+            addr = int.from_bytes(op.data[0:4], "little")
+            length = int.from_bytes(op.data[4:8], "little")
+            buf_of_op[i] = len(buffers)
+            buffers.append(BufWrite(addr=addr, length=length, payload=b""))
+            pending_buf = len(buffers) - 1
+        elif op.kind == "bo":
+            if pending_buf is None:
+                raise ValueError(f"{phase.name}: bulk OUT at op {i} with no "
+                                 f"preceding buffer descriptor")
+            buffers[pending_buf].payload += op.data
+            buf_of_op[i] = pending_buf
+        elif op.kind == "cw" and op.br == REQ_END_ACCESS:
+            end_access.append((op.wv, op.wi))
+        elif op.kind in ("cr", "poll", "bi"):
+            reads += 1
+
+    injections: dict[str, int] = {}
+    bo_injections: dict[str, tuple[int, int]] = {}
+    for name, spec in phase.injections.items():
+        if spec[0] == "byte":
+            _, idx, off = spec
+            if idx not in pair_base:
+                raise ValueError(f"{phase.name}: injection {name!r} targets op "
+                                 f"{idx}, which is not a register write")
+            if off % 2 == 0:
+                raise ValueError(f"{phase.name}: injection {name!r} targets byte "
+                                 f"{off}, a register number rather than a value")
+            injections[name] = pair_base[idx] + off // 2
+        elif spec[0] == "bo":
+            _, idxs = spec
+            bufs = {buf_of_op[i] for i in idxs if i in buf_of_op}
+            if len(bufs) != 1:
+                raise ValueError(f"{phase.name}: injection {name!r} spans "
+                                 f"{len(bufs)} buffers, expected exactly one")
+            b = bufs.pop()
+            bo_injections[name] = (b, sum(len(phase.ops[i].data) for i in idxs))
+
+    return PhaseTables(
+        name=phase.name, pairs=pairs, injections=injections,
+        bo_injections=bo_injections, buffers=buffers, end_access=end_access,
+        op_count=len(phase.ops), read_count=reads, split_at=phase.split_at,
+    )
+
+
+def c_ident(*parts: str) -> str:
+    return "_".join(p.replace("-", "_") for p in parts)
+
+
+def fmt_pairs(pairs: list[tuple[int, int]], indent: str = "    ") -> str:
+    """Four pairs per line, hex, so a diff against a capture stays readable."""
+    out, line = [], []
+    for reg, val in pairs:
+        line.append(f"{{0x{reg:02x}, 0x{val:02x}}}")
+        if len(line) == 4:
+            out.append(indent + ", ".join(line) + ",")
+            line = []
+    if line:
+        out.append(indent + ", ".join(line) + ",")
+    return "\n".join(out)
+
+
+def fmt_bytes(data: bytes, indent: str = "    ") -> str:
+    out, line = [], []
+    for b in data:
+        line.append(f"0x{b:02x}")
+        if len(line) == 12:
+            out.append(indent + ", ".join(line) + ",")
+            line = []
+    if line:
+        out.append(indent + ", ".join(line) + ",")
+    return "\n".join(out)
+
+
+def emit() -> tuple[str, str]:
+    """Return (header, source) for the generated tables."""
+    h: list[str] = []
+    c: list[str] = []
+
+    banner = (
+        "/* GENERATED by tools/gen_sane_tables.py from of135i/tables*.py --\n"
+        " * do not edit. Regenerate after any table change.\n"
+        " *\n"
+        " * Register values captured from the vendor driver and verified\n"
+        " * byte-exact against USB traces (docs/protocol-notes.md); these are\n"
+        " * interoperability facts, not vendor code. Reads and polls are not\n"
+        " * reproduced here: the backend polls explicitly with timeouts\n"
+        " * (docs/sane-port.md, decision 3).\n"
+        " */\n")
+
+    h.append(banner)
+    h.append("#ifndef BACKEND_GENESYS_GL126_TABLES_H")
+    h.append("#define BACKEND_GENESYS_GL126_TABLES_H\n")
+    h.append("#include <cstddef>")
+    h.append("#include <cstdint>\n")
+    h.append("namespace genesys {")
+    h.append("namespace gl126 {\n")
+    h.append("/** One register write: the chip takes [reg][val] byte pairs. */")
+    h.append("struct RegPair {")
+    h.append("    std::uint8_t reg;")
+    h.append("    std::uint8_t val;")
+    h.append("};\n")
+    h.append("/** A value the hook must compute and patch in before writing.")
+    h.append(" *  `index` addresses the phase's pair array; the captured value")
+    h.append(" *  standing there belongs to the reference unit and must not be")
+    h.append(" *  written as-is. */")
+    h.append("struct RegInjection {")
+    h.append("    const char* name;")
+    h.append("    std::size_t index;")
+    h.append("};\n")
+    h.append("/** A buffer transfer: descriptor address plus payload length. */")
+    h.append("struct BufWrite {")
+    h.append("    std::uint32_t addr;")
+    h.append("    std::uint32_t length;")
+    h.append("};\n")
+    h.append("/** One phase of the captured sequence. */")
+    h.append("struct Phase {")
+    h.append("    const char* name;")
+    h.append("    const RegPair* regs;")
+    h.append("    std::size_t reg_count;")
+    h.append("    const RegInjection* injections;")
+    h.append("    std::size_t injection_count;")
+    h.append("    const BufWrite* buffers;")
+    h.append("    std::size_t buffer_count;")
+    h.append("};\n")
+    h.append("/** One scan profile: a resolution and its phase sequence. */")
+    h.append("struct Profile {")
+    h.append("    const char* name;")
+    h.append("    unsigned dpi;")
+    h.append("    unsigned image_width;      /* px per line, RGB16LE */")
+    h.append("    unsigned chunk_len;        /* bytes per image bulk-read */")
+    h.append("    unsigned lines_per_chunk;")
+    h.append("    unsigned shading_lines;")
+    h.append("    unsigned shading_upload_len;")
+    h.append("    const std::uint8_t* slope_position;")
+    h.append("    std::size_t slope_position_len;")
+    h.append("    const std::uint8_t* slope_scan;")
+    h.append("    std::size_t slope_scan_len;")
+    h.append("    const Phase* phases;")
+    h.append("    std::size_t phase_count;")
+    h.append("};\n")
+
+    c.append(banner)
+    c.append(f'#include "{STEM}.h"\n')
+    c.append("namespace genesys {")
+    c.append("namespace gl126 {\n")
+
+    # ---- flat register tables from tables_base -------------------------
+    for name, pairs, doc in [
+        ("BASE_INIT", tables_base.BASE_INIT_PAIRS,
+         "Power-on base register table, written once per session."),
+        ("AFE_BASE", tables_base.AFE_BASE_PAIRS,
+         "AFE bring-up values that follow the base table."),
+        ("COLD_INIT", tables_base.COLD_INIT_PAIRS,
+         "Cold-start table (reg 0x01 lacks the ready bit 0x20)."),
+        ("LOADER_SPEED", tables_base.LOADER_SPEED_PAIRS,
+         "Loader motor speed registers used by the magazine phases."),
+    ]:
+        h.append(f"/** {doc} */")
+        h.append(f"extern const RegPair {name}[{len(pairs)}];")
+        h.append(f"constexpr std::size_t {name}_COUNT = {len(pairs)};\n")
+        c.append(f"/* {doc} */")
+        c.append(f"const RegPair {name}[{len(pairs)}] = {{")
+        c.append(fmt_pairs(list(pairs)))
+        c.append("};\n")
+
+    # ---- slope tables, deduplicated ------------------------------------
+    # The same 512 B payload is written to several addresses and shared
+    # between profiles; emitting it once keeps the object small and makes
+    # an accidental divergence visible as a new array.
+    slopes: dict[bytes, str] = {}
+
+    def slope_name(payload: bytes, suggested: str) -> str:
+        if payload in slopes:
+            return slopes[payload]
+        ident = f"SLOPE_{suggested.upper()}"
+        n = 2
+        while ident in slopes.values():
+            ident = f"SLOPE_{suggested.upper()}_{n}"
+            n += 1
+        slopes[payload] = ident
+        h.append(f"extern const std::uint8_t {ident}[{len(payload)}];")
+        h.append(f"constexpr std::size_t {ident}_LEN = {len(payload)};\n")
+        c.append(f"const std::uint8_t {ident}[{len(payload)}] = {{")
+        c.append(fmt_bytes(payload))
+        c.append("};\n")
+        return ident
+
+    slope_name(tables_base.SLOPE_TABLE_LOADER, "loader")
+
+    # ---- profiles -------------------------------------------------------
+    profile_entries: list[str] = []
+    for key, mod, dpi, doc in PROFILES:
+        pos = slope_name(mod.SLOPE_TABLE_POSITION, f"{key}_position")
+        scan = slope_name(mod.SLOPE_TABLE_SCAN, f"{key}_scan")
+
+        phase_entries: list[str] = []
+        for phase in mod.PHASES:
+            pt = decode_phase(phase)
+            base = c_ident(key.upper(), pt.name.upper())
+
+            if pt.pairs:
+                c.append(f"/* {key} / {pt.name}: {len(pt.pairs)} register writes "
+                         f"from {pt.op_count} captured ops "
+                         f"({pt.read_count} reads not reproduced). */")
+                c.append(f"static const RegPair {base}_REGS[{len(pt.pairs)}] = {{")
+                c.append(fmt_pairs(pt.pairs))
+                c.append("};\n")
+                regs_ref = f"{base}_REGS"
+            else:
+                regs_ref = "nullptr"
+
+            if pt.injections:
+                c.append(f"/* Computed values patched into {base}_REGS. */")
+                c.append(f"static const RegInjection {base}_INJ"
+                         f"[{len(pt.injections)}] = {{")
+                for name, idx in sorted(pt.injections.items(), key=lambda kv: kv[1]):
+                    reg, val = pt.pairs[idx]
+                    c.append(f'    {{"{name}", {idx}}},'
+                             f'   /* reg 0x{reg:02x}, captured 0x{val:02x} */')
+                c.append("};\n")
+                inj_ref = f"{base}_INJ"
+            else:
+                inj_ref = "nullptr"
+
+            if pt.buffers:
+                c.append(f"/* Buffer transfers in {key} / {pt.name}. */")
+                c.append(f"static const BufWrite {base}_BUFS[{len(pt.buffers)}] = {{")
+                for b in pt.buffers:
+                    note = ""
+                    if b.payload and b.payload in slopes:
+                        note = f"   /* {slopes[b.payload]} */"
+                    elif not b.payload:
+                        note = "   /* payload computed at run time */"
+                    c.append(f"    {{0x{b.addr:08x}, {b.length}}},{note}")
+                c.append("};\n")
+                bufs_ref = f"{base}_BUFS"
+            else:
+                bufs_ref = "nullptr"
+
+            phase_entries.append(
+                f'    {{"{pt.name}", {regs_ref}, {len(pt.pairs)}, '
+                f'{inj_ref}, {len(pt.injections)}, '
+                f'{bufs_ref}, {len(pt.buffers)}}},')
+
+        c.append(f"static const Phase {key.upper()}_PHASES"
+                 f"[{len(phase_entries)}] = {{")
+        c.extend(phase_entries)
+        c.append("};\n")
+
+        profile_entries.append(
+            f'    {{"{key}", {dpi}, {getattr(mod, "IMAGE_WIDTH", 0)}, '
+            f'{getattr(mod, "IMAGE_CHUNK_LEN", 0)}, '
+            f'{getattr(mod, "LINES_PER_CHUNK", 0)}, '
+            f'{getattr(mod, "SHADING_LINES", 0)}, '
+            f'{getattr(mod, "SHADING_UPLOAD_LEN", 0)}, '
+            f'{pos}, {pos}_LEN, {scan}, {scan}_LEN, '
+            f'{key.upper()}_PHASES, {len(phase_entries)}}},   /* {doc} */')
+
+    # ---- magazine phases (no dpi) ---------------------------------------
+    load_entries: list[str] = []
+    for phase in tables_load.PHASES:
+        pt = decode_phase(phase)
+        base = c_ident("LOAD", pt.name.upper())
+        if pt.pairs:
+            c.append(f"/* magazine / {pt.name}: {len(pt.pairs)} register writes "
+                     f"from {pt.op_count} captured ops. */")
+            c.append(f"static const RegPair {base}_REGS[{len(pt.pairs)}] = {{")
+            c.append(fmt_pairs(pt.pairs))
+            c.append("};\n")
+            regs_ref = f"{base}_REGS"
+        else:
+            regs_ref = "nullptr"
+        bufs_ref = "nullptr"
+        if pt.buffers:
+            c.append(f"static const BufWrite {base}_BUFS[{len(pt.buffers)}] = {{")
+            for b in pt.buffers:
+                note = f"   /* {slopes[b.payload]} */" if b.payload in slopes else ""
+                c.append(f"    {{0x{b.addr:08x}, {b.length}}},{note}")
+            c.append("};\n")
+            bufs_ref = f"{base}_BUFS"
+        load_entries.append(
+            f'    {{"{pt.name}", {regs_ref}, {len(pt.pairs)}, '
+            f'nullptr, 0, {bufs_ref}, {len(pt.buffers)}}},')
+
+    h.append("/** The magazine phases (OPEN / JOG / LOAD), in order. */")
+    h.append(f"extern const Phase MAGAZINE_PHASES[{len(load_entries)}];")
+    h.append(f"constexpr std::size_t MAGAZINE_PHASE_COUNT = {len(load_entries)};\n")
+    c.append(f"const Phase MAGAZINE_PHASES[{len(load_entries)}] = {{")
+    c.extend(load_entries)
+    c.append("};\n")
+
+    h.append("/** Every scan profile, indexed by PROFILE_COUNT. */")
+    h.append(f"extern const Profile PROFILES[{len(profile_entries)}];")
+    h.append(f"constexpr std::size_t PROFILE_COUNT = {len(profile_entries)};\n")
+    c.append(f"const Profile PROFILES[{len(profile_entries)}] = {{")
+    c.extend(profile_entries)
+    c.append("};\n")
+
+    h.append("} // namespace gl126")
+    h.append("} // namespace genesys\n")
+    h.append("#endif // BACKEND_GENESYS_GL126_TABLES_H")
+    c.append("} // namespace gl126")
+    c.append("} // namespace genesys")
+
+    return "\n".join(h) + "\n", "\n".join(c) + "\n"
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--check", action="store_true",
+                    help="fail if the checked-in output is out of date")
+    args = ap.parse_args(argv)
+
+    header, source = emit()
+    h_path = OUT_DIR / f"{STEM}.h"
+    c_path = OUT_DIR / f"{STEM}.cpp"
+
+    if args.check:
+        for path, want in ((h_path, header), (c_path, source)):
+            if not path.exists():
+                print(f"missing generated file: {path}", file=sys.stderr)
+                return 1
+            if path.read_text() != want:
+                print(f"{path} is out of date; run tools/gen_sane_tables.py",
+                      file=sys.stderr)
+                return 1
+        print("generated SANE tables are up to date")
+        return 0
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    h_path.write_text(header)
+    c_path.write_text(source)
+    print(f"wrote {h_path} ({len(header)} B)")
+    print(f"wrote {c_path} ({len(source)} B)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

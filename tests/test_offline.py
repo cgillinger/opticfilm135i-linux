@@ -607,6 +607,62 @@ def test_digitize_records_partial_frame_progress():
     print("test_digitize_records_partial_frame_progress OK")
 
 
+# ------------------------------------------------ SANE port (stage 2 tables)
+
+
+def test_sane_tables_generated_and_current():
+    """The generated C++ register tables must match of135i/tables*.py. They
+    are the SANE backend's only source of register values, so a table change
+    that is not regenerated would leave the backend writing stale values --
+    silently, since nothing else reads them."""
+    import subprocess
+    rc = subprocess.run(
+        [sys.executable, "tools/gen_sane_tables.py", "--check"],
+        cwd=str(Path(__file__).resolve().parent.parent),
+        capture_output=True, text=True)
+    assert rc.returncode == 0, rc.stdout + rc.stderr
+    print("test_sane_tables_generated_and_current OK")
+
+
+def test_sane_tables_injections_land_on_value_bytes():
+    """Every injection point must address the VALUE byte of the right
+    register: the captured byte belongs to the reference unit, so a
+    mis-indexed injection would make the backend scan with another unit's
+    gain or offset -- which looks like a working scan, not like an error."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import gen_sane_tables as gen
+    from of135i import tables
+
+    by_name = {p.name: p for p in tables.PHASES}
+    # (phase, injection) -> the register it must write
+    expected = {
+        ("cal_gain_check_a", "gain_r"): 0x5E,
+        ("cal_gain_check_a", "gain_g"): 0x5E,
+        ("cal_gain_check_a", "gain_b"): 0x5E,
+        ("cal_shading_measure", "offset_r_hi"): 0x5D,
+        ("cal_shading_measure", "offset_r_lo"): 0x5E,
+        ("position", "feedl_hi"): 0x3D,
+        ("position", "feedl_mid"): 0x3E,
+        ("position", "feedl_lo"): 0x3F,
+        ("scan", "lines_hi"): 0x26,
+        ("scan", "lines_lo"): 0x27,
+    }
+    for (phase_name, inj), want_reg in expected.items():
+        pt = gen.decode_phase(by_name[phase_name])
+        idx = pt.injections[inj]
+        reg, _val = pt.pairs[idx]
+        assert reg == want_reg, (
+            f"{phase_name}/{inj} lands on reg {reg:#04x}, expected {want_reg:#04x}")
+
+    # Every profile must decode without the decoder's own consistency
+    # checks firing (odd-length register batches, injections on a register
+    # number instead of a value, a bulk write with no descriptor).
+    for _key, mod, _dpi, _doc in gen.PROFILES:
+        for phase in mod.PHASES:
+            gen.decode_phase(phase)
+    print("test_sane_tables_injections_land_on_value_bytes OK")
+
+
 def main() -> int:
     tests = [
         test_assemble_shape_and_endianness,
@@ -631,6 +687,8 @@ def main() -> int:
         test_digitize_prefix_sequences_are_independent,
         test_clear_roll_outputs_only_frame_files,
         test_digitize_records_partial_frame_progress,
+        test_sane_tables_generated_and_current,
+        test_sane_tables_injections_land_on_value_bytes,
     ]
     for t in tests:
         t()
