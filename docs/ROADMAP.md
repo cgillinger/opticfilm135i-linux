@@ -108,7 +108,8 @@ series is required for these merely because this plan was written.
    offset, raw image sound. The fix is hardware-verified on the host that
    produces the fault.
 2. ~~Release packaging~~ — **done:** tagged **v0.1.0** on 45305a4; README
-   install + usage confirmed complete and current.
+   install + usage confirmed complete and current. **v0.1.1** (c579078)
+   follows with the post-release digitize fixes (Test 40).
 
 Every acceptance-matrix row is met and A is packaged. **Milestone A is
 complete.**
