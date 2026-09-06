@@ -1773,3 +1773,94 @@ reproducibility bands. The dark_b collapse on even frames is the first
 genuine host difference the B5 track has produced, and it propagates
 into the AFE offsets. The images themselves were not assessed for
 visible impact.
+
+
+## 2026-09-06 — Test 25: load from a magazine at the stop, and a same-strip geometry comparison across hosts
+
+Two questions, both settled. (a) Does the load flow tolerate the
+magazine already inserted to the mechanical stop at power-on, rather than
+loose? (b) Is the ~16-row film-start offset seen on B5 (Test 24 left it
+unmeasurable) a host difference or an artefact of a different film strip?
+
+**(a) Load from a magazine at the stop — tolerated.**
+Cold scanner (reg 0x01 = 0x00), magazine pushed all the way to the stop
+before power-on. The presence sensor cannot tell "at the stop" from
+"loose": both give the identical register picture (0x31=0xfe, 0x32=0xc6,
+0x35=0x00, 0x101=0x48), confirmed against this session's earlier loose
+reading. `of135i load` runs the cold path unchanged: cold_init (three
+homing rounds → 0x01=0x22), then the jog. The pre-run analysis flagged
+the jog as the risk — its feeds might grip and drag a cassette that has
+no slack. They did not: four completion polls, all f855 exact, sensor
+bit still set, over two independent power cycles. The first attempt
+FAILED at the load feed (fc55, want f455) — but that was operator error
+(Enter pressed before the magazine was taken fully out and reinserted),
+confirmed by the operator, and is not a result about the start position.
+The clean rerun, with the reinsert done deliberately, completed with
+f455 then dc55 both exact. So the start position is fine for cold_init,
+jog and load. Caveat: the flow still converges on the verified state at
+the Enter prompt, because the operator takes the magazine fully out and
+reinserts it to the stop regardless — what is verified is that cold_init
+and jog tolerate the stop position, not that the reinsert step can be
+skipped.
+
+**The reinsert prompt has no machine verification.**
+`reg 0x32` reads 0x1f before and after the reinsert, and the interrupt
+event list is empty — identical in both the failed and the successful
+run. The driver cannot tell whether the operator actually took the
+magazine out and back to the stop; it is a pure trust step, which is why
+a premature Enter yields a silent fc55 rather than a legible refusal.
+This is a property of the flow, not of the host, and it mirrors the
+sensor's blindness to insertion depth.
+
+**(b) Same-strip geometry, both hosts.**
+The vendor reference strip in batch-test/ (2026-09-01) turned out to be a
+*different* physical strip (picnic scenes, not the boy-portrait / Big Ben
+strip in the magazine), and Test 21 saved no images, so B5's film-start
+number could not be checked against the same strip from the earlier data.
+Resolved by scanning the *same* strip on both hosts, `scan --frame 1
+--ir` (no --positive, so film_rows is measurable), film_rows verbatim
+(green row-means, 21-wide edge-padded moving average, threshold
+(p5+p95)/2):
+
+| same physical strip | film_start | film_end | length |
+|---|---|---|---|
+| B5 (Lenovo laptop) | 1842 | 5106 | 3264 |
+| reference host | 1858 | 5114 | 3256 |
+| Test 21 (different strip) | 1856-1860 | 5130-5134 | 3274 |
+
+The reference host landed at 1858 — inside Test 21's 1856-1860 band —
+even though Test 21 was a different strip. So film_start_row is
+host/positioning-determined, not strip-determined (two different strips
+give the same start row on the same host). That makes the ~16-row earlier
+start on B5, on the identical strip, a genuine host difference, not the
+strip confound the earlier data could not rule out. It is consistent with
+B5's other signature: B5 ran the POSITION ladder 0.1-0.15 s and the scan
+pass ~1 s faster (Test 24) and now also positions the film start ~16 rows
+earlier — the same marginally-faster motor/USB profile on that host.
+Caveat: one load cycle per host, so load-to-load variation is not
+formally excluded; the reference host giving 1858 on two different strips
+makes chance unlikely. The algorithm is bit-depth insensitive (Pillow
+8-bit and 16-bit memmap gave identical rows), so the reading method is
+not a confound.
+
+**Sharpening of Test 24.**
+The standalone frame 1 on both hosts is clean on everything the batch
+even frames were not: dark_b per-channel (reference host
+[24129, 26873, 25859]), offsets 0x010a/0x0109/0x010a, cr_mismatches 9 (B5
+19) — both inside the reference band. So Test 24's dark_b collapse is
+"even frames within a batch", not "B5 is broken": a lone frame 1 is clean
+every time it has been run, on either host.
+
+**Still open, unchanged:** the cold_init settle poll reads 0x32 = 0x1d
+instead of 0x1f, 6 of 6 homing rounds over two power cycles on B5 —
+systematic and reproducible, but no reference-host settle-poll log was
+saved to compare against, so it is noted, not concluded. The earlier
+0x4855 flag is withdrawn: the reference host's cold doctor shows the same
+0x4855 in the same cold-never-homed state, so it is the normal cold start
+value.
+
+Verdict: the load flow tolerates a magazine at the stop through cold_init
+and jog; the reinsert prompt is an unverifiable trust step; and B5 has a
+second host signature — film start ~16 rows earlier on the identical
+strip — alongside the dark_b collapse, both pointing to the same faster
+motor/USB profile.
