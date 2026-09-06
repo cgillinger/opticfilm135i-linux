@@ -1864,3 +1864,46 @@ and jog; the reinsert prompt is an unverifiable trust step; and B5 has a
 second host signature — film start ~16 rows earlier on the identical
 strip — alongside the dark_b collapse, both pointing to the same faster
 motor/USB profile.
+
+
+## 2026-09-06 — Test 26: semantic PARK Wait B completes; Test 25's geometry host-difference is withdrawn
+
+Semantic PARK, run on mintuu, `hwblock warm --repeat 3 --skip-dpi-change
+--eject --park semantic`. Status COMPLETED, findings none, ejected.
+
+**Semantic PARK Wait B now completes deterministically.**
+All three scans: Wait A ~0.004 s (no timeout), Wait B ~3.78-3.79 s,
+`b_timed_out` false, `b_last = e855` on all three (e8 & 0xe3 = 0xe0, so
+it matches the redefined `park_complete_status_matches` rule; see
+docs/park-completion-analysis.md). This is what Test 23 failed at — there
+Wait B's condition was wrong and timed out. Contrast verbatim PARK
+(Test 21), which does not wait on the status word at all: its 0x32 poll
+times out after 1 s and continues. So semantic is the park mode that
+actually verifies completion (waits ~3.8 s for the e8-class
+PARK_COMPLETE), and verbatim is the one that assumes it. Semantic is a
+working, verified alternative but is NOT made the default on one run.
+
+Reproducibility was good: W1 length constant at 3290 across the three
+scans, warmup 1/1/1 never exhausted, batch start rows 1838/2145/6/0 ≈
+Test 21's 1856/2159/6/0.
+
+**Test 25's geometry host-difference is withdrawn.**
+W1's first scan gave film_start_row **1842** on mintuu — the same host
+and the same physical strip that gave **1858** in Test 25. That is 16
+rows of load-to-load variation on a single host, which is exactly the
+confound Test 25 flagged but judged unlikely ("one load cycle per
+host"). B5's 1842 therefore lies inside mintuu's own load-to-load range
+(1842-1858), so the ~16-row "host difference" Test 25 reported cannot be
+distinguished from load-to-load variation, and that finding is
+withdrawn. Test 24's dark_b collapse is unaffected — it is independent
+and was confirmed against the baseline. Within a single load the drift
+stays small (W1 1842 → 1839 → 1838, ~4 rows over three scans, in line
+with Test 21's 4 rows over ten), so the large frame-start jumps are
+between loads, not within one.
+
+Verdict: semantic PARK Wait B is a working, verified park mode (not the
+default); and the load-to-load film-start spread is ~16 rows, which
+subsumes the B5-vs-mintuu geometry gap Test 25 had read as a host
+difference. The one open question this leaves is the DPI-change position
+shift (Test 7, ~1059 rows) — an order of magnitude larger than
+load-to-load, so still a real and separate effect to test.
