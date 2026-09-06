@@ -94,7 +94,7 @@ the evidence was produced against where it matters.
 | A7 | Cold-start init | reg 0x01=0x00 → cold homing inside the load flow | Test 22; test log | — | hardware |
 | A8 | Positioning never starts a scan on a moving transport | Long-move completion is class F; frame lands on the normal batch position structure (fits the scan window with margin — **scope decision: tolerance is on the order of mm, not rows**) | Test 28 (d555 budget), Test 34 (f555 benign) | — | hardware |
 | A9 | Safety model | Refuses writes unless start state known (0x22/0x00), read before configure (zero writes on refusal), process lock, short transfer = unknown state, no auto-recovery | Test 12–16 (guard held); hardware-safety.md | — | hardware |
-| A10 | Residual dark_b handled | A residual dark_b (device returns a stale buffer on a later batch frame) is detected and the session's healthy dark_b substituted, else fail-closed; the delivered raw image's calibration is trustworthy | Cause: Test 32 (hardware, proven). Fix: Test 33 (offline: detection + substitution + fail-closed) | **1 hardware run: batch with the fix active, confirm a residual frame is corrected and its raw image is sound** | offline (fix); cause hardware |
+| A10 | Residual dark_b handled | A residual dark_b (device returns a stale buffer on a later batch frame) is detected and the session's healthy dark_b substituted, else fail-closed; the delivered raw image's calibration is trustworthy | Cause: Test 32. Fix: Test 33 (offline). **HW-confirmed Test 36** (frame 3 residual → substituted → all four frames get the reference offset) | — | hardware |
 | A11 | Raw output integrity | Linear, unclipped, channel-aligned negative | Test 20 (no clipping, black floor stable) | — | hardware |
 | A12 | Bulk-digitisation workflow | `of135i digitize`: resumable staging + append-only manifest, one strip per run | Test 35 | — | offline (build/logic; the scan it calls is A2/A3) |
 
@@ -103,14 +103,16 @@ and closed. A12 is offline-complete (its scanning is A2/A3). No new test
 series is required for these merely because this plan was written.
 
 **What must remain before A can be declared complete:**
-1. **A10 hardware confirmation** — one batch run with the residual-dark_b
-   fix active, confirming a residual frame is corrected (or fails closed)
-   and its raw image is sound. One run, tied to A10 — not a series.
+1. ~~A10 hardware confirmation~~ — **done (Test 36):** frame 3's residual
+   dark_b was detected and substituted, all four frames got the reference
+   offset, raw image sound. The fix is hardware-verified on the host that
+   produces the fault.
 2. **Release packaging** — a version tag, and confirming the install +
    usage instructions (README) are complete and current. Documentation/
    build only; no hardware.
 
-When those two are done, A is complete.
+Every acceptance-matrix row is now met. The only thing between here and A
+is packaging (2) — no hardware, no further testing.
 
 ## A — Accepted limitations
 
@@ -153,15 +155,13 @@ request flow at submission time). Delivered = submitted, review-ready.
 ## Current status (2026-09-06)
 
 - **M1 — protocol** ✅ and **M2 — driver drives the hardware** ✅.
-- **M3 — robustness:** offline-complete. The frozen A-matrix has **one open
-  item: A10's hardware confirmation** of the residual-dark_b fix (offline-
-  verified; cause hardware-proven). Everything else in A is
-  hardware-verified or offline-complete. (This resolves the earlier
-  wording that called M3 either "in progress" or "no open rows": M3 is
-  offline-done with a single, named hardware confirmation outstanding.)
-- **A — own driver:** near complete — remaining: A10 hardware run + release
-  packaging (version tag, docs check).
-- **B1 / B2 — SANE:** not started; begin after A is complete.
+- **M3 — robustness:** ✅ **complete.** Every row of the A-matrix is met;
+  A10 (the residual-dark_b fix) is hardware-verified on B5 (Test 36). No
+  open rows.
+- **A — own driver:** all acceptance criteria met. **Remaining: release
+  packaging only** (version tag + confirm README install/usage) —
+  documentation/build, no hardware, no further testing.
+- **B1 / B2 — SANE:** not started; begin after A is packaged.
 
-Next action toward A is the A10 hardware confirmation, then packaging —
-not further general testing.
+Next action toward A is packaging, then A is complete — then B1 (local
+SANE backend). Not further general testing.

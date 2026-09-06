@@ -2363,3 +2363,52 @@ is offline-verified only; its cause is hardware-proven but the fix has not
 been run on hardware against an active residual. So M3 is offline-complete
 with exactly ONE open row — ROADMAP A10's hardware confirmation. Do not
 read this entry as marking the dark_b fix hardware-verified.]
+
+
+## 2026-09-06 — Test 36: A10 — the dark_b fix is hardware-verified; geometry closed; M3 done
+
+Batch 1–4 on B5 (the host that shows the fault), driver 14cc444 (fix
+active), raw (no --positive), `OF135I_DUMP_CAL` set. This is ROADMAP
+A10's hardware confirmation.
+
+**The fix works on hardware.** Frame 3's raw dark_b was residual (8
+distinct values = frame 3's own dark_a[-8:], a third independent
+confirmation of the mechanism). The driver logged "dark_b is residual …
+substituting this session's healthy dark_b" and substituted frame 2's
+dark_b (frame 3's dark_b_mean came out bit-identical to frame 2's — the
+"last healthy" behaviour). Result: **all four frames now get the
+reference offset 0x010a / 0x0109 / 0x010a** — the R−5 drift is gone
+(affected frames used to get 0x0105/0x010d–e/0x0108–9). `dark_b_substituted`
+was true on frame 3 only, false on 1/2/4. dropped_buffers 0, all
+transfers 6144/6144, no exceptions.
+
+**Timing is NOT a usable discriminator (self-correction).** An earlier
+entry suggested the ~0.5–0.7 ms fast reads could flag a residual. This run
+disproves that: healthy cal_dark_a f2/f4 also read in 0.5–0.6 ms while
+being healthy (2469/2457 unique), and healthy cal_dark_b f1 took 4.6 ms.
+The fast-read correlation was dataset-specific, not a signature. The
+content-based rule (dark_is_residual, 1 < unique < 32) is the right
+choice; the code comment "timing is host-dependent" was more correct than
+that earlier note.
+
+**"Even frames" is definitively dead.** Affected frames across three runs:
+morning f2/f4; afternoon f2/f3/f4; A10 f3 only. Stochastic. Frame 1 has
+been healthy 3/3 (the fix's fail-closed branch assumes this; still n=3, no
+counterexample). f555 reproduced identically (f2/f3/f4 settle 2.01/4.17/
+6.33 s).
+
+**Geometry closed.** Raw, so comparable. film_start 1819/2119/0/0. Frame 1
+is 1819 here vs 1842 in the morning's standalone geometry frame — same
+host, same strip, same method, only a new load between them: **23 rows of
+load-to-load variation**. That is the baseline that was missing. The old
+"B5 1842 vs reference host 1856–1860" gap (14–18 rows) is *within* one
+host's load-to-load spread — it was never a host difference (confirms Test
+26's withdrawal, now with a measured baseline). B5 positions like the
+reference host.
+
+**Verdict: A10 hardware-verified. M3 is complete** — every row of the
+ROADMAP A-matrix is now met (A10 was the last open one). The residual
+dark_b is the device's own behaviour on later batch frames; the driver
+detects it and delivers a correct raw image, verified on the hardware that
+produces the fault. Remaining before milestone A (own driver): release
+packaging only (version tag, docs check) — no hardware.
