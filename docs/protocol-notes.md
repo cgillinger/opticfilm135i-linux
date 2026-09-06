@@ -134,7 +134,7 @@ tshark -r SEG.pcap -Y "usb.bmRequestType == 0xc0 && usb.setup.bRequest == 4" \
 
 ## Pass 4 (2026-08-30): REPLAY PoC — VERIFIED AGAINST HARDWARE
 
-`of135i_poc.py` (pyusb, venv `.venv/`) run on the mintuu host with the
+`of135i_poc.py` (pyusb, venv `.venv/`) run on the reference host with the
 scanner released from the VM. Results:
 
 - **Read format confirmed**: `0xc0/0x04/0x008e`, wIndex `(reg<<8)|0x22`
@@ -198,7 +198,7 @@ shading correction data to scanner RAM (bulk OUT, addr 0x10014000).
 
 ## Pass 6 (2026-08-30): FULL SCAN FLOW NATIVE ON LINUX — GOAL REACHED
 
-Hardware replay on mintuu (scanner disconnected from the VM, power
+Hardware replay on the reference host (scanner disconnected from the VM, power
 cycled, magazine with negatives loaded):
 
 - `of135i_poc.py init` (base register table) replaces the 01-init
