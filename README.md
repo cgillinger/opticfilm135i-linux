@@ -227,11 +227,18 @@ from the manifest, so you can stop and pick up where you left off.
 # Insert the next strip and run the same command again (roll-002, ...).
 ```
 
-Raw 16-bit TIFF by default — the archival starting point; do colour
-(inversion, white balance, tone) later in your editor. `--positive` adds
-a preview, `--roll N` targets a specific roll, `--no-ir` skips the dust
-pass. The manifest records per-frame calibration and whether a residual
-dark_b was auto-corrected (see docs/test-log.md Test 32–33).
+The main `fN.tiff` is always the **raw negative** (calibrated,
+channel-aligned, and — with IR, unless `--no-clean` — dust-cleaned; not an
+untouched sensor dump). Do colour (inversion, white balance, tone) later
+in your editor. `--positive` writes a **separate** `fN-preview.tiff` and
+leaves the negative untouched; `--roll N` targets a specific roll,
+`--no-ir` drops the IR output (non-3600 profiles still capture dual-light).
+Resume is **between strips**: the roll number advances past the highest
+recorded or on-disk roll, an existing roll is not overwritten without
+`--force`, and an interrupted strip is recorded failed and re-run whole
+(there is no mid-strip resume). The manifest records per-frame calibration
+and whether a residual dark_b was auto-corrected (docs/test-log.md
+Test 32–33).
 
 ### What the driver knows about the magazine
 

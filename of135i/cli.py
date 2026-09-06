@@ -356,29 +356,91 @@ def _cmd_load(args: argparse.Namespace) -> int:
     return loadflow.run(ask=input)
 
 
+def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
+                           out: str, dual: bool):
+    """digitize's per-frame writer. The MAIN image (`out`, fN.tiff) is
+    always the raw NEGATIVE -- never inverted -- so it is the archival
+    product. With --positive a SEPARATE preview (fN-preview.tiff, positive,
+    sRGB) is written from the SAME scan (no extra hardware pass). This
+    differs from `scan`, where --positive replaces the main image; here the
+    negative is preserved and the preview is a side file.
+
+    Note: with IR (and unless --no-clean) the main negative is
+    dust-cleaned; it is calibrated, channel-aligned linear data, not an
+    untouched sensor dump. Returns (main, ir_file, preview_file,
+    dust_cleaned)."""
+    import numpy as _np
+
+    ir_file = None
+    preview_file = None
+    if dual:
+        visible, ir = image.split_ir(raw, width=width)
+        _shift = round(24 * args.dpi / 7200)
+        visible = image.align_channels(visible, dpi=args.dpi)
+        if _shift:
+            ir = ir[_shift:-_shift]
+    else:
+        visible = image.align_channels(image.assemble(raw, width), dpi=args.dpi)
+        ir = None
+
+    dust_cleaned = bool(dual and args.ir and not args.no_clean)
+    if dust_cleaned:
+        visible = image.remove_dust(visible, ir)
+    if args.rotate:
+        k = args.rotate // 90
+        visible = _np.ascontiguousarray(_np.rot90(visible, k=k))
+        if ir is not None:
+            ir = _np.ascontiguousarray(_np.rot90(ir, k=k))
+
+    _write_image(visible, out, positive=False)   # raw negative, never inverted
+    print(f"wrote {out} ({visible.shape[1]}x{visible.shape[0]}, 16-bit RGB "
+          f"negative{', dust-cleaned' if dust_cleaned else ''})")
+
+    if dual and args.ir:
+        ir_rgb = _np.stack([ir, ir, ir], axis=-1)
+        ir_file = str(Path(out).with_name(Path(out).stem + "-ir.tiff"))
+        image.write_tiff16(ir_rgb, ir_file)
+        print(f"wrote {ir_file} ({ir.shape[1]}x{ir.shape[0]}, 16-bit, IR channel)")
+
+    if args.positive:
+        prev = image.to_positive(visible)   # from the same visible; no rescan
+        preview_file = str(Path(out).with_name(Path(out).stem + "-preview.tiff"))
+        _write_image(prev, preview_file, positive=True)
+        print(f"wrote {preview_file} ({prev.shape[1]}x{prev.shape[0]}, "
+              f"16-bit RGB, positive preview)")
+
+    return out, ir_file, preview_file, dust_cleaned
+
+
 def _cmd_digitize(args: argparse.Namespace) -> int:
     """Bulk-digitise one film strip into a resumable staging tree
     (of135i.digitize): pick the roll number, load the magazine, scan
     frames 1-4 to <out>/<prefix>roll-NNN/, eject, and record the roll in
-    an append-only manifest. Run once per strip; the roll number
-    auto-advances from the manifest so a box can be worked through strip
-    by strip. Interactive (the load flow prompts), so it needs a real
-    terminal. Raw 16-bit TIFF by default -- the archival starting point;
-    colour interpretation is the application's job."""
+    an append-only manifest. Run once per strip; resume is BETWEEN strips
+    -- the roll number advances past the highest recorded or on-disk roll,
+    and an incomplete strip is recorded failed and re-run whole (there is
+    no mid-strip resume). Interactive (the load flow prompts), so it needs
+    a real terminal. The main image is the raw negative (the archival
+    starting point); colour interpretation is the application's job."""
     from datetime import datetime, timezone
     from . import digitize, loadflow
 
-    roll = args.roll if args.roll is not None else digitize.next_roll(args.out)
-    if digitize.roll_is_done(args.out, roll) and not args.force:
-        print(f"error: roll {roll} is already recorded as done in "
-              f"{digitize.manifest_path(args.out)}; use --roll to target a "
-              f"different one, or --force to redo it.", file=sys.stderr)
-        return 2
+    roll = args.roll if args.roll is not None else digitize.next_roll(args.out, args.prefix)
     rdir = digitize.roll_dir(args.out, args.prefix, roll)
+
+    # Overwrite guard, BEFORE any hardware: refuse a roll that already has a
+    # scan on disk (checked directly, not just via the manifest, so a crash
+    # between scanning and recording is caught) or is recorded done, unless
+    # --force.
+    if not args.force and (digitize.roll_dir_has_output(args.out, args.prefix, roll)
+                           or digitize.roll_is_done(args.out, roll)):
+        print(f"error: roll {roll} already has output in {rdir} (or is recorded "
+              f"done); use --roll for a different one, or --force to redo it.",
+              file=sys.stderr)
+        return 2
     print(f"=== digitize roll {roll} -> {rdir} ===")
 
-    # Fields the shared scan finishers / diag sidecar read off `args`.
-    args.frames = "1-4"
+    args.frames = "1-4"   # for _write_diag_sidecar's cli metadata
     args.eject = True
 
     started = datetime.now(timezone.utc).isoformat()
@@ -386,23 +448,35 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
                     "started_utc": started, "dpi": args.dpi,
                     "positive": args.positive}
 
+    def record_failed(stage: str, **extra) -> None:
+        """Record this roll as failed, tolerating a manifest write that
+        itself fails -- never let that mask the original error."""
+        try:
+            record.update(status="failed", stage=stage,
+                          finished_utc=datetime.now(timezone.utc).isoformat(),
+                          **extra)
+            digitize.append_manifest(args.out, record)
+        except Exception as me:
+            log.warning("manifest write failed while recording a failed roll "
+                        "(original error preserved): %s", me)
+
     # 1) Load (its own session; interactive). A failure here leaves the
     #    scanner in an unknown state -- power cycle -- so we record and stop.
     if not args.assume_loaded:
         rc = loadflow.run(ask=input)
         if rc != 0:
-            record.update(status="failed", stage="load", load_rc=rc,
-                          finished_utc=datetime.now(timezone.utc).isoformat())
-            digitize.append_manifest(args.out, record)
+            record_failed("load", load_rc=rc)
             print(f"load failed (rc {rc}); roll {roll} recorded as failed. "
                   f"Power-cycle before retrying.", file=sys.stderr)
             return rc
 
-    # 2) Scan frames 1-4 to the roll dir (a fresh writing session).
+    # 2) Scan frames 1-4 to the roll dir (a fresh writing session). Same
+    #    plain/dual dispatch as `scan`: non-3600 dpi is always a dual-light
+    #    pass, and --ir on 3600 selects the dual flow; --no-ir on 3600 uses
+    #    the plain flow.
     rdir.mkdir(parents=True, exist_ok=True)
     dual = args.ir or args.dpi != 3600
     per_frame: list[dict] = []
-    files: list[str] = []
 
     def body(scanner: Scanner) -> int:
         scanner.park_mode = args.park
@@ -415,26 +489,38 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
         for frame in (1, 2, 3, 4):
             scanner.initialize(ir=dual, dpi=args.dpi)
             out = str(digitize.frame_path(args.out, args.prefix, roll, frame))
-            log.info("scanning frame %d @ %d dpi (dual-light pass)", frame, args.dpi)
-            raw, width, _meta = scanner.scan(frame=frame, ir=True, dpi=args.dpi)
-            _finish_dual_scan(args, raw, width, out, write_ir=args.ir)
+            log.info("scanning frame %d @ %d dpi%s", frame, args.dpi,
+                     " (dual-light pass)" if dual else "")
+            if dual:
+                raw, width, _meta = scanner.scan(frame=frame, ir=True, dpi=args.dpi)
+            else:
+                raw, width = scanner.scan(frame=frame)
+            main, irf, prev, cleaned = _finish_digitize_frame(args, raw, width, out, dual)
             del raw
             _write_diag_sidecar(args, scanner, out, frame)
             d = scanner.last_diag or {}
             per_frame.append({
-                "frame": frame,
+                "frame": frame, "main": main, "ir": irf, "preview": prev,
+                "dust_cleaned": cleaned,
                 "gain_codes": d.get("gain_codes"),
                 "offset_codes": d.get("offset_codes"),
                 "dark_b_substituted": d.get("dark_b_substituted"),
             })
-            files.append(out)
         scanner.eject()
         print("ejected")
         return 0
 
-    rc = _run_writing_session(body)
+    # Even if the scan/write flow raises (e.g. an OSError writing an image),
+    # record the roll as failed -- with what was saved -- before the error
+    # propagates, so its number is not silently reused. No further scan,
+    # eject or recovery runs after a failure.
+    try:
+        rc = _run_writing_session(body)
+    except BaseException as e:
+        record_failed("scan", per_frame=per_frame, error=repr(e))
+        raise
     record.update(finished_utc=datetime.now(timezone.utc).isoformat(),
-                  per_frame=per_frame, files=files,
+                  per_frame=per_frame,
                   status="ok" if rc == 0 else "failed",
                   stage=None if rc == 0 else "scan")
     digitize.append_manifest(args.out, record)
@@ -442,7 +528,7 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
     if rc == 0:
         subs = [pf["frame"] for pf in per_frame if pf.get("dark_b_substituted")]
         note = f" (dark_b substituted on frame(s) {subs})" if subs else ""
-        print(f"roll {roll} done: {len(files)} frames -> {rdir}{note}. "
+        print(f"roll {roll} done: {len(per_frame)} frames -> {rdir}{note}. "
               f"Next: insert the next strip and run 'of135i digitize' again "
               f"(roll {roll + 1}).")
     else:
@@ -596,12 +682,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_dig.add_argument("--dpi", type=int, default=3600, choices=SUPPORTED_DPIS,
         help="scan resolution (default 3600)")
     p_dig.add_argument("--positive", action="store_true",
-        help="also apply the preview positive inversion (default off: raw "
-             "negative is the archival product)")
+        help="also write a positive preview as a SEPARATE file "
+             "(fN-preview.tiff); the main fN.tiff always stays the raw "
+             "negative (default off)")
     p_dig.add_argument("--rotate", type=int, default=0, choices=(0, 90, 180, 270),
         help="rotate output counter-clockwise (degrees; default 0)")
     p_dig.add_argument("--no-ir", dest="ir", action="store_false",
-        help="skip the IR pass and dust removal (IR is on by default)")
+        help="skip the IR pass and dust removal (non-3600 profiles still "
+             "run a dual-light capture; only the IR output is dropped)")
     p_dig.add_argument("--no-clean", action="store_true",
         help="skip IR-based dust/scratch removal on the visible image")
     p_dig.add_argument("--no-diag", action="store_true",

@@ -53,9 +53,20 @@ def read_manifest(out_dir: str) -> list[dict]:
 
 
 def append_manifest(out_dir: str, record: dict) -> None:
-    """Append one record as a JSON line. Creates the dir/file if needed."""
+    """Append one record as a JSON line. Creates the dir/file if needed.
+
+    If the file's last line was torn (an interrupted write with no trailing
+    newline), a newline is written first so the new record lands on its own
+    clean line -- otherwise it would merge with the broken tail, making
+    BOTH lines unreadable and risking a reused roll number."""
     p = manifest_path(out_dir)
     p.parent.mkdir(parents=True, exist_ok=True)
+    if p.exists() and p.stat().st_size > 0:
+        with open(p, "rb") as f:
+            f.seek(-1, 2)
+            if f.read(1) != b"\n":
+                with open(p, "a") as fa:
+                    fa.write("\n")
     with open(p, "a") as f:
         f.write(json.dumps(record, sort_keys=True) + "\n")
 
@@ -66,14 +77,41 @@ def rolls_done(out_dir: str) -> set[int]:
             if r.get("status") == "ok" and "roll" in r}
 
 
-def next_roll(out_dir: str) -> int:
-    """The next roll number to scan: one past the highest roll seen in the
-    manifest (any status), or 1 for an empty manifest. Uses the highest
-    seen -- not just 'ok' -- so a failed roll's number is not silently
-    reused by the auto-increment; the operator can still target it
-    explicitly with --roll."""
-    rolls = [int(r["roll"]) for r in read_manifest(out_dir) if "roll" in r]
+def existing_roll_numbers(out_dir: str, prefix: str = "") -> set[int]:
+    """Roll numbers that already have an output directory on disk (matching
+    ``<prefix>roll-NNN``), regardless of the manifest. A scan can write
+    frames before its manifest record is appended (or crash in between), so
+    disk state must be consulted for auto-numbering, not just the manifest."""
+    d = Path(out_dir)
+    if not d.is_dir():
+        return set()
+    out: set[int] = set()
+    want = f"{prefix}roll-"
+    for child in d.iterdir():
+        if child.is_dir() and child.name.startswith(want):
+            tail = child.name[len(want):]
+            if tail.isdigit():
+                out.add(int(tail))
+    return out
+
+
+def next_roll(out_dir: str, prefix: str = "") -> int:
+    """The next roll number to scan: one past the highest roll seen in
+    EITHER the manifest (any status) or an existing output directory, or 1
+    if none. Consulting both means a scan that wrote frames but never
+    recorded a manifest entry (a crash between the two) does not get its
+    number reused and its files overwritten. A failed roll's number is not
+    silently reused either; the operator can still target one with --roll."""
+    rolls = {int(r["roll"]) for r in read_manifest(out_dir) if "roll" in r}
+    rolls |= existing_roll_numbers(out_dir, prefix)
     return max(rolls) + 1 if rolls else 1
+
+
+def roll_dir_has_output(out_dir: str, prefix: str, roll: int) -> bool:
+    """True if this roll's directory already holds a scan (any .tiff) --
+    the check that guards against overwriting existing results."""
+    d = roll_dir(out_dir, prefix, roll)
+    return d.is_dir() and any(d.glob("*.tiff"))
 
 
 def roll_dirname(prefix: str, roll: int) -> str:

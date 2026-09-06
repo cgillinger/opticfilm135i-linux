@@ -2412,3 +2412,46 @@ dark_b is the device's own behaviour on later batch frames; the driver
 detects it and delivers a correct raw image, verified on the hardware that
 produces the fault. Remaining before milestone A (own driver): release
 packaging only (version tag, docs check) — no hardware.
+
+
+## 2026-09-06 — Test 37: digitize (A12) — six review fixes (offline)
+
+An external review of `of135i digitize` (from 6b3ee2a) found six concrete
+defects. All fixed offline; only A12 reopened (other closed requirements
+unaffected). No protocol/calibration/POSITION/PARK/safety change.
+
+1. **Manifest safe after a torn write.** A record appended straight onto an
+   interrupted last line (no trailing newline) merged with it, making both
+   unreadable — and the merged record's roll invisible, so its number could
+   be reused. `append_manifest` now writes a newline first if the file
+   doesn't end in one.
+2. **Overwrite guard on resume.** Auto-numbering was manifest-only, so a
+   scan that wrote frames but crashed before its manifest record could have
+   its number reused and files overwritten. `next_roll` now also consults
+   on-disk `<prefix>roll-NNN` directories, and `_cmd_digitize` refuses a
+   roll that already has output (checked on disk, not just the manifest)
+   without `--force` — **before any hardware action**.
+3. **Failed runs recorded even on a file error.** `_run_writing_session`
+   re-raises a generic exception, so an OSError writing an image/sidecar
+   propagated past the manifest write and the roll was never recorded
+   failed. `_cmd_digitize` now records the roll failed (with what was
+   saved and the stage) before re-raising, and a manifest write that itself
+   fails does not mask the original error. No scan/eject/recovery after.
+4. **--no-ir dispatch.** The body initialised with `ir=dual` but always
+   called `scan(ir=True)`. It now uses the same plain/dual dispatch as
+   `scan`: plain flow on `--no-ir` + 3600, dual otherwise (non-3600 always
+   dual-light).
+5. **--positive preserves the raw image.** It replaced `fN.tiff` with the
+   inverted image. Now `fN.tiff` is always the raw negative and `--positive`
+   writes a separate `fN-preview.tiff` from the same scan (no rescan). The
+   main image is documented as dust-cleaned (with IR), not "untouched raw".
+6. **Resume semantics documented:** between strips only; an interrupted
+   strip is re-run whole.
+
+Tests (offline, test_offline, no hardware): append-after-torn-line;
+overwrite guard (disk roll dir, no manifest — new run neither reuses the
+number nor touches the file); failed-run recording on a write error with a
+propagating exception; the plain/dual dispatch via `_cmd_digitize` with a
+mock scanner; and that a `--positive` preview does not alter the main
+pixels. Full suite green (133). CLI help, README and ROADMAP (A12)
+synchronised. A12 stays offline-verified; next is release packaging.

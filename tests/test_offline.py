@@ -187,6 +187,157 @@ def test_digitize_next_roll_and_done():
     print("test_digitize_next_roll_and_done OK")
 
 
+def test_digitize_append_after_torn_line():
+    """A torn last line (an interrupted write with no trailing newline)
+    must not swallow the next record: append writes a newline first, so the
+    new record is readable and its roll number is seen. (Fix #1.)"""
+    from of135i import digitize
+    with tempfile.TemporaryDirectory() as d:
+        digitize.append_manifest(d, {"roll": 1, "status": "ok"})
+        # simulate an interrupted write: a partial JSON line, no newline
+        with open(digitize.manifest_path(d), "a") as f:
+            f.write('{"roll": 2, "status": "ok"')      # torn, no "}\n"
+        digitize.append_manifest(d, {"roll": 3, "status": "ok"})
+        recs = digitize.read_manifest(d)
+        rolls = [r["roll"] for r in recs]
+        assert 1 in rolls and 3 in rolls, rolls        # both valid records readable
+        assert digitize.next_roll(d) == 4, digitize.next_roll(d)  # roll 3 counted
+    print("test_digitize_append_after_torn_line OK")
+
+
+def test_digitize_overwrite_guard():
+    """A roll directory with a saved frame but no manifest entry must not be
+    reused by auto-numbering, and --roll onto it without --force is refused
+    without touching the file. (Fix #2.)"""
+    import argparse
+    from of135i import cli, digitize
+    with tempfile.TemporaryDirectory() as d:
+        rd = digitize.roll_dir(d, "", 1)
+        rd.mkdir(parents=True)
+        marker = rd / "f1.tiff"
+        marker.write_bytes(b"existing")
+        # auto-numbering skips roll 1 (disk-based), even with no manifest
+        assert digitize.next_roll(d) == 2
+        # targeting roll 1 without --force is refused, file untouched
+        args = argparse.Namespace(
+            out=d, prefix="", roll=1, force=False, assume_loaded=True,
+            dpi=3600, positive=False, rotate=0, ir=True, no_clean=False,
+            no_diag=True, park="verbatim", warmup_budget=None)
+        rc = cli._cmd_digitize(args)
+        assert rc == 2, rc
+        assert marker.read_bytes() == b"existing"
+        assert digitize.read_manifest(d) == []          # nothing recorded
+    print("test_digitize_overwrite_guard OK")
+
+
+def test_digitize_records_failed_on_write_error():
+    """If the scan/write flow raises (e.g. OSError writing an image) after a
+    frame was saved, the roll is recorded failed with what was saved, and a
+    failing manifest write does not mask the original error. (Fix #3.)"""
+    import argparse
+    from of135i import cli, digitize
+
+    class _Boom(Exception):
+        pass
+
+    with tempfile.TemporaryDirectory() as d:
+        args = argparse.Namespace(
+            out=d, prefix="", roll=1, force=True, assume_loaded=True,
+            dpi=3600, positive=False, rotate=0, ir=True, no_clean=False,
+            no_diag=True, park="verbatim", warmup_budget=None)
+        # _run_writing_session re-raises a generic exception; simulate that
+        orig = cli._run_writing_session
+        cli._run_writing_session = lambda body: (_ for _ in ()).throw(_Boom("disk full"))
+        try:
+            raised = None
+            try:
+                cli._cmd_digitize(args)
+            except _Boom as e:
+                raised = e
+            assert isinstance(raised, _Boom), "original error must propagate"
+            recs = digitize.read_manifest(d)
+            assert len(recs) == 1 and recs[0]["status"] == "failed", recs
+            assert recs[0]["stage"] == "scan"
+        finally:
+            cli._run_writing_session = orig
+    print("test_digitize_records_failed_on_write_error OK")
+
+
+def test_digitize_dispatch_plain_on_no_ir():
+    """--no-ir + 3600 uses the PLAIN flow: initialize(ir=False) and scan()
+    without ir=True (matching the scan command). Verified through
+    _cmd_digitize's body with a mock scanner. (Fix #4.)"""
+    import argparse
+    from of135i import cli
+    calls: list = []
+
+    class _MockScanner:
+        park_mode = "verbatim"
+        warmup_budget_s = 60.0
+        last_diag = {"gain_codes": [1, 2, 3], "offset_codes": [4, 5, 6],
+                     "dark_b_substituted": False}
+
+        def check_start_state(self): pass
+        def is_magazine_present(self): return True
+        def initialize(self, ir, dpi): calls.append(("init", ir, dpi))
+        def scan(self, frame, ir=None, dpi=None):
+            calls.append(("scan", frame, ir, dpi))
+            return (b"", 0)
+        def eject(self): calls.append(("eject",))
+
+    with tempfile.TemporaryDirectory() as d:
+        args = argparse.Namespace(
+            out=d, prefix="", roll=1, force=True, assume_loaded=True,
+            dpi=3600, positive=False, rotate=0, ir=False, no_clean=False,
+            no_diag=True, park="verbatim", warmup_budget=None)
+        orig_rws = cli._run_writing_session
+        orig_fin = cli._finish_digitize_frame
+        cli._run_writing_session = lambda body: body(_MockScanner())
+        cli._finish_digitize_frame = lambda a, raw, w, out, dual: (out, None, None, False)
+        try:
+            rc = cli._cmd_digitize(args)
+        finally:
+            cli._run_writing_session = orig_rws
+            cli._finish_digitize_frame = orig_fin
+        assert rc == 0, rc
+        inits = [c for c in calls if c[0] == "init"]
+        scans = [c for c in calls if c[0] == "scan"]
+        assert inits and all(c[1] is False for c in inits), inits   # plain init
+        assert scans and all(c[2] is None for c in scans), scans    # scan() no ir=True
+    print("test_digitize_dispatch_plain_on_no_ir OK")
+
+
+def test_digitize_preview_does_not_alter_main():
+    """With --positive the main image stays the raw negative and a separate
+    positive preview is written; the preview does not change the main
+    pixels. (Fix #5.) Captures the arrays via _write_image."""
+    import argparse
+    from of135i import cli, image
+    # H large enough to survive align_channels' stagger crop (~12 rows at 3600)
+    W, H = 8, 60
+    arr = (np.arange(H * W * 3, dtype="<u2") % 60000).reshape(H, W, 3)
+    raw = np.ascontiguousarray(arr).tobytes()
+    args = argparse.Namespace(dpi=3600, ir=False, no_clean=False, rotate=0,
+                              positive=True)
+    written: dict = {}
+    orig = cli._write_image
+    cli._write_image = lambda a, out, positive=False: written.__setitem__(
+        out, (a.copy(), positive))
+    try:
+        main, irf, prev, cleaned = cli._finish_digitize_frame(args, raw, W, "f1.tiff", dual=False)
+    finally:
+        cli._write_image = orig
+    assert irf is None and prev is not None and cleaned is False
+    main_arr, main_pos = written[main]
+    prev_arr, prev_pos = written[prev]
+    expected = image.align_channels(image.assemble(raw, W), dpi=3600)
+    assert main_pos is False, "main must not be written as positive"
+    assert np.array_equal(main_arr, expected), "main must be the raw negative, unchanged"
+    assert np.array_equal(prev_arr, image.to_positive(expected)), "preview is the positive"
+    assert not np.array_equal(main_arr, prev_arr), "preview must differ from main"
+    print("test_digitize_preview_does_not_alter_main OK")
+
+
 def test_digitize_records_failed_load():
     """_cmd_digitize records a failed load as a failed roll (stage 'load')
     and attempts no scan. Exercised without USB by stubbing the load flow
@@ -226,6 +377,11 @@ def main() -> int:
         test_digitize_manifest_roundtrip_and_torn_line,
         test_digitize_next_roll_and_done,
         test_digitize_records_failed_load,
+        test_digitize_append_after_torn_line,
+        test_digitize_overwrite_guard,
+        test_digitize_records_failed_on_write_error,
+        test_digitize_dispatch_plain_on_no_ir,
+        test_digitize_preview_does_not_alter_main,
     ]
     for t in tests:
         t()
