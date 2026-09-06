@@ -356,6 +356,101 @@ def _cmd_load(args: argparse.Namespace) -> int:
     return loadflow.run(ask=input)
 
 
+def _cmd_digitize(args: argparse.Namespace) -> int:
+    """Bulk-digitise one film strip into a resumable staging tree
+    (of135i.digitize): pick the roll number, load the magazine, scan
+    frames 1-4 to <out>/<prefix>roll-NNN/, eject, and record the roll in
+    an append-only manifest. Run once per strip; the roll number
+    auto-advances from the manifest so a box can be worked through strip
+    by strip. Interactive (the load flow prompts), so it needs a real
+    terminal. Raw 16-bit TIFF by default -- the archival starting point;
+    colour interpretation is the application's job."""
+    from datetime import datetime, timezone
+    from . import digitize, loadflow
+
+    roll = args.roll if args.roll is not None else digitize.next_roll(args.out)
+    if digitize.roll_is_done(args.out, roll) and not args.force:
+        print(f"error: roll {roll} is already recorded as done in "
+              f"{digitize.manifest_path(args.out)}; use --roll to target a "
+              f"different one, or --force to redo it.", file=sys.stderr)
+        return 2
+    rdir = digitize.roll_dir(args.out, args.prefix, roll)
+    print(f"=== digitize roll {roll} -> {rdir} ===")
+
+    # Fields the shared scan finishers / diag sidecar read off `args`.
+    args.frames = "1-4"
+    args.eject = True
+
+    started = datetime.now(timezone.utc).isoformat()
+    record: dict = {"roll": roll, "prefix": args.prefix, "dir": str(rdir),
+                    "started_utc": started, "dpi": args.dpi,
+                    "positive": args.positive}
+
+    # 1) Load (its own session; interactive). A failure here leaves the
+    #    scanner in an unknown state -- power cycle -- so we record and stop.
+    if not args.assume_loaded:
+        rc = loadflow.run(ask=input)
+        if rc != 0:
+            record.update(status="failed", stage="load", load_rc=rc,
+                          finished_utc=datetime.now(timezone.utc).isoformat())
+            digitize.append_manifest(args.out, record)
+            print(f"load failed (rc {rc}); roll {roll} recorded as failed. "
+                  f"Power-cycle before retrying.", file=sys.stderr)
+            return rc
+
+    # 2) Scan frames 1-4 to the roll dir (a fresh writing session).
+    rdir.mkdir(parents=True, exist_ok=True)
+    dual = args.ir or args.dpi != 3600
+    per_frame: list[dict] = []
+    files: list[str] = []
+
+    def body(scanner: Scanner) -> int:
+        scanner.park_mode = args.park
+        if getattr(args, "warmup_budget", None) is not None:
+            scanner.warmup_budget_s = float(args.warmup_budget)
+        scanner.check_start_state()
+        if not scanner.is_magazine_present():
+            print("error: no magazine detected after load", file=sys.stderr)
+            return 1
+        for frame in (1, 2, 3, 4):
+            scanner.initialize(ir=dual, dpi=args.dpi)
+            out = str(digitize.frame_path(args.out, args.prefix, roll, frame))
+            log.info("scanning frame %d @ %d dpi (dual-light pass)", frame, args.dpi)
+            raw, width, _meta = scanner.scan(frame=frame, ir=True, dpi=args.dpi)
+            _finish_dual_scan(args, raw, width, out, write_ir=args.ir)
+            del raw
+            _write_diag_sidecar(args, scanner, out, frame)
+            d = scanner.last_diag or {}
+            per_frame.append({
+                "frame": frame,
+                "gain_codes": d.get("gain_codes"),
+                "offset_codes": d.get("offset_codes"),
+                "dark_b_substituted": d.get("dark_b_substituted"),
+            })
+            files.append(out)
+        scanner.eject()
+        print("ejected")
+        return 0
+
+    rc = _run_writing_session(body)
+    record.update(finished_utc=datetime.now(timezone.utc).isoformat(),
+                  per_frame=per_frame, files=files,
+                  status="ok" if rc == 0 else "failed",
+                  stage=None if rc == 0 else "scan")
+    digitize.append_manifest(args.out, record)
+
+    if rc == 0:
+        subs = [pf["frame"] for pf in per_frame if pf.get("dark_b_substituted")]
+        note = f" (dark_b substituted on frame(s) {subs})" if subs else ""
+        print(f"roll {roll} done: {len(files)} frames -> {rdir}{note}. "
+              f"Next: insert the next strip and run 'of135i digitize' again "
+              f"(roll {roll + 1}).")
+    else:
+        print(f"roll {roll} FAILED at scan (rc {rc}); recorded. "
+              f"Power-cycle before the next strip.", file=sys.stderr)
+    return rc
+
+
 def _cmd_version(args: argparse.Namespace) -> int:
     from . import __version__, diag
     host = diag._collect_host()
@@ -482,6 +577,40 @@ def build_parser() -> argparse.ArgumentParser:
         "doctor", help="read-only hardware health report (no motor/register writes)")
     p_doctor.add_argument("--json", metavar="PATH", help="also write the report as JSON to PATH")
     p_doctor.set_defaults(func=_cmd_doctor)
+
+    p_dig = sub.add_parser(
+        "digitize",
+        help="bulk-digitise one strip into a resumable staging tree "
+             "(load, scan frames 1-4, eject, record in a manifest); interactive")
+    p_dig.add_argument("-o", "--out", required=True, metavar="DIR",
+        help="staging directory; rolls go in <out>/<prefix>roll-NNN/, logged in "
+             "<out>/manifest.jsonl")
+    p_dig.add_argument("--prefix", default="",
+        help="roll-directory name prefix, e.g. 'boxA-' -> boxA-roll-001/ (default none)")
+    p_dig.add_argument("--roll", type=int, default=None,
+        help="roll number (default: one past the highest in the manifest)")
+    p_dig.add_argument("--force", action="store_true",
+        help="scan even if this roll is already recorded as done")
+    p_dig.add_argument("--assume-loaded", action="store_true",
+        help="skip the load flow (the magazine is already latched)")
+    p_dig.add_argument("--dpi", type=int, default=3600, choices=SUPPORTED_DPIS,
+        help="scan resolution (default 3600)")
+    p_dig.add_argument("--positive", action="store_true",
+        help="also apply the preview positive inversion (default off: raw "
+             "negative is the archival product)")
+    p_dig.add_argument("--rotate", type=int, default=0, choices=(0, 90, 180, 270),
+        help="rotate output counter-clockwise (degrees; default 0)")
+    p_dig.add_argument("--no-ir", dest="ir", action="store_false",
+        help="skip the IR pass and dust removal (IR is on by default)")
+    p_dig.add_argument("--no-clean", action="store_true",
+        help="skip IR-based dust/scratch removal on the visible image")
+    p_dig.add_argument("--no-diag", action="store_true",
+        help="skip writing per-frame .diag.json sidecars")
+    p_dig.add_argument("--park", choices=("verbatim", "semantic"), default="verbatim",
+        help="PARK implementation (default verbatim)")
+    p_dig.add_argument("--warmup-budget", type=float, default=None, metavar="SECONDS",
+        help="lamp warmup budget after a cold start (default 60 s)")
+    p_dig.set_defaults(func=_cmd_digitize, ir=True)
 
     return parser
 

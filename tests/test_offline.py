@@ -146,6 +146,74 @@ def test_tiff_icc_profile_via_pillow():
     print("test_tiff_icc_profile_via_pillow OK")
 
 
+# ------------------------------------------------ digitize staging (Test 35)
+
+
+def test_digitize_layout_and_paths():
+    from of135i import digitize
+    assert digitize.roll_dirname("", 1) == "roll-001"
+    assert digitize.roll_dirname("boxA-", 12) == "boxA-roll-012"
+    assert digitize.frame_path("/s", "boxA-", 3, 2) == \
+        Path("/s") / "boxA-roll-003" / "f2.tiff"
+    print("test_digitize_layout_and_paths OK")
+
+
+def test_digitize_manifest_roundtrip_and_torn_line():
+    from of135i import digitize
+    with tempfile.TemporaryDirectory() as d:
+        assert digitize.read_manifest(d) == []          # missing -> []
+        digitize.append_manifest(d, {"roll": 1, "status": "ok"})
+        digitize.append_manifest(d, {"roll": 2, "status": "failed"})
+        # a torn/blank trailing line must not break resume
+        with open(digitize.manifest_path(d), "a") as f:
+            f.write("\n{not valid json")
+        recs = digitize.read_manifest(d)
+        assert [r["roll"] for r in recs] == [1, 2], recs
+    print("test_digitize_manifest_roundtrip_and_torn_line OK")
+
+
+def test_digitize_next_roll_and_done():
+    from of135i import digitize
+    with tempfile.TemporaryDirectory() as d:
+        assert digitize.next_roll(d) == 1                 # empty
+        digitize.append_manifest(d, {"roll": 1, "status": "ok"})
+        digitize.append_manifest(d, {"roll": 2, "status": "failed"})
+        # next is one past the HIGHEST seen (a failed roll's number is not
+        # silently reused), and only 'ok' rolls count as done
+        assert digitize.next_roll(d) == 3
+        assert digitize.rolls_done(d) == {1}
+        assert digitize.roll_is_done(d, 1) is True
+        assert digitize.roll_is_done(d, 2) is False
+    print("test_digitize_next_roll_and_done OK")
+
+
+def test_digitize_records_failed_load():
+    """_cmd_digitize records a failed load as a failed roll (stage 'load')
+    and attempts no scan. Exercised without USB by stubbing the load flow
+    (the scan success path reuses _cmd_scan's tested finishers)."""
+    import argparse
+    from of135i import cli, digitize, loadflow
+    with tempfile.TemporaryDirectory() as d:
+        args = argparse.Namespace(
+            out=d, prefix="", roll=None, force=False, assume_loaded=False,
+            dpi=3600, positive=False, rotate=0, ir=True, no_clean=False,
+            no_diag=False, park="verbatim", warmup_budget=None)
+        orig = loadflow.run
+        loadflow.run = lambda ask=None: 130          # simulate a load abort
+        try:
+            rc = cli._cmd_digitize(args)
+        finally:
+            loadflow.run = orig
+        assert rc == 130, rc
+        recs = digitize.read_manifest(d)
+        assert len(recs) == 1, recs
+        assert recs[0]["status"] == "failed" and recs[0]["stage"] == "load"
+        assert recs[0]["roll"] == 1
+        # nothing scanned: no roll dir created
+        assert not (Path(d) / "roll-001").exists()
+    print("test_digitize_records_failed_load OK")
+
+
 def main() -> int:
     tests = [
         test_assemble_shape_and_endianness,
@@ -154,6 +222,10 @@ def main() -> int:
         test_tiff_roundtrip_via_pillow,
         test_tiff_icc_profile_via_pillow,
         test_pnm_roundtrip_via_pillow,
+        test_digitize_layout_and_paths,
+        test_digitize_manifest_roundtrip_and_torn_line,
+        test_digitize_next_roll_and_done,
+        test_digitize_records_failed_load,
     ]
     for t in tests:
         t()

@@ -22,14 +22,18 @@ functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md]
 
 - **M1 — Protocol reverse-engineered** ✅
 - **M2 — Driver drives the hardware** ✅ (load, 1–4 batch, all DPI, IR + dust removal, eject)
-- **M3 — Robustness and honest limits** — in progress (short frozen list of open items)
+- **M3 — Robustness and honest limits** ✅ (frozen list closed: calibration
+  anomalies diagnosed and handled, positioning verified, cross-unit a
+  documented limitation)
 - **M4 — SANE backend** — not started yet (skeleton only)
 
-Today you scan from the command line to TIFF/PNM and can import the files
-into any tool (including digiKam). Scanning *from inside* a SANE frontend
-needs M4. The SANE backend can be **built and installed locally** — it does
-not depend on the SANE project accepting it upstream; upstreaming is a
-separate, later step for wider distribution.
+Today you scan from the command line to raw 16-bit TIFF — including a
+resumable **bulk-digitisation** workflow (`of135i digitize`) for working
+through boxes of film strip by strip — and import the files into any tool
+(including digiKam). Scanning *from inside* a SANE frontend needs M4. The
+SANE backend can be **built and installed locally** — it does not depend on
+the SANE project accepting it upstream; upstreaming is a separate, later
+step for wider distribution.
 
 ## What works today
 
@@ -38,7 +42,10 @@ separate, later step for wider distribution.
   live white measurements, AFE offset from a two-point dark bracket,
   two-stage per-pixel shading correction) and 3600 dpi 48-bit RGB
   scanning. The dark-bracket offset reproduces the vendor's codes on the
-  reference unit; it is implemented but not yet hardware-verified.
+  reference unit, hardware-verified. On later frames of a batch the device
+  can return a *residual* dark_b (a stale buffer, not a fresh measurement);
+  the driver detects this and substitutes the session's healthy dark_b, or
+  fails closed if none is available (docs/test-log.md Test 32–33).
 - Color-line (staggered CCD) channel alignment — no RGB fringing.
 - Output as 16-bit TIFF or PNM: the raw linear negative (the driver's
   actual product: calibrated, channel-aligned, unclipped), or a preview
@@ -202,6 +209,27 @@ the vendor application does it.
 docs/replay-analysis.md); it is off by default and not hardware-verified.
 `--warmup-budget SECONDS` bounds how long a scan waits for the lamp.
 
+### Bulk digitisation (a box of film, strip by strip)
+
+`of135i digitize` runs one strip end to end — load, scan frames 1–4,
+eject — into a resumable staging tree, and records each strip in an
+append-only manifest. Run it once per strip; the roll number advances
+from the manifest, so you can stop and pick up where you left off.
+
+```bash
+# Insert a strip, then:
+.venv/bin/python -m of135i digitize --out ~/scans/boxA --prefix boxA-
+# -> loads, scans, ejects, writes ~/scans/boxA/boxA-roll-001/f{1..4}.tiff
+#    (+ -ir.tiff + .diag.json) and appends ~/scans/boxA/manifest.jsonl.
+# Insert the next strip and run the same command again (roll-002, ...).
+```
+
+Raw 16-bit TIFF by default — the archival starting point; do colour
+(inversion, white balance, tone) later in your editor. `--positive` adds
+a preview, `--roll N` targets a specific roll, `--no-ir` skips the dust
+pass. The manifest records per-frame calibration and whether a residual
+dark_b was auto-corrected (see docs/test-log.md Test 32–33).
+
 ### What the driver knows about the magazine
 
 | term | meaning | how it is known |
@@ -311,6 +339,8 @@ interoperability constants and our own code.
 - [x] Eject from a loaded magazine, before or after scanning
 - [x] Magazine loading through the driver (the vendor's insert flow replayed whole; latched 3/3, 2026-09-05)
 - [x] Per-frame positioning wait scaled with the move length (frame 4 of a batch was scanned mid-move before; fixed and verified against the vendor's output, 2026-09-05)
+- [x] Residual dark_b handled: on later batch frames the device can return a stale buffer instead of measuring; detected and the session's healthy dark_b substituted, else fail-closed (Test 32–33)
+- [x] Bulk-digitisation workflow (`of135i digitize`): one strip per run into a resumable staging tree with an append-only manifest
 - [ ] Speed tuning (trim the replayed command stream)
 - [x] Cold-start initialization from a bare power-on
 - [x] udev rule for rootless operation
