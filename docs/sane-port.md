@@ -39,19 +39,40 @@ with nothing to re-sync. The eventual merge request takes copies.
   0x5e, offsets on 0x5d/0x5e, FEEDL on 0x3d-0x3f, line count on
   0x26/0x27) -- a mis-indexed injection would scan with the reference
   unit's calibration and look like a working scan.
-- **Stage 1 — skeleton written, not yet built.** `sane/gl126.{h,cpp}` and
-  `sane/gl126_registers.h` declare the full `CommandSet` surface. The
-  table-driven hooks (`init`, `asic_boot`'s register phase) are
-  implemented; every hook that would move the motor throws
-  `SANE_STATUS_UNSUPPORTED` naming itself, rather than issuing a sequence
-  that has never been executed. `check_start_state()` mirrors
+- **Stage 1 — done except the `scanimage -L` check, which needs the
+  scanner.** `sane/gl126.{h,cpp}` and `sane/gl126_registers.h` declare the
+  full `CommandSet` surface. The table-driven hooks (`init`, `asic_boot`'s
+  register phase) are implemented; every hook that would move the motor
+  throws `SANE_STATUS_UNSUPPORTED` naming itself, rather than issuing a
+  sequence that has never been executed. `check_start_state()` mirrors
   `of135i/safety.py`: reg 0x01 must read 0x22 or 0x00 or the call fails
   having written nothing, and no recovery is attempted.
-- **Not done yet:** the model/sensor/motor/gpo entry in `tables_model.cpp`,
-  `AsicType::GL126` in `enums.{h,cpp}` and the places that special-case
-  GL124, `genesys.conf.in`, the `.desc` entry, `Makefile.am`, and an
-  actual build. Building the checkout needs `autoconf-archive` installed
-  (`./autogen.sh` stops without it).
+
+  The integration into the sane-backends tree is `sane/gl126-integration.patch`
+  (against sane-backends master 1d47d7c): `AsicType::GL126` and
+  `ModelId::PLUSTEK_OPTICFILM_135I` in `enums.{h,cpp}`, the command-set
+  factory and the 0x101 extended-register address in `low.cpp`, the model
+  entry in `tables_model.cpp`, `Makefile.am`, `genesys.conf.in` and the
+  `.desc` entry (`:status :untested`).
+
+  **Built and linked**, 2026-09-06 on B5: `libgenesys_la-gl126.o` and
+  `libgenesys_la-gl126_tables.o` are in `libsane-genesys.so` (229 gl126
+  symbols), no warnings from our files. What is left of stage 1 is seeing
+  the model in `scanimage -L`, which needs the unit attached.
+
+  The model's sensor/adc/gpio/motor ids are the OpticFilm 7200's, used as
+  placeholders so the model registers: the 135i's own tables are not
+  written yet. Nothing can reach the wire through them, because every scan
+  hook refuses first -- but they are wrong values and stage 3 replaces
+  them.
+- **Deliberately not decided yet:** whether GL126 belongs in each place
+  `low.cpp` and `scanner_interface_usb.cpp` special-case GL124. Those
+  branches decide how bytes reach the chip, and our captures already say
+  what the wire looks like (`0x40/0x04` with wValue `0x0083` for register
+  batches, `0x0082` for a buffer descriptor). Each site gets checked
+  against the captures during stage 3 rather than guessed now; only the
+  extended-register address (0x101, which the driver already relies on)
+  is wired.
 
 **Stage 3 is the first step that touches the scanner**, and it happens on
 the machine the unit is attached to, with the operator listening. Nothing

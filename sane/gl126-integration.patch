@@ -1,0 +1,195 @@
+diff --git a/backend/Makefile.am b/backend/Makefile.am
+index 64c6cb1..b4543ea 100644
+--- a/backend/Makefile.am
++++ b/backend/Makefile.am
+@@ -765,6 +765,8 @@ libgenesys_la_SOURCES = genesys/genesys.cpp genesys/genesys.h \
+     genesys/fwd.h \
+     genesys/gl646.cpp genesys/gl646.h genesys/gl646_registers.h \
+     genesys/gl124.cpp genesys/gl124.h genesys/gl124_registers.h \
++    genesys/gl126.cpp genesys/gl126.h genesys/gl126_registers.h \
++    genesys/gl126_tables.cpp genesys/gl126_tables.h \
+     genesys/gl841.cpp genesys/gl841.h genesys/gl841_registers.h \
+     genesys/gl842.cpp genesys/gl842.h genesys/gl842_registers.h \
+     genesys/gl843.cpp genesys/gl843.h genesys/gl843_registers.h \
+diff --git a/backend/genesys.conf.in b/backend/genesys.conf.in
+index 6e6a8d7..1153059 100644
+--- a/backend/genesys.conf.in
++++ b/backend/genesys.conf.in
+@@ -169,3 +169,6 @@ usb 0x07b3 0x1300
+ 
+ # Plustek OpticFilm 7600i
+ usb 0x07b3 0x0c3b
++
++# Plustek OpticFilm 135i
++usb 0x07b3 0x1436
+diff --git a/backend/genesys/enums.cpp b/backend/genesys/enums.cpp
+index 343a220..406cc61 100644
+--- a/backend/genesys/enums.cpp
++++ b/backend/genesys/enums.cpp
+@@ -118,6 +118,7 @@ std::ostream& operator<<(std::ostream& out, ModelId id)
+         case ModelId::PANASONIC_KV_SS080: out << "PANASONIC_KV_SS080"; break;
+         case ModelId::PENTAX_DSMOBILE_600: out << "PENTAX_DSMOBILE_600"; break;
+         case ModelId::PLUSTEK_OPTICBOOK_3800: out << "PLUSTEK_OPTICBOOK_3800"; break;
++        case ModelId::PLUSTEK_OPTICFILM_135I: out << "PLUSTEK_OPTICFILM_135I"; break;
+         case ModelId::PLUSTEK_OPTICFILM_7200: out << "PLUSTEK_OPTICFILM_7200"; break;
+         case ModelId::PLUSTEK_OPTICFILM_7200I: out << "PLUSTEK_OPTICFILM_7200I"; break;
+         case ModelId::PLUSTEK_OPTICFILM_7300: out << "PLUSTEK_OPTICFILM_7300"; break;
+diff --git a/backend/genesys/enums.h b/backend/genesys/enums.h
+index 02cfc43..c7207b7 100644
+--- a/backend/genesys/enums.h
++++ b/backend/genesys/enums.h
+@@ -179,6 +179,7 @@ enum class ModelId : unsigned
+     PANASONIC_KV_SS080,
+     PENTAX_DSMOBILE_600,
+     PLUSTEK_OPTICBOOK_3800,
++    PLUSTEK_OPTICFILM_135I,
+     PLUSTEK_OPTICFILM_7200,
+     PLUSTEK_OPTICFILM_7200I,
+     PLUSTEK_OPTICFILM_7300,
+@@ -458,6 +459,7 @@ enum class AsicType : unsigned
+     GL846,
+     GL847,
+     GL124,
++    GL126,   // Plustek OpticFilm 135i
+ };
+ 
+ 
+diff --git a/backend/genesys/low.cpp b/backend/genesys/low.cpp
+index 3ffc24a..eda72e8 100644
+--- a/backend/genesys/low.cpp
++++ b/backend/genesys/low.cpp
+@@ -35,6 +35,7 @@
+ #include "gl646_registers.h"
+ 
+ #include "gl124.h"
++#include "gl126.h"
+ #include "gl646.h"
+ #include "gl841.h"
+ #include "gl842.h"
+@@ -65,6 +66,7 @@ std::unique_ptr<CommandSet> create_cmd_set(AsicType asic_type)
+         case AsicType::GL846: return std::unique_ptr<CommandSet>(new gl846::CommandSetGl846{});
+         case AsicType::GL847: return std::unique_ptr<CommandSet>(new gl847::CommandSetGl847{});
+         case AsicType::GL124: return std::unique_ptr<CommandSet>(new gl124::CommandSetGl124{});
++        case AsicType::GL126: return std::unique_ptr<CommandSet>(new gl126::CommandSetGl126{});
+         default: throw SaneException(SANE_STATUS_INVAL, "unknown ASIC type");
+     }
+ }
+@@ -139,7 +141,8 @@ Status scanner_read_status(Genesys_Device& dev)
+     std::uint16_t address = 0;
+ 
+     switch (dev.model->asic_type) {
+-        case AsicType::GL124: address = 0x101; break;
++        case AsicType::GL124:
++        case AsicType::GL126: address = 0x101; break;
+         case AsicType::GL646:
+         case AsicType::GL841:
+         case AsicType::GL842:
+diff --git a/backend/genesys/tables_model.cpp b/backend/genesys/tables_model.cpp
+index 321d179..590c4a7 100644
+--- a/backend/genesys/tables_model.cpp
++++ b/backend/genesys/tables_model.cpp
+@@ -2311,6 +2311,87 @@ void genesys_init_usb_device_tables()
+ 
+ 
+ 
++    /* Plustek OpticFilm 135i (GL126).
++
++       STAGE 1 SKELETON, UNTESTED. The sensor/adc/gpio/motor ids below are
++       the 7200's, used as placeholders so the model registers and the
++       backend builds: the 135i's own tables are not written yet, and
++       every scan hook in gl126.cpp refuses before anything reaches the
++       wire, so the placeholder values cannot drive the hardware. They are
++       replaced with measured ones during stage 3 bring-up
++       (docs/sane-port.md).
++
++       Geometry is the 35 mm frame as the driver scans it: a 36 x 24 mm
++       image area on a strip fed through the magazine. */
++    model = Genesys_Model();
++    model.name = "plustek-opticfilm-135i";
++    model.vendor = "PLUSTEK";
++    model.model = "OpticFilm 135i";
++    model.model_id = ModelId::PLUSTEK_OPTICFILM_135I;
++    model.asic_type = AsicType::GL126;
++
++    model.resolutions = {
++        {
++            { ScanMethod::TRANSPARENCY },
++            { 7200, 3600, 2400, 1200, 600 },
++            { 7200, 3600, 2400, 1200, 600 },
++        }
++    };
++
++    model.bpp_gray_values = { 16 };
++    model.bpp_color_values = { 16 };
++    model.default_method = ScanMethod::TRANSPARENCY;
++
++    model.x_offset = 0.0;
++    model.y_offset = 0.0;
++    model.x_size = 36.0;
++    model.y_size = 24.0;
++
++    model.y_offset_calib_white = 0.0;
++    model.y_size_calib_mm = 0.0;
++    model.x_offset_calib_black = 0.0;
++    model.x_size_calib_mm = 36.0;
++
++    model.x_offset_ta = 0.0;
++    model.y_offset_ta = 0.0;
++    model.x_size_ta = 36.0;
++    model.y_size_ta = 24.0;
++
++    model.y_offset_sensor_to_ta = 0.0;
++    model.y_offset_calib_black_ta = 0.0;
++    model.y_offset_calib_white_ta = 0.0;
++    model.y_size_calib_ta_mm = 0.0;
++
++    model.post_scan = 0.0;
++    model.eject_feed = 0.0;
++
++    /* Colour-line stagger at 3600 dpi: 24 lines between R and B
++       (docs/protocol-notes.md pass 18). */
++    model.ld_shift_r = 0;
++    model.ld_shift_g = 12;
++    model.ld_shift_b = 24;
++
++    model.line_mode_color_order = ColorOrder::RGB;
++
++    model.is_cis = false;
++    /* Not sheetfed: that path ejects after every scan and reloads before
++       calibration, which breaks a 1-4 frame batch (docs/sane-port.md,
++       decision 4). */
++    model.is_sheetfed = false;
++
++    /* Placeholders -- see the note above. */
++    model.sensor_id = SensorId::CCD_PLUSTEK_OPTICFILM_7200;
++    model.adc_id = AdcId::PLUSTEK_OPTICFILM_7200;
++    model.gpio_id = GpioId::PLUSTEK_OPTICFILM_7200;
++    model.motor_id = MotorId::PLUSTEK_OPTICFILM_7200;
++
++    model.flags = ModelFlag::UNTESTED |
++                  ModelFlag::WARMUP;
++
++    model.search_lines = 200;
++    s_usb_devices->emplace_back(0x07b3, 0x1436, model);
++
++
+     model = Genesys_Model();
+     model.name = "plustek-opticfilm-7200";
+     model.vendor = "PLUSTEK";
+diff --git a/doc/descriptions/genesys.desc b/doc/descriptions/genesys.desc
+index 43b0736..83414f8 100644
+--- a/doc/descriptions/genesys.desc
++++ b/doc/descriptions/genesys.desc
+@@ -17,6 +17,12 @@
+ :status :basic
+ :comment "Has a Primax USB ID"
+ 
++:model "OpticFilm 135i"
++:interface "USB"
++:usbid "0x07b3" "0x1436"
++:status :untested
++:comment "GL126; backend skeleton, hardware bring-up in progress"
++
+ :model "OpticFilm 7200"
+ :interface "USB"
+ :usbid "0x07b3" "0x0807"
