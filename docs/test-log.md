@@ -1952,3 +1952,32 @@ Verdict: DPI→DPI position is stable on 058f3a8; Test 7's shift is not
 reproducible; no PARK_COMPLETE session-start fix is needed. TODO 9 can be
 closed as "not reproducible on current code", pending re-check if it ever
 resurfaces.
+
+
+## 2026-09-06 — Test 28: POSITION completion — the 0xf1 mask adds nothing, and frame 4's budget is already sufficient (offline)
+
+Both settled from collected diag (test18/19, all eight batch frames,
+`poll_timeout_details` + `phase_seconds`), no new hardware.
+
+**TODO 10 — POSITION mask 0xf1 vs 0xf0.** The question was whether the
+POSITION completion should also require bit 0x01 (mask 0xf1) rather than
+the state class alone (0xf0). The data answers it:
+- Successful POSITION completions are always `f455` (bit 0x01 = 0).
+- Still-moving reads are always class 9 or D (`9c55`, `d555`), already
+  rejected by the 0xf0 class mask.
+
+No observed case has class F with bit 0x01 set, so 0xf1 would behave
+identically to 0xf0 on all data — no discrimination gain, only the risk
+of a false timeout if a settled transport ever read `f5`. Keep 0xf0.
+TODO 10 closed.
+
+**Frame 4's POSITION budget is already sufficient.** The earlier worry
+(position-poll-budget-frame4, 2026-09-05: "frame 4 scanned while still
+moving") predates the FEEDL-scaled budget. `position_timeout_scale` gives
+frame 4 (FEEDL 39026) ~28 s, and test18-f4 / test19-f4 completed POSITION
+in **6.66 s / 8.13 s** with `session.failure` None. The `d555` in the
+details was an intermediate non-strict settle poll, not a completion
+timeout. Resolved.
+
+Verdict: no POSITION code change. The mask stays 0xf0 and the FEEDL-scaled
+budget already covers the longest move — both closed offline.
