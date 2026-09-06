@@ -132,14 +132,17 @@ def _print_session_failure(scanner: Scanner | None) -> None:
         print(safety.NO_COMMANDS_SENT, file=sys.stderr)
 
 
-def _write_image(arr, out: str, positive: bool = False) -> None:
+def _write_image(arr, out: str, positive: bool = False, dpi: int | None = None) -> None:
     """Write `arr`; a --positive TIFF gets an sRGB ICC profile embedded
     (the positive rendering targets the vendor app's sRGB output), a
-    raw negative none (linear scanner data)."""
+    raw negative none (linear scanner data). `dpi` becomes the TIFF's
+    resolution tags, so the file states the scale it was scanned at;
+    PPM has no such field."""
     if out.lower().endswith((".pnm", ".ppm")):
         image.write_pnm16(arr, out)
     else:
-        image.write_tiff16(arr, out, icc=image.srgb_icc() if positive else None)
+        image.write_tiff16(arr, out, icc=image.srgb_icc() if positive else None,
+                           dpi=dpi)
 
 
 def _parse_frames(spec: str) -> list[int]:
@@ -247,7 +250,7 @@ def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
     if args.rotate:
         import numpy as _np
         arr = _np.ascontiguousarray(_np.rot90(arr, k=args.rotate // 90))
-    _write_image(arr, out, positive=args.positive)
+    _write_image(arr, out, positive=args.positive, dpi=args.dpi)
     print(f"wrote {out} ({arr.shape[1]}x{arr.shape[0]}, 16-bit RGB)")
 
 
@@ -306,14 +309,14 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
         visible = _np.ascontiguousarray(_np.rot90(visible, k=args.rotate // 90))
         ir = _np.ascontiguousarray(_np.rot90(ir, k=args.rotate // 90))
 
-    _write_image(visible, out, positive=args.positive)
+    _write_image(visible, out, positive=args.positive, dpi=args.dpi)
     print(f"wrote {out} ({visible.shape[1]}x{visible.shape[0]}, 16-bit RGB, visible)")
 
     if write_ir:
         ir_rgb = _np.stack([ir, ir, ir], axis=-1)
         out_path = Path(out)
         ir_out = str(out_path.with_name(out_path.stem + "-ir.tiff"))
-        image.write_tiff16(ir_rgb, ir_out)
+        image.write_tiff16(ir_rgb, ir_out, dpi=args.dpi)
         print(f"wrote {ir_out} ({ir.shape[1]}x{ir.shape[0]}, 16-bit, IR channel)")
 
 
@@ -408,19 +411,19 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
         if prev is not None:
             prev = _np.ascontiguousarray(_np.rot90(prev, k=k))
 
-    _write_image(visible, out, positive=False)   # raw negative, never inverted
+    _write_image(visible, out, positive=False, dpi=args.dpi)  # raw negative, never inverted
     print(f"wrote {out} ({visible.shape[1]}x{visible.shape[0]}, 16-bit RGB "
           f"negative{', dust-cleaned' if dust_cleaned else ''})")
 
     if dual and args.ir:
         ir_rgb = _np.stack([ir, ir, ir], axis=-1)
         ir_file = str(Path(out).with_name(Path(out).stem + "-ir.tiff"))
-        image.write_tiff16(ir_rgb, ir_file)
+        image.write_tiff16(ir_rgb, ir_file, dpi=args.dpi)
         print(f"wrote {ir_file} ({ir.shape[1]}x{ir.shape[0]}, 16-bit, IR channel)")
 
     if prev is not None:
         preview_file = str(Path(out).with_name(Path(out).stem + "-preview.tiff"))
-        _write_image(prev, preview_file, positive=True)
+        _write_image(prev, preview_file, positive=True, dpi=args.dpi)
         print(f"wrote {preview_file} ({prev.shape[1]}x{prev.shape[0]}, "
               f"16-bit RGB, positive preview)")
 

@@ -51,6 +51,7 @@ def assemble(raw: bytes, width: int) -> np.ndarray:
 
 _TAG_TYPE_SHORT = 3
 _TAG_TYPE_LONG = 4
+_TAG_TYPE_RATIONAL = 5
 
 
 def _ifd_entry(tag: int, typ: int, count: int, value_bytes: bytes) -> bytes:
@@ -72,10 +73,20 @@ def srgb_icc() -> bytes:
     return SRGB_ICC_PATH.read_bytes()
 
 
-def write_tiff16(arr: np.ndarray, path: str | Path, icc: bytes | None = None) -> None:
+def write_tiff16(arr: np.ndarray, path: str | Path, icc: bytes | None = None,
+                 dpi: int | None = None) -> None:
     """Write an (lines, width, 3) uint16 array as an uncompressed 16-bit
     RGB TIFF, using only stdlib struct. `icc`, if given, is embedded as
-    the ICCProfile tag (34675)."""
+    the ICCProfile tag (34675). `dpi`, if given, is written as the scan
+    resolution in both axes (the scanner's pixels are square, so X and Y
+    carry the same value).
+
+    XResolution, YResolution and ResolutionUnit are baseline-required
+    fields: a file without them is read as 72 dpi, so a 3600 dpi scan
+    loses its physical size. They are therefore always written -- with a
+    known dpi in inches, and otherwise as TIFF's own "no absolute unit"
+    (unit 1, 1/1), which states the pixel aspect ratio and nothing more.
+    """
     if arr.ndim != 3 or arr.shape[2] != 3:
         raise ValueError(f"expected (lines, width, 3) array, got shape {arr.shape}")
     height, width, _ = arr.shape
@@ -93,8 +104,15 @@ def write_tiff16(arr: np.ndarray, path: str | Path, icc: bytes | None = None) ->
     sample_format = struct.pack("<HHH", 1, 1, 1)
     sample_format_offset = bits_per_sample_offset + len(bits_per_sample)
 
+    # XResolution/YResolution are RATIONAL (two LONGs each), too wide for
+    # the IFD's 4-byte value field, so they live out of line like the
+    # arrays above: X at resolution_offset, Y 8 bytes after it.
+    res_num = int(dpi) if dpi else 1
+    resolution = struct.pack("<IIII", res_num, 1, res_num, 1)
+    resolution_offset = sample_format_offset + len(sample_format)
+
     icc_data = bytes(icc) if icc else b""
-    icc_offset = sample_format_offset + len(sample_format)
+    icc_offset = resolution_offset + len(resolution)
     if len(icc_data) % 2:
         icc_data += b"\x00"  # keep the IFD word-aligned
 
@@ -116,6 +134,9 @@ def write_tiff16(arr: np.ndarray, path: str | Path, icc: bytes | None = None) ->
         _ifd_entry(277, _TAG_TYPE_SHORT, 1, short1(3)),         # SamplesPerPixel
         _ifd_entry(278, _TAG_TYPE_LONG, 1, long1(height)),      # RowsPerStrip (single strip)
         _ifd_entry(279, _TAG_TYPE_LONG, 1, long1(len(pixel_data))),  # StripByteCounts
+        _ifd_entry(282, _TAG_TYPE_RATIONAL, 1, long1(resolution_offset)),      # XResolution
+        _ifd_entry(283, _TAG_TYPE_RATIONAL, 1, long1(resolution_offset + 8)),  # YResolution
+        _ifd_entry(296, _TAG_TYPE_SHORT, 1, short1(2 if dpi else 1)),  # ResolutionUnit: inch / none
         _ifd_entry(339, _TAG_TYPE_SHORT, 3, long1(sample_format_offset)),  # SampleFormat = uint
     ]
     if icc:
@@ -128,7 +149,8 @@ def write_tiff16(arr: np.ndarray, path: str | Path, icc: bytes | None = None) ->
     ifd += struct.pack("<I", 0)  # no next IFD
 
     header = b"II" + struct.pack("<H", 42) + struct.pack("<I", ifd_offset)
-    blob = header + pixel_data + bits_per_sample + sample_format + icc_data + ifd
+    blob = (header + pixel_data + bits_per_sample + sample_format
+            + resolution + icc_data + ifd)
 
     Path(path).write_bytes(blob)
 

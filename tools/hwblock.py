@@ -463,8 +463,9 @@ def _save_scan(out_dir: Path, tag: str, raw: bytes, width: int, dpi: int, scanne
     them as TIFFs keeps the data inspectable without the driver."""
     visible, ir = image.split_ir(raw, width=width)
     visible = image.align_channels(visible, dpi=dpi)
-    image.write_tiff16(visible, str(out_dir / f"{tag}.tiff"))
-    image.write_tiff16(np.stack([ir, ir, ir], axis=-1), str(out_dir / f"{tag}-ir.tiff"))
+    image.write_tiff16(visible, str(out_dir / f"{tag}.tiff"), dpi=dpi)
+    image.write_tiff16(np.stack([ir, ir, ir], axis=-1),
+                       str(out_dir / f"{tag}-ir.tiff"), dpi=dpi)
     diag.write_sidecar(str(out_dir / f"{tag}.diag.json"), dict(scanner.last_diag))
     return visible
 

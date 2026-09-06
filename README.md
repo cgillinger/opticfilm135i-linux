@@ -51,7 +51,8 @@ step for wider distribution.
   fails closed if none is available (docs/test-log.md Test 32–33).
 - Color-line (staggered CCD) channel alignment — no RGB fringing.
 - Output as 16-bit TIFF or PNM: the raw linear negative (the driver's
-  actual product: calibrated, channel-aligned, unclipped), or a preview
+  actual product: calibrated, channel-aligned, unclipped, and tagged with
+  the resolution it was scanned at), or a preview
   positive (`--positive`, sRGB-tagged) by per-frame density inversion
   with automatic black/white points per channel. The preview is a
   convenience; colour interpretation (inversion, mask, white balance,
@@ -359,6 +360,7 @@ interoperability constants and our own code.
 - [x] udev rule for rootless operation
 - [x] Loader sensor and button event reading
 - [x] ICC-tagged output (`--positive` TIFFs carry an sRGB profile; raw negatives are untagged linear data)
+- [x] Baseline-conformant TIFF resolution tags (the file states its own dpi, so physical size survives)
 - [ ] SANE genesys backend support for GL126 (upstream goal) — plan and hook mapping in [`docs/sane-port.md`](docs/sane-port.md); skeleton in progress
 
 ## Status & disclaimer

@@ -146,6 +146,40 @@ def test_tiff_icc_profile_via_pillow():
     print("test_tiff_icc_profile_via_pillow OK")
 
 
+def test_tiff_resolution_tags():
+    """XResolution/YResolution/ResolutionUnit are baseline-required fields
+    and carry the scan's real dpi: without them a 3600 dpi scan is read as
+    72 dpi and its physical size is lost. Checked through Pillow's tag
+    parser, including the no-dpi fallback (unit 1 = no absolute unit, so
+    the values state the pixel aspect ratio only)."""
+    from PIL import Image
+
+    arr = np.full((5, 7, 3), 4242, dtype="<u2")
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "scan.tiff"
+        image.write_tiff16(arr, path, dpi=3600)
+        im = Image.open(path)
+        assert im.tag_v2[282] == 3600 and im.tag_v2[283] == 3600, (
+            im.tag_v2[282], im.tag_v2[283])
+        assert im.tag_v2[296] == 2, f"ResolutionUnit {im.tag_v2[296]} != inch"
+        assert im.info.get("dpi") == (3600, 3600), im.info.get("dpi")
+        # The new out-of-line RATIONAL block must not have moved the pixels.
+        assert Path(path).read_bytes()[8:8 + arr.nbytes] == arr.tobytes()
+
+        # Both out-of-line blocks (resolution + ICC) in one file.
+        image.write_tiff16(arr, path, icc=image.srgb_icc(), dpi=1200)
+        im = Image.open(path)
+        assert im.info.get("dpi") == (1200, 1200), im.info.get("dpi")
+        assert im.info.get("icc_profile") == image.srgb_icc()
+
+        # No dpi: TIFF's own "no absolute unit" -- still baseline-conformant.
+        image.write_tiff16(arr, path)
+        im = Image.open(path)
+        assert im.tag_v2[296] == 1, f"ResolutionUnit {im.tag_v2[296]} != none"
+        assert im.tag_v2[282] == 1 and im.tag_v2[283] == 1
+    print("test_tiff_resolution_tags OK")
+
+
 # ------------------------------------------------ digitize staging (Test 35)
 
 
@@ -398,7 +432,7 @@ def test_digitize_preview_does_not_alter_main():
                               positive=True)
     written: dict = {}
     orig = cli._write_image
-    cli._write_image = lambda a, out, positive=False: written.__setitem__(
+    cli._write_image = lambda a, out, positive=False, dpi=None: written.__setitem__(
         out, (a.copy(), positive))
     try:
         main, irf, prev, cleaned = cli._finish_digitize_frame(args, raw, W, "f1.tiff", dual=False)
@@ -500,6 +534,7 @@ def main() -> int:
         test_assemble_single_pixel,
         test_tiff_roundtrip_via_pillow,
         test_tiff_icc_profile_via_pillow,
+        test_tiff_resolution_tags,
         test_pnm_roundtrip_via_pillow,
         test_digitize_layout_and_paths,
         test_digitize_manifest_roundtrip_and_torn_line,

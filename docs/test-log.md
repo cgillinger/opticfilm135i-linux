@@ -2511,3 +2511,38 @@ unrelated file, and is a no-op on a missing dir. Full suite 137
 (test_offline 19). (The re-audit's other note — a test through the real
 `_run_writing_session` — is left out: it needs a device open and maps to
 no open A12 requirement; the re-raise branch is guaranteed by code.)
+
+## 2026-09-06 — Test 39: TIFF resolution tags — the file states its own dpi (offline)
+
+Follow-up finding from the A12 audit, outside A12 itself: `write_tiff16`
+omitted XResolution (282), YResolution (283) and ResolutionUnit (296).
+Those are baseline-required fields for a TIFF RGB image, so every file the
+driver has produced so far is read as 72 dpi — a 3600 dpi scan lost its
+physical size the moment it left the tool. The dpi was recorded only in the
+`.diag.json` sidecar, which is exactly the thing that gets separated from
+the image in a copy or a migration.
+
+Fixed: `write_tiff16` takes an optional `dpi` and always writes the three
+tags. With a dpi they are inches (unit 2) with X = Y = dpi (the scanner's
+pixels are square: 5184 px across the strip and the line density both come
+out at the nominal resolution — the same assumption `align_channels` already
+makes). Without one they are TIFF's own "no absolute unit" (unit 1, 1/1),
+which states the pixel aspect ratio and nothing more, so every file this
+writer produces is baseline-conformant either way. The RATIONAL values are
+8 bytes each and live out of line, next to the existing BitsPerSample /
+SampleFormat blocks; the pixel data still starts at offset 8 and is
+byte-identical to before. `scan`, `digitize` (negative, IR and preview) and
+`tools/hwblock.py` pass the scan dpi through.
+
+Not changed: no compression, no Make/Model/Software/DateTime, and the IR
+channel is still written as an RGB replicate rather than a single band.
+Those are size and provenance conveniences, not conformance, and were left
+out deliberately (see the audit notes) — the resolution tags were the only
+point where the writer contradicted the standard it targets.
+
+Verified offline: the suite's new `test_tiff_resolution_tags` reads the
+tags back through Pillow (dpi 3600 and 1200, with and without an ICC
+profile, plus the no-dpi fallback) and checks the pixel block did not move;
+ImageMagick, an independent reader, reports `Resolution: 3600x3600`,
+`Units: PixelsPerInch`. No protocol, calibration, POSITION, PARK or safety
+change; no hardware involved.
