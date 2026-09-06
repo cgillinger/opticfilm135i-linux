@@ -22,8 +22,10 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
 import struct
 import sys
+import tempfile
 from collections import deque
 from pathlib import Path
 
@@ -31,7 +33,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 
-from of135i import calibrate, tables
+from of135i import calibrate, diag, tables
+from of135i import device as _device
 from of135i.device import Scanner
 
 REPO = Path(__file__).resolve().parents[1]
@@ -701,6 +704,201 @@ def test_scan_sequence_matches_trace():
     )
 
 
+# ------------------------------- calibration-buffer capture (Test 30)
+#
+# These drive the capture through the real scan() call path and the
+# __exit__ flush (not just the diag.py helpers), on the plain mock.
+
+
+def _plain_scan(env_dir, read_hook=None):
+    """Run initialize() + scan(frame=1) on the plain mock inside a
+    `with Scanner(...)` block so the __exit__ flush fires. If ``env_dir``
+    is given, OF135I_DUMP_CAL is set for the Scanner's lifetime.
+    ``read_hook(scanner, real_read, ep, length, timeout)`` may shorten or
+    raise on a bulk read. Returns (mock, raised_exception_or_None)."""
+    saved = os.environ.pop(_device.DUMP_CAL_ENV, None)
+    if env_dir is not None:
+        os.environ[_device.DUMP_CAL_ENV] = env_dir
+    raised = None
+    try:
+        mock = MockUsbIo(_build_cal_buffers())
+        fake = mock.dev  # the _FakeDev, before Scanner wraps it in GuardedDevice
+        scanner = Scanner(mock)
+        with scanner:
+            if read_hook is not None:
+                real = fake.read
+                fake.read = lambda ep, length, timeout=0: read_hook(
+                    scanner, real, ep, length, timeout)
+            scanner.initialize()
+            mock.writes.clear()
+            try:
+                scanner.scan(frame=1)
+            except BaseException as e:   # noqa: BLE001 -- test observes it
+                raised = e
+    finally:
+        os.environ.pop(_device.DUMP_CAL_ENV, None)
+        if saved is not None:
+            os.environ[_device.DUMP_CAL_ENV] = saved
+    return mock, raised
+
+
+def _read_calbuf(d):
+    files = os.listdir(d)
+    metas = [f for f in files if f.endswith(".calbuf.json")]
+    assert len(metas) == 1, files
+    return json.load(open(Path(d) / metas[0])), files
+
+
+def test_cal_capture_offon_identical_write_stream():
+    """Capture off vs on must emit a byte-identical control-write stream
+    -- the diagnostic adds no USB transaction and changes no op."""
+    mock_off, err_off = _plain_scan(None)
+    assert err_off is None, err_off
+    with tempfile.TemporaryDirectory() as d:
+        mock_on, err_on = _plain_scan(d)
+        assert err_on is None, err_on
+        assert os.listdir(d), "flush wrote nothing with capture on"
+    assert b"".join(mock_on.writes) == b"".join(mock_off.writes), (
+        len(mock_on.writes), len(mock_off.writes))
+    print("test_cal_capture_offon_identical_write_stream OK")
+
+
+def test_cal_capture_flush_after_success():
+    """A successful scan flushes raw dark_a/dark_b + per-transfer reads
+    once, on __exit__."""
+    with tempfile.TemporaryDirectory() as d:
+        _mock, err = _plain_scan(d)
+        assert err is None, err
+        rec, files = _read_calbuf(d)
+        assert any(f.endswith(".bin") for f in files), files
+        names = [b["name"] for b in
+                 [{"name": k} for k in rec["buffers"]]]
+        assert any("dark_a" in k for k in rec["buffers"]), rec["buffers"].keys()
+        assert any("dark_b" in k for k in rec["buffers"]), rec["buffers"].keys()
+        assert rec["reads"], "no per-transfer read records"
+        assert all("requested" in r and "returned" in r for r in rec["reads"])
+    print("test_cal_capture_flush_after_success OK")
+
+
+def _short_dark_b_hook(short_by):
+    def hook(scanner, real, ep, length, timeout=0):
+        data = real(ep, length, timeout)
+        if scanner.session.phase == tables.CAL_DARK_B.name:
+            return data[:length - short_by]
+        return data
+    return hook
+
+
+def test_cal_capture_short_dark_b_6_bytes_preserved():
+    """A 6-byte-short dark_b still reshapes cleanly (divisible by 6), so
+    the scan completes -- but the transfer record must show returned <
+    requested, and the saved buffer's byte_len must be the short length.
+    Total length + reshape_ok alone would miss this."""
+    with tempfile.TemporaryDirectory() as d:
+        _mock, err = _plain_scan(d, _short_dark_b_hook(6))
+        rec, _ = _read_calbuf(d)
+        db = [v for k, v in rec["buffers"].items() if "dark_b" in k][0]
+        short = [r for r in rec["reads"]
+                 if r["phase"] == tables.CAL_DARK_B.name
+                 and r["returned"] is not None
+                 and r["returned"] < r["requested"]]
+        assert short, rec["reads"]
+        assert db["byte_len"] == short[0]["returned"], (db["byte_len"], short[0])
+    print("test_cal_capture_short_dark_b_6_bytes_preserved OK")
+
+
+def test_cal_capture_short_dark_b_1_byte_preserved_through_reshape_error():
+    """A 1-byte-short dark_b makes reshape(-1, 3) raise. The buffer is
+    captured BEFORE reshape, so the raw short buffer and its transfer
+    record are still flushed on __exit__, and reshape_ok is False. The
+    scan error propagates."""
+    with tempfile.TemporaryDirectory() as d:
+        _mock, err = _plain_scan(d, _short_dark_b_hook(1))
+        assert err is not None, "1-byte-short dark_b should raise on reshape"
+        rec, _ = _read_calbuf(d)
+        db = [v for k, v in rec["buffers"].items() if "dark_b" in k][0]
+        assert db["reshape_ok"] is False, db
+    print("test_cal_capture_short_dark_b_1_byte_preserved_through_reshape_error OK")
+
+
+class _InjectedReadError(Exception):
+    pass
+
+
+def test_cal_capture_failure_preserves_data_and_sends_nothing_after():
+    """A USB error on a later read (white line, after both dark reads)
+    must: preserve the already-read dark_a/dark_b, mark the session
+    FAILED, propagate, and send ZERO further USB writes (no PARK/home/
+    eject/init -- __exit__ does no recovery)."""
+    marker = {"writes_at_error": None}
+
+    def hook(scanner, real, ep, length, timeout=0):
+        if scanner.session.phase == tables.CAL_WHITE.name:
+            marker["writes_at_error"] = len(scanner.io.writes)
+            raise _InjectedReadError("simulated USB error on white read")
+        return real(ep, length, timeout)
+
+    with tempfile.TemporaryDirectory() as d:
+        mock, err = _plain_scan(d, hook)
+        assert isinstance(err, _InjectedReadError), err
+        # Session marked FAILED, nothing sent after the error.
+        assert mock.session.state is _device.safety.SessionState.FAILED, mock.session.state
+        assert marker["writes_at_error"] is not None
+        assert len(mock.writes) == marker["writes_at_error"], (
+            "USB writes emitted after the failure", len(mock.writes),
+            marker["writes_at_error"])
+        # dark_a and dark_b were read before the error -> still captured.
+        rec, _ = _read_calbuf(d)
+        assert any("dark_a" in k for k in rec["buffers"]), rec["buffers"].keys()
+        assert any("dark_b" in k for k in rec["buffers"]), rec["buffers"].keys()
+    print("test_cal_capture_failure_preserves_data_and_sends_nothing_after OK")
+
+
+def test_cal_capture_flush_error_does_not_mask_scan_error():
+    """If the flush itself fails, it must not replace the original scan
+    error -- the scan error is what propagates."""
+    orig = diag.dump_calibration_buffers
+
+    def boom(*a, **k):
+        raise RuntimeError("flush blew up")
+
+    def hook(scanner, real, ep, length, timeout=0):
+        if scanner.session.phase == tables.CAL_WHITE.name:
+            raise _InjectedReadError("scan error")
+        return real(ep, length, timeout)
+
+    diag.dump_calibration_buffers = boom
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            _mock, err = _plain_scan(d, hook)
+        assert isinstance(err, _InjectedReadError), (
+            "flush error masked the scan error", err)
+    finally:
+        diag.dump_calibration_buffers = orig
+    print("test_cal_capture_flush_error_does_not_mask_scan_error OK")
+
+
+def test_cal_capture_no_disk_io_during_scan():
+    """No file is written during the scan; the single flush happens only
+    at __exit__. Proves nothing is written between frames."""
+    saved = os.environ.get(_device.DUMP_CAL_ENV)
+    with tempfile.TemporaryDirectory() as d:
+        os.environ[_device.DUMP_CAL_ENV] = d
+        try:
+            mock = MockUsbIo(_build_cal_buffers())
+            with Scanner(mock) as scanner:
+                scanner.initialize()
+                scanner.scan(frame=1)
+                assert os.listdir(d) == [], "wrote to disk during the scan"
+            assert os.listdir(d), "nothing flushed at __exit__"
+        finally:
+            if saved is None:
+                os.environ.pop(_device.DUMP_CAL_ENV, None)
+            else:
+                os.environ[_device.DUMP_CAL_ENV] = saved
+    print("test_cal_capture_no_disk_io_during_scan OK")
+
+
 def main() -> int:
     tests = [
         test_gain_codes_against_capture,
@@ -718,6 +916,13 @@ def main() -> int:
         test_warmup_ctrl_c_and_usb_errors_propagate,
         test_warmup_survives_zero_white_line,
         test_scan_sequence_matches_trace,
+        test_cal_capture_offon_identical_write_stream,
+        test_cal_capture_flush_after_success,
+        test_cal_capture_short_dark_b_6_bytes_preserved,
+        test_cal_capture_short_dark_b_1_byte_preserved_through_reshape_error,
+        test_cal_capture_failure_preserves_data_and_sends_nothing_after,
+        test_cal_capture_flush_error_does_not_mask_scan_error,
+        test_cal_capture_no_disk_io_during_scan,
     ]
     for t in tests:
         t()

@@ -16,7 +16,6 @@ Covers:
 from __future__ import annotations
 
 import json
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -25,7 +24,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from of135i import device, diag
+from of135i import diag
 
 
 # ------------------------------------------------------------- known_read_regs
@@ -199,47 +198,48 @@ def test_cal_buffer_dump_detects_buffer_reuse():
     print("test_cal_buffer_dump_detects_buffer_reuse OK")
 
 
-class _UsbTouched(BaseException):
-    """Not an Exception, so the dump's own broad ``except Exception`` can
-    never swallow it -- if the dump touches io, the test sees it."""
+def test_equal_means_do_not_imply_bit_identical_channels():
+    """Regression for the corrected claim (Test 30): three equal channel
+    MEANS do not imply identical channels or identical value sets. This
+    synthetic buffer averages to exactly 26177.375 in all three channels
+    yet has different per-channel values. channels_bit_identical must be
+    False and the three per-channel sha256 values must differ -- proving
+    the checksum, not the mean, is what actually decides bit-identity."""
+    rows = ([[26177, 26176, 26175]]
+            + [[26177, 26177, 26177]] * 6
+            + [[26180, 26181, 26182]])
+    raw = np.asarray(rows, dtype="<u2").tobytes()
+    stats = diag._buffer_stats(raw)
+    assert stats["channel_mean"] == [26177.375, 26177.375, 26177.375], stats["channel_mean"]
+    assert stats["channels_bit_identical"] is False, stats
+    assert len(set(stats["channel_sha256"])) == 3, stats["channel_sha256"]
+    print("test_equal_means_do_not_imply_bit_identical_channels OK")
 
 
-def test_dump_cal_buffers_noop_without_env_and_touches_no_usb():
-    """The scanner hook must be a no-op when the env var is unset, and
-    must never touch USB io when it runs (it persists already-read host
-    bytes; adding no USB traffic and not changing the op sequence is the
-    whole point of the diagnostic)."""
-    class _NoUsbStub:
-        DUMP_CAL_ENV = device.Scanner.DUMP_CAL_ENV
-        park_mode = "verbatim"
-
-        @property
-        def io(self):
-            raise _UsbTouched("calibration dump must not touch USB io")
-
-    stub = _NoUsbStub()
-    dark_a = _u16_buffer([[1, 2, 3]] * 8)
-    dark_b = _u16_buffer([[4, 5, 6]] * 8)
-    saved = os.environ.pop(device.Scanner.DUMP_CAL_ENV, None)
-    try:
-        with tempfile.TemporaryDirectory() as d:
-            device.Scanner._dump_cal_buffers_if_requested(
-                stub, dark_a, dark_b, frame=1, dpi=3600, dual=True,
-                started_utc="2026-09-06T00:00:00+00:00")
-            assert os.listdir(d) == [], "dump ran without the env var set"
-        with tempfile.TemporaryDirectory() as d:
-            os.environ[device.Scanner.DUMP_CAL_ENV] = d
-            device.Scanner._dump_cal_buffers_if_requested(
-                stub, dark_a, dark_b, frame=1, dpi=3600, dual=True,
-                started_utc="2026-09-06T00:00:00+00:00")
-            files = os.listdir(d)
-            assert any(f.endswith(".calbuf.json") for f in files), files
-            assert any(f.endswith("-dark_b.bin") for f in files), files
-    finally:
-        os.environ.pop(device.Scanner.DUMP_CAL_ENV, None)
-        if saved is not None:
-            os.environ[device.Scanner.DUMP_CAL_ENV] = saved
-    print("test_dump_cal_buffers_noop_without_env_and_touches_no_usb OK")
+def test_cal_buffer_dump_records_transfer_reads():
+    """The optional `reads` record (per-bulk-transfer requested vs
+    returned length + exception) is stored verbatim, so a short read of
+    even a few bytes is visible where the total length would miss it. A
+    read whose length is unknown after an exception is returned=None,
+    distinct from a genuine zero-byte read (returned=0). (The scan-path
+    integration of this capture is verified in test_calibrate.py.)"""
+    reads = [
+        {"seq": 1, "phase": "cal_dark_b", "frame": 2, "requested": 3072,
+         "returned": 3066, "exception": None},               # 6 bytes short
+        {"seq": 2, "phase": "cal_dark_b", "frame": 4, "requested": 3072,
+         "returned": None, "exception": "USBError(...)"},     # length unknown
+        {"seq": 3, "phase": "cal_white", "frame": 4, "requested": 3072,
+         "returned": 0, "exception": None},                   # genuine zero
+    ]
+    with tempfile.TemporaryDirectory() as d:
+        meta_path = diag.dump_calibration_buffers(
+            d, "reads", {}, {"dark_b": _u16_buffer([[1, 2, 3]] * 8)},
+            reads=reads)
+        rec = json.load(open(meta_path))
+        assert rec["reads"] == reads
+        assert rec["reads"][1]["returned"] is None   # unknown
+        assert rec["reads"][2]["returned"] == 0       # genuine zero
+    print("test_cal_buffer_dump_records_transfer_reads OK")
 
 
 def main() -> int:
@@ -252,7 +252,8 @@ def main() -> int:
         test_cal_buffer_dump_normal_reference_not_flagged,
         test_cal_buffer_dump_short_transfer_flagged,
         test_cal_buffer_dump_detects_buffer_reuse,
-        test_dump_cal_buffers_noop_without_env_and_touches_no_usb,
+        test_equal_means_do_not_imply_bit_identical_channels,
+        test_cal_buffer_dump_records_transfer_reads,
     ]
     for t in tests:
         t()

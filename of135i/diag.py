@@ -403,13 +403,17 @@ def _buffer_stats(raw: bytes) -> dict:
 
 
 def dump_calibration_buffers(out_dir: str, base: str, meta: dict,
-                             named_buffers: dict) -> str:
+                             named_buffers: dict, reads=None) -> str:
     """Write the raw calibration buffers in ``named_buffers`` (name ->
     bytes) to ``out_dir`` as ``<base>-<name>.bin``, plus a
     ``<base>.calbuf.json`` metadata file combining ``meta`` (frame, dpi,
     dual, commit, host, timestamps) with per-buffer :func:`_buffer_stats`
     and a cross-buffer ``equal_to`` map (which buffers are byte-identical
-    -- the direct test for buffer reuse/stale RAM, e.g. dark_b == dark_a).
+    -- an observation *consistent with* buffer reuse / stale RAM, not on
+    its own proof of it). ``reads`` (optional) is the per-bulk-transfer
+    record (phase, frame, seq, requested vs returned length, timestamps,
+    exception), stored verbatim so a short read of even a few bytes is
+    visible where the total length and reshape_ok would miss it.
     Pure host-side I/O; the caller has already read every buffer.  Returns
     the metadata file path."""
     d = Path(out_dir)
@@ -420,7 +424,8 @@ def dump_calibration_buffers(out_dir: str, base: str, meta: dict,
         raw = bytes(raw)
         (d / f"{base}-{name}.bin").write_bytes(raw)
         buffers[name] = _buffer_stats(raw)
-    # Cross-buffer byte-identity: the direct stale-RAM / reuse signal.
+    # Cross-buffer byte-identity: an observation consistent with reuse /
+    # stale RAM (e.g. dark_b == dark_a), not by itself proof of cause.
     names = list(named_buffers)
     equal_to: dict = {}
     for i, a in enumerate(names):
@@ -430,6 +435,8 @@ def dump_calibration_buffers(out_dir: str, base: str, meta: dict,
             equal_to[a] = eq
     record["buffers"] = buffers
     record["byte_identical_buffers"] = equal_to
+    if reads is not None:
+        record["reads"] = reads
     meta_path = str(d / f"{base}.calbuf.json")
     with open(meta_path, "w") as f:
         json.dump(record, f, indent=2, sort_keys=True, default=_json_default)

@@ -30,8 +30,10 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
 import struct
 import sys
+import tempfile
 from collections import deque
 from pathlib import Path
 
@@ -40,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 
 from of135i import calibrate, image, tables_ir
+from of135i import device as _device
 from of135i.device import Scanner
 
 REPO = Path(__file__).resolve().parents[1]
@@ -477,11 +480,43 @@ def test_dust_removal_synthetic():
     )
 
 
+def test_cal_capture_offon_identical_write_stream_dual():
+    """Dual (IR) scan path: capture off vs on must emit a byte-identical
+    control-write stream (the diagnostic adds no USB, changes no op), and
+    with capture on the __exit__ flush writes the dark buffers. Mirrors
+    the plain-path test in test_calibrate.py, covering _scan_dual."""
+    def run(env_dir):
+        saved = os.environ.pop(_device.DUMP_CAL_ENV, None)
+        if env_dir is not None:
+            os.environ[_device.DUMP_CAL_ENV] = env_dir
+        try:
+            mock = MockUsbIo(_build_cal_buffers())
+            with Scanner(mock) as scanner:
+                scanner.initialize(ir=True)
+                mock.writes.clear()
+                scanner.scan(frame=1, ir=True)
+            return b"".join(mock.writes)
+        finally:
+            os.environ.pop(_device.DUMP_CAL_ENV, None)
+            if saved is not None:
+                os.environ[_device.DUMP_CAL_ENV] = saved
+
+    off = run(None)
+    with tempfile.TemporaryDirectory() as d:
+        on = run(d)
+        assert os.listdir(d), "dual capture flushed nothing on __exit__"
+        assert any(f.endswith("-dark_b-f1-1.bin") or "dark_b" in f
+                   for f in os.listdir(d)), os.listdir(d)
+    assert on == off, (len(on), len(off))
+    print("test_cal_capture_offon_identical_write_stream_dual OK")
+
+
 def main() -> int:
     tests = [
         test_split_ir_against_capture,
         test_scan_sequence_matches_trace_ir,
         test_dust_removal_synthetic,
+        test_cal_capture_offon_identical_write_stream_dual,
     ]
     for t in tests:
         t()

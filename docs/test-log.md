@@ -2014,9 +2014,15 @@ bytes exist nowhere, on any host.** Every artefact here is a summary.
 shrinks, and the R code falls ~5 — exactly the observed drift. That is a
 mechanical consequence of the collapse, not a second fault.
   What the summary *can* say: `26177.375` is not an integer, so the buffer
-  is not trivially constant; and three **bit-identical** non-integer means
-  force the three channel columns to hold the same value multiset —
-  strongest reading, every u16 triplet is `[v, v, v]`.
+  is not trivially constant. [Corrected 2026-09-06, see Test 30: an earlier
+  version here claimed three equal non-integer means "force the three
+  channel columns to hold the same value multiset — every triplet
+  `[v, v, v]`". That is FALSE. Three channels can average to the same
+  non-integer value with different values and different value sets — e.g.
+  `[[26177,26176,26175]] + [[26177,26177,26177]]*6 + [[26180,26181,26182]]`
+  all three columns average to 26177.375. The mean says nothing about the
+  buffer's structure; only a per-channel checksum decides bit-identity,
+  which is why the diagnostic records one.]
   What it *cannot* say: whether that came from flat hardware data, a
   short/stale bulk transfer, buffer reuse, or channel replication. All
   four hypotheses predict three-equal-means and can only be separated by
@@ -2057,11 +2063,86 @@ read, detects buffer reuse, and is a no-op without the env var while
 touching no USB). Synthetic fixtures are labelled SYNTHETIC and are not
 presented as a reproduction of the B5 fault.
 
-**Remaining uncertainty:** the actual cause (flat hardware data vs stale/
-short transfer vs timing race) can only be decided by one hardware
+**Remaining uncertainty:** the next step toward the cause is a hardware
 re-collection with `OF135I_DUMP_CAL` set on B5 — a 1–4 batch, then read
-back the even-frame `dark_b` buffers' per-channel checksums and
-byte-identity. That is the single missing datum; it needs hardware and is
-out of scope for this offline pass. Test 24's "degenerate data" and
-"platform-dependent difference" wording is corrected above to match the
-evidence.
+back the even-frame `dark_b` buffers' per-channel checksums, byte lengths
+and byte-identity. [Corrected 2026-09-06, see Test 30: do NOT promise that
+a single collection settles the root cause. It may not reproduce the
+collapse at all, or may reproduce it ambiguously; a byte-identical dark_b
+is consistent with reuse/stale data but is not by itself proof of the
+mechanism. One collection is the next datum, not a guaranteed verdict.] It
+needs hardware and is out of scope for this offline pass. Test 24's
+"degenerate data" and "platform-dependent difference" wording is corrected
+above to match the evidence.
+
+
+## 2026-09-06 — Test 30: hardened the dark_b capture so it survives failure, and corrected an overstated claim (offline)
+
+An external review of Test 29's diagnostic (`d3834d6`) found three real
+weaknesses for the very collection it was built for, plus a logic error in
+the prose. All fixed offline; no hardware.
+
+**1. The capture now survives a failed scan.** Before, the dump ran only
+after a successful scan + PARK, so a short `dark_b` that crashes
+`frombuffer`/`reshape` — the case we most want to see — saved nothing. Now
+the raw dark_a/dark_b are recorded the moment they are read, *before*
+reshape, and an accumulated capture is flushed on `__exit__` whether the
+block exits normally or by exception. A partial buffer from a bulk read
+that raises mid-transfer is kept too. The flush is host I/O only: it sends
+no USB, triggers no PARK/home/eject/init, and a flush error is logged
+without masking the original scan error or the session's FAILED state.
+
+**2. Disk and metadata work moved out of the batch's active run.** Before,
+the dump wrote files between frames, so an unchanged USB *sequence* did not
+prove unchanged *timing*. Now buffers + lightweight per-transfer records
+are held in memory during the batch, and files + checksums are written
+once, on `__exit__` — after the batch or after a failure stops the
+hardware. No file I/O or subprocess runs between frames (test:
+`no_disk_io_during_scan`). Memory is bounded: only dark_a/dark_b are kept
+(not white/shading/image), capped at 64 MiB per session with a recorded
+drop count. This is NOT claimed to be perfectly timing-neutral — the
+in-memory `note_read`/`note_buffer` calls add a little host work per read;
+the point is only that no disk or subprocess work happens mid-batch.
+
+**3. Per-transfer lengths are recorded.** Total length + `reshape_ok`
+cannot catch a 6-byte-short read (still a valid reshape). Each calibration
+bulk read now records phase, frame, sequence number, requested vs actually
+returned length, before/after timestamps, and any exception. A read whose
+length is unknown after an exception is `returned: null`, kept distinct
+from a genuine zero-byte read (`returned: 0`). No USB reads, retries or
+status polls were added; the read call is byte-for-byte the same with the
+diagnostic off or on (tests: `offon_identical_write_stream`, plain and
+dual).
+
+**4. Corrected conclusions.** The claim that three equal channel means
+imply the same value set / `[v, v, v]` triplets is removed from Tests 24
+and 29 (a counterexample averages to 26177.375 in all three channels with
+different values — regression test
+`test_equal_means_do_not_imply_bit_identical_channels`). Byte-identical
+buffers are now described as *consistent with* reuse/stale data, not proof
+of cause. The promise that a single hardware collection settles the root
+cause is withdrawn.
+
+**Constraints held:** no offset formula, register table, POSITION/PARK
+predicate, or recovery path changed. No hardware run.
+
+**Tests (offline suite, ordinary deps):**
+- PASSED: full suite green (test_safety 48, test_calibrate 22, test_hwblock
+  16, test_park 12, test_offline 6, test_diag 10, test_dpi 3, test_ir 4).
+  New: 7 scan-path integration tests in test_calibrate (off/on identical
+  stream, flush-after-success, 6-byte and 1-byte short dark_b, failure
+  preserves data + zero writes after + FAILED + no recovery, flush error
+  does not mask scan error, no disk during scan); 1 dual-path off/on in
+  test_ir; 2 in test_diag (per-transfer reads, equal-means counterexample).
+- SKIPPED/BLOCKED: reproducing the actual B5 collapse — blocked, needs
+  hardware (`OF135I_DUMP_CAL` on B5); the short-read and failure cases are
+  fault injection through the mock, labelled as such, not the real fault.
+- The scan-path tests run on the plain path in test_calibrate and the dual
+  path off/on in test_ir; both share the one `_exec_ops` read hook and the
+  one `__exit__` flush, so the failure/short-read behaviour verified on the
+  plain path holds for dual by construction.
+
+**Limitations / open:** the diagnostic observes; it does not decide the
+cause. dark_b's cause stays open until a hardware collection (Test 29).
+POSITION's f555 acceptance remains a separate open safety question,
+untouched.

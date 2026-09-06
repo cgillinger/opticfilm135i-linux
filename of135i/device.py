@@ -276,6 +276,60 @@ def load_completion_target() -> int:
     return int.from_bytes(polls[-1].resp, "big")
 
 
+# Diagnostic: when OF135I_DUMP_CAL is set to a directory, a Scanner
+# accumulates the raw dark_a/dark_b calibration buffers and per-bulk-read
+# transfer metadata in memory across a session, and writes them (with
+# checksums) once, on __exit__ -- after the batch or after a failure.
+# It adds no USB transaction and does not change the op sequence; no file
+# I/O or subprocess runs between frames (dark_b-collapse investigation,
+# docs/test-log.md Test 29/30).
+DUMP_CAL_ENV = "OF135I_DUMP_CAL"
+
+
+class _CalCapture:
+    """In-memory accumulation of raw calibration buffers and per-transfer
+    read records for one Scanner session. Nothing is hashed or written to
+    disk until :meth:`Scanner._flush_cal_capture` at __exit__, so the
+    batch's inter-frame timing is untouched. Memory is bounded: only the
+    dark_a/dark_b buffers are kept (not white/shading/image), and past
+    ``max_bytes`` further buffers are dropped with a recorded count."""
+
+    def __init__(self, out_dir: str, max_bytes: int = 64 * 1024 * 1024):
+        self.out_dir = out_dir
+        self.max_bytes = max_bytes
+        self.frame: int | None = None
+        self.buffers: list[dict] = []   # {name, frame, phase, raw}
+        self.reads: list[dict] = []     # per-bulk-read transfer record
+        self._seq = 0
+        self._bytes = 0
+        self.dropped_buffers = 0
+
+    def set_frame(self, frame: int | None) -> None:
+        self.frame = frame
+
+    def note_read(self, phase, requested, returned, t_before, t_after,
+                  exception) -> None:
+        """One bulk-IN read. ``returned`` is the byte count, or None when
+        an exception made the received length unknown (distinct from a
+        genuine zero-byte read, which records returned=0)."""
+        self._seq += 1
+        self.reads.append({
+            "seq": self._seq, "phase": phase, "frame": self.frame,
+            "requested": requested, "returned": returned,
+            "t_before": t_before, "t_after": t_after,
+            "exception": exception,
+        })
+
+    def note_buffer(self, name, phase, raw) -> None:
+        raw = bytes(raw)
+        if self._bytes + len(raw) > self.max_bytes:
+            self.dropped_buffers += 1
+            return
+        self._bytes += len(raw)
+        self.buffers.append({"name": name, "frame": self.frame,
+                             "phase": phase, "raw": raw})
+
+
 class Scanner:
     """Drives the of135i scan sequence over a UsbIo transport."""
 
@@ -335,6 +389,14 @@ class Scanner:
         # condition waits instead of captured pacing. See _park().
         self.park_mode: str = "verbatim"
 
+        # Calibration-buffer capture (see _CalCapture / DUMP_CAL_ENV):
+        # active only when the env var names an output directory. Held for
+        # the whole session so a batch accumulates in memory and flushes
+        # once, on __exit__.
+        _cal_dir = os.environ.get(DUMP_CAL_ENV)
+        self._cal_capture: _CalCapture | None = (
+            _CalCapture(_cal_dir) if _cal_dir else None)
+
     @classmethod
     def open(cls) -> "Scanner":
         return cls(UsbIo.open())
@@ -346,10 +408,44 @@ class Scanner:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        # Flush captured calibration buffers (host I/O only, no USB, no
+        # recovery), then close. The flush runs whether the block exited
+        # normally or by exception, so a failed scan's partial buffers are
+        # still written; a flush error is logged, never allowed to mask
+        # the original exception or trigger recovery.
+        try:
+            self._flush_cal_capture()
+        except Exception as e:
+            log.warning("cal-capture flush failed (ignored): %s", e)
         # Close only. Deliberately NO park/home/eject/initialize here:
         # if the block is left by an exception the hardware state is
         # unknown and the only valid recovery is a power cycle.
         self.close()
+
+    def _flush_cal_capture(self) -> None:
+        """Write the session's captured raw calibration buffers + transfer
+        records to OF135I_DUMP_CAL, computing checksums/stats now (after
+        the hardware run). No-op if capture is off or empty."""
+        cap = self._cal_capture
+        if cap is None or (not cap.buffers and not cap.reads):
+            return
+        meta = {
+            "dumped_utc": datetime.now(timezone.utc).isoformat(),
+            "host": diag._collect_host(),
+            "park_mode": self.park_mode,
+            "dropped_buffers": cap.dropped_buffers,
+            "max_bytes": cap.max_bytes,
+        }
+        base = f"cal-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}"
+        # Name buffers uniquely per (frame, phase, name), preserving order.
+        named: dict = {}
+        for i, b in enumerate(cap.buffers):
+            key = f"{b['name']}-f{b['frame']}-{i}"
+            named[key] = b["raw"]
+        path = diag.dump_calibration_buffers(
+            cap.out_dir, base, meta, named, reads=cap.reads)
+        log.info("flushed %d calibration buffer(s), %d read record(s) to %s",
+                 len(named), len(cap.reads), path)
 
     # ------------------------------------------------------- safety gate
 
@@ -474,7 +570,26 @@ class Scanner:
             elif op.kind == "bo":
                 dev.write(EP_BULK_OUT, op.data, timeout=5000)
             elif op.kind == "bi":
-                data = dev.read(EP_BULK_IN, op.length, timeout=60000)
+                cap = self._cal_capture
+                if cap is None:
+                    data = dev.read(EP_BULK_IN, op.length, timeout=60000)
+                else:
+                    # Same read call as above; only wrapped in timing +
+                    # a transfer record. On failure, keep the partial
+                    # buffer and re-raise (returned=None marks the length
+                    # unknown, distinct from a zero-byte read).
+                    _t0 = time.monotonic()
+                    try:
+                        data = dev.read(EP_BULK_IN, op.length, timeout=60000)
+                    except BaseException as e:
+                        cap.note_read(self.session.phase, op.length, None,
+                                      _t0, time.monotonic(), repr(e))
+                        if cur is not None:
+                            cap.note_buffer(f"partial:{self.session.phase}",
+                                            self.session.phase, bytes(cur))
+                        raise
+                    cap.note_read(self.session.phase, op.length, len(data),
+                                  _t0, time.monotonic(), None)
                 if cur is not None:
                     cur.extend(data)
             else:
@@ -1482,39 +1597,11 @@ class Scanner:
                 raise Of135iError(f"line count {n_lines_check} does not fit the 24-bit register")
         with self._operation("scan"):
             self._prepared_for_scan = False
+            if self._cal_capture is not None:
+                self._cal_capture.set_frame(frame)
             if t is not None:
                 return self._scan_dual(t, frame=frame, lines=lines)
             return self._scan_plain(frame=frame, lines=lines)
-
-    # Env var: when set to a directory, dump the raw dark calibration
-    # buffers there after each scan (dark_b-collapse investigation,
-    # docs/test-log.md Test 29). Diagnostic only -- it persists bytes the
-    # driver already read; it adds no USB traffic and does not change the
-    # op sequence (the dump runs after PARK, on host memory).
-    DUMP_CAL_ENV = "OF135I_DUMP_CAL"
-
-    def _dump_cal_buffers_if_requested(self, dark_a_raw, dark_b_raw, *,
-                                       frame: int, dpi: int, dual: bool,
-                                       started_utc: str) -> None:
-        out_dir = os.environ.get(self.DUMP_CAL_ENV)
-        if not out_dir:
-            return
-        try:
-            meta = {
-                "frame": frame, "dpi": dpi, "dual": dual,
-                "park_mode": getattr(self, "park_mode", None),
-                "scan_started_utc": started_utc,
-                "dumped_utc": datetime.now(timezone.utc).isoformat(),
-                "host": diag._collect_host(),
-            }
-            base = f"cal-f{frame}-{dpi}dpi-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}"
-            path = diag.dump_calibration_buffers(
-                out_dir, base, meta,
-                {"dark_a": dark_a_raw, "dark_b": dark_b_raw},
-            )
-            log.info("dumped raw calibration buffers to %s", path)
-        except Exception as e:  # diagnostics must never break a scan
-            log.warning("calibration-buffer dump failed (ignored): %s", e)
 
     def _scan_plain(self, frame: int, lines: int | None) -> tuple[bytes, int]:
         # No homing move here. The vendor flow has none (protocol-notes.md
@@ -1538,7 +1625,11 @@ class Scanner:
 
         # ---- dark pair (offset bracket, gain=0) ------------------------
         dark_a_raw = self._run_phase(tables.CAL_DARK_A)[0]
+        if self._cal_capture is not None:
+            self._cal_capture.note_buffer("dark_a", tables.CAL_DARK_A.name, dark_a_raw)
         dark_b_raw = self._run_phase(tables.CAL_DARK_B)[0]
+        if self._cal_capture is not None:
+            self._cal_capture.note_buffer("dark_b", tables.CAL_DARK_B.name, dark_b_raw)
         dark_a = np.frombuffer(dark_a_raw, dtype="<u2").reshape(-1, 3)
         dark_b = np.frombuffer(dark_b_raw, dtype="<u2").reshape(-1, 3)
 
@@ -1623,10 +1714,6 @@ class Scanner:
         # PARK's own first op is the captured end-of-access control
         # write (cw wv=0x8d) -- no separate call needed here.
         self._park(tables, ir=False)
-
-        self._dump_cal_buffers_if_requested(
-            dark_a_raw, dark_b_raw, frame=frame, dpi=3600, dual=False,
-            started_utc=started_utc)
 
         warmup = self._diag_warmup or {}
         self.last_diag = {
@@ -1720,7 +1807,11 @@ class Scanner:
         # doesn't matter -- flattened to (N, 3) either way, and the IR
         # and visible dark lines are both dark.
         dark_a_raw = self._run_phase(t.CAL_DARK_A)[0]
+        if self._cal_capture is not None:
+            self._cal_capture.note_buffer("dark_a", t.CAL_DARK_A.name, dark_a_raw)
         dark_b_raw = self._run_phase(t.CAL_DARK_B)[0]
+        if self._cal_capture is not None:
+            self._cal_capture.note_buffer("dark_b", t.CAL_DARK_B.name, dark_b_raw)
         dark_a = np.frombuffer(dark_a_raw, dtype="<u2").reshape(-1, 3)
         dark_b = np.frombuffer(dark_b_raw, dtype="<u2").reshape(-1, 3)
 
@@ -1841,10 +1932,6 @@ class Scanner:
 
         # ---- park ---------------------------------------------------------
         self._park(t, ir=True)
-
-        self._dump_cal_buffers_if_requested(
-            dark_a_raw, dark_b_raw, frame=frame, dpi=dpi, dual=True,
-            started_utc=started_utc)
 
         warmup = self._diag_warmup or {}
         self.last_diag = {
