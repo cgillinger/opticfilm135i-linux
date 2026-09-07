@@ -23,7 +23,7 @@ index 6e6a8d7..1153059 100644
 +# Plustek OpticFilm 135i
 +usb 0x07b3 0x1436
 diff --git a/backend/genesys/enums.cpp b/backend/genesys/enums.cpp
-index 343a220..406cc61 100644
+index 343a220..34f64c6 100644
 --- a/backend/genesys/enums.cpp
 +++ b/backend/genesys/enums.cpp
 @@ -118,6 +118,7 @@ std::ostream& operator<<(std::ostream& out, ModelId id)
@@ -34,8 +34,16 @@ index 343a220..406cc61 100644
          case ModelId::PLUSTEK_OPTICFILM_7200: out << "PLUSTEK_OPTICFILM_7200"; break;
          case ModelId::PLUSTEK_OPTICFILM_7200I: out << "PLUSTEK_OPTICFILM_7200I"; break;
          case ModelId::PLUSTEK_OPTICFILM_7300: out << "PLUSTEK_OPTICFILM_7300"; break;
+@@ -170,6 +171,7 @@ std::ostream& operator<<(std::ostream& out, SensorId id)
+         case SensorId::CCD_PLUSTEK_OPTICBOOK_3800: out << "CCD_PLUSTEK_OPTICBOOK_3800"; break;
+         case SensorId::CCD_PLUSTEK_OPTICFILM_7200: out << "CCD_PLUSTEK_OPTICFILM_7200"; break;
+         case SensorId::CCD_PLUSTEK_OPTICFILM_7200I: out << "CCD_PLUSTEK_OPTICFILM_7200I"; break;
++        case SensorId::CCD_PLUSTEK_OPTICFILM_135I: out << "CCD_PLUSTEK_OPTICFILM_135I"; break;
+         case SensorId::CCD_PLUSTEK_OPTICFILM_7300: out << "CCD_PLUSTEK_OPTICFILM_7300"; break;
+         case SensorId::CCD_PLUSTEK_OPTICFILM_7400_V1: out << "CCD_PLUSTEK_OPTICFILM_7400_V1"; break;
+         case SensorId::CCD_PLUSTEK_OPTICFILM_7400_V2: out << "CCD_PLUSTEK_OPTICFILM_7400_V2"; break;
 diff --git a/backend/genesys/enums.h b/backend/genesys/enums.h
-index 02cfc43..c7207b7 100644
+index 02cfc43..8813651 100644
 --- a/backend/genesys/enums.h
 +++ b/backend/genesys/enums.h
 @@ -179,6 +179,7 @@ enum class ModelId : unsigned
@@ -46,7 +54,15 @@ index 02cfc43..c7207b7 100644
      PLUSTEK_OPTICFILM_7200,
      PLUSTEK_OPTICFILM_7200I,
      PLUSTEK_OPTICFILM_7300,
-@@ -458,6 +459,7 @@ enum class AsicType : unsigned
+@@ -241,6 +242,7 @@ enum class SensorId : unsigned
+     CCD_PLUSTEK_OPTICBOOK_3800,
+     CCD_PLUSTEK_OPTICFILM_7200,
+     CCD_PLUSTEK_OPTICFILM_7200I,
++    CCD_PLUSTEK_OPTICFILM_135I,
+     CCD_PLUSTEK_OPTICFILM_7300,
+     CCD_PLUSTEK_OPTICFILM_7400_V1,
+     CCD_PLUSTEK_OPTICFILM_7400_V2,
+@@ -458,6 +460,7 @@ enum class AsicType : unsigned
      GL846,
      GL847,
      GL124,
@@ -147,7 +163,7 @@ index 542d4ff..dd77f3c 100644
          reg.init_reg(0x5e, value & 0xff);
      } else {
 diff --git a/backend/genesys/tables_model.cpp b/backend/genesys/tables_model.cpp
-index 321d179..590c4a7 100644
+index 321d179..2e0710f 100644
 --- a/backend/genesys/tables_model.cpp
 +++ b/backend/genesys/tables_model.cpp
 @@ -2311,6 +2311,87 @@ void genesys_init_usb_device_tables()
@@ -222,8 +238,8 @@ index 321d179..590c4a7 100644
 +       decision 4). */
 +    model.is_sheetfed = false;
 +
++    model.sensor_id = SensorId::CCD_PLUSTEK_OPTICFILM_135I;
 +    /* Placeholders -- see the note above. */
-+    model.sensor_id = SensorId::CCD_PLUSTEK_OPTICFILM_7200;
 +    model.adc_id = AdcId::PLUSTEK_OPTICFILM_7200;
 +    model.gpio_id = GpioId::PLUSTEK_OPTICFILM_7200;
 +    model.motor_id = MotorId::PLUSTEK_OPTICFILM_7200;
@@ -238,6 +254,66 @@ index 321d179..590c4a7 100644
      model = Genesys_Model();
      model.name = "plustek-opticfilm-7200";
      model.vendor = "PLUSTEK";
+diff --git a/backend/genesys/tables_sensor.cpp b/backend/genesys/tables_sensor.cpp
+index 09ca861..d40a24e 100644
+--- a/backend/genesys/tables_sensor.cpp
++++ b/backend/genesys/tables_sensor.cpp
+@@ -3355,6 +3355,55 @@ void genesys_init_sensor_tables()
+     }
+ 
+ 
++    /* Plustek OpticFilm 135i (GL126). The GL126 command set drives the
++       chip from register tables generated from USB captures
++       (gl126_tables.cpp), so the per-sensor register and calibration
++       fields the core uses for other chips are not consulted; what the
++       core does read from here is the resolution list, the scan method
++       and the channel count. The rest is left at its defaults and marked
++       as such rather than copied from another sensor. */
++    sensor = Genesys_Sensor();
++    sensor.sensor_id = SensorId::CCD_PLUSTEK_OPTICFILM_135I; // gl126
++    sensor.full_resolution = 7200;
++    sensor.optical_resolution = 7200;
++    sensor.register_dpihw = 3600; // not used by the GL126 hooks
++    sensor.black_pixels = 0;      // calibration is table-driven in gl126.cpp
++    sensor.dummy_pixel = 0;
++    sensor.fau_gain_white_ref = 0;
++    sensor.gain_white_ref = 0;
++    sensor.exposure = { 0x0000, 0x0000, 0x0000 };
++    /* Not consumed by the GL126 hooks: the captured tables carry the
++       per-channel exposure block (regs 0xe0-0xf7, DPI-independent). The
++       core still needs a non-negative value here to seed its exposure
++       option; 0x3ffb is the end of that captured block. */
++    sensor.exposure_lperiod = 0x3ffb;
++    sensor.gamma = { 1.0f, 1.0f, 1.0f };
++    {
++        struct CustomSensorSettings
++        {
++            ValueFilterAny<unsigned> resolutions;
++            unsigned register_dpiset;
++        };
++
++        CustomSensorSettings custom_settings[] = {
++            { { 600 }, 600 },
++            { { 1200 }, 1200 },
++            { { 2400 }, 2400 },
++            { { 3600 }, 3600 },
++            { { 7200 }, 7200 },
++        };
++
++        for (const CustomSensorSettings& setting : custom_settings) {
++            sensor.resolutions = setting.resolutions;
++            sensor.method = ScanMethod::TRANSPARENCY;
++            sensor.shading_resolution = setting.resolutions.values().front();
++            sensor.register_dpiset = setting.register_dpiset;
++            sensor.pixel_count_ratio = Ratio{1, 1};
++            sensor.output_pixel_offset = 0;
++            s_sensors->push_back(sensor);
++        }
++    }
++
+     sensor = Genesys_Sensor();
+     sensor.sensor_id = SensorId::CCD_PLUSTEK_OPTICFILM_7300; // gl843
+     sensor.full_resolution = 7200;
 diff --git a/doc/descriptions/genesys.desc b/doc/descriptions/genesys.desc
 index 43b0736..83414f8 100644
 --- a/doc/descriptions/genesys.desc

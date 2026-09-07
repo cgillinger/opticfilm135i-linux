@@ -237,17 +237,52 @@ void CommandSetGl126::init(Genesys_Device* dev) const
     base_init(dev, "init");
 }
 
-ScanSession CommandSetGl126::calculate_scan_session(const Genesys_Device* /*dev*/,
-                                                    const Genesys_Sensor& /*sensor*/,
+/* Pure computation: the ScanSession the core sizes its image pipeline
+   from. Nothing here reaches the wire, and nothing here positions the
+   transport -- frame positioning is FEEDL from the captured tables
+   (docs/sane-port.md, geometry model), not the core's scanner_move. The
+   start offsets are kept in the same units the gl124 template uses so
+   the core's bookkeeping stays consistent; the scan hook, when it is
+   brought up, must pin `pixels`/`lines` to the profile's captured
+   geometry rather than trust these values. */
+ScanSession CommandSetGl126::calculate_scan_session(const Genesys_Device* dev,
+                                                    const Genesys_Sensor& sensor,
                                                     const Genesys_Settings& settings) const
 {
     DBG_HELPER(dbg);
-    /* The geometry model is written out in docs/sane-port.md; it is not
-       guessed here. Until it is implemented and checked against a real
-       frame, refuse rather than compute a scan window that could position
-       the transport somewhere the vendor never does. */
-    (void) settings;
-    not_brought_up("calculate_scan_session");
+    debug_dump(DBG_info, settings);
+
+    float move = dev->model->y_offset + settings.tl_y;
+    move = static_cast<float>((move * settings.yres) / MM_PER_INCH);
+
+    float start = dev->model->x_offset + settings.tl_x;
+    start = static_cast<float>((start * settings.xres) / MM_PER_INCH);
+
+    ScanSession session;
+    session.params.xres = settings.xres;
+    session.params.yres = settings.yres;
+    session.params.startx = static_cast<unsigned>(start);
+    session.params.starty = static_cast<unsigned>(move);
+    session.params.pixels = settings.pixels;
+    session.params.requested_pixels = settings.requested_pixels;
+    session.params.lines = settings.lines;
+    session.params.depth = settings.depth;
+    session.params.channels = settings.get_channels();
+    session.params.scan_method = settings.scan_method;
+    session.params.scan_mode = settings.scan_mode;
+    session.params.color_filter = settings.color_filter;
+    /* As gl124: these come from the device's current settings, which the
+       core keeps valid from sane_open on, whereas the incoming settings
+       object carries the frontend's exposure field unset at option-init
+       time. */
+    session.params.contrast_adjustment = dev->settings.contrast;
+    session.params.brightness_adjustment = dev->settings.brightness;
+    session.params.exposure_lperiod = dev->settings.exposure_lperiod;
+    session.params.flags = ScanFlag::NONE;
+
+    compute_session(dev, session, sensor);
+
+    return session;
 }
 
 void CommandSetGl126::init_regs_for_scan_session(Genesys_Device* /*dev*/,

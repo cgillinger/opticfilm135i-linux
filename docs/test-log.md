@@ -2668,3 +2668,58 @@ regenerated from the clone (`git diff` against 1d47d7c).
 
 Resulting write list for hook 1 is in docs/sane-port.md ("Stage 3,
 hook 1"). Not run; the run needs reg 0x01 = 0x22 and the operator.
+
+## 2026-09-07 — Test 43: SANE stage 3, hook 1 — `sane_open` writes the base table (hardware)
+
+First backend write to the scanner. Precondition met with the driver:
+`of135i load` from cold (0x00) → reg 0x01 = 0x22, magazine latched, blue
+LED. Trigger: `scanimage -d genesys:libusb:001:006 -A` against the
+clone's freshly built `libsane-genesys.so.1` (private `SANE_CONFIG_DIR`,
+genesys only), full genesys + sanei_usb debug.
+
+Three attempts stopped **before any write** (zero control transfers each,
+`of135i status` unchanged at 0x22) on things `init_options` needs before
+`init()` runs:
+1. "Given device does not have sensor defined": the placeholder sensor
+   (OpticFilm 7200) has resolutions 900/1800/3600/7200 and the default
+   resolution is the model's lowest, 600. Fixed properly rather than by
+   bending the placeholder: `SensorId::CCD_PLUSTEK_OPTICFILM_135I` with
+   the five captured resolutions, method TRANSPARENCY, everything else at
+   defaults and labelled as not consulted by the table-driven hooks.
+2. `calculate_scan_session` was a stage-3 refusal. It is pure geometry
+   (no wire, no positioning -- FEEDL comes from the tables), so it is now
+   the gl124 shape: params from settings, `compute_session`.
+3. "SetupParams are not valid": the core seeds its exposure option from
+   `sensor.exposure_lperiod`, whose default is -1 → NOT_SET. Set to
+   0x3ffb, the end of the captured exposure block (regs 0xe0-0xf7), and
+   documented as not consumed by GL126.
+
+Fourth attempt: `sane_open` → `init()` → option listing → `sane_close`,
+exit 0, no sound. Fifth attempt identical, with byte-level USB logging
+(`SANE_DEBUG_SANEI_USB=6`) for the record. The wire, in order:
+
+| # | Transfer | Content |
+|---|---|---|
+| 1 | `0xc0/0x04` wValue 0x8e wIndex 0x0122, 2 B | read reg 0x01 → 0x22 (`check_start_state`) |
+| 2-5 | `0x40/0x04` wValue 0x83 wIndex 0, 64/64/64/40 B | BASE_INIT, 116 pairs in four batches |
+| 6-13 | `0x40/0x04` wValue 0x83, 6 B × 8 | AFE base via 0x51/0x5d/0x5e, one triple per value |
+| 14 | `0x40/0x04` wValue 0x83, 2 B | 0x03 = 0x00 at `sane_close` |
+
+Nothing else: no clear-halt, no port reset (skipped for GL126), no
+bulk, no 0x0f = 0x01. Fourteen control transfers, the same count and
+shape as the driver's `initialize()` from 0x22.
+
+After each successful run `of135i status` read 0x22 idle-homed; regs
+0x32 (0x05 → 0x1f) and 0x35 (0xbb → 0xfb) took the values BASE_INIT
+writes, which is the state `initialize()` leaves and every scan starts
+from. Christian reported no sound.
+
+Noted, open: `scanimage -A` printed the six option groups with no
+options under them. Cosmetic for now (the model advertises no options
+the frontend can show yet); to be looked at with the option set in a
+later hook. The bulk-read and `low.cpp` GL124 sites are still undecided
+and become relevant at hook 2 (offset calibration reads dark lines).
+
+Hook 1 is hardware-verified: the backend opens the unit from the
+driver's start state, writes exactly what the driver writes, and leaves
+the unit in the state the driver leaves it in.

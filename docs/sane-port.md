@@ -25,7 +25,7 @@ done
 Symlinks rather than copies: an edit here is picked up by the next build
 with nothing to re-sync. The eventual merge request takes copies.
 
-## Status (2026-09-07)
+## Status (2026-09-07, evening)
 
 - **Stage 2 — done (offline).** `tools/gen_sane_tables.py` emits
   `sane/gl126_tables.{h,cpp}` from `of135i/tables*.py`: the base, AFE,
@@ -98,7 +98,19 @@ with nothing to re-sync. The eventual merge request takes copies.
   they are safe. The lamp-off write at close (0x03 = 0x00) is kept: the
   driver's PARK writes the same.
 
-### Stage 3, hook 1 — what `sane_open` writes (planned, not run)
+- **Stage 3, hook 1 — done (Test 43, hardware).** `sane_open` from
+  reg 0x01 = 0x22 writes BASE_INIT (four 0x83 batches) and the AFE base
+  (eight 0x51/0x5d/0x5e triples), `sane_close` writes 0x03 = 0x00; the
+  unit reads 0x22 afterwards with 0x32/0x35 at the base-table values.
+  Getting there added a real `SensorId::CCD_PLUSTEK_OPTICFILM_135I`
+  (five resolutions, TRANSPARENCY, other fields default and labelled),
+  the gl124-shaped `calculate_scan_session` (geometry only), and
+  `exposure_lperiod = 0x3ffb` on the sensor (the core seeds an option
+  from it; GL126 never reads it). Next: hook 2, offset calibration --
+  the first bulk read, which is where the bulk-path GL124 sites get
+  decided against the captures.
+
+### Stage 3, hook 1 — what `sane_open` writes (verified, Test 43)
 
 Precondition: reg 0x01 = 0x22 (idle-homed; a driver-loaded magazine is the
 state every scan starts from). Trigger: `scanimage -d genesys:… -A`
