@@ -1655,6 +1655,47 @@ def _cli(argv):
     return code, _STDOUT.getvalue(), _STDERR.getvalue()
 
 
+def test_eject_refuses_base_table_state_with_zero_writes():
+    """Test 44/46: regs 0x3b/0x3c = 0xff/0xff is the base-table-only
+    state (BASE_INIT written, no scan phase after it). The driver's
+    eject stalled twice from it and no vendor flow ejects from it, so
+    eject() refuses it with two register reads and zero writes."""
+    fake = FakeUsbDevice(reg01=0x22)
+    fake.regs[0x3B] = fake.regs[0x3C] = 0xFF
+    scanner = make_scanner(fake)
+    with fast_time():
+        e = expect(safety.UnejectableStateError, scanner.eject)
+    assert e.regs == (0xFF, 0xFF), e.regs
+    assert fake.out_count == 0 and fake.pulses == 0, (fake.out_count, fake.pulses)
+    assert "no commands were sent" in str(e).lower(), str(e)
+    assert scanner.session.state is SessionState.FAILED, scanner.session.state
+    # Nothing may follow the refusal in that session.
+    expect(safety.SafetyError, scanner.eject)
+    assert fake.out_count == 0
+
+    # The states eject is verified from are not confused with it:
+    # 0x00/0x01 (after scan + PARK), 0x00/0x00 (after OPEN/LOAD), and a
+    # single 0xff on either register.
+    for r3b, r3c in ((0x00, 0x01), (0x00, 0x00), (0xFF, 0x00), (0x00, 0xFF)):
+        fake = FakeUsbDevice(reg01=0x22)
+        fake.regs[0x3B], fake.regs[0x3C] = r3b, r3c
+        scanner = make_scanner(fake)
+        with fast_time():
+            scanner.eject()
+        assert fake.pulses == 1, (hex(r3b), hex(r3c), fake.pulses)
+
+    # The driver's own initialize() never leaves the base table alone
+    # (PREP/AFE_BASE follow it), so initialize -> eject keeps working.
+    fake = FakeUsbDevice(reg01=0x22, cal_buffers=_cal_buffers())
+    scanner = make_scanner(fake)
+    with fast_time():
+        scanner.initialize()
+        assert (fake.regs.get(0x3B), fake.regs.get(0x3C)) != (0xFF, 0xFF)
+        scanner.eject()
+    assert scanner.session.state is SessionState.ARMED
+    print("test_eject_refuses_base_table_state_with_zero_writes OK")
+
+
 def test_cli_scan_eject_watch_refuse_unsafe_states_with_zero_writes():
     with tempfile.TemporaryDirectory() as td:
         out = str(Path(td) / "x.tiff")
@@ -2289,6 +2330,7 @@ def main() -> int:
         test_load_status_matches_is_class_and_sensor_bit,
         test_load_completion_is_verified_not_assumed,
         test_sensor_probe_is_strictly_read_only,
+        test_eject_refuses_base_table_state_with_zero_writes,
         test_cli_scan_eject_watch_refuse_unsafe_states_with_zero_writes,
         test_cli_scan_normal_path_and_failure_reporting,
         test_cli_eject_and_watch_paths,

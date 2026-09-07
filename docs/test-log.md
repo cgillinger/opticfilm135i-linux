@@ -2933,3 +2933,19 @@ transfer, the 0x8e read of reg 0x01 (0x22), zero writes; the unit read
 released, reg 0x01 = 0x22, 0x32 = 0x5b, 0x101 = 0xf0, sensor "not
 detected" -- the healthy post-eject signature. A SANE open/close between
 load and eject changes nothing. Round closed.
+
+## 2026-09-07 — offline: the Test 46 eject guard implemented
+
+`Scanner.eject()` now refuses, before its first write, when regs
+0x3b/0x3c read 0xff/0xff (`UnejectableStateError`, two register reads,
+zero writes, session FAILED so nothing follows). That value pair is the
+base-table-only state (BASE_INIT written, no PREP/AFE_BASE after it)
+the eject stalled from twice in Test 44; every state the vendor ejects
+from reads 0x00/0x00 (after OPEN/LOAD, after cold_init) or 0x00/0x01
+(after scan + PARK). The driver's own `initialize()` never leaves the
+base table alone, so initialize → eject is unchanged. The cause of the
+stall stays a hypothesis; the guard only keeps the motor out of that
+state. Covered by `test_eject_refuses_base_table_state_with_zero_writes`
+(refusal, the three working value pairs, single-0xff not confused,
+initialize → eject). Not hardware-run: a run is only meaningful from
+the stalled state, which no flow produces any more.

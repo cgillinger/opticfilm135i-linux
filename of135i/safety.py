@@ -196,6 +196,18 @@ class LoadIncompleteError(SafetyError):
         self.expected = expected
 
 
+class UnejectableStateError(SafetyError):
+    """eject() was requested from a register state no vendor flow ejects
+    from: regs 0x3b/0x3c both read 0xff, the scan-session base table
+    with no scan phase after it (Test 44/46, docs/test-log.md). The
+    driver's eject stalled twice from that state. Nothing was written
+    by the eject; ``regs`` holds the two values read."""
+
+    def __init__(self, message: str, *, regs: tuple[int, int], **kw):
+        super().__init__(message, **kw)
+        self.regs = regs
+
+
 class StrictPollTimeoutError(SafetyError):
     """A completion poll that the operation declared strict (exact match
     with the captured settled value, no state-class leniency) timed out.

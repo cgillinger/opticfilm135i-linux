@@ -46,7 +46,7 @@ import numpy as np
 
 from . import calibrate, diag, safety, tables, tables_base, tables_ir
 from .safety import (
-    OperationNotAllowedError, SessionState, StartState, UnsafeStartStateError,
+    OperationNotAllowedError, UnejectableStateError, SessionState, StartState, UnsafeStartStateError,
 )
 from .tables import Op, Phase
 from .usbio import EP_BULK_IN, EP_BULK_OUT, Of135iError, UsbIo
@@ -1404,6 +1404,10 @@ class Scanner:
           of the scanner's power cycle -- docs/hardware-safety.md.)
         - Cold start (0x00, never homed): run cold_init() first —
           ejecting from an unhomed state is undefined.
+        - Base-table-only state (regs 0x3b/0x3c read 0xff/0xff: BASE_INIT
+          written with no scan phase after it): refused read-only with
+          UnejectableStateError. The eject stalled twice from that state
+          (Test 44) and no vendor flow ejects from it (Test 46).
         """
         with self._operation("eject", cold_ok=True):
             if not self.is_magazine_present():
@@ -1412,8 +1416,31 @@ class Scanner:
             if self.session.state is SessionState.COLD:
                 log.info("eject: reg 0x01=0x00 (cold state) — running cold_init() first")
                 self.cold_init()
+            self._refuse_eject_from_base_table_state()
             self.session.phase = "eject"
             self._eject_body()
+
+    def _refuse_eject_from_base_table_state(self) -> None:
+        """Fail-closed guard before the eject sequence's first write.
+
+        Regs 0x3b/0x3c read 0xff/0xff only in the base-table-only state
+        (BASE_INIT_PAIRS written, no PREP/AFE_BASE phase after it -- the
+        state the SANE hook-1 open created). The driver's eject stalled
+        2/2 from it (Test 44, 2026-09-07); every state the vendor ejects
+        from reads 0x00/0x00 (after OPEN/LOAD, cold_init) or 0x00/0x01
+        (after scan + PARK). Two register reads, no write. Why the eject
+        stalls there is a hypothesis, not established (docs/test-log.md,
+        Test 46); this guard only keeps the motor out of that state.
+        """
+        regs = (self.io.read_reg(0x3B), self.io.read_reg(0x3C))
+        if regs == (0xFF, 0xFF):
+            raise UnejectableStateError(
+                "eject() refused: regs 0x3b/0x3c read 0xff/0xff (the scan-session "
+                "base table with no scan phase after it). The driver's eject stalled "
+                "from this state (Test 44) and no vendor flow ejects from it. "
+                "Recovery: power-cycle the scanner, then `of135i load`. "
+                f"{safety.NO_COMMANDS_SENT}",
+                regs=regs, session=self.session.snapshot())
 
     def _eject_body(self) -> None:
         feedl = 3090
