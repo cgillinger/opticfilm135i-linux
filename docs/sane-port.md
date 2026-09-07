@@ -109,6 +109,13 @@ with nothing to re-sync. The eventual merge request takes copies.
   from it; GL126 never reads it). Next: hook 2, offset calibration --
   the first bulk read, which is where the bulk-path GL124 sites get
   decided against the captures.
+- **Test 44 (open): eject stalled after hook 1.** The driver's eject from
+  the hook-1 end state (loaded magazine, base table, a lone 0x03 = 0x00
+  from `sane_close`) stalled -- short harsh sound, magazine latched,
+  registers healthy. Recovered by power cycle + QuickScan in the VM.
+  `sane_close` now writes nothing for GL126 (the reference driver writes
+  nothing at close). Not proven to be the cause; the proof is a hardware
+  round of its own. Until then: no driver eject after a SANE session.
 
 ### Stage 3, hook 1 — what `sane_open` writes (verified, Test 43)
 

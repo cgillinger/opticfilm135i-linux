@@ -2723,3 +2723,60 @@ and become relevant at hook 2 (offset calibration reads dark lines).
 Hook 1 is hardware-verified: the backend opens the unit from the
 driver's start state, writes exactly what the driver writes, and leaves
 the unit in the state the driver leaves it in.
+
+## 2026-09-07 — Test 44: eject stalled after the SANE hook-1 session (hardware) — OPEN
+
+State before: the Test 43 end state -- magazine latched by `of135i load`,
+then two `sane_open`/`sane_close` rounds (BASE_INIT + AFE, then
+0x03 = 0x00 at close), reg 0x01 = 0x22, 0x32 = 0x1f, 0x35 = 0xfb,
+0x101 = 0xd8, button orange. The driver was then asked to `eject`.
+
+Result: the driver printed `ejected` (the status-word completion poll
+reached its end value) but the magazine stayed mechanically latched.
+Christian heard a short, louder, "not right" motor sound. After: reg
+0x01 = 0x22, 0x32 = 0x07, 0x101 = 0xf8 (sensor still sees the
+magazine), button orange. A healthy eject ends at 0x32 = 0xdb,
+0x101 = 0xf0 (test log 2026-09-05).
+
+This is the stall class of protocol-notes.md ("short harsh motor sound;
+the button went orange (firmware: ejected) but the magazine was
+mechanically stuck. Registers read healthy afterwards"). Every earlier
+stall was issued from an end state the vendor never ejects from, never
+from the eject batch itself. Tonight's start state is such a state: a
+loaded magazine after the base table and a bare lamp-off (0x03 = 0x00)
+without the rest of PARK, which is what `sane_close` writes. The
+driver's own `eject` re-runs `initialize()` first, so the base table was
+written a third time on top.
+
+Prime suspect, not proven: the lone 0x03 = 0x00 at `sane_close`. The
+Python driver writes nothing at session close; the vendor's 0x03 = 0x00
+only ever appears inside PARK/cold-init sequences. Action regardless of
+proof: `sane_close` must not write it for GL126 (the reference driver
+does not), and no eject from a SANE-touched state until the close path
+matches the driver.
+
+Recovery attempted, in the documented order: power cycle first (the
+firmware's power-on init has ejected a latched cassette once before),
+then QuickScan in the Win11 VM if the magazine is still latched. No
+motor command from Linux. Outcome recorded below when known.
+
+**Outcome (same evening).** Power cycle: reg 0x01 = 0x00, re-enumerated,
+magazine still latched by hand. QuickScan in the Win11 VM: its normal
+init ran and released the magazine ("usual QuickScan init", no unusual
+sound). Back on Linux: reg 0x01 = 0x22, 0x32 = 0x1f, 0x35 = 0xbb
+(PARK's end value), 0x101 = 0xf8, magazine loose in the slot. Recovered.
+
+Capture of the recovery: attempted with the usbmon recipe, but the
+savefile path used `~` inside `sudo bash -c`, which expands to root's
+home; no file landed in the analysis directory. Recipe corrected to an
+absolute path. The recovery itself is repeatable if a capture is wanted.
+
+Fixed offline, before any further hardware: `sane_close` no longer writes
+0x03 = 0x00 for GL126 (integration patch regenerated, rebuilt clean).
+Whether the lone lamp-off was the cause is NOT proven -- the fix removes
+the only write that distinguished the stalled start state from the
+verified "load → eject" path. Rule until proven otherwise: after any
+SANE session on a loaded magazine, do not eject with the driver; scan
+(scan → PARK → eject) or power-cycle-and-VM if needed. Test 44 stays open
+for the proof (a load → sane_open/close → driver eject round with the
+guarded close), which is a hardware test of its own.
