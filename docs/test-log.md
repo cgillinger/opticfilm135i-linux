@@ -2780,3 +2780,57 @@ SANE session on a loaded magazine, do not eject with the driver; scan
 (scan → PARK → eject) or power-cycle-and-VM if needed. Test 44 stays open
 for the proof (a load → sane_open/close → driver eject round with the
 guarded close), which is a hardware test of its own.
+
+**Proof round, same evening — Test 44 CLOSED, root cause found.** With
+`sane_close` writing nothing (13 transfers, no 0x03, verified in the USB
+log), the same round -- `load` → `scanimage -A` → driver `eject` --
+stalled again: the same "different, slightly louder" motor sound,
+magazine latched, `ejected` printed. The lamp-off is cleared.
+
+Root cause, from the driver's own code and history: `eject()` never
+writes the motor speed profile. `_eject_body` writes 0x33, 0x32, 0x09,
+the FEEDL batch, the slope tables and 0x0f = 0x01, and runs with
+whatever 0x7e/0x7f the chip holds. After `load` those hold the LOADER
+profile (0x75/0x30, written by OPEN/JOG/LOAD and LOADER_SPEED), so eject
+works. BASE_INIT -- what the vendor writes at app open and what the
+SANE `init()` writes -- carries the SCAN profile (0x15/0x7c). An eject
+straight after a base table therefore runs the eject move with the scan
+motor profile: Test 16 ("JOG on top of BASE_INIT_PAIRS -- a harsh
+noise") was the same mechanism for the jog. `batch --eject` works
+because a scan session ends in the vendor's own post-PARK state.
+
+So this is a driver defect exposed by SANE, not a SANE defect: any
+sequence that writes the base table on a loaded magazine and then calls
+the driver's `eject` stalls. Fix direction (offline first): `_eject_body`
+writes the loader profile (LOADER_SPEED_PAIRS, at least 0x7e/0x7f)
+before its motor batch, checked against the vendor's loaded-state eject
+capture; the SANE `eject_document` hook does the same. Hardware A/B
+after. Until then: never `eject` after a base-table write without a
+scan in between; `load` releases a latched magazine safely (below).
+
+## 2026-09-07 — Test 45: recovery on Linux — cold start with the magazine latched at the stop (hardware)
+
+The planned "cold boot with the magazine already at the stop" test,
+run for real as the recovery from Test 44's second stall. Power cycle
+(after disconnecting the unit from the VM -- autoConnect had grabbed it
+on the first re-enumeration and `load` refused with "Resource busy"
+after zero writes, as designed). Then `of135i load` from 0x00:
+
+- `cold_init` ran the vendor sequence with three poll deviations, all
+  "continuing": the initial status-word poll timed out at 0x4855 (want
+  class 0xf000), and each of the three homing rounds settled at
+  0x32 = 0x1d instead of 0x1f. Ended reg 0x01 = 0x22, armed.
+- The app-start jog released the latched magazine (interrupt event 4 =
+  the loader sensor), status 0xf855. Reinsert to the stop, LOAD:
+  f455 / dc55 exact, as always.
+- Driver `eject` from that loaded state (loader profile in the
+  registers): `ejected`, magazine loose in the slot by hand. After:
+  reg 0x01 = 0x22, 0x32 = 0x1f, 0x35 = 0xbb, 0x101 = 0xfc.
+
+Two things to keep: (1) the Linux recovery from a latched magazine is
+power cycle → `load` (the cold sequence + jog release), no VM needed;
+(2) the cold-start poll deviations with a latched magazine (0x4855
+timeout, 0x32 = 0x1d) are recorded, not explained -- the sequence
+completed and the unit homed, so they are an observation for the
+cold-start notes, not a blocker. Post-eject 0x32 = 0x1f (vs 0xdb in the
+2026-09-05 log) likewise noted, magazine confirmed loose.

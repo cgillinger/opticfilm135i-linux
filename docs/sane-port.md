@@ -109,13 +109,16 @@ with nothing to re-sync. The eventual merge request takes copies.
   from it; GL126 never reads it). Next: hook 2, offset calibration --
   the first bulk read, which is where the bulk-path GL124 sites get
   decided against the captures.
-- **Test 44 (open): eject stalled after hook 1.** The driver's eject from
-  the hook-1 end state (loaded magazine, base table, a lone 0x03 = 0x00
-  from `sane_close`) stalled -- short harsh sound, magazine latched,
-  registers healthy. Recovered by power cycle + QuickScan in the VM.
-  `sane_close` now writes nothing for GL126 (the reference driver writes
-  nothing at close). Not proven to be the cause; the proof is a hardware
-  round of its own. Until then: no driver eject after a SANE session.
+- **Test 44 (closed): eject stalled after hook 1 -- a driver defect.**
+  The driver's `eject` never writes the motor speed profile and runs
+  with whatever 0x7e/0x7f the chip holds; the base table (vendor app
+  open, and our `init()`) leaves the SCAN profile there, the magazine
+  flow the LOADER one. Eject after a base table = eject at scan speed =
+  stall. Fix in the driver's `_eject_body` (write the loader profile
+  first, checked against the vendor capture) and the same in
+  `eject_document` here. `sane_close` writes nothing for GL126 anyway
+  (the reference driver writes nothing at close). Recovery from a
+  latched magazine on Linux: power cycle → `of135i load` (Test 45).
 
 ### Stage 3, hook 1 — what `sane_open` writes (verified, Test 43)
 
