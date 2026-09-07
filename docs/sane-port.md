@@ -89,14 +89,19 @@ with nothing to re-sync. The eventual merge request takes copies.
      de-duplicates by address and cannot carry the AFE sequence).
   4. `init()` wrote the base table from the cold state (0x00). The
      Python driver runs the vendor cold-start sequence first, which has
-     motor moves; `init()`/`asic_boot()` now refuse a cold scanner
-     *before* the first write (`SANE_STATUS_UNSUPPORTED`), and no partial
-     cold-init is written either.
+     motor moves; `init()`/`asic_boot()` were changed to refuse a cold
+     scanner before the first write. *Superseded by Test 46:* `init()`
+     and `asic_boot()` now write nothing in any state, so a cold scanner
+     (0x00) opens like an idle one; the cold path is a matter for the
+     hooks that write, none of which is enabled yet.
   Also guarded: `sane_close` issues an endpoint clear-halt and a USB port
   reset for every model. The unit has never been driven with either, so
   the integration patch skips both for GL126 until a directed check says
-  they are safe. The lamp-off write at close (0x03 = 0x00) is kept: the
-  driver's PARK writes the same.
+  they are safe. The lamp-off write at close (0x03 = 0x00) was kept at
+  this point; *superseded by Test 46:* the integration patch now skips
+  it for GL126 too, so `sane_close` writes nothing (the driver writes
+  nothing at session close either; 0x03 = 0x00 only appears inside PARK
+  and cold-init).
 
 - **Stage 3, hook 1 — done (Test 43, hardware).** `sane_open` from
   reg 0x01 = 0x22 writes BASE_INIT (four 0x83 batches) and the AFE base
@@ -106,7 +111,8 @@ with nothing to re-sync. The eventual merge request takes copies.
   (five resolutions, TRANSPARENCY, other fields default and labelled),
   the gl124-shaped `calculate_scan_session` (geometry only), and
   `exposure_lperiod = 0x3ffb` on the sensor (the core seeds an option
-  from it; GL126 never reads it). Next: hook 2, offset calibration --
+  from it; GL126 never reads it). Next: hook 2, offset calibration (scoped
+  under "Decisions taken") --
   the first bulk read, which is where the bulk-path GL124 sites get
   decided against the captures.
 - **Test 44 → resolved by design (Test 46).** The stalls came from a
@@ -123,7 +129,27 @@ with nothing to re-sync. The eventual merge request takes copies.
   read, 0x83 batches, AFE via 0x51/0x5d/0x5e all reach the chip as the
   driver's do).
 
-### Stage 3, hook 1 — what `sane_open` writes (verified, Test 43)
+### Stage 3, hook 1 — what `sane_open` does now (verified, Test 46)
+
+Precondition: reg 0x01 = 0x22 or 0x00. Trigger: `scanimage -d genesys:… -A`.
+
+| Step | Wire | Same as the driver? |
+|---|---|---|
+| `sanei_usb_open` | `libusb_open`, read the current configuration, claim interface 0 -- no SET_CONFIGURATION when the kernel has already configured the unit (it has: one configuration, value 1), no kernel-driver detach | driver: `set_configuration` after the check (step 6 of `UsbIo.open`) -- see decision 6 |
+| `check_start_state` | read reg 0x01 (`0xc0/0x04 0x8e`) | yes (`safety.py`) |
+| `init` / `asic_boot` | nothing | yes (`Scanner.open()` writes nothing) |
+| `sane_close` | release interface; no register write, no clear-halt, no reset | yes |
+
+Measured 2026-09-07 (Test 46): exactly one control transfer, the 0x8e
+read of reg 0x01, zero writes; a driver eject afterwards was normal.
+
+### HISTORICAL — hook 1 as first implemented (Test 43), superseded by Test 46
+
+This table describes what `sane_open` wrote on 2026-09-07 morning. It is
+**no longer what the code does**: writing the base table at open created
+the state the driver's eject stalled from (Test 44), and Test 46 showed
+the vendor never writes it at app open. Kept as the wire-format record
+(0x83 batches, AFE via 0x51/0x5d/0x5e reach the chip as the driver's do).
 
 Precondition: reg 0x01 = 0x22 (idle-homed; a driver-loaded magazine is the
 state every scan starts from). Trigger: `scanimage -d genesys:… -A`
@@ -135,11 +161,11 @@ state every scan starts from). Trigger: `scanimage -d genesys:… -A`
 | `check_start_state` | read reg 0x01 (`0xc0/0x04 0x8e`) | yes (`safety.py`) |
 | `BASE_INIT` | 116 pairs, four 0x83 batches of ≤32 pairs | yes (`initialize()`) |
 | `write_afe_base` | 8 × `[0x51,a 0x5d,0 0x5e,v]` batches | yes (`initialize()`) |
-| `sane_close` | write 0x03 = 0x00; release interface | 0x03 = 0x00 is PARK's write; no clear-halt, no reset |
+| `sane_close` | write 0x03 = 0x00; release interface | 0x03 = 0x00 is PARK's write; no clear-halt, no reset. *Removed for GL126 after Test 46.* |
 
 No 0x0f = 0x01 execute pulse in any of it; no motor register is touched.
-Expected result: `scanimage -A` prints the option list, `of135i status`
-afterwards reads 0x22, and a driver `eject` returns the unit to rest.
+Result then: `scanimage -A` printed the option list and `of135i status`
+read 0x22 -- but the driver's `eject` from that state stalled (Test 44).
 
 **Stage 3 is the first step that touches the scanner**, and it happens on
 the machine the unit is attached to, with the operator listening. Nothing
@@ -182,7 +208,7 @@ registers from generated tables and does the same computation.
 
 | Python (`device.py` / `tables.py`) | genesys hook | Notes |
 |-----------------------------------|--------------|-------|
-| `cold_init()` (chip handshake, COLD_INIT_PAIRS, AFE bring-up, 3 loader-homing rounds) | `asic_boot(dev, cold=true)` | Triggered when reg 0x01 lacks the ready bit 0x20 (never homed). Motor moves are the vendor's own sequence — safe from power-on. |
+| `cold_init()` (chip handshake, COLD_INIT_PAIRS, AFE bring-up, 3 loader-homing rounds) | `asic_boot(dev, cold=true)` -- **not enabled**: `asic_boot` currently reads reg 0x01 and writes nothing | When brought up: triggered when reg 0x01 reads 0x00 (never homed). Motor moves are the vendor's own sequence — safe from power-on. Until then a cold scanner opens but no writing hook accepts it. |
 | `initialize()` (BASE_INIT_PAIRS + AFE base, PREP, AFE_BASE) | scan-session hooks (`init_regs_for_scan_session` and the calibration hooks), NOT `init()` | `sane_open` writes nothing (Test 46); the base table is per-scan, as in the vendor's per-frame re-init. |
 | CAL_DARK_A / CAL_DARK_B + `calibrate.offset_codes()` | `offset_calibration()` | Two dark reads at offset 0x80 / 0xff, slope-extrapolated codes → AFE regs 5/6/7 via 0x5d/0x5e. |
 | CAL_WHITE + `_gain_with_warmup()` + `gain_codes()` + CAL_GAIN_CHECK_A/B | `coarse_gain_calibration()` | Keep the 3×5 s warmup retry on gain 0x3F. `ModelFlag::WARMUP` also enables the core's `genesys_warmup_lamp`; decide in stage 3 whether one of the two is enough. |
@@ -250,22 +276,85 @@ buffers. From `tables_dpi*.py`:
    Dust removal (`image.remove_dust`) is a frontend feature; SANE
    delivers the IR channel as a separate gray scan the way gl843 does.
 6. **Safety model: the C++ mirrors `of135i.safety`, it cannot reuse it.**
-   (Revised 2026-09-07; the original wording said "route every write
-   through the same guard" -- impossible from a C++ backend, and not what
-   the code does.) What is implemented: `check_start_state()` in
-   `gl126.cpp` reads reg 0x01 before the first write of every writing
-   hook and fails with zero writes unless it reads 0x22 or 0x00; a cold
-   scanner (0x00) is refused outright until the cold path is brought up;
-   no recovery is attempted anywhere; `sane_close` writes nothing, no
-   clear-halt, no reset. What is NOT implemented: the Python driver's
-   process lock. Mutual exclusion between the backend and the driver
-   currently rests on the USB interface claim only (the other side gets
-   "Resource busy" and, in the driver, refuses with zero writes -- seen
-   in Test 45). Whether that is sufficient, or a shared lock file is
-   needed for the sequences that must not interleave, is decided before
-   any hook that leaves the transport mid-sequence (position/scan).
-   Documentation and code are to be kept in step: a hook that writes is
+   (Revised 2026-09-07 evening, after Test 46 and a review of the whole
+   `sane_open` → hook → `sane_close` chain against docs/hardware-safety.md.)
+
+   *Implemented:* `check_start_state()` in `gl126.cpp` reads reg 0x01
+   and fails with zero writes unless it reads 0x22 or 0x00; it is the
+   first thing `init()`/`asic_boot()` do, and every hook that will write
+   calls it before its first write. No recovery is attempted anywhere.
+   `sane_open` and `sane_close` write nothing (Test 46: one control
+   transfer, the reg 0x01 read). Every hook that would write
+   beyond that throws `SANE_STATUS_UNSUPPORTED` naming itself.
+
+   *Verification before configuration* (hardware-safety.md, "Opening a
+   session"): the driver reads reg 0x01 before any standard request and
+   only then detaches/`set_configuration`s. The backend cannot reorder
+   `sanei_usb_open`, but on this unit `sanei_usb_open` issues **no**
+   device-facing standard request: the unit has one configuration, the
+   kernel selects it at enumeration, and `sanei_usb` calls
+   `SET_CONFIGURATION` only when the device reports configuration 0 or
+   has several; `claim_interface` is a host-side operation and there is
+   no kernel-driver detach. So the reg 0x01 read is the first transfer
+   on the wire (measured, Test 46). Residual, accepted and documented:
+   if the unit ever reports configuration 0 (never observed on Linux),
+   `sanei_usb` would send `SET_CONFIGURATION` before our read -- the same
+   request the driver sends on every session after its check, so its
+   effect on this unit in the 0x22 and 0x00 states is verified benign;
+   only the engine-running states are then unprotected by that one
+   request, and no write follows a failed check either way.
+
+   *Mutual exclusion with the driver -- proposed, to be confirmed before
+   hook 2 is enabled:* today it rests on the interface claim alone. That
+   fails closed in both directions (the driver's `set_configuration`
+   gets `EBUSY` after its check and refuses with zero writes, Test 45;
+   the backend's `claim_interface` gets `EBUSY` while the driver holds
+   the unit and `sane_open` fails before any transfer), but the driver
+   then reports a half-configured session and asks for a power cycle
+   that is not needed, and the driver's read-only sessions (`status`,
+   `doctor`) hold the lock without claiming the interface, so the claim
+   does not see them. Proposal: the GL126 branch of `sane_open` takes
+   the driver's `flock` (`/tmp/of135i-07b3-1436.lock`, or
+   `OF135I_LOCK_FILE`) non-blocking before `sanei_usb_open` and releases
+   it in `sane_close`; `EWOULDBLOCK` → `SANE_STATUS_DEVICE_BUSY`, zero
+   transfers. About 30 lines in `gl126.cpp` plus two lines in the
+   integration patch, GL126-only; noted for the maintainer as a local
+   convention. Decided either way before any hook that writes beyond the
+   start-state read.
+
+   Documentation and code are kept in step: a hook that writes is
    enabled only together with the note here that says what guards it.
+
+### Next: hook 2, offset calibration (scoped 2026-09-07)
+
+Hook 2 is `offset_calibration()` and nothing else: the driver's
+CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and
+0xff) feeding `calibrate.offset_codes()` → AFE regs 5/6/7 via
+0x5d/0x5e. It is the first bulk read, so it decides the GL124 bulk
+sites (`scanner_interface_usb.cpp` bulk-read header, `bulk_read_data`,
+the `low.cpp` valid-words / scan-count reads) for GL126. Order of work:
+
+1. **Offline, from the captures and `tables.py`:** write down the whole
+   sequence -- every register batch in order, the buffer descriptor
+   (wValue 0x82, wIndex, length), the bulk-IN size, the completion
+   condition -- and the driver's waits (engine-busy bit after the
+   execute pulse, status word) as **explicit poll conditions with
+   timeouts** (decision 3). The Python results verify the *values*
+   (the driver's AFE codes and dark means for the same strip), not the
+   C++ pacing: a C++ poll that returns on a different condition than the
+   captured one is a new sequence and is treated as such.
+2. **Offline:** the failure handling per step -- a poll timeout, a short
+   bulk read, a dark level outside the bracket -- each ends the hook
+   with zero further writes and a named error; no retry, no recovery.
+   Offline tests against the Python driver's fake device model where the
+   wire format can be compared byte for byte.
+3. **Hardware, one run, operator listening:** enable the hook, run
+   `scanimage` far enough to trigger calibration and stop after offset
+   (the gain/shading hooks still refuse), compare the AFE codes and the
+   dark means with the driver's for the same strip, then a driver `eject`.
+
+Prerequisite: the mutual-exclusion decision above.
+
 ## Risks and open questions
 
 - **Valid-words / scan-count registers** (0x102–0x105, 0x10b–0x10d):

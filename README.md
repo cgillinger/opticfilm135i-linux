@@ -26,7 +26,7 @@ functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md]
 - **M3 — Robustness and honest limits** ✅ (every acceptance-matrix row met;
   the residual-dark_b fix is hardware-verified — A10/Test 36 — positioning
   verified, cross-unit a documented limitation)
-- **M4 — SANE backend** — not started yet (skeleton only)
+- **M4 — SANE backend** — in progress: builds and links against sane-backends, the unit is listed and opened read-only from `scanimage` (hardware-checked); no calibration or scan hook is enabled yet
 
 See **[docs/ROADMAP.md](docs/ROADMAP.md)** for the acceptance matrix,
 frozen scope, and exactly what remains before the driver is "complete".
@@ -84,8 +84,8 @@ step for wider distribution.
 
 **Status: v0.1.1 released. The standalone CLI driver is complete —
 magazine loading, single-frame and whole-strip batch scanning, all five
-resolutions, IR and dust removal, and eject. The SANE backend is not
-usable yet.** Scan, calibration, IR and dust removal are stable and
+resolutions, IR and dust removal, and eject. The SANE backend builds and
+opens the scanner but cannot scan yet.** Scan, calibration, IR and dust removal are stable and
 hardware-verified, per frame and across a 4-frame strip in one
 invocation, frame for frame against the vendor application's output of
 the same strip (2026-09-05). Complete does not mean polished: this is
@@ -365,7 +365,7 @@ interoperability constants and our own code.
 - [x] Loader sensor and button event reading
 - [x] ICC-tagged output (`--positive` TIFFs carry an sRGB profile; raw negatives are untagged linear data)
 - [x] Baseline-conformant TIFF resolution tags (the file states its own dpi, so physical size survives)
-- [ ] SANE genesys backend support for GL126 (upstream goal) — plan and hook mapping in [`docs/sane-port.md`](docs/sane-port.md); register tables generated from the driver's own tables and a command-set skeleton in `sane/`, not yet built or hardware-tested
+- [ ] SANE genesys backend support for GL126 (upstream goal) — plan and hook mapping in [`docs/sane-port.md`](docs/sane-port.md); register tables generated from the driver's own tables and the command set in `sane/`; built and linked, `scanimage -L` and a read-only `sane_open` hardware-checked (2026-09-07), calibration and scan hooks not yet enabled
 
 ## Status & disclaimer
 
