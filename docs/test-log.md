@@ -2824,8 +2824,8 @@ after zero writes, as designed). Then `of135i load` from 0x00:
   the loader sensor), status 0xf855. Reinsert to the stop, LOAD:
   f455 / dc55 exact, as always.
 - Driver `eject` from that loaded state (loader profile in the
-  registers): `ejected`, magazine loose in the slot by hand. After:
-  reg 0x01 = 0x22, 0x32 = 0x1f, 0x35 = 0xbb, 0x101 = 0xfc.
+  registers): `ejected`, magazine loose in the slot by hand, every move sounded normal (Christian).
+  After: reg 0x01 = 0x22, 0x32 = 0x1f, 0x35 = 0xbb, 0x101 = 0xfc.
 
 Two things to keep: (1) the Linux recovery from a latched magazine is
 power cycle → `load` (the cold sequence + jog release), no VM needed;
