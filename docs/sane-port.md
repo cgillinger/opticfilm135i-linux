@@ -25,7 +25,7 @@ done
 Symlinks rather than copies: an edit here is picked up by the next build
 with nothing to re-sync. The eventual merge request takes copies.
 
-## Status (2026-09-06)
+## Status (2026-09-07)
 
 - **Stage 2 — done (offline).** `tools/gen_sane_tables.py` emits
   `sane/gl126_tables.{h,cpp}` from `of135i/tables*.py`: the base, AFE,
@@ -39,8 +39,9 @@ with nothing to re-sync. The eventual merge request takes copies.
   0x5e, offsets on 0x5d/0x5e, FEEDL on 0x3d-0x3f, line count on
   0x26/0x27) -- a mis-indexed injection would scan with the reference
   unit's calibration and look like a working scan.
-- **Stage 1 — done except the `scanimage -L` check, which needs the
-  scanner.** `sane/gl126.{h,cpp}` and `sane/gl126_registers.h` declare the
+- **Stage 1 — done.** The `scanimage -L` check passed on the reference
+  host 2026-09-07 (Test 41): the built backend lists the unit as
+  `genesys:libusb:…` / `PLUSTEK OpticFilm 135i`, with zero writes. `sane/gl126.{h,cpp}` and `sane/gl126_registers.h` declare the
   full `CommandSet` surface. The table-driven hooks (`init`, `asic_boot`'s
   register phase) are implemented; every hook that would move the motor
   throws `SANE_STATUS_UNSUPPORTED` naming itself, rather than issuing a
@@ -55,10 +56,12 @@ with nothing to re-sync. The eventual merge request takes copies.
   entry in `tables_model.cpp`, `Makefile.am`, `genesys.conf.in` and the
   `.desc` entry (`:status :untested`).
 
-  **Built and linked**, 2026-09-06 on B5: `libgenesys_la-gl126.o` and
-  `libgenesys_la-gl126_tables.o` are in `libsane-genesys.so` (229 gl126
-  symbols), no warnings from our files. What is left of stage 1 is seeing
-  the model in `scanimage -L`, which needs the unit attached.
+  **Built and linked**, 2026-09-06 on B5 and 2026-09-07 on the reference
+  host: `libgenesys_la-gl126.o` and `libgenesys_la-gl126_tables.o` are in
+  `libsane-genesys.so` (229 gl126 symbols), no warnings from our files.
+  To run the built backend without installing it: `LD_LIBRARY_PATH` at the
+  clone's `backend/.libs` plus a private `SANE_CONFIG_DIR` whose
+  `dll.conf` holds only `genesys` (and a copy of the built `genesys.conf`).
 
   The model's sensor/adc/gpio/motor ids are the OpticFilm 7200's, used as
   placeholders so the model registers: the 135i's own tables are not

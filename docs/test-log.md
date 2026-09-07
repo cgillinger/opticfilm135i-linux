@@ -2589,3 +2589,37 @@ removed and the other five survive; `test_digitize_records_partial_frame_progres
 fails the diag write after the main image landed and asserts the failed
 record carries frame 1, its `main` path and `stage: "diag"`. Suite 140 OK.
 No protocol, calibration, POSITION, PARK or safety change.
+
+## 2026-09-07 — Test 41: SANE stage 1 closed — the model enumerates in `scanimage -L` (hardware, read-only)
+
+The last open item of stage 1 (docs/sane-port.md): the built backend must
+list the unit. Run on the reference host with the scanner attached, cold
+(reg 0x01 = 0x00, magazine present, not latched — orange LED).
+
+Setup: the sane-backends clone reset to master 1d47d7c, the integration
+patch applied, the five `sane/` sources symlinked into `backend/genesys/`,
+`libsane-genesys.la` rebuilt (229 gl126 symbols, no warnings from our
+files — same result as the B5 build of 2026-09-06). `scanimage -L` was
+run against that library, not the installed one: `LD_LIBRARY_PATH` at the
+clone's `backend/.libs` and a private `SANE_CONFIG_DIR` whose `dll.conf`
+enables only `genesys`; the debug log confirms the dll backend dlopen'ed
+the clone's `libsane-genesys.so.1`.
+
+Result:
+
+```
+device `genesys:libusb:001:006' is a PLUSTEK OpticFilm 135i flatbed scanner
+```
+
+The enumeration path (`probe_genesys_devices` → `attach_usb_device`) only
+matches vendor/product against the model table; it never opens the
+device, and `of135i status` read the same cold state before and after
+(reg 0x01 = 0x00). Zero writes, as intended for stage 1.
+
+Noted, not changed: the type string "flatbed scanner" is hard-coded in
+genesys.cpp for every genesys model (the OpticFilm 7200 gets it too); it
+is a shared-core cosmetic, not something for the model entry.
+
+Stage 1 is closed. Stage 3 (hook-by-hook bring-up, the first hook being
+boot/status through `check_start_state()`) is the next step and the first
+one in which the backend writes to the scanner.
