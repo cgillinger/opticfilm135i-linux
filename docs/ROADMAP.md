@@ -90,7 +90,7 @@ the evidence was produced against where it matters.
 | A3 | 1–4 batch in one session | Four frames, each correctly positioned | Test 24, 18/19 | — | hardware |
 | A4 | All five DPI | Each scans and assembles | Test log (dpi profiles) | — | hardware |
 | A5 | IR pass + dust removal | IR channel written; visible cleaned without color ghosts | Test log; test_ir | — | hardware |
-| A6 | Eject from a loaded magazine | Magazine released to loose-in-slot, reg 0x01=0x22 | Test log (ejects) | — | hardware |
+| A6 | Eject from a loaded magazine | Magazine released to loose-in-slot, reg 0x01=0x22 | Test log (ejects) | **Reopened narrowly (Test 44, 2026-09-07):** eject straight after a base-table write on a loaded magazine (the SANE `init()` state; the CLI never produces it on its own) stalled twice. Verified states (after the magazine flow, after scan + PARK) unaffected. Cause open; no eject from that state until fixed. | hardware (from the magazine flow and post-scan states) |
 | A7 | Cold-start init | reg 0x01=0x00 → cold homing inside the load flow | Test 22; test log | — | hardware |
 | A8 | Positioning never starts a scan on a moving transport | Long-move completion is class F; frame lands on the normal batch position structure (fits the scan window with margin — **scope decision: tolerance is on the order of mm, not rows**) | Test 28 (d555 budget), Test 34 (f555 benign) | — | hardware |
 | A9 | Safety model | Refuses writes unless start state known (0x22/0x00), read before configure (zero writes on refusal), process lock, short transfer = unknown state, no auto-recovery | Test 12–16 (guard held); hardware-safety.md | — | hardware |
@@ -152,7 +152,7 @@ request flow at submission time). Delivered = submitted, review-ready.
 
 ---
 
-## Current status (2026-09-06)
+## Current status (2026-09-07)
 
 - **M1 — protocol** ✅ and **M2 — driver drives the hardware** ✅.
 - **M3 — robustness:** ✅ **complete.** Every row of the A-matrix is met;
@@ -160,8 +160,16 @@ request flow at submission time). Delivered = submitted, review-ready.
   open rows.
 - **A — own driver:** ✅ **complete.** All acceptance criteria met and
   packaged: tagged **v0.1.0** (45305a4), README install/usage confirmed.
-- **B1 / B2 — SANE:** not started; B1 (local SANE backend) is the next
-  milestone.
+- **B1 — SANE, in progress** (since 2026-09-06): register tables
+  generated, backend builds against sane-backends, model enumerates,
+  `sane_open` initialises the unit exactly as the driver does (Test 43).
+  Scanning not implemented yet; bring-up continues hook by hook
+  (docs/sane-port.md). **B2** not started.
+- **A6 reopened narrowly** (Test 44): the driver's eject stalls when
+  issued from the base-table state that the SANE `init()` leaves. Not a
+  regression of any CLI workflow; blocks "eject after SANE init" until
+  the cause is found.
 
-Milestone A is done. The next action is B1 — a local `genesys`-family
-SANE backend — not further general testing of A.
+Milestone A is done for its CLI workflows; the A6 note above is the one
+open item, and it is worked as part of B1's bring-up. The next action is
+the Test 44 analysis, then B1's next hook.

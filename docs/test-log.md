@@ -2834,3 +2834,53 @@ timeout, 0x32 = 0x1d) are recorded, not explained -- the sequence
 completed and the unit homed, so they are an observation for the
 cold-start notes, not a blocker. Post-eject 0x32 = 0x1f (vs 0xdb in the
 2026-09-05 log) likewise noted, magazine confirmed loose.
+
+## 2026-09-07 — Correction after review: Test 44 REOPENED — the "root cause" above is wrong
+
+A reviewer of 7188bd8 pointed out, correctly, that `_eject_body` DOES
+write the loader motor profile: its FEEDL batch carries
+`LOADER_SPEED_PAIRS` (0x7e = 0x75, 0x7f = 0x30, 0x8a-0x92, 0x7d) before
+the slope-table uploads and 0x0f = 0x01, and it has since v0.1.1. The
+claim in "Test 44 CLOSED" that eject "runs with whatever 0x7e/0x7f the
+chip holds" came from a grep that showed only the first line of that
+multi-line call; the function body was not read. The claim is
+withdrawn. The venv ran the repository's own `of135i` at HEAD (v0.1.1,
+`device.py` unchanged since 0b24c85), so no other driver version was
+involved.
+
+What stands, as observation: two driver ejects stalled, both issued
+right after BASE_INIT + AFE base had been written on a loaded magazine
+(by the SANE `init()`), with the "different, slightly louder" sound;
+every verified eject was issued either straight after the magazine flow
+(OPEN/JOG/LOAD) or after a scan's PARK. The lamp-off at `sane_close`
+is cleared (the second stall happened without it).
+
+Offline comparison of the register states eject was issued from, over
+the registers the OPEN table and BASE_INIT disagree on (10 of ~117):
+
+| reg | after OPEN/LOAD (works) | after scan + PARK (works) | after BASE_INIT (stalled) |
+|---|---|---|---|
+| 0x03 | 0x00 | 0x00 | 0x20 |
+| 0x13 | 0x0f | 0x08 | 0x08 |
+| 0x3b / 0x3c | 0x00 / 0x00 | 0x00 / 0x01 | 0xff / 0xff |
+| 0x4f | 0x63 | 0x63 | 0x03 |
+| 0x7e / 0x7f | loader | scan (0x36/0xb0) | scan (0x15/0x7c) -- rewritten by eject itself |
+
+0x7e/0x7f are rewritten by eject and 0x13 is the same in a working and
+the stalled state, so neither explains it. What separates the stalled
+state from both working ones is 0x3b/0x3c = 0xff/0xff and 0x4f = 0x03
+(and the lamp/LED bits in 0x03). That is a **hypothesis** for the next
+offline step, not a cause: the vendor capture `20260902-vendor-eject-
+from-loaded.pcap` shows the vendor ejecting only from the OPEN/LOAD
+state, so there is no vendor precedent for an eject from the base-table
+state at all. Candidate fix: eject re-establishes the loader-flow state
+(the OPEN table, or at least 0x3b/0x3c/0x4f) before its motor batch.
+Requires (1) the register semantics or a targeted vendor capture (app
+open → eject with a loaded magazine, if QuickScan even allows it), then
+(2) a hardware A/B with the operator listening. No motor attempt before
+that.
+
+Status corrections made with this entry: Test 44 open; the A6 row in
+docs/ROADMAP.md reopened narrowly (eject from the base-table state);
+B1 marked in progress; sane-port.md decision 6 rewritten to what the
+C++ actually does (its own start-state check, no process lock yet).

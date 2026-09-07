@@ -109,16 +109,18 @@ with nothing to re-sync. The eventual merge request takes copies.
   from it; GL126 never reads it). Next: hook 2, offset calibration --
   the first bulk read, which is where the bulk-path GL124 sites get
   decided against the captures.
-- **Test 44 (closed): eject stalled after hook 1 -- a driver defect.**
-  The driver's `eject` never writes the motor speed profile and runs
-  with whatever 0x7e/0x7f the chip holds; the base table (vendor app
-  open, and our `init()`) leaves the SCAN profile there, the magazine
-  flow the LOADER one. Eject after a base table = eject at scan speed =
-  stall. Fix in the driver's `_eject_body` (write the loader profile
-  first, checked against the vendor capture) and the same in
-  `eject_document` here. `sane_close` writes nothing for GL126 anyway
-  (the reference driver writes nothing at close). Recovery from a
-  latched magazine on Linux: power cycle → `of135i load` (Test 45).
+- **Test 44 (OPEN): eject stalled after hook 1.** Two driver ejects
+  issued right after `init()` had written BASE_INIT + AFE on a loaded
+  magazine stalled (different, louder sound; magazine latched; registers
+  healthy). The `sane_close` lamp-off is cleared (second stall happened
+  without it). An earlier "root cause" (eject not writing the motor
+  profile) was WRONG and is withdrawn: `_eject_body` writes
+  LOADER_SPEED_PAIRS. Standing hypothesis (test log, correction entry):
+  the base-table state differs from every state eject is verified from
+  in 0x3b/0x3c (0xff/0xff vs 0x00) and 0x4f (0x03 vs 0x63); the vendor
+  never ejects from the base-table state. Next: register semantics or a
+  targeted vendor capture, then a hardware A/B. Recovery from a latched
+  magazine on Linux: power cycle → `of135i load` (Test 45).
 
 ### Stage 3, hook 1 — what `sane_open` writes (verified, Test 43)
 
@@ -246,15 +248,23 @@ buffers. From `tables_dpi*.py`:
 5. **Stagger, dust removal, positive inversion stay out of the backend.**
    Dust removal (`image.remove_dust`) is a frontend feature; SANE
    delivers the IR channel as a separate gray scan the way gl843 does.
-6. **Reuse the safety guard, don't reimplement it.** A SANE backend
-   must route every write through the same `of135i.safety` start-state
-   guard (`GuardedDevice`, process lock) rather than duplicating the
-   check — the guarantee lives in the shared driver layer precisely so
-   every frontend, SANE included, inherits it unchanged. No automatic
-   recovery from an unknown start state is attempted there either;
-   that stays a power-cycle-only failure. See
-   [`docs/hardware-safety.md`](hardware-safety.md).
-
+6. **Safety model: the C++ mirrors `of135i.safety`, it cannot reuse it.**
+   (Revised 2026-09-07; the original wording said "route every write
+   through the same guard" -- impossible from a C++ backend, and not what
+   the code does.) What is implemented: `check_start_state()` in
+   `gl126.cpp` reads reg 0x01 before the first write of every writing
+   hook and fails with zero writes unless it reads 0x22 or 0x00; a cold
+   scanner (0x00) is refused outright until the cold path is brought up;
+   no recovery is attempted anywhere; `sane_close` writes nothing, no
+   clear-halt, no reset. What is NOT implemented: the Python driver's
+   process lock. Mutual exclusion between the backend and the driver
+   currently rests on the USB interface claim only (the other side gets
+   "Resource busy" and, in the driver, refuses with zero writes -- seen
+   in Test 45). Whether that is sufficient, or a shared lock file is
+   needed for the sequences that must not interleave, is decided before
+   any hook that leaves the transport mid-sequence (position/scan).
+   Documentation and code are to be kept in step: a hook that writes is
+   enabled only together with the note here that says what guards it.
 ## Risks and open questions
 
 - **Valid-words / scan-count registers** (0x102–0x105, 0x10b–0x10d):
