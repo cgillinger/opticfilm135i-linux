@@ -2923,3 +2923,13 @@ A cheap fail-closed guard is possible and proposed, not implemented:
 state has that value.
 
 Hardware check of the new open path: below.
+
+**Hardware check of the read-only open (same evening):** magazine
+latched by `of135i load` (0x32 = 0x05, 0x101 = 0xdc), then
+`scanimage -A` against the rebuilt backend: exactly one control
+transfer, the 0x8e read of reg 0x01 (0x22), zero writes; the unit read
+0x32 = 0x05 / 0x35 = 0xbb afterwards, untouched. Then the driver's
+`eject`: normal sound ("ejected as it should", Christian), magazine
+released, reg 0x01 = 0x22, 0x32 = 0x5b, 0x101 = 0xf0, sensor "not
+detected" -- the healthy post-eject signature. A SANE open/close between
+load and eject changes nothing. Round closed.
