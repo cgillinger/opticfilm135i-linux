@@ -304,8 +304,8 @@ buffers. From `tables_dpi*.py`:
    only the engine-running states are then unprotected by that one
    request, and no write follows a failed check either way.
 
-   *Mutual exclusion with the driver -- proposed, to be confirmed before
-   hook 2 is enabled:* today it rests on the interface claim alone. That
+   *Mutual exclusion with the driver -- decided 2026-09-07, to be
+   implemented before hook 2 is enabled:* today it rests on the interface claim alone. That
    fails closed in both directions (the driver's `set_configuration`
    gets `EBUSY` after its check and refuses with zero writes, Test 45;
    the backend's `claim_interface` gets `EBUSY` while the driver holds
@@ -313,14 +313,15 @@ buffers. From `tables_dpi*.py`:
    then reports a half-configured session and asks for a power cycle
    that is not needed, and the driver's read-only sessions (`status`,
    `doctor`) hold the lock without claiming the interface, so the claim
-   does not see them. Proposal: the GL126 branch of `sane_open` takes
+   does not see them. Decision: the GL126 branch of `sane_open` takes
    the driver's `flock` (`/tmp/of135i-07b3-1436.lock`, or
    `OF135I_LOCK_FILE`) non-blocking before `sanei_usb_open` and releases
    it in `sane_close`; `EWOULDBLOCK` → `SANE_STATUS_DEVICE_BUSY`, zero
    transfers. About 30 lines in `gl126.cpp` plus two lines in the
    integration patch, GL126-only; noted for the maintainer as a local
-   convention. Decided either way before any hook that writes beyond the
-   start-state read.
+   convention. Implemented first thing next session, with an offline
+   test in each direction and one hardware check (`scanimage -A` returns
+   busy while `of135i status` holds the lock, zero transfers).
 
    Documentation and code are kept in step: a hook that writes is
    enabled only together with the note here that says what guards it.
@@ -353,7 +354,7 @@ the `low.cpp` valid-words / scan-count reads) for GL126. Order of work:
    (the gain/shading hooks still refuse), compare the AFE codes and the
    dark means with the driver's for the same strip, then a driver `eject`.
 
-Prerequisite: the mutual-exclusion decision above.
+Prerequisite: the shared lock above, implemented and checked.
 
 ## Risks and open questions
 
