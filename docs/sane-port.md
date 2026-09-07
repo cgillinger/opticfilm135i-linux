@@ -68,14 +68,53 @@ with nothing to re-sync. The eventual merge request takes copies.
   written yet. Nothing can reach the wire through them, because every scan
   hook refuses first -- but they are wrong values and stage 3 replaces
   them.
-- **Deliberately not decided yet:** whether GL126 belongs in each place
-  `low.cpp` and `scanner_interface_usb.cpp` special-case GL124. Those
-  branches decide how bytes reach the chip, and our captures already say
-  what the wire looks like (`0x40/0x04` with wValue `0x0083` for register
-  batches, `0x0082` for a buffer descriptor). Each site gets checked
-  against the captures during stage 3 rather than guessed now; only the
-  extended-register address (0x101, which the driver already relies on)
-  is wired.
+- **Stage 3 pre-flight (2026-09-07, Test 42, offline).** Walking the
+  `sane_open` → `init()` → `sane_close` path against the Python driver
+  before the first hardware run found four deviations, all fixed:
+  1. `scanner_interface_usb.cpp` took the GL646-style path for GL126
+     register reads/writes (`0x40/0x0c`, one byte at a time). The 135i
+     wire is the GL124 one -- read `0xc0/0x04 0x8e` with wIndex
+     `(reg<<8)|0x22` and `0x018e` above 0xff, write `0x40/0x04 0x83`
+     `[reg,val]` -- so GL126 joins those two branches and the
+     `write_fe_register` one (AFE via 0x5d/0x5e, not 0x3a/0x3b).
+     **Still open**: the bulk-read header, `bulk_read_data`, `write_ahb`
+     and the `low.cpp` sites (valid words, scan count, feed steps, bulk
+     max size). Each is decided when its hook is brought up.
+  2. `AFE_BASE` was written as chip registers 0x00-0x07 (reg 0x01 among
+     them). The table holds AFE addresses; each value goes through
+     0x51 / 0x5d / 0x5e as one three-pair batch, as `initialize()` does.
+  3. Register tables went out one pair per control transfer. The vendor
+     and the driver send 0x83 batches of up to 32 pairs; `write_pairs()`
+     now does the same, straight to the USB device (`Genesys_Register_Set`
+     de-duplicates by address and cannot carry the AFE sequence).
+  4. `init()` wrote the base table from the cold state (0x00). The
+     Python driver runs the vendor cold-start sequence first, which has
+     motor moves; `init()`/`asic_boot()` now refuse a cold scanner
+     *before* the first write (`SANE_STATUS_UNSUPPORTED`), and no partial
+     cold-init is written either.
+  Also guarded: `sane_close` issues an endpoint clear-halt and a USB port
+  reset for every model. The unit has never been driven with either, so
+  the integration patch skips both for GL126 until a directed check says
+  they are safe. The lamp-off write at close (0x03 = 0x00) is kept: the
+  driver's PARK writes the same.
+
+### Stage 3, hook 1 — what `sane_open` writes (planned, not run)
+
+Precondition: reg 0x01 = 0x22 (idle-homed; a driver-loaded magazine is the
+state every scan starts from). Trigger: `scanimage -d genesys:… -A`
+(open, list options, close -- no `sane_start`).
+
+| Step | Wire | Same as the driver? |
+|---|---|---|
+| `sanei_usb_open` | set configuration, claim interface 0 | yes (`usbio.py` open) |
+| `check_start_state` | read reg 0x01 (`0xc0/0x04 0x8e`) | yes (`safety.py`) |
+| `BASE_INIT` | 116 pairs, four 0x83 batches of ≤32 pairs | yes (`initialize()`) |
+| `write_afe_base` | 8 × `[0x51,a 0x5d,0 0x5e,v]` batches | yes (`initialize()`) |
+| `sane_close` | write 0x03 = 0x00; release interface | 0x03 = 0x00 is PARK's write; no clear-halt, no reset |
+
+No 0x0f = 0x01 execute pulse in any of it; no motor register is touched.
+Expected result: `scanimage -A` prints the option list, `of135i status`
+afterwards reads 0x22, and a driver `eject` returns the unit to rest.
 
 **Stage 3 is the first step that touches the scanner**, and it happens on
 the machine the unit is attached to, with the operator listening. Nothing

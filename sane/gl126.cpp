@@ -24,6 +24,7 @@
 #include "gl126_registers.h"
 #include "gl126_tables.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -47,8 +48,10 @@ namespace {
     refusal means the operator power-cycles, not that the backend retries
     or homes to "fix" the state.
 
-    Called before the first write of any hook that writes. */
-void check_start_state(Genesys_Device* dev)
+    Called before the first write of any hook that writes. Returns the
+    value read so the caller can tell the cold state (0x00) from the
+    idle-homed one (0x22). */
+std::uint8_t check_start_state(Genesys_Device* dev)
 {
     std::uint8_t val = dev->interface->read_register(REG_0x01);
     if (val != 0x22 && val != 0x00) {
@@ -58,13 +61,56 @@ void check_start_state(Genesys_Device* dev)
                             "cold). No registers were written. Power-cycle the "
                             "scanner; no recovery is attempted.", val);
     }
+    return val;
+}
+
+/** Write (reg, val) pairs the way the vendor and the Python driver do:
+    as 0x40/0x04 wValue 0x83 register batches of up to 32 pairs (64 B)
+    per control transfer, in order, duplicates kept (of135i/usbio.py
+    write_regs). Genesys_Register_Set cannot carry this -- it de-duplicates
+    by address, and the AFE sequence below repeats 0x51/0x5d/0x5e -- and
+    one control transfer per register is a wire pattern the unit has
+    never been driven with, so the batch goes to the USB device
+    directly. */
+void write_pairs(Genesys_Device* dev, const RegPair* regs, std::size_t count)
+{
+    constexpr std::size_t PAIRS_PER_TRANSFER = 32;
+    std::uint8_t buf[PAIRS_PER_TRANSFER * 2];
+
+    for (std::size_t i = 0; i < count; i += PAIRS_PER_TRANSFER) {
+        std::size_t n = std::min(PAIRS_PER_TRANSFER, count - i);
+        for (std::size_t j = 0; j < n; j++) {
+            buf[2 * j] = regs[i + j].reg;
+            buf[2 * j + 1] = regs[i + j].val;
+        }
+        dev->interface->get_usb_device().control_msg(REQUEST_TYPE_OUT, REQUEST_BUFFER,
+                                                     VALUE_SET_REGISTER, INDEX,
+                                                     static_cast<int>(n * 2), buf);
+    }
 }
 
 /** Write one generated register table, in capture order. */
 void write_table(Genesys_Device* dev, const RegPair* regs, std::size_t count)
 {
-    for (std::size_t i = 0; i < count; i++) {
-        dev->interface->write_register(regs[i].reg, regs[i].val);
+    write_pairs(dev, regs, count);
+}
+
+/** Program the AFE base values. AFE_BASE holds (afe register, value)
+    pairs, NOT chip registers: each one reaches the front end through the
+    chip's indirection regs -- 0x51 = AFE address, 0x5d = high byte (0),
+    0x5e = low byte -- one three-pair batch per value, exactly as
+    of135i/device.py initialize() writes them. Writing the table with
+    write_table() would instead overwrite chip regs 0x00-0x07 (0x01 among
+    them) with AFE values. */
+void write_afe_base(Genesys_Device* dev)
+{
+    for (std::size_t i = 0; i < AFE_BASE_COUNT; i++) {
+        const RegPair triple[3] = {
+            { 0x51, AFE_BASE[i].reg },
+            { 0x5d, 0x00 },
+            { 0x5e, AFE_BASE[i].val },
+        };
+        write_pairs(dev, triple, 3);
     }
 }
 
@@ -148,29 +194,47 @@ bool CommandSetGl126::needs_home_before_init_regs_for_scan(Genesys_Device* /*dev
     return false;
 }
 
+/** The session's first writes: the power-on base table and the AFE base
+    values, the same two things of135i/device.py initialize() writes on an
+    idle-homed scanner.
+
+    From the cold state (reg 0x01 = 0x00) the Python driver runs the
+    vendor's cold-start sequence FIRST -- chip handshake, COLD_INIT, AFE
+    bring-up and three rounds of loader homing -- and only then the base
+    table. That sequence contains motor moves and is not brought up yet,
+    and writing the base table on a never-homed transport is a sequence
+    the unit has never executed, so a cold scanner is refused here before
+    the first write. A partial cold-init (the table without the homing)
+    would leave the unit in a state neither driver can name, which is why
+    COLD_INIT is not written either. */
+void base_init(Genesys_Device* dev, const char* hook)
+{
+    std::uint8_t state = check_start_state(dev);
+    if (state == 0x00) {
+        DBG(DBG_info, "%s: reg 0x01 = 0x00 (cold, never homed): the cold-start "
+            "sequence is a stage-3 item, refusing before the first write\n", hook);
+        not_brought_up("cold-start init (chip handshake, COLD_INIT, loader homing)");
+    }
+    write_table(dev, BASE_INIT, BASE_INIT_COUNT);
+    write_afe_base(dev);
+}
+
 void CommandSetGl126::asic_boot(Genesys_Device* dev, bool cold) const
 {
     DBG_HELPER(dbg);
-    check_start_state(dev);
-
     if (cold) {
-        /* The cold table is written here, but the three loader-homing
-           rounds that follow it in the vendor's sequence are motor moves
-           and belong to stage 3. */
-        write_table(dev, COLD_INIT, COLD_INIT_COUNT);
-        not_brought_up("cold-start homing (asic_boot cold)");
+        /* The core's own cold detection asked for the cold path. Refuse
+           before any write; base_init() would refuse on reg 0x01 anyway,
+           but the request itself is the stage-3 item. */
+        not_brought_up("cold-start init (asic_boot cold)");
     }
-
-    write_table(dev, BASE_INIT, BASE_INIT_COUNT);
-    write_table(dev, AFE_BASE, AFE_BASE_COUNT);
+    base_init(dev, "asic_boot");
 }
 
 void CommandSetGl126::init(Genesys_Device* dev) const
 {
     DBG_HELPER(dbg);
-    check_start_state(dev);
-    write_table(dev, BASE_INIT, BASE_INIT_COUNT);
-    write_table(dev, AFE_BASE, AFE_BASE_COUNT);
+    base_init(dev, "init");
 }
 
 ScanSession CommandSetGl126::calculate_scan_session(const Genesys_Device* /*dev*/,

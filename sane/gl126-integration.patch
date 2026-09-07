@@ -54,6 +54,33 @@ index 02cfc43..c7207b7 100644
  };
  
  
+diff --git a/backend/genesys/genesys.cpp b/backend/genesys/genesys.cpp
+index d7ec422..1bdefb3 100644
+--- a/backend/genesys/genesys.cpp
++++ b/backend/genesys/genesys.cpp
+@@ -5581,10 +5581,18 @@ sane_close_impl(SANE_Handle handle)
+     // LAMP OFF : same register across all the ASICs */
+     dev->interface->write_register(0x03, 0x00);
+ 
+-    catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().clear_halt(); });
+-
+-    // we need this to avoid these ASIC getting stuck in bulk writes
+-    catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().reset(); });
++    // The GL126 unit (OpticFilm 135i) has never been driven with a port
++    // reset or an endpoint clear-halt: its reference driver releases the
++    // interface and nothing else, and the unit is known to leave the bus
++    // for good after a session under some conditions. Whether a reset is
++    // safe is a separate bring-up check (docs/sane-port.md stage 3), so
++    // until it is made the close path does what the reference driver does.
++    if (dev->model->asic_type != AsicType::GL126) {
++        catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().clear_halt(); });
++
++        // we need this to avoid these ASIC getting stuck in bulk writes
++        catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().reset(); });
++    }
+ 
+     // not freeing dev because it's in the dev list
+     catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().close(); });
 diff --git a/backend/genesys/low.cpp b/backend/genesys/low.cpp
 index 3ffc24a..eda72e8 100644
 --- a/backend/genesys/low.cpp
@@ -84,6 +111,41 @@ index 3ffc24a..eda72e8 100644
          case AsicType::GL646:
          case AsicType::GL841:
          case AsicType::GL842:
+diff --git a/backend/genesys/scanner_interface_usb.cpp b/backend/genesys/scanner_interface_usb.cpp
+index 542d4ff..dd77f3c 100644
+--- a/backend/genesys/scanner_interface_usb.cpp
++++ b/backend/genesys/scanner_interface_usb.cpp
+@@ -43,7 +43,8 @@ std::uint8_t ScannerInterfaceUsb::read_register(std::uint16_t address)
+     if (dev_->model->asic_type == AsicType::GL847 ||
+         dev_->model->asic_type == AsicType::GL845 ||
+         dev_->model->asic_type == AsicType::GL846 ||
+-        dev_->model->asic_type == AsicType::GL124)
++        dev_->model->asic_type == AsicType::GL124 ||
++        dev_->model->asic_type == AsicType::GL126)
+     {
+         std::uint8_t value2x8[2];
+         std::uint16_t address16 = 0x22 + (address << 8);
+@@ -88,7 +89,8 @@ void ScannerInterfaceUsb::write_register(std::uint16_t address, std::uint8_t val
+     if (dev_->model->asic_type == AsicType::GL847 ||
+         dev_->model->asic_type == AsicType::GL845 ||
+         dev_->model->asic_type == AsicType::GL846 ||
+-        dev_->model->asic_type == AsicType::GL124)
++        dev_->model->asic_type == AsicType::GL124 ||
++        dev_->model->asic_type == AsicType::GL126)
+     {
+         std::uint8_t buffer[2];
+ 
+@@ -438,7 +440,9 @@ void ScannerInterfaceUsb::write_fe_register(std::uint8_t address, std::uint16_t
+     Genesys_Register_Set reg(Genesys_Register_Set::SEQUENTIAL);
+ 
+     reg.init_reg(0x51, address);
+-    if (dev_->model->asic_type == AsicType::GL124) {
++    if (dev_->model->asic_type == AsicType::GL124 ||
++        dev_->model->asic_type == AsicType::GL126)
++    {
+         reg.init_reg(0x5d, (value / 256) & 0xff);
+         reg.init_reg(0x5e, value & 0xff);
+     } else {
 diff --git a/backend/genesys/tables_model.cpp b/backend/genesys/tables_model.cpp
 index 321d179..590c4a7 100644
 --- a/backend/genesys/tables_model.cpp

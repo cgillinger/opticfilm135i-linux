@@ -2623,3 +2623,48 @@ is a shared-core cosmetic, not something for the model entry.
 Stage 1 is closed. Stage 3 (hook-by-hook bring-up, the first hook being
 boot/status through `check_start_state()`) is the next step and the first
 one in which the backend writes to the scanner.
+
+## 2026-09-07 — Test 42: SANE stage 3 pre-flight — what `sane_open` would have written (offline)
+
+Before the first backend write to the scanner, the `sane_open` → `init()` →
+`sane_close` path in the genesys core and `sane/gl126.cpp` was walked
+against the Python driver's `initialize()` / `safety.py` / `usbio.py`.
+Four deviations, each of which would have put bytes on the wire the unit
+has never seen:
+
+1. **Wrong register wire format.** `ScannerInterfaceUsb::read_register` /
+   `write_register` branch on GL847/845/846/124; GL126 fell through to the
+   GL646 path (`0x40/0x0c 0x83` + `0x84`/`0x85`, single bytes). The very
+   first call, `check_start_state()`'s read of reg 0x01, would have gone
+   out as a write on the wrong request. The 135i uses the GL124 format
+   exactly (read `0xc0/0x04 0x8e`, wIndex `(reg<<8)|0x22`, `0x018e` for
+   0x101; write `0x40/0x04 0x83 [reg,val]`) -- byte-identical to
+   `usbio.py` and the captures. GL126 added to both branches and to
+   `write_fe_register` (0x5d/0x5e). The bulk and `low.cpp` sites stay
+   undecided until their hooks.
+2. **AFE table written as chip registers.** `init()` passed `AFE_BASE`
+   (AFE addresses 0x00-0x07) to `write_table()`, i.e. chip regs 0x00-0x07
+   would have received AFE values -- reg 0x01 = 0x80 among them. The driver
+   writes each value through 0x51/0x5d/0x5e. Fixed (`write_afe_base`).
+3. **One pair per transfer.** The core writes registers one control
+   transfer each; the vendor and the driver send 0x83 batches of ≤32
+   pairs. `write_pairs()` reproduces the batches (four for BASE_INIT, one
+   per AFE value).
+4. **Base table from cold.** `init()` accepted 0x00 and wrote BASE_INIT
+   directly; the driver runs the vendor cold-start (with loader homing)
+   first. `init()`/`asic_boot()` now refuse a cold scanner before any
+   write. The old `asic_boot` wrote COLD_INIT and *then* refused -- a
+   half-initialised state neither driver names -- removed.
+
+Guarded in the integration patch: `sane_close` does a clear-halt and a
+USB port reset for all models; both skipped for GL126 until checked on
+their own. The close path's lamp-off (0x03 = 0x00) is kept -- PARK writes
+it.
+
+Verified offline: `libsane-genesys.so` rebuilds without warnings from our
+files (230 gl126 symbols); the genesys unit tests pass; the offline suite
+is unchanged (24 tests, tables untouched). The integration patch was
+regenerated from the clone (`git diff` against 1d47d7c).
+
+Resulting write list for hook 1 is in docs/sane-port.md ("Stage 3,
+hook 1"). Not run; the run needs reg 0x01 = 0x22 and the operator.
