@@ -2884,3 +2884,42 @@ Status corrections made with this entry: Test 44 open; the A6 row in
 docs/ROADMAP.md reopened narrowly (eject from the base-table state);
 B1 marked in progress; sane-port.md decision 6 rewritten to what the
 C++ actually does (its own start-state check, no process lock yet).
+
+## 2026-09-07 — Test 46: vendor app open with a LATCHED magazine (capture) → `sane_open` writes nothing
+
+Capture `20260907-vendor-open-with-latched-magazine.pcap` (usbmon on
+the host, QuickScan in the VM, magazine latched by `of135i load`
+beforehand). Timeline of the vendor's app open:
+
+| t | what | key registers at the GO |
+|---|---|---|
+| 87.4 s | OPEN table (three 32-pair batches), then 03=10, 03=00 | 03=00 13=08 3b/3c=00/00 4f=63 7e/7f=75/30 |
+| 87.7–92.5 s | jog: feed 6690, feed 6690, eject 3090 (f855 each) | loader profile throughout |
+| 96.1–99.0 s | user reinsert → 32=1d, feed 6690 (f055), traverse 71490 with 02=1c (d855) = LOAD | same |
+| 99 s → | idle loop, 32=05 acks every ~0.3 s | — |
+
+So with a latched magazine the vendor does exactly what it does with a
+loose one: OPEN table, jog (which ejects it), and it loads again on
+reinsert. It never writes the base table at app open, and there is no
+vendor flow "open on a latched magazine, then eject in place" -- the
+jog IS the eject. Byte-for-byte the same sequence `of135i load` replays.
+
+Design consequence for the backend: `sane_open` must write nothing --
+the driver's `Scanner.open()` writes nothing either; the base table is
+written by `scan()` and, in the vendor, at each frame's re-init. The
+hook-1 implementation of Test 43 (base table + AFE at open) created the
+base-table-only state, which is transient in every verified flow (the
+AFE_BASE phase overwrites it 0.1 s later in `scan()`), and the driver's
+eject stalled twice from it (Test 44). `init()`/`asic_boot()` now read
+reg 0x01 and stop. Rebuilt clean, offline suite unchanged.
+
+Test 44 status: the stalled state can no longer be produced by the
+backend, and no verified workflow produces it. WHY the eject stalls
+there (hypothesis: 0x3b/0x3c = 0xff/0xff and/or 0x4f = 0x03, the
+registers that separate that state from every state eject works from)
+is NOT established and is not pursued with the motor; it stays recorded.
+A cheap fail-closed guard is possible and proposed, not implemented:
+`eject()` refuses if 0x3b/0x3c read 0xff, since no vendor-ejectable
+state has that value.
+
+Hardware check of the new open path: below.

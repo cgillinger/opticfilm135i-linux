@@ -960,3 +960,12 @@ positioning move is dpi-independent (1/7200 in units; frame 1 = 6746,
 pitch 10760). Lines are programmed as whole chunks and all chunks are
 read, so the engine completes (the vendor's strip scans abort with
 lines pending via the 0x8d end-of-access; the 3600 flows complete).
+
+### App open with a LATCHED magazine (2026-09-07, `20260907-vendor-open-with-latched-magazine.pcap`)
+
+Same as with a loose one: OPEN table (loader profile, 3b/3c=00, 4f=63),
+jog feed 6690 / feed 6690 / eject 3090 (which ejects the latched
+cassette), then on reinsert the load (32=1d, feed 6690, traverse 71490
+with 02=1c), then the idle loop. The vendor never writes the base
+register table at app open, and never ejects a latched magazine "in
+place": the jog is the eject. Timeline in docs/test-log.md, Test 46.

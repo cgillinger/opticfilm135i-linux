@@ -109,18 +109,19 @@ with nothing to re-sync. The eventual merge request takes copies.
   from it; GL126 never reads it). Next: hook 2, offset calibration --
   the first bulk read, which is where the bulk-path GL124 sites get
   decided against the captures.
-- **Test 44 (OPEN): eject stalled after hook 1.** Two driver ejects
-  issued right after `init()` had written BASE_INIT + AFE on a loaded
-  magazine stalled (different, louder sound; magazine latched; registers
-  healthy). The `sane_close` lamp-off is cleared (second stall happened
-  without it). An earlier "root cause" (eject not writing the motor
-  profile) was WRONG and is withdrawn: `_eject_body` writes
-  LOADER_SPEED_PAIRS. Standing hypothesis (test log, correction entry):
-  the base-table state differs from every state eject is verified from
-  in 0x3b/0x3c (0xff/0xff vs 0x00) and 0x4f (0x03 vs 0x63); the vendor
-  never ejects from the base-table state. Next: register semantics or a
-  targeted vendor capture, then a hardware A/B. Recovery from a latched
-  magazine on Linux: power cycle → `of135i load` (Test 45).
+- **Test 44 → resolved by design (Test 46).** The stalls came from a
+  state only the backend's hook-1 `init()` produced: the base table
+  written at open and left there. The vendor never writes the base
+  table at app open (capture 20260907-vendor-open-with-latched-magazine:
+  OPEN table + jog, even with a latched magazine), and the driver's
+  `open()` writes nothing. `init()`/`asic_boot()` now read reg 0x01 and
+  write nothing; the base table belongs to the scan-session hooks. Why
+  eject stalls from the base-table-only state is recorded as a
+  hypothesis (0x3b/0x3c/0x4f), not established, and not pursued.
+- **Hook 1, redefined:** `sane_open` = open + start-state read, zero
+  writes. The Test 43 run remains the wire-format verification (0x8e
+  read, 0x83 batches, AFE via 0x51/0x5d/0x5e all reach the chip as the
+  driver's do).
 
 ### Stage 3, hook 1 — what `sane_open` writes (verified, Test 43)
 
@@ -182,7 +183,7 @@ registers from generated tables and does the same computation.
 | Python (`device.py` / `tables.py`) | genesys hook | Notes |
 |-----------------------------------|--------------|-------|
 | `cold_init()` (chip handshake, COLD_INIT_PAIRS, AFE bring-up, 3 loader-homing rounds) | `asic_boot(dev, cold=true)` | Triggered when reg 0x01 lacks the ready bit 0x20 (never homed). Motor moves are the vendor's own sequence — safe from power-on. |
-| `initialize()` (BASE_INIT_PAIRS + AFE base, PREP, AFE_BASE) | `asic_boot(cold=false)` + `init()` | Base table goes in `dev->reg` via `init_reg`. |
+| `initialize()` (BASE_INIT_PAIRS + AFE base, PREP, AFE_BASE) | scan-session hooks (`init_regs_for_scan_session` and the calibration hooks), NOT `init()` | `sane_open` writes nothing (Test 46); the base table is per-scan, as in the vendor's per-frame re-init. |
 | CAL_DARK_A / CAL_DARK_B + `calibrate.offset_codes()` | `offset_calibration()` | Two dark reads at offset 0x80 / 0xff, slope-extrapolated codes → AFE regs 5/6/7 via 0x5d/0x5e. |
 | CAL_WHITE + `_gain_with_warmup()` + `gain_codes()` + CAL_GAIN_CHECK_A/B | `coarse_gain_calibration()` | Keep the 3×5 s warmup retry on gain 0x3F. `ModelFlag::WARMUP` also enables the core's `genesys_warmup_lamp`; decide in stage 3 whether one of the two is enough. |
 | CAL_SHADING_MEASURE → `shading_table()` → CAL_SHADING_UPLOAD → CAL_SHADING_VERIFY (re-measure, `shading_table2()`, re-upload) | inside `coarse_gain_calibration()`, with `ModelFlag::DISABLE_SHADING_CALIBRATION` | **Decision:** keep the vendor's hardware-shading flow (512 B blocks of u16 offset/gain pairs uploaded to scanner RAM, vendor gain formula, verify pass) self-contained in our hook, exactly as verified in Python. The core's host-side shading (`compute_coefficients` + `send_shading_data`) targets a different data model; adapting to it is a later refactor if the maintainer asks. `has_send_shading_data()` returns false. |

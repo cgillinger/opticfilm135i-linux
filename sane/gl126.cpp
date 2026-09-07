@@ -90,7 +90,7 @@ void write_pairs(Genesys_Device* dev, const RegPair* regs, std::size_t count)
 }
 
 /** Write one generated register table, in capture order. */
-void write_table(Genesys_Device* dev, const RegPair* regs, std::size_t count)
+[[maybe_unused]] void write_table(Genesys_Device* dev, const RegPair* regs, std::size_t count)
 {
     write_pairs(dev, regs, count);
 }
@@ -102,7 +102,7 @@ void write_table(Genesys_Device* dev, const RegPair* regs, std::size_t count)
     of135i/device.py initialize() writes them. Writing the table with
     write_table() would instead overwrite chip regs 0x00-0x07 (0x01 among
     them) with AFE values. */
-void write_afe_base(Genesys_Device* dev)
+[[maybe_unused]] void write_afe_base(Genesys_Device* dev)
 {
     for (std::size_t i = 0; i < AFE_BASE_COUNT; i++) {
         const RegPair triple[3] = {
@@ -194,47 +194,30 @@ bool CommandSetGl126::needs_home_before_init_regs_for_scan(Genesys_Device* /*dev
     return false;
 }
 
-/** The session's first writes: the power-on base table and the AFE base
-    values, the same two things of135i/device.py initialize() writes on an
-    idle-homed scanner.
-
-    From the cold state (reg 0x01 = 0x00) the Python driver runs the
-    vendor's cold-start sequence FIRST -- chip handshake, COLD_INIT, AFE
-    bring-up and three rounds of loader homing -- and only then the base
-    table. That sequence contains motor moves and is not brought up yet,
-    and writing the base table on a never-homed transport is a sequence
-    the unit has never executed, so a cold scanner is refused here before
-    the first write. A partial cold-init (the table without the homing)
-    would leave the unit in a state neither driver can name, which is why
-    COLD_INIT is not written either. */
-void base_init(Genesys_Device* dev, const char* hook)
-{
-    std::uint8_t state = check_start_state(dev);
-    if (state == 0x00) {
-        DBG(DBG_info, "%s: reg 0x01 = 0x00 (cold, never homed): the cold-start "
-            "sequence is a stage-3 item, refusing before the first write\n", hook);
-        not_brought_up("cold-start init (chip handshake, COLD_INIT, loader homing)");
-    }
-    write_table(dev, BASE_INIT, BASE_INIT_COUNT);
-    write_afe_base(dev);
-}
-
+/* sane_open writes NOTHING -- like the driver's Scanner.open() and like the
+   vendor's app open. The reference (capture 20260907-vendor-open-with-
+   latched-magazine: the vendor writes its OPEN table and jogs, never the
+   base table) puts the base table at scan start, per frame; the driver
+   writes it in scan(), not at open. Writing it at open, as this backend
+   did on 2026-09-07 (Test 43), left the unit in the base-table-only state
+   -- transient in every verified flow (the AFE_BASE phase overwrites it
+   0.1 s later in scan()) -- and the driver's eject stalled twice from it
+   (Test 44). So: at open, read the start state and stop. The base table
+   is written by the scan-session hooks when they are brought up. */
 void CommandSetGl126::asic_boot(Genesys_Device* dev, bool cold) const
 {
     DBG_HELPER(dbg);
-    if (cold) {
-        /* The core's own cold detection asked for the cold path. Refuse
-           before any write; base_init() would refuse on reg 0x01 anyway,
-           but the request itself is the stage-3 item. */
-        not_brought_up("cold-start init (asic_boot cold)");
-    }
-    base_init(dev, "asic_boot");
+    std::uint8_t state = check_start_state(dev);
+    DBG(DBG_info, "asic_boot: reg 0x01 = 0x%02x (%s), nothing written\n", state,
+        cold ? "core asked for cold" : "warm");
 }
 
 void CommandSetGl126::init(Genesys_Device* dev) const
 {
     DBG_HELPER(dbg);
-    base_init(dev, "init");
+    std::uint8_t state = check_start_state(dev);
+    DBG(DBG_info, "init: reg 0x01 = 0x%02x (%s), nothing written\n", state,
+        state == 0x00 ? "cold, never homed" : "idle-homed");
 }
 
 /* Pure computation: the ScanSession the core sizes its image pipeline
