@@ -375,7 +375,9 @@ op-program generator, genesys-free runner `gl126_ops.{h,cpp}` with the
 wire-equality test against the Python replayer, `offset_calibration()`
 running the session preamble and the dark bracket, core gating in
 `genesys_start_scan` (no home / move-to-TA for GL126, `WARMUP` flag
-dropped). Hardware run pending.
+dropped). Hardware run done (Test 48): hook 2 complete on the unit,
+offset codes within one step of the driver's, W1 = DATAENB confirmed.
+Next: hook 3, coarse gain (`CAL_WHITE` + warmup retry + gain checks).
 
 Hook 2 is `offset_calibration()` and nothing else: the driver's
 CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and

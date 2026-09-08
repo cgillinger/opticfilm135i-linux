@@ -2993,3 +2993,52 @@ Observations, not acted on:
 - `-A` now lists populated option groups (mode, source, depth,
   resolution 600–7200, exposure, geometry), so the earlier "empty option
   groups" note is stale.
+
+## 2026-09-08 — Test 48: SANE hook 2 (offset calibration) on hardware — complete, codes within the band
+
+Setup: power cycle, `of135i load` with the reference strip (0x22,
+latched, button blue). Reference: the driver's `scan --frame 1`
+(post-PARK 0x22 afterwards). Then, uninstalled backend at 96b2063,
+`scanimage -d genesys:libusb:001:007 --force-calibration --resolution
+3600 --format pnm -o /dev/null` with `SANE_DEBUG_GENESYS=5` /
+`SANE_DEBUG_SANEI_USB=255`. (A first attempt without `--format` was
+refused by scanimage before opening anything.)
+
+Result: `offset_calibration()` ran S0–S6 to completion — base table +
+AFE base, prep, afe_base, cal_dark_a, cal_dark_b, computation: 180
+control transfers, two bulk reads of 3072/3072 bytes. Then
+`coarse_gain_calibration` refused (UNSUPPORTED) as designed,
+`sane_start` failed, `sane_cancel`'s `end_scan` refused (logged noise,
+predicted), `sane_close` wrote nothing. No unusual sound reported.
+
+| | Python (same strip, same load) | C++ hook 2 |
+|---|---|---|
+| offset codes R/G/B | 0x010a / 0x010a / 0x010b | 0x010a / 0x010a / 0x010a |
+| slope R/G/B (counts per code) | 18.71 / 18.66 / 18.58 | 18.87 / 18.62 / 19.30 |
+| dark_a mean R/G/B | (not logged by the CLI) | 21764 / 28668 / 25338 |
+| dark_b mean R/G/B | — | 24160 / 31032 / 27789 |
+| W1 data-ready poll | (lenient replay) | first 0xcd, last 0xcd, 1 poll, 4 ms, both phases |
+| poll timeouts | 0 | 0 |
+
+The one differing code (B, 0x010b vs 0x010a) is one step, inside the
+±1 band of Test 21's ten-run reproducibility; B's slope is also the one
+that moved (18.58 → 19.30, one margin-step boundary at 215/slope).
+
+W1 evidence (docs/sane-hook2-offset.md §3): the status word after the
+execute pulse read **0xcd** on the first poll in both phases — DATAENB
+(bit 0x01) set at once, but state class 0xC, not the captured 0xB. The
+semantic condition held; the verbatim replayer's upper-nibble leniency
+would have called this a mismatch. The fallback condition is not needed.
+
+Read deviations logged by the hook, all in `prep` and all in the
+session-variable registers: 0x35 = 0xfb (captured 0xbb), 0x32 = 0x1f /
+0x9d (captured 0x8d), 0x101 = 0xd8 / 0xdc (captured 0xe8 / 0xec, bit
+0x20 clear here — same shape as the documented e8/ec-vs-f8/fc pair, now
+seen one class lower). None affected the run.
+
+State after: reg 0x01 = 0x02, 0x101 = 0xdc, 0x32 = 0x9d, 0x35 = 0xfb —
+exactly the post-dark_b state the analysis predicted. Exit per plan:
+power cycle → `of135i load` → `of135i eject`; no eject from this state.
+
+Logs kept privately: `plustek-135i-analys/hook2-20260908/`
+(scanimage debug log, the Python reference run's log and TIFF).

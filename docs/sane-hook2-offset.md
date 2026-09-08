@@ -21,8 +21,11 @@ move-to-TA for GL126). Offline tests (`tests/test_sane_ops.py`, 8/8):
 the C++ programs and the Python replayer emit identical transfer lists
 for prep/afe_base/cal_dark_a/cal_dark_b (39/71/29/29 transfers), the
 wait policy and every failure rule behave as specified, the offset
-computation reproduces the reference vectors. Build clean. **The
-hardware run of §7 has not happened yet.**
+computation reproduces the reference vectors. Build clean. **Hardware run done the same day, Test 48:** the hook
+ran to completion, codes within the ±1 band of the driver's, W1 settled
+on the first poll at 0xcd (DATAENB set, class C — the semantic
+condition held where the verbatim class match would not have), no
+fallback needed, post-run state as predicted in §7.
 
 ## 1. What the hook has to reproduce
 
