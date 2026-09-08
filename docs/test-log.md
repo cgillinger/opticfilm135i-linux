@@ -3101,3 +3101,30 @@ Exit per plan: power cycle → `of135i load` (magazine fully out and back
 to the stop at the prompt) → `of135i eject`.
 
 Logs kept privately: `plustek-135i-analys/hook3-20260908/`.
+
+**Exit (same session) and a correction to Test 48's exit note:** power
+cycle → `of135i load` with the magazine latched: cold_init with the
+latched-magazine poll deviations, jog released the magazine (event 4),
+reinsert done as instructed, and the load FEED ended **0xfc55** again
+(sensor bit still set, transport ran without taking the cassette),
+strict poll stopped before the traverse. This is the second time in
+two exits after a SANE hook run with a latched magazine (Test 48's
+exit was the first), with the same operator steps both times, so the
+"reinsert-step / operator" reading in Test 48's exit note is
+**withdrawn**. What is reproducible: *power cycle with the magazine
+latched → cold_init → jog → reinsert → feed* does not engage on the
+first attempt; a second power cycle from the now-loose magazine →
+cold_init → jog → reinsert → load engages (Test 48 exit: f455/dc55
+exact). Test 45 — the one first-attempt success on this path — started
+from a different mechanical state (a stalled eject before the power
+cycle). Hypothesis, not verified: the cold-start homing rounds and/or
+the jog's eject 3090 from a *latched* cassette leave the cassette or
+the loader mechanism where the following feed does not catch (Test
+15's working hypothesis was that the eject positions the loader for
+the next feed). The failure is benign — no traverse is attempted and
+nothing further is sent — so until it is understood the exit after a
+SANE hook run is documented as two cycles: power cycle → `load` (fails
+at the feed, releases the magazine) → power cycle → `load` → `eject`.
+Cheapest evidence: a vendor capture of "power on with the magazine
+latched → app open → load" (the Test 46 capture was warm, not a power
+cycle), to see whether the vendor's feed engages first time there.
