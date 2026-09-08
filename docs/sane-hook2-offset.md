@@ -105,8 +105,10 @@ poll timed out after 1 s and the bulk read still delivered a healthy
 dark buffer. The record does not say which poll site produced 0x9c.
 If it is W1, the DATAENB condition would fail closed on hardware where
 the verbatim replay succeeded. That is acceptable for the single
-hardware run (it produces evidence, not a stuck scanner: the sequence
-stops before the bulk read with the engine idle; §7), and it is why
+hardware run (it produces evidence, not a stuck scanner: the dark
+exposure carries no motor command — S4/S5 write no mode or FEEDL
+register, and the settled status has MOTMFLG clear — and the exit is
+the power cycle of §7 either way), and it is why
 the alternative is written down now rather than after: **fallback
 condition = upper nibble ∈ {0xA, 0xB} or DATAENB set**, adopted only
 if the run shows W1 settling without DATAENB. The hook logs every
