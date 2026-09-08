@@ -328,9 +328,16 @@ buffers. From `tables_dpi*.py`:
    backend, backend holding it refuses the driver, holder-line format,
    read-only-lock-file fallback) -- standalone build of `gl126_lock.cpp`
    with a tiny probe, zero new compiler warnings on the full
-   `libsane-genesys.la` build. Still pending: the one hardware check
-   (`scanimage -A` returns busy while `of135i status` holds the lock,
-   zero transfers).
+   `libsane-genesys.la` build. Hardware check done 2026-09-08 (Test
+   47): with the driver holding the lock, `scanimage -A` fails with
+   `Device busy` naming the holder's pid, and the `sanei_usb` debug log
+   shows no open and zero transfers in `sane_open`; with the lock free
+   the same command opens, reads reg 0x01 once, closes and releases
+   the lock (a driver `status` succeeds right after). Note: the
+   genesys-wide device probe in `sane_init` opens/closes the device
+   (interface claim, no wire transfer) before `sane_open` and is not
+   under the lock -- it never was under the interface claim either
+   when the driver's session is read-only.
 
    *Reference-counted ownership -- fixed 2026-09-08, external review:*
    the first version released the lock from an unconditional
@@ -350,7 +357,7 @@ buffers. From `tables_dpi*.py`:
    non-GL126 open never touches the lock at all. Covered by
    `test_failed_second_open_keeps_first_sessions_lock` and
    `test_release_without_acquire_is_noop` in `test_sane_lock.py`
-   (6/6 passing).
+   (6/6 passing); hardware side in Test 47.
 
    Documentation and code are kept in step: a hook that writes is
    enabled only together with the note here that says what guards it.

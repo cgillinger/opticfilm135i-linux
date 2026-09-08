@@ -2949,3 +2949,47 @@ state. Covered by `test_eject_refuses_base_table_state_with_zero_writes`
 (refusal, the three working value pairs, single-0xff not confused,
 initialize → eject). Not hardware-run: a run is only meaningful from
 the stalled state, which no flow produces any more.
+
+## 2026-09-08 — Test 47: the shared process lock on hardware — `sane_open` refuses busy with zero transfers
+
+Setup: scanner powered on with the magazine loose in the well (reg 0x01
+= 0x00, cold, never homed — nothing in this test writes, so the state
+does not matter); VM disconnected. Backend built from the clone at the
+lock commits (d63be83 + 9918917), run uninstalled with `LD_LIBRARY_PATH`
+and a private `SANE_CONFIG_DIR`, `SANE_DEBUG_SANEI_USB=255` and
+`SANE_DEBUG_GENESYS=5` as the transfer log (every control/bulk transfer
+is a `sanei_usb_*` line; Test 46 showed this count agrees with usbmon).
+
+1. `of135i status` (read-only): 0x01 = 0x00, magazine not detected.
+2. A Python process holding `ProcessLock` (no USB at all), then
+   `scanimage -d genesys:libusb:001:006 -A`: exit 1,
+   `open of device genesys:libusb:001:006 failed: Device busy`. The
+   backend's message names the holder (`pid 27555 since
+   2026-09-08T08:44:54…`). In `sane_open_impl`: no `sanei_usb_open`, no
+   transfer. Total `sanei_usb` control/bulk lines in the whole run: 0.
+3. Lock released, same `scanimage -A`: exit 0, options listed, exactly
+   one control transfer (the 0x8e read of reg 0x01 = 0x00, "nothing
+   written"), zero bulk, `sane_close` completed. `of135i status` right
+   after: succeeds (so the backend released the lock), 0x01 = 0x00.
+
+Result: the lock works in the direction that matters on hardware
+(driver holds → backend refuses before touching USB); the other
+direction and the ownership rules are covered offline
+(`tests/test_sane_lock.py`, 6/6).
+
+Observations, not acted on:
+- `sane_init`'s device probe (`attach_device_by_name`) opens and closes
+  the device BEFORE `sane_open`, outside the lock: `sanei_usb_open`
+  (claim interface) + descriptor reads + close, no wire transfer. This
+  is genesys-wide and was part of Test 43/46 too (their usbmon counts
+  did not see it). Consequence: while the driver holds a writing session
+  (interface claimed) the probe gets EBUSY and the device is simply not
+  listed; the lock covers the read-only sessions the claim cannot see.
+- `sane_close` logs `Cannot open calibration for writing : Invalid
+  argument` (write_calibration, caught by catch_all). Path/permissions
+  of the calibration cache in the uninstalled setup; harmless here, to
+  be looked at with hook 2 (which is what would produce calibration
+  data).
+- `-A` now lists populated option groups (mode, source, depth,
+  resolution 600–7200, exposure, geometry), so the earlier "empty option
+  groups" note is stale.
