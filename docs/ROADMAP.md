@@ -130,9 +130,12 @@ Each is outside the promised function or has a verified safe handling:
   is the application's job. (Out of scope by design.)
 - **Speed:** correct but not tuned. (Out of scope for A; a functional scan
   is not blocked.)
-- **Panorama holder:** only the standard 4-frame 35 mm holder's geometry
-  (frame count, pitch, frame length) is known; the panorama holder would
-  need a vendor capture and its own geometry profile. (Out of scope.)
+- **Holders and frame positions:** the strip holder's positions 1–4 are
+  the only captured geometry (Plustek: the holder takes six frames —
+  5 and 6 untested); the mounted-slide holder is untested (planned, once
+  it is at hand); panorama is a vendor software mode (one continuous
+  scan, the holder encodes as the strip holder) that needs its own
+  capture. (Out of scope for A; open for later.)
 
 ---
 

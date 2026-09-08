@@ -3,7 +3,7 @@
 ![License: GPL-2.0-or-later](https://img.shields.io/badge/License-GPL--2.0--or--later-blue.svg)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
 ![Release: v0.1.1](https://img.shields.io/badge/Release-v0.1.1-blue.svg)
-![Status: CLI driver complete, SANE backend pending](https://img.shields.io/badge/Status-CLI%20driver%20complete%2C%20SANE%20backend%20pending-green.svg)
+![Status: CLI driver complete, SANE backend in progress](https://img.shields.io/badge/Status-CLI%20driver%20complete%2C%20SANE%20backend%20in%20progress-green.svg)
 
 **Unofficial, community-built Linux driver for the Plustek OpticFilm 135i**
 (USB `07b3:1436`, Genesys Logic GL126) — a 35 mm film scanner with motorized
@@ -103,14 +103,21 @@ rough edges you should know about:
   transport states (e.g. after the older `--full` load flow) stalled
   the mechanism with the magazine stuck part-way; recovery was a power
   cycle plus an initialization with the vendor software.
-- **Standard 35 mm strip holder only.** The driver knows the geometry of
-  the standard 4-frame magazine: four frames at a fixed 38.0 mm pitch,
-  each 36.2 mm long (5137 lines at 3600 dpi). Plustek's optional
-  panorama holder (24 × 65 mm frames) is **not supported** — it needs
-  its own frame count, pitch and frame length, which have not been
-  captured from the vendor software, and neither `--frame` nor the SANE
-  backend offers it. Not a mechanical question: the driver never sees
-  the holder, only the positions it drives to.
+- **Film strip holder, frames 1–4, only.** The driver knows one
+  geometry: frames at a fixed 38.0 mm pitch, each 36.2 mm long (5137
+  lines at 3600 dpi), positions 1–4, verified frame for frame against
+  the vendor's output of the same strip. Plustek states the strip
+  holder takes a six-frame strip; positions 5 and 6 have not been
+  captured or tested. **Mounted slides:** the scanner ships with a
+  four-slide holder; the driver and the backend have not been tested
+  with it (its frame pitch and load flow are uncaptured) — planned.
+  **Panorama:** Plustek's optional panoramic holder (frames up to
+  226 mm) carries the same identification tab encoding as the strip
+  holder (35mmc's review), so "panorama" is a software mode — one
+  continuous scan along the holder that the application cuts up — not
+  a holder the scanner treats differently. The driver has no such mode:
+  it scans fixed frame positions only. **Not supported** until a vendor
+  capture of a panorama scan exists.
 - **Speed: not tuned yet.** The driver replays the vendor's complete
   captured command stream, including every status read and the
   captured pacing between commands, because slimmed-down variants

@@ -33,7 +33,11 @@ semantic park has **four** read-modify-write sites (0x15, 0x32 twice,
 `park_semantic()` does) and no ack reads (the driver's `write_regs()`
 does none). One accepted equivalence: a chunk is read with one 519156-
 byte bulk request where the capture shows ~33 USB fragments — the same
-bulk stream on the wire. **The hardware run of §7 has not happened yet.**
+bulk stream on the wire. **The hardware run of §7 happened 2026-09-08
+(Test 52, attempt 3): complete.** Frame selection followed (§10,
+hardware-verified Test 53) and the colour-line shift found by Test 53's
+image check was corrected the same day (Test 54; decision 5 in
+docs/sane-port.md revised).
 
 ## 1. Why POSITION cannot be tested alone
 
@@ -216,7 +220,8 @@ If the run stops before PARK completes: power cycle → `load
    the core's colour-line shift node consumes 24, as `align_channels`
    crops them in the driver.)*
 5. **Frame 1 fixed** for this run; a `--frame` backend option comes
-   with batch support later.
+   with batch support later. *(The option came the same day, §10;
+   hardware-verified Test 53.)*
 6. **Exit by `eject` from the post-PARK state** if the run completes;
    power cycle + `load --double-jog` otherwise.
 
@@ -287,9 +292,10 @@ the fake device equal the C++ program's with the same FEEDL (48
 transfers each), and the budgets equal `position_timeout_scale()`.
 `scanimage -A` lists `--frame 1..4 (in steps of 1) [1]`.
 
-Hardware run (needs its own go): one load of the reference strip,
-driver `scan --frame 2` as the reference, `scanimage --frame 2`, then
-driver `scan --frame 4` and `scanimage --frame 4` (the longest move,
-28 s budget), images compared as in Test 52 and looked at, exit by
-`eject` from post-PARK. Frame 3 follows the same rule and is not run
-separately unless 2 or 4 deviates.
+Hardware run — **done (Test 53, 2026-09-08)**: one load of the
+reference strip, driver `scan --frame 2` as the reference, `scanimage
+--frame 2`, then driver `scan --frame 4` and `scanimage --frame 4` (the
+longest move, 28 s budget, completed in 8.0 s), exit by `eject` from
+post-PARK. Frame 3 follows the same rule and was not run separately.
+The image check of that run found the colour-line shift uncorrected;
+fixed and hardware-verified in Test 54 (docs/sane-port.md decision 5).

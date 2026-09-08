@@ -853,7 +853,7 @@ Deeper analysis of the four DPI captures, using the bulk-IN payloads
 (image and calibration data) as well as the command stream. Result:
 `of135i/tables_dpi{600,1200,2400,7200}.py`, compiled by
 `tools/gen_tables.py`'s `compile_dual()`, and `Scanner._scan_dual()`.
-Not yet hardware-verified.
+Hardware-verified 2026-09-03 (docs/test-log.md, Test 5).
 
 ### The captures are dual-light (IR) captures
 

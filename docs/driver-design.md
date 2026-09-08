@@ -99,8 +99,9 @@ single USB operation the driver would otherwise perform:
       busy flag; candidates: reg 0x01 bits, interrupt EP).
 - [x] Loader feed sequence extraction from segment 02 (driver-managed
       magazine insertion) → `load()`. Done: `tools/load_magazine.py`.
-- [~] dpi profiles beyond 3600. Implemented 2026-09-02 (passes 17-18),
-      NOT yet hardware-verified: `of135i/tables_dpi{600,1200,2400,7200}.py`
+- [x] dpi profiles beyond 3600. Implemented 2026-09-02 (passes 17-18),
+      hardware-verified 2026-09-03 (test-log Test 5):
+      `of135i/tables_dpi{600,1200,2400,7200}.py`
       compiled from the QuickScan strip captures by gen_tables.py's
       compile_dual() (the same compiler now produces tables_ir.py), all
       dual-light (alternating IR/visible) captures; `Scanner._scan_dual()`
