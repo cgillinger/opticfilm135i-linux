@@ -3401,3 +3401,58 @@ the budgets (12.6 / 20.3 / 28.0 s) added to the op tests: 32/32, 183
 total. Backend built clean; `scanimage -A` on the idle unit (read-only,
 reg 0x01 = 0x22 before and after) lists `--frame 1..4 (in steps of 1)
 [1]`. Hardware run pending (plan in §10).
+
+## 2026-09-08 — Test 53: `--frame 2` and `--frame 4` on hardware — positioning verified; an uncorrected colour-line stagger found in the SANE image
+
+One load of the reference strip (`of135i load`, first try). For each of
+frames 2 and 4: driver `scan --frame N` as the reference, then the
+uninstalled backend at 56abf03, `scanimage --force-calibration --mode
+Color --resolution 3600 --frame N`.
+
+Positioning (the point of the run):
+
+| frame | FEEDL | W3 budget | W3 wait | scan | park Wait B |
+|---|---|---|---|---|---|
+| 2 | 17503 | 12.6 s | 3.6 s (472 polls) | 18 s | 5.9 s |
+| 4 | 39023 | 28.0 s | 8.0 s (1042 polls) | 18 s | 10.2 s |
+
+Both: exit 0, full 3762×5137 P6 image, 224 full chunks, scan-pass state
+machine `Complete → Parked` once, `eject` from post-PARK (0x22 / 0x101 =
+0xf8) succeeded, magazine ejected. Sound normal throughout (operator
+present, nothing abnormal). The `--frame` option positions correctly and
+delivers the right frame; the longest move (frame 4, 8.0 s) sat well
+inside its 28 s budget.
+
+**Defect found by the eye check (Christian's new acceptance rule):** the
+SANE image carries an uncorrected colour-line stagger. Measured per
+channel against each frame's own driver reference:
+
+- SANE: R is +12 rows and B is −12 rows relative to G (24-row R↔B
+  spread); the driver reference has R/G/B aligned (0/0).
+- Green channel matches the reference closely (corr ≈ 0.995); R and B
+  correlate much worse (0.88–0.95) purely from the shift.
+
+Visible as a red/cyan fringe along every edge in the SANE image.
+Systematic across frames 1 (Test 52, missed then), 2 and 4 — not
+frame-specific. Root cause: `calculate_scan_session` in `sane/gl126.cpp`
+sets `session.params.flags = IGNORE_COLOR_OFFSET | IGNORE_STAGGER_OFFSET`,
+which zeroes the core's `max_color_shift_lines`
+(`backend/genesys/low.cpp`), so the `ImagePipelineNodeComponentShiftLines`
+node is never inserted. The model already declares `ld_shift_r/g/b =
+0/12/24`; the Python driver applies exactly this in `of135i/image.py`
+(roll R −12, B +12). An earlier comment ("no colour line shift or stagger
+to undo on the host") was wrong.
+
+Left as an open decision (CLAUDE.md TODO), two questions unanswered
+2026-09-08: (1) should the backend correct the stagger at all — it
+touches the raw-data principle, my read is yes (geometry, not colour
+interpretation); (2) method — a host-side circular roll matching
+`image.py` (wire unchanged, small 12-row wrap artefact at the edges, as
+the driver already ships) versus dropping `IGNORE_COLOR_OFFSET` and
+scanning 24 extra lines (no wrap, but the wire changes and the frame
+guard needs rework). The fix is offline; verifying it needs one hardware
+run plus Christian's eye check. Stopped here at Christian's request.
+
+Logs kept privately in `plustek-135i-analys/hook5-20260908/`
+(frame2/4-sane.pnm, ref-f2/f4.tiff, debug logs zstd-compressed); the
+side-by-side PNGs in `~/Bilder/opticfilm-sane-test52/`.
