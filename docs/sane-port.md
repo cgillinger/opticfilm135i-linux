@@ -215,7 +215,7 @@ registers from generated tables and does the same computation.
 | `initialize()` (BASE_INIT_PAIRS + AFE base, PREP, AFE_BASE) | scan-session hooks (`init_regs_for_scan_session` and the calibration hooks), NOT `init()` | `sane_open` writes nothing (Test 46); the base table is per-scan, as in the vendor's per-frame re-init. |
 | CAL_DARK_A / CAL_DARK_B + `calibrate.offset_codes()` | `offset_calibration()` | Two dark reads at offset 0x80 / 0xff, slope-extrapolated codes → AFE regs 5/6/7 via 0x5d/0x5e. |
 | CAL_WHITE + `_gain_with_warmup()` + `gain_codes()` + CAL_GAIN_CHECK_A/B | `coarse_gain_calibration()` | Keep the 3×5 s warmup retry on gain 0x3F. `ModelFlag::WARMUP` also enables the core's `genesys_warmup_lamp`; decide in stage 3 whether one of the two is enough. |
-| CAL_SHADING_MEASURE → `shading_table()` → CAL_SHADING_UPLOAD → CAL_SHADING_VERIFY (re-measure, `shading_table2()`, re-upload) | inside `coarse_gain_calibration()`, with `ModelFlag::DISABLE_SHADING_CALIBRATION` | **Decision:** keep the vendor's hardware-shading flow (512 B blocks of u16 offset/gain pairs uploaded to scanner RAM, vendor gain formula, verify pass) self-contained in our hook, exactly as verified in Python. The core's host-side shading (`compute_coefficients` + `send_shading_data`) targets a different data model; adapting to it is a later refactor if the maintainer asks. `has_send_shading_data()` returns false. |
+| CAL_SHADING_MEASURE → `shading_table()` → CAL_SHADING_UPLOAD → CAL_SHADING_VERIFY (re-measure, `shading_table2()`, re-upload) | inside `coarse_gain_calibration()`, with `ModelFlag::DISABLE_SHADING_CALIBRATION` | **Decision:** keep the vendor's hardware-shading flow (512 B blocks of u16 offset/gain pairs uploaded to scanner RAM, vendor gain formula, verify pass) self-contained in our hook, exactly as verified in Python. The core's host-side shading (`compute_coefficients` + `send_shading_data`) targets a different data model; adapting to it is a later refactor if the maintainer asks. *Revised 2026-09-08 (hook 4):* `has_send_shading_data()` returns **true** with a no-op `send_shading_data()` — with false the core pushes a default table and its coefficients to scanner RAM through `write_buffer`; true plus `DISABLE_SHADING_CALIBRATION` keeps the core off the wire entirely (`docs/sane-hook4-shading.md` §5). |
 | POSITION (mode 0x18 absolute FEEDL, `feedl_for_frame`) | `init_regs_for_scan_session()` computes FEEDL from `settings.tl_y`; `begin_scan()` runs the feed, then the scan pulse | No homing between frames (pass 14). `needs_home_before_init_regs_for_scan()` → false. |
 | SCAN (slope tables, line count 0x25–0x27, execute, 223 chunk reads, drain) | `begin_scan()` + core `genesys_read_ordered_data` | Chunked reads are the core's job; our fixed chunk plan (LINES_PER_CHUNK × width × 6 B) becomes `ScanSession.output_line_bytes` etc. The trailing 180 576 B drain is chip-specific: do it in `end_scan()`. |
 | PARK | `end_scan()` | Includes the 0x8d end-of-access write. |
@@ -387,7 +387,8 @@ identical to the driver's. Hook 4, shading: offline analysis in
 wait on reg 0x100, split programs for the verify pass, and the
 decision that turns decision 2 around: `has_send_shading_data()` true
 with a no-op send + `DISABLE_SHADING_CALIBRATION`, the vendor's shading
-inside `coarse_gain_calibration()`.
+inside `coarse_gain_calibration()`. Implemented offline the same day
+(21/21 op tests); hardware run pending.
 
 Hook 2 is `offset_calibration()` and nothing else: the driver's
 CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and

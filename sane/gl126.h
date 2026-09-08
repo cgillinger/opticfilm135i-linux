@@ -101,11 +101,15 @@ public:
     void send_shading_data(Genesys_Device* dev, const Genesys_Sensor& sensor,
                            std::uint8_t* data, int size) const override;
 
-    /* The vendor uploads shading coefficients to scanner RAM itself, in
-       its own format, and verifies them with a second measurement pass.
-       The core's host-side shading targets a different data model, so it
-       stays out of the way here (docs/sane-port.md, decision 2). */
-    bool has_send_shading_data() const override { return false; }
+    /* The backend uploads its own shading tables, in the vendor's format,
+       from the calibration hook (docs/sane-hook4-shading.md). Answering
+       "true" here is what keeps the core's own shading machinery off the
+       wire: with "false" the core pushes a default table and later its
+       coefficients to scanner RAM through write_buffer (a transfer this
+       unit has never been driven with). send_shading_data() itself is a
+       no-op: the core's coefficients are never used, and the model sets
+       DISABLE_SHADING_CALIBRATION so they are never computed either. */
+    bool has_send_shading_data() const override { return true; }
 
     ScanSession calculate_scan_session(const Genesys_Device* dev,
                                        const Genesys_Sensor& sensor,

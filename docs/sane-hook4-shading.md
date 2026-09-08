@@ -8,6 +8,24 @@ re-measures and re-uploads. Scope here is the **plain 3600 dpi**
 profile; the dual-light profiles use two tables and a different gain
 formula (`shading_table2_dual`) and are a later step.
 
+## Status (2026-09-08, same day)
+
+Implemented offline: `BulkOut` / `PollClass` ops, bulk injections with
+the driver's padding rule, the verify pass split into two programs,
+`shading_table()` / `shading_table2()` / `pack_shading()` in
+`gl126_ops`, `run_shading_calibration()` in `gl126.cpp` at the end of
+`coarse_gain_calibration()` (plain 3600 only), `has_send_shading_data()`
+→ true and `DISABLE_SHADING_CALIBRATION` on the model. `tests/test_sane_ops.py`
+21/21: wire equality with the Python replayer for the four programs
+(450 / 6 / 445 / 10 transfers, offset bytes and both table payloads
+injected on both sides, bulk-OUT payloads compared by digest), the
+class poll, short bulk OUT, missing/oversized bulk injection, and the
+tables: `shading_table` on the vendor's measurement byte-identical to
+the driver's and within the driver's tolerance of the vendor's upload
+(100 % of offsets within ±8), `shading_table2` byte-identical to the
+driver's on real and synthetic inputs. Build clean. **The hardware run
+of §7 has not happened yet.**
+
 ## 1. Scope
 
 After the gain checks, `_scan_plain()` runs:

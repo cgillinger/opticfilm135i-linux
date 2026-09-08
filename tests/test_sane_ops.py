@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """Offline tests for the GL126 SANE backend's op-program runner
-(hooks 2 and 3).
+(hooks 2, 3 and 4).
 
 sane/gl126_ops.{h,cpp} executes the op programs tools/gen_sane_tables.py
 generates into sane/gl126_tables.{h,cpp} for the prep/afe_base/
 cal_dark_a/cal_dark_b phases (docs/sane-hook2-offset.md, sections 3 and
-6, hook 2) and the cal_white/cal_gain_check_a/cal_gain_check_b phases
-(docs/sane-hook3-gain.md, sections 3, 4 and 6, hook 3): the whole wire
-sequence offset and gain calibration need, with transfer boundaries and
-interleaving kept exactly as captured. These tests check it without
-building the full SANE backend or touching hardware: gl126_ops.cpp is
-compiled standalone (no genesys headers) together with
-sane/gl126_tables.cpp and a tiny probe program, tests/gl126_ops_probe.cpp
-(see its file comment for the script format).
+6, hook 2), the cal_white/cal_gain_check_a/cal_gain_check_b phases
+(docs/sane-hook3-gain.md, sections 3, 4 and 6, hook 3) and the
+cal_shading_measure/cal_shading_upload/cal_shading_verify/
+cal_shading_verify_upload phases (docs/sane-hook4-shading.md, sections
+3, 4 and 6, hook 4): the whole wire sequence offset, gain and shading
+calibration need, with transfer boundaries and interleaving kept
+exactly as captured. These tests check it without building the full
+SANE backend or touching hardware: gl126_ops.cpp is compiled standalone
+(no genesys headers) together with sane/gl126_tables.cpp and a tiny
+probe program, tests/gl126_ops_probe.cpp (see its file comment for the
+script format).
 
   1. test_programs_match_python_replayer -- the plan's wire-equality
      test: the Python driver (of135i.device.Scanner) runs the same four
@@ -32,6 +35,13 @@ sane/gl126_tables.cpp and a tiny probe program, tests/gl126_ops_probe.cpp
      MissingInjection rule, a multi-chunk short bulk, gain_codes()/
      percentile_linear() against reference data and numpy, and the
      warmup retry policy.
+  15-21. hook 4 (docs/sane-hook4-shading.md section 6): the shading
+     phases' wire equality (four programs, byte and bulk injections
+     applied on both sides, BulkOut payloads compared by digest),
+     PollClass wait/timeout, a short BulkOut, the two bulk-injection
+     failure rules, and the shading computation (shading_table/
+     shading_table2/shading_upload_len) against reference vectors and
+     against of135i.calibrate byte for byte.
 
 Run with:
     .venv/bin/python tests/test_sane_ops.py
@@ -42,6 +52,7 @@ needs the probe prints a SKIP line and passes trivially.
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 import subprocess
 import sys
@@ -54,12 +65,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np  # noqa: E402
 
-from of135i import calibrate  # noqa: E402
+from of135i import calibrate, tables  # noqa: E402
 from of135i.device import Scanner  # noqa: E402
 from of135i.usbio import UsbIo  # noqa: E402
 
 from test_safety import FakeUsbDevice, fast_time  # noqa: E402
-from test_calibrate import _build_cal_buffers, _peak_for_gain_code  # noqa: E402
+from test_calibrate import (  # noqa: E402
+    _build_cal_buffers, _peak_for_gain_code, _parse_shading_blocks,
+)
 
 try:
     from test_calibrate import _WarmupHarness  # noqa: E402
@@ -109,13 +122,18 @@ def _build_probe() -> str | None:
 
 def _run_probe_program(probe: str, profile: str, phase: str,
                        script_lines: list[str] | None = None,
-                       injects: dict[str, int] | None = None):
+                       injects: dict[str, int] | None = None,
+                       bulk_injects: dict[str, bytes] | None = None):
     with tempfile.TemporaryDirectory() as td:
         script_path = str(Path(td) / "script.txt")
         Path(script_path).write_text("\n".join(script_lines or []) + "\n")
         cmd = [probe, "run", profile, phase, script_path]
         for name, val in (injects or {}).items():
             cmd += ["--inject", f"{name}=0x{val:02x}"]
+        for name, data in (bulk_injects or {}).items():
+            bulk_path = Path(td) / f"bulk_{name}.bin"
+            bulk_path.write_bytes(data)
+            cmd += ["--inject-bulk", f"{name}={bulk_path}"]
         r = subprocess.run(cmd, capture_output=True, text=True)
         return r.returncode, r.stdout, r.stderr
 
@@ -143,6 +161,8 @@ def _parse_probe_transfers(text: str) -> list[tuple]:
                        int(kv["idx"], 16), int(kv["len"])))
         elif kind == "B":
             out.append(("B", int(kv["len"])))
+        elif kind == "BO":
+            out.append(("BO", int(kv["len"]), kv["sha256"]))
         else:
             raise AssertionError(f"unrecognised probe transfer line: {line!r}")
     return out
@@ -150,7 +170,10 @@ def _parse_probe_transfers(text: str) -> list[tuple]:
 
 def _python_transfers(entries: list[dict]) -> list[tuple]:
     """Map a slice of FakeUsbDevice.wire_log to the same tuple shape
-    _parse_probe_transfers produces, so the two logs compare directly."""
+    _parse_probe_transfers produces, so the two logs compare directly.
+    A bulk OUT ('bo') compares by (length, sha256 digest) -- the probe's
+    "BO len=<n> sha256=<hex>" line -- rather than the raw payload, which
+    can be tens of KB (docs/sane-hook4-shading.md section 6, Part C)."""
     out: list[tuple] = []
     for e in entries:
         if e["t"] == "cw":
@@ -160,8 +183,8 @@ def _python_transfers(entries: list[dict]) -> list[tuple]:
         elif e["t"] == "bi":
             out.append(("B", e["length"]))
         elif e["t"] == "bo":
-            raise AssertionError(
-                "unexpected bulk OUT recorded in an op-program phase")
+            data = bytes(e["data"])
+            out.append(("BO", len(data), hashlib.sha256(data).hexdigest()))
         else:
             raise AssertionError(f"unknown wire_log entry kind: {e!r}")
     return out
@@ -731,6 +754,328 @@ def test_warmup_policy():
     print(f"test_warmup_policy OK ({outcome}, {outcome2}, {outcome3}, {outcome4}, {outcome5})")
 
 
+# ------------------------------------------------- 15-21. hook 4 (shading)
+
+# The four C++ programs docs/sane-hook4-shading.md section 6 emits from
+# the ONE captured cal_shading_verify phase (split at its own split_at)
+# plus cal_shading_measure/cal_shading_upload, in the order Scanner.scan()
+# runs them.
+SHADING_PROGRAM_NAMES = (
+    "cal_shading_measure", "cal_shading_upload",
+    "cal_shading_verify", "cal_shading_verify_upload",
+)
+_SHADING_OFFSET_INJECTIONS = (
+    "offset_r_hi", "offset_r_lo", "offset_g_hi", "offset_g_lo",
+    "offset_b_hi", "offset_b_lo",
+)
+
+
+def test_shading_programs_match_python_replayer():
+    """docs/sane-hook4-shading.md section 6, Part C test 1: wire equality
+    for the four shading programs of plain3600. `_exec_ops` (not
+    `_run_phase`) is wrapped: cal_shading_verify's two halves are run as
+    two direct `_exec_ops` calls from `_scan_plain`, not through
+    `_run_phase`, and wrapping `_exec_ops` catches every call (including
+    the ones `_run_phase` itself makes) uniformly. The byte injections
+    (cal_shading_measure's offset codes) and the bulk injections
+    (cal_shading_upload's/cal_shading_verify_upload's shading-table
+    payloads) are recovered directly from the already-patched `ops` list
+    each call received -- exactly what went out on the wire -- and fed
+    to the C++ side via --inject/--inject-bulk so both sides compute
+    from the same values; the C++ shading computation itself is checked
+    separately (test_shading_table_reference_vectors), so this test
+    isolates the transfer stream."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_shading_programs_match_python_replayer SKIPPED (no g++)")
+        return "skipped"
+
+    fake = FakeUsbDevice(reg01=0x22, cal_buffers=_build_cal_buffers())
+    scanner = Scanner(UsbIo(fake))
+
+    calls: list[tuple[str, int, int, list]] = []
+    orig_exec_ops = scanner._exec_ops
+
+    def wrapped(ops, *a, **kw):
+        start = len(fake.wire_log)
+        result = orig_exec_ops(ops, *a, **kw)
+        end = len(fake.wire_log)
+        calls.append((scanner.session.phase, start, end, ops))
+        return result
+
+    scanner._exec_ops = wrapped  # type: ignore[method-assign]
+
+    with fast_time():
+        scanner.initialize()
+        scanner.scan(frame=1)
+
+    def calls_named(name):
+        return [c for c in calls if c[0] == name]
+
+    measure_calls = calls_named("cal_shading_measure")
+    upload_calls = calls_named("cal_shading_upload")
+    verify_calls = calls_named("cal_shading_verify")
+    assert len(measure_calls) == 1, measure_calls
+    assert len(upload_calls) == 1, upload_calls
+    # cal_shading_verify runs as two direct _exec_ops calls sharing the
+    # same session.phase (the measurement half, then the re-upload half,
+    # _scan_plain lines ~1730-1737).
+    assert len(verify_calls) == 2, verify_calls
+
+    split_at = tables.CAL_SHADING_VERIFY.split_at
+
+    program_calls = {
+        "cal_shading_measure": measure_calls[0],
+        "cal_shading_upload": upload_calls[0],
+        "cal_shading_verify": verify_calls[0],
+        "cal_shading_verify_upload": verify_calls[1],
+    }
+
+    total = 0
+    counts: dict[str, int] = {}
+    for prog_name in SHADING_PROGRAM_NAMES:
+        _, start, end, ops = program_calls[prog_name]
+        py_transfers = _python_transfers(fake.wire_log[start:end])
+
+        injects: dict[str, int] = {}
+        bulk_injects: dict[str, bytes] = {}
+        if prog_name == "cal_shading_measure":
+            for name in _SHADING_OFFSET_INJECTIONS:
+                _, idx, off = tables.CAL_SHADING_MEASURE.injections[name]
+                injects[name] = ops[idx].data[off]
+        elif prog_name == "cal_shading_upload":
+            _, idxs = tables.CAL_SHADING_UPLOAD.injections["shading_table"]
+            bulk_injects["shading_table"] = b"".join(ops[i].data for i in idxs)
+        elif prog_name == "cal_shading_verify_upload":
+            _, idxs = tables.CAL_SHADING_VERIFY.injections["shading_table2"]
+            local = [i - split_at for i in idxs]
+            bulk_injects["shading_table2"] = b"".join(ops[i].data for i in local)
+
+        rc, out, err = _run_probe_program(
+            probe, "plain3600", prog_name,
+            injects=injects or None, bulk_injects=bulk_injects or None)
+        assert rc == 0, (prog_name, out, err)
+        assert _lines(out)[-1].startswith("DONE"), (prog_name, out)
+        cpp_transfers = _parse_probe_transfers(out)
+
+        assert py_transfers == cpp_transfers, (
+            f"{prog_name}: python and C++ transfer logs differ\n"
+            f"python ({len(py_transfers)}): {py_transfers}\n"
+            f"cpp    ({len(cpp_transfers)}): {cpp_transfers}")
+        counts[prog_name] = len(py_transfers)
+        total += len(py_transfers)
+
+    counts_str = ", ".join(f"{name}={counts[name]}" for name in SHADING_PROGRAM_NAMES)
+    print(f"test_shading_programs_match_python_replayer OK "
+          f"({total} transfers across {len(SHADING_PROGRAM_NAMES)} programs: {counts_str})")
+
+
+def test_poll_class_waits_then_continues():
+    """docs/sane-hook4-shading.md section 3, W2: the poll on reg 0x100
+    (cal_shading_measure op 448) waits through non-matching classes then
+    continues once the reply's upper nibble reaches 0xf0's class."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_poll_class_waits_then_continues SKIPPED (no g++)")
+        return "skipped"
+
+    injects = {
+        "offset_r_hi": 0x01, "offset_r_lo": 0x0B, "offset_g_hi": 0x01,
+        "offset_g_lo": 0x0A, "offset_b_hi": 0x01, "offset_b_lo": 0x0B,
+    }
+    rc, out, err = _run_probe_program(
+        probe, "plain3600", "cal_shading_measure",
+        ["class_poll d055,d055,f055"], injects=injects)
+    assert rc == 0, (out, err)
+    lines = _lines(out)
+    assert lines[-1] == "DONE ops=450", lines[-1]
+    class_site = [ln for ln in lines if ln.startswith("R req=04 val=018e idx=0022")]
+    assert len(class_site) == 3, class_site
+    print("test_poll_class_waits_then_continues OK")
+
+
+def test_poll_class_timeout_fails_closed():
+    """docs/sane-hook4-shading.md section 3: a class that never reaches
+    0xf0 times out after class_timeout_ms, fail-closed at op 448."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_poll_class_timeout_fails_closed SKIPPED (no g++)")
+        return "skipped"
+
+    injects = {
+        "offset_r_hi": 0x01, "offset_r_lo": 0x0B, "offset_g_hi": 0x01,
+        "offset_g_lo": 0x0A, "offset_b_hi": 0x01, "offset_b_lo": 0x0B,
+    }
+    rc, out, err = _run_probe_program(
+        probe, "plain3600", "cal_shading_measure",
+        ["class_poll d055"], injects=injects)
+    assert rc == 1, (out, err)
+    lines = _lines(out)
+    assert lines[-1].startswith("FAIL PollTimeout op=448 "), lines[-1]
+    # Nothing after the failure but the repeated (never-settling) poll read.
+    assert lines[-2] == "R req=04 val=018e idx=0022 len=2", lines[-2]
+    print(f"test_poll_class_timeout_fails_closed OK ({lines[-1]})")
+
+
+def test_short_bulk_out_fails_closed():
+    """docs/sane-hook4-shading.md section 6, Part C test 3:
+    cal_shading_upload with its second BulkOut accepting only 1000 B ->
+    FAIL ShortBulkOut after exactly two bulk OUTs."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_short_bulk_out_fails_closed SKIPPED (no g++)")
+        return "skipped"
+
+    payload = bytes(calibrate.SHADING_UPLOAD_LEN)   # content is irrelevant here
+    rc, out, err = _run_probe_program(
+        probe, "plain3600", "cal_shading_upload", ["bulk_out_len_at 1 1000"],
+        bulk_injects={"shading_table": payload})
+    assert rc == 1, (out, err)
+    lines = _lines(out)
+    assert lines[-1].startswith("FAIL ShortBulkOut op="), lines[-1]
+    bo_lines = [ln for ln in lines if ln.startswith("BO len=")]
+    assert len(bo_lines) == 2, bo_lines
+    assert bo_lines[1].startswith("BO len=1000 "), bo_lines[1]
+    print(f"test_short_bulk_out_fails_closed OK ({lines[-1]})")
+
+
+def test_missing_bulk_injection_fails_before_any_transfer():
+    """docs/sane-hook4-shading.md section 6, Part C test 4: no
+    --inject-bulk at all -> MissingInjection before any transfer."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_missing_bulk_injection_fails_before_any_transfer SKIPPED (no g++)")
+        return "skipped"
+
+    rc, out, err = _run_probe_program(probe, "plain3600", "cal_shading_upload")
+    assert rc == 1, (out, err)
+    lines = _lines(out)
+    assert len(lines) == 1, lines
+    assert lines[0].startswith("FAIL MissingInjection "), lines
+    assert lines[0].endswith("ops=0"), lines
+    print(f"test_missing_bulk_injection_fails_before_any_transfer OK ({lines[0]!r})")
+
+
+def test_bulk_injection_too_long_is_refused():
+    """docs/sane-hook4-shading.md section 6, Part C test 4: a value
+    longer than the covered BulkOut ops' combined length (46080 B for
+    plain3600's cal_shading_upload: 16384+16384+12800+512) ->
+    BadInjection before any transfer."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_bulk_injection_too_long_is_refused SKIPPED (no g++)")
+        return "skipped"
+
+    payload = bytes(46081)   # 1 B over the 46080 B combined chunk total
+    rc, out, err = _run_probe_program(
+        probe, "plain3600", "cal_shading_upload",
+        bulk_injects={"shading_table": payload})
+    assert rc == 1, (out, err)
+    lines = _lines(out)
+    assert len(lines) == 1, lines
+    assert lines[0].startswith("FAIL BadInjection "), lines
+    assert lines[0].endswith("ops=0"), lines
+    print(f"test_bulk_injection_too_long_is_refused OK ({lines[0]!r})")
+
+
+def test_shading_table_reference_vectors():
+    """docs/sane-hook4-shading.md section 4/6, Part C test 5: the pure
+    shading computation (shading_table/shading_table2/shading_upload_len),
+    C++ vs the reference capture and vs of135i.calibrate byte for byte."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_shading_table_reference_vectors SKIPPED (no g++)")
+        return "skipped"
+
+    meas_path = CAPTURE_DIR / "cal-frame00797-len2889216.bin"
+    raw = meas_path.read_bytes()
+    meas = np.frombuffer(raw, dtype="<u2").reshape(128, 3762, 3)
+
+    with tempfile.TemporaryDirectory() as td:
+        # -- shading_table: reference capture, C++ vs Python, vs the
+        # vendor's own upload (the driver's own tolerance) --
+        out1 = Path(td) / "out1.bin"
+        r1 = subprocess.run(
+            [probe, "shading_table", str(meas_path), "128", "3762", str(out1)],
+            capture_output=True, text=True)
+        assert r1.returncode == 0, r1
+        assert _lines(r1.stdout)[-1] == "OK len=45856", r1.stdout
+        got1 = out1.read_bytes()
+        assert len(got1) == 45856 == calibrate.SHADING_UPLOAD_LEN
+
+        py1 = calibrate.shading_table(meas)
+        assert got1 == py1, "C++ shading_table differs from Python byte for byte"
+
+        truth = (CAPTURE_DIR / "shading-upload-len45856.bin").read_bytes()
+        got_offsets, got_gains = _parse_shading_blocks(got1)
+        want_offsets, _want_gains = _parse_shading_blocks(truth)
+        assert set(np.unique(got_gains).tolist()) == {0x4000}
+        diff = np.abs(got_offsets.astype(int) - want_offsets.astype(int))
+        within_tol = float((diff <= 8).mean())
+        assert within_tol >= 0.99, f"only {within_tol:.4%} of pixels within +/-8"
+
+        # -- shading_table2 (a): the same capture as both white and dark --
+        out2a = Path(td) / "out2a.bin"
+        r2a = subprocess.run(
+            [probe, "shading_table2", str(meas_path), str(meas_path),
+             "128", "3762", str(out2a)],
+            capture_output=True, text=True)
+        assert r2a.returncode == 0, r2a
+        got2a = out2a.read_bytes()
+        py2a = calibrate.shading_table2(meas, meas)
+        assert got2a == py2a, "shading_table2(a) differs from Python byte for byte"
+
+        # -- shading_table2 (b): seeded random white > dark --
+        rng = np.random.default_rng(20260908)
+        dark_b = rng.integers(0, 2000, (128, 3762, 3)).astype(np.uint16)
+        white_b = np.clip(
+            dark_b.astype(np.int32) + rng.integers(1000, 20000, (128, 3762, 3)),
+            0, 65535).astype(np.uint16)
+        white_b_path, dark_b_path = Path(td) / "white_b.bin", Path(td) / "dark_b.bin"
+        white_b_path.write_bytes(white_b.astype("<u2").tobytes())
+        dark_b_path.write_bytes(dark_b.astype("<u2").tobytes())
+        out2b = Path(td) / "out2b.bin"
+        r2b = subprocess.run(
+            [probe, "shading_table2", str(white_b_path), str(dark_b_path),
+             "128", "3762", str(out2b)],
+            capture_output=True, text=True)
+        assert r2b.returncode == 0, r2b
+        got2b = out2b.read_bytes()
+        py2b = calibrate.shading_table2(white_b, dark_b)
+        assert got2b == py2b, "shading_table2(b) differs from Python byte for byte"
+
+        # -- shading_table2 (c): hits both the gain clip at 65535 (most
+        # pixels: white == dark, so w - f0 == 0, floored to 1.0, driving
+        # gain to the clip) and the max(w - f0, 1.0) floor itself --
+        dark_c = np.full((128, 3762, 3), 100, dtype=np.uint16)
+        white_c = np.full((128, 3762, 3), 100, dtype=np.uint16)
+        white_c[:, 0, 0] = 50000   # one pixel: a real difference, not clipped
+        white_c_path, dark_c_path = Path(td) / "white_c.bin", Path(td) / "dark_c.bin"
+        white_c_path.write_bytes(white_c.astype("<u2").tobytes())
+        dark_c_path.write_bytes(dark_c.astype("<u2").tobytes())
+        out2c = Path(td) / "out2c.bin"
+        r2c = subprocess.run(
+            [probe, "shading_table2", str(white_c_path), str(dark_c_path),
+             "128", "3762", str(out2c)],
+            capture_output=True, text=True)
+        assert r2c.returncode == 0, r2c
+        got2c = out2c.read_bytes()
+        py2c = calibrate.shading_table2(white_c, dark_c)
+        assert got2c == py2c, "shading_table2(c) differs from Python byte for byte"
+        _offsets_c, gains_c = _parse_shading_blocks(got2c)
+        assert 65535 in set(gains_c.tolist()), "test case did not hit the gain clip"
+
+        # -- shading_upload_len --
+        r3 = subprocess.run([probe, "upload_len", "3762"], capture_output=True, text=True)
+        assert r3.returncode == 0, r3
+        assert r3.stdout.strip() == "LEN=45856", r3.stdout
+        r4 = subprocess.run([probe, "upload_len", "5184"], capture_output=True, text=True)
+        assert r4.returncode == 0, r4
+        assert r4.stdout.strip() == "LEN=63192", r4.stdout
+
+    print(f"test_shading_table_reference_vectors OK (within +/-8: {within_tol:.4%})")
+
+
 def main() -> int:
     tests = [
         test_programs_match_python_replayer,
@@ -747,6 +1092,13 @@ def main() -> int:
         test_gain_codes_reference_vectors,
         test_percentile_matches_numpy,
         test_warmup_policy,
+        test_shading_programs_match_python_replayer,
+        test_poll_class_waits_then_continues,
+        test_poll_class_timeout_fails_closed,
+        test_short_bulk_out_fails_closed,
+        test_missing_bulk_injection_fails_before_any_transfer,
+        test_bulk_injection_too_long_is_refused,
+        test_shading_table_reference_vectors,
     ]
     passed = 0
     skipped = 0

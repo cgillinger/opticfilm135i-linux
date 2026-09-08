@@ -50,29 +50,33 @@ struct Phase {
 };
 
 /** An op-program transfer kind (docs/sane-hook2-offset.md
- *  section 6); gl126_ops.cpp is the runner that executes these. */
+ *  section 6, docs/sane-hook4-shading.md section 6);
+ *  gl126_ops.cpp is the runner that executes these. */
 enum class OpKind : std::uint8_t {
     Write,          /* control write: register batch, 0x82 buffer
                        descriptor, or 0x8c write */
     AckRead,        /* control read, 1 B, must be 0x55 */
     Read,           /* control read, logged only (provenance) */
     PollDataReady,  /* poll reg 0x101 until bit 0x01 (DATAENB) sets */
+    PollClass,      /* poll reg 0x100 until (reply[0] & 0xf0) matches
+                       the captured settled value's upper nibble */
     BulkIn,         /* bulk IN of `len` bytes from EP 0x81 */
+    BulkOut,        /* bulk OUT of `len` bytes to EP 0x02 */
     BulkDone,       /* control read after a bulk transfer, logged only */
 };
 
-/** One op-program transfer. `data` is the write payload (Write) or
- *  the captured reply (AckRead/Read/PollDataReady/BulkDone,
- *  provenance only -- the runner does not require a live reply to
- *  match it, except AckRead's fixed 0x55 and PollDataReady's bit
- *  0x01); nullptr for BulkIn. */
+/** One op-program transfer. `data` is the write payload (Write/BulkOut)
+ *  or the captured reply (AckRead/Read/PollDataReady/PollClass/
+ *  BulkDone, provenance only -- the runner does not require a live
+ *  reply to match it, except AckRead's fixed 0x55, PollDataReady's
+ *  bit 0x01 and PollClass's upper nibble); nullptr for BulkIn. */
 struct Op {
     OpKind kind;
-    std::uint8_t request;    /* bRequest; 0 for BulkIn */
+    std::uint8_t request;    /* bRequest; 0 for BulkIn/BulkOut */
     std::uint16_t value;     /* wValue */
     std::uint16_t index;     /* wIndex */
     const std::uint8_t* data;
-    std::uint16_t len;       /* Write/reads: byte length; BulkIn: bulk length */
+    std::uint16_t len;       /* Write/reads: byte length; BulkIn/BulkOut: bulk length */
     std::uint16_t dur_ms;    /* captured poll duration, ms (0 otherwise) */
 };
 
@@ -92,15 +96,38 @@ struct OpInjection {
     std::size_t byte_offset;
 };
 
+/** A payload the op-program runner must compute and split across a
+ *  run of consecutive BulkOut ops before sending them (docs/sane-
+ *  hook4-shading.md section 6) -- run_program() takes a name ->
+ *  byte vector map and refuses (OpsFailure::MissingInjection, before
+ *  any transfer) if a name here is not in it, or
+ *  OpsFailure::BadInjection if the value is longer than the ops'
+ *  combined length. `first_op`/`last_op` address the OpProgram's own
+ *  `ops` array, INCLUSIVE, and are always a contiguous run of
+ *  BulkOut ops. A shorter value is zero-padded to the combined
+ *  length before slicing, exactly of135i/tables.py's Phase.patched()
+ *  rule for a "bo" injection. */
+struct OpBulkInjection {
+    const char* name;
+    std::size_t first_op;
+    std::size_t last_op;
+};
+
 /** An ordered op program for one phase -- prep/afe_base/cal_dark_a/
- *  cal_dark_b (SANE hook 2) plus cal_white/cal_gain_check_a/
- *  cal_gain_check_b (SANE hook 3, docs/sane-hook3-gain.md). */
+ *  cal_dark_b (SANE hook 2), cal_white/cal_gain_check_a/
+ *  cal_gain_check_b (SANE hook 3, docs/sane-hook3-gain.md) and
+ *  cal_shading_measure/cal_shading_upload/cal_shading_verify/
+ *  cal_shading_verify_upload (SANE hook 4, docs/sane-hook4-
+ *  shading.md -- the last two are one captured phase,
+ *  `cal_shading_verify`, split at its own `split_at`). */
 struct OpProgram {
     const char* name;
     const Op* ops;
     std::size_t count;
     const OpInjection* injections;  /* nullptr/0 when none */
     std::size_t injection_count;
+    const OpBulkInjection* bulk_injections;  /* nullptr/0 when none */
+    std::size_t bulk_injection_count;
 };
 
 /** One scan profile: a resolution and its phase sequence. */
@@ -119,7 +146,9 @@ struct Profile {
     const Phase* phases;
     std::size_t phase_count;
     const OpProgram* programs;  /* prep/afe_base/cal_dark_a/cal_dark_b/
-                                   cal_white/cal_gain_check_a/cal_gain_check_b */
+                                   cal_white/cal_gain_check_a/cal_gain_check_b/
+                                   cal_shading_measure/cal_shading_upload/
+                                   cal_shading_verify/cal_shading_verify_upload */
     std::size_t program_count;
 };
 

@@ -35,6 +35,8 @@ const char* to_string(OpsFailure failure)
     case OpsFailure::PollTimeout:      return "PollTimeout";
     case OpsFailure::ShortBulk:        return "ShortBulk";
     case OpsFailure::MissingInjection: return "MissingInjection";
+    case OpsFailure::BadInjection:     return "BadInjection";
+    case OpsFailure::ShortBulkOut:     return "ShortBulkOut";
     }
     return "Unknown";
 }
@@ -58,6 +60,50 @@ void check_injections(const OpProgram& prog,
                 << "\" (op " << inj.op_index << ", byte " << inj.byte_offset
                 << ") -- nothing sent";
             throw OpsError(OpsFailure::MissingInjection, inj.op_index, oss.str());
+        }
+    }
+}
+
+// The combined length (bytes) of the BulkOut ops a bulk injection
+// covers -- the total a payload is zero-padded to before slicing
+// (docs/sane-hook4-shading.md section 6, Part B/2).
+std::size_t bulk_injection_total(const OpProgram& prog, const OpBulkInjection& inj)
+{
+    std::size_t total = 0;
+    for (std::size_t i = inj.first_op; i <= inj.last_op; ++i) {
+        total += prog.ops[i].len;
+    }
+    return total;
+}
+
+// Checked once, before any transfer -- and before check_injections()'s
+// byte-injection check, so a program with both kinds missing reports the
+// bulk one first, deterministically (docs/sane-hook4-shading.md section
+// 6, Part B/2): every bulk injection this program needs must be present
+// in `bulk_values` (a null `bulk_values` counts as none present), and
+// not longer than the BulkOut ops it covers. Names in `bulk_values` the
+// program has no bulk injection for are ignored -- not checked here.
+void check_bulk_injections(const OpProgram& prog,
+                           const std::map<std::string, std::vector<std::uint8_t>>* bulk_values)
+{
+    for (std::size_t k = 0; k < prog.bulk_injection_count; ++k) {
+        const OpBulkInjection& inj = prog.bulk_injections[k];
+        if (bulk_values == nullptr || bulk_values->find(inj.name) == bulk_values->end()) {
+            std::ostringstream oss;
+            oss << "gl126_ops: missing bulk injection value for \"" << inj.name
+                << "\" (ops " << inj.first_op << "-" << inj.last_op
+                << ") -- nothing sent";
+            throw OpsError(OpsFailure::MissingInjection, inj.first_op, oss.str());
+        }
+        std::size_t total = bulk_injection_total(prog, inj);
+        const std::vector<std::uint8_t>& val = bulk_values->at(inj.name);
+        if (val.size() > total) {
+            std::ostringstream oss;
+            oss << "gl126_ops: bulk injection \"" << inj.name << "\" (ops "
+                << inj.first_op << "-" << inj.last_op << ") is " << val.size()
+                << " B, longer than the covered ops' combined " << total
+                << " B -- nothing sent";
+            throw OpsError(OpsFailure::BadInjection, inj.first_op, oss.str());
         }
     }
 }
@@ -191,12 +237,104 @@ void do_bulk_in(Wire& wire, const Op& op, std::size_t idx, RunResult& out)
     }
 }
 
+// The bulk injection (if any) covering op `idx`, or nullptr -- at most
+// one can, since a program's OpBulkInjection ranges never overlap (each
+// names a distinct contiguous run of BulkOut ops).
+const OpBulkInjection* bulk_injection_covering(const OpProgram& prog, std::size_t idx)
+{
+    for (std::size_t k = 0; k < prog.bulk_injection_count; ++k) {
+        const OpBulkInjection& inj = prog.bulk_injections[k];
+        if (idx >= inj.first_op && idx <= inj.last_op) {
+            return &inj;
+        }
+    }
+    return nullptr;
+}
+
+void do_bulk_out(Wire& wire, const Op& op, const OpProgram& prog, std::size_t idx,
+                 const std::map<std::string, std::vector<std::uint8_t>>* bulk_values)
+{
+    const std::uint8_t* data = op.data;
+    std::size_t len = op.len;
+    std::vector<std::uint8_t> patched;   // must outlive the wire.bulk_write() call
+
+    const OpBulkInjection* inj = bulk_injection_covering(prog, idx);
+    if (inj != nullptr) {
+        // check_bulk_injections() already guaranteed `bulk_values` has
+        // this name and it is not longer than the covered ops' combined
+        // length. Zero-pad to that combined length, then slice out this
+        // op's share -- of135i/tables.py's Phase.patched() "bo" rule.
+        const std::vector<std::uint8_t>& val = bulk_values->at(inj->name);
+        std::size_t offset = 0;
+        for (std::size_t i = inj->first_op; i < idx; ++i) {
+            offset += prog.ops[i].len;
+        }
+        patched.resize(len);
+        for (std::size_t b = 0; b < len; ++b) {
+            std::size_t pos = offset + b;
+            patched[b] = (pos < val.size()) ? val[pos] : 0;
+        }
+        data = patched.data();
+    }
+
+    std::size_t written = wire.bulk_write(data, len);
+    if (written != len) {
+        std::ostringstream oss;
+        oss << "gl126_ops: BulkOut at op " << idx << " wrote " << written
+            << " B, want " << len << " B -- nothing further sent";
+        throw OpsError(OpsFailure::ShortBulkOut, idx, oss.str());
+    }
+}
+
+void do_poll_class(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
+                   const RunPolicy& policy)
+{
+    unsigned start = wire.now_ms();
+    std::uint8_t first = 0;
+    std::uint8_t last = 0;
+    unsigned polls = 0;
+    std::uint8_t want_class =
+        (op.data != nullptr && op.len > 0) ? static_cast<std::uint8_t>(op.data[0] & 0xF0) : 0xF0;
+
+    for (;;) {
+        std::uint8_t reply[2] = {0, 0};
+        wire.control_read(op.request, op.value, op.index, reply, 2);
+        ++polls;
+        if (polls == 1) {
+            first = reply[0];
+        }
+        last = reply[0];
+
+        if ((reply[0] & 0xF0) == want_class) {
+            PollRecord rec{idx, first, last, polls, wire.now_ms() - start};
+            out.polls.push_back(rec);
+            return;
+        }
+
+        unsigned elapsed = wire.now_ms() - start;
+        if (elapsed > policy.class_timeout_ms) {
+            std::ostringstream oss;
+            oss << "gl126_ops: PollClass at op " << idx << " (reg 0x100) "
+                << "timed out after " << elapsed << "ms: first 0x" << std::hex
+                << static_cast<int>(first) << ", last 0x" << static_cast<int>(last)
+                << std::dec << " -- class 0x" << std::hex << static_cast<int>(want_class)
+                << std::dec << " never reached, nothing further sent";
+            throw OpsError(OpsFailure::PollTimeout, idx, oss.str());
+        }
+        wire.sleep_ms(policy.poll_interval_ms);
+    }
+}
+
 } // namespace
 
 void run_program(Wire& wire, const OpProgram& prog, RunResult& out,
                  const RunPolicy& policy,
-                 const std::map<std::string, std::uint8_t>* values)
+                 const std::map<std::string, std::uint8_t>* values,
+                 const std::map<std::string, std::vector<std::uint8_t>>* bulk_values)
 {
+    if (prog.bulk_injection_count > 0) {
+        check_bulk_injections(prog, bulk_values);
+    }
     if (prog.injection_count > 0) {
         check_injections(prog, values);
     }
@@ -215,8 +353,14 @@ void run_program(Wire& wire, const OpProgram& prog, RunResult& out,
         case OpKind::PollDataReady:
             do_poll(wire, op, i, out, policy);
             break;
+        case OpKind::PollClass:
+            do_poll_class(wire, op, i, out, policy);
+            break;
         case OpKind::BulkIn:
             do_bulk_in(wire, op, i, out);
+            break;
+        case OpKind::BulkOut:
+            do_bulk_out(wire, op, prog, i, bulk_values);
             break;
         case OpKind::BulkDone:
             do_bulk_done(wire, op, i, out);
@@ -495,6 +639,171 @@ WarmupOutcome gain_with_warmup(const std::function<std::vector<std::uint8_t>()>&
         }
         prev = cur;
     }
+}
+
+// ------------------------------------------------------- hook 4: shading
+
+// docs/sane-hook4-shading.md section 4 / of135i/calibrate.py's shading
+// section.
+const double kShading2Targets[3] = {81752.0, 83490.0, 87083.0};   // R, G, B
+
+namespace {
+
+constexpr std::uint16_t kShadingGain = 0x4000;
+constexpr std::size_t kPayloadPairsPerFullBlock = 126;
+constexpr std::size_t kTrailerPairsPerFullBlock = 2;
+
+// Walks the 512 B block structure once, calling `emit_payload(i, n)` for
+// each block's payload run (starting pair index `i`, count `n`) and
+// `emit_trailer(n)` for its zero trailer pairs (n == 0 or
+// kTrailerPairsPerFullBlock) -- the single place that owns the block
+// layout, shared by shading_upload_len() and pack_shading() so they
+// cannot drift apart.
+template <typename EmitPayload, typename EmitTrailer>
+void walk_shading_blocks(std::size_t n_pairs, EmitPayload emit_payload, EmitTrailer emit_trailer)
+{
+    std::size_t i = 0;
+    while (i < n_pairs) {
+        std::size_t remaining = n_pairs - i;
+        std::size_t n_payload, n_trailer;
+        if (remaining >= kPayloadPairsPerFullBlock) {
+            n_payload = kPayloadPairsPerFullBlock;
+            n_trailer = kTrailerPairsPerFullBlock;
+        } else {
+            n_payload = remaining;
+            n_trailer = 0;
+        }
+        emit_payload(i, n_payload);
+        emit_trailer(n_trailer);
+        i += n_payload;
+    }
+}
+
+} // namespace
+
+std::size_t shading_upload_len(unsigned width)
+{
+    std::size_t n_pairs = static_cast<std::size_t>(width) * 3;
+    std::size_t total = 0;
+    walk_shading_blocks(
+        n_pairs,
+        [&](std::size_t, std::size_t n_payload) { total += n_payload * 4; },
+        [&](std::size_t n_trailer) { total += n_trailer * 4; });
+    return total;
+}
+
+std::vector<std::uint8_t> pack_shading(const std::vector<std::uint16_t>& offsets,
+                                       const std::vector<std::uint16_t>& gains,
+                                       unsigned width)
+{
+    std::size_t n_pairs = static_cast<std::size_t>(width) * 3;
+    if (offsets.size() != n_pairs || gains.size() != n_pairs) {
+        throw std::invalid_argument(
+            "gl126_ops::pack_shading: offsets/gains size does not match width*3");
+    }
+    std::vector<std::uint8_t> out;
+    out.reserve(shading_upload_len(width));
+    walk_shading_blocks(
+        n_pairs,
+        [&](std::size_t i, std::size_t n_payload) {
+            for (std::size_t k = 0; k < n_payload; ++k) {
+                std::uint16_t off = offsets[i + k];
+                std::uint16_t g = gains[i + k];
+                out.push_back(static_cast<std::uint8_t>(off & 0xFF));
+                out.push_back(static_cast<std::uint8_t>((off >> 8) & 0xFF));
+                out.push_back(static_cast<std::uint8_t>(g & 0xFF));
+                out.push_back(static_cast<std::uint8_t>((g >> 8) & 0xFF));
+            }
+        },
+        [&](std::size_t n_trailer) {
+            for (std::size_t k = 0; k < n_trailer; ++k) {
+                out.push_back(0);
+                out.push_back(0);
+                out.push_back(0);
+                out.push_back(0);
+            }
+        });
+    return out;
+}
+
+namespace {
+
+// Per-pixel/channel mean over `lines` of a `lines * width * 6` byte
+// RGB16LE buffer, pixel-interleaved (docs/sane-hook4-shading.md section
+// 4). `p` indexes the flattened (pixel, channel) pair, 0..width*3-1,
+// same order as a scanned line's own bytes.
+double mean_over_lines(const std::uint8_t* buf, unsigned lines, unsigned width, std::size_t p)
+{
+    std::size_t row_stride = static_cast<std::size_t>(width) * 6;
+    double sum = 0.0;
+    for (unsigned line = 0; line < lines; ++line) {
+        sum += read_u16le(buf + line * row_stride + p * 2);
+    }
+    return lines ? sum / static_cast<double>(lines) : 0.0;
+}
+
+void check_shading_buffer(const char* fn, const std::uint8_t* buf, std::size_t len,
+                          unsigned lines, unsigned width)
+{
+    (void)buf;
+    std::size_t expected = static_cast<std::size_t>(lines) * width * 6;
+    if (len != expected) {
+        std::ostringstream oss;
+        oss << "gl126_ops::" << fn << ": buffer is " << len << " B, expected "
+            << "lines*width*6 = " << expected << " B (lines=" << lines
+            << ", width=" << width << ")";
+        throw std::invalid_argument(oss.str());
+    }
+}
+
+} // namespace
+
+std::vector<std::uint8_t> shading_table(const std::uint8_t* meas, std::size_t len,
+                                        unsigned lines, unsigned width)
+{
+    check_shading_buffer("shading_table", meas, len, lines, width);
+    std::size_t n_pairs = static_cast<std::size_t>(width) * 3;
+    std::vector<std::uint16_t> offsets(n_pairs);
+    std::vector<std::uint16_t> gains(n_pairs, kShadingGain);
+    for (std::size_t p = 0; p < n_pairs; ++p) {
+        double mean = mean_over_lines(meas, lines, width, p);
+        offsets[p] = static_cast<std::uint16_t>(round_half_even(mean));
+    }
+    return pack_shading(offsets, gains, width);
+}
+
+std::vector<std::uint8_t> shading_table2(const std::uint8_t* white, std::size_t white_len,
+                                         const std::uint8_t* dark, std::size_t dark_len,
+                                         unsigned lines, unsigned width,
+                                         const double targets[3])
+{
+    check_shading_buffer("shading_table2", white, white_len, lines, width);
+    check_shading_buffer("shading_table2", dark, dark_len, lines, width);
+    std::size_t n_pairs = static_cast<std::size_t>(width) * 3;
+    std::vector<std::uint16_t> f0(n_pairs);
+    std::vector<std::uint16_t> gains(n_pairs);
+    for (std::size_t p = 0; p < n_pairs; ++p) {
+        double w = mean_over_lines(white, lines, width, p);
+        double f0_val = round_half_even(mean_over_lines(dark, lines, width, p));
+        f0[p] = static_cast<std::uint16_t>(f0_val);
+        double denom = std::max(w - f0_val, 1.0);
+        int ch = static_cast<int>(p % 3);
+        double g = round_half_even(targets[ch] * 0x4000 / denom);
+        if (g < 1.0) {
+            g = 1.0;
+        } else if (g > 65535.0) {
+            g = 65535.0;
+        }
+        gains[p] = static_cast<std::uint16_t>(g);
+    }
+    return pack_shading(f0, gains, width);
+}
+
+std::vector<std::uint8_t> shading_table2(const std::uint8_t* white, std::size_t white_len,
+                                         const std::uint8_t* dark, std::size_t dark_len,
+                                         unsigned lines, unsigned width)
+{
+    return shading_table2(white, white_len, dark, dark_len, lines, width, kShading2Targets);
 }
 
 } // namespace gl126

@@ -77,6 +77,13 @@ public:
         OpsFailure::ShortBulk). */
     virtual std::size_t bulk_read(std::uint8_t* data, std::size_t len) = 0;
 
+    /** Bulk OUT to EP 0x02 (docs/sane-hook4-shading.md section 6).
+        Returns the number of bytes actually written (may be less than
+        `len`: a short write is not itself an error at this layer --
+        run_program() is what turns a short BulkOut into
+        OpsFailure::ShortBulkOut). */
+    virtual std::size_t bulk_write(const std::uint8_t* data, std::size_t len) = 0;
+
     /** Sleep for (at least) `ms` milliseconds. */
     virtual void sleep_ms(unsigned ms) = 0;
 
@@ -91,11 +98,18 @@ public:
     (docs/sane-hook2-offset.md section 3's failure-rules table). */
 enum class OpsFailure : std::uint8_t {
     BadAck,           // AckRead did not reply 0x55
-    PollTimeout,      // PollDataReady never saw bit 0x01 within the budget
+    PollTimeout,      // PollDataReady/PollClass never settled within the budget
     ShortBulk,        // BulkIn returned fewer bytes than the op called for
-    MissingInjection, // a program injection has no value in the map passed
-                       // to run_program() -- checked before any transfer
-                       // (docs/sane-hook3-gain.md section 6, Part B/1)
+    MissingInjection, // a program injection (byte or bulk) has no value in
+                       // the map(s) passed to run_program() -- checked
+                       // before any transfer (docs/sane-hook3-gain.md
+                       // section 6, Part B/1; docs/sane-hook4-shading.md
+                       // section 6)
+    BadInjection,     // a bulk injection value is longer than its BulkOut
+                       // ops' combined length -- checked before any
+                       // transfer (docs/sane-hook4-shading.md section 6,
+                       // Part B/2)
+    ShortBulkOut,      // BulkOut wrote fewer bytes than the op called for
 };
 
 const char* to_string(OpsFailure failure);
@@ -144,19 +158,23 @@ struct RunResult {
     std::size_t ops_done = 0;  // completed ops; ties a failure to "no transfer after it"
 };
 
-/** Tunable wait policy for PollDataReady (docs/sane-hook2-offset.md
-    section 3: "2 s [timeout]; captured 16 ms"). The 4 ms interval keeps a
-    real timeout well under a second of wall time while still being many
-    multiples of the captured settle time. */
+/** Tunable wait policy for PollDataReady/PollClass (docs/sane-hook2-
+    offset.md section 3: "2 s [timeout]; captured 16 ms"; docs/sane-
+    hook4-shading.md section 3: PollClass gets its own, longer budget --
+    "5 s"). The 4 ms interval keeps a real timeout well under a second
+    of wall time while still being many multiples of the captured
+    settle time. */
 struct RunPolicy {
     unsigned poll_timeout_ms = 2000;
     unsigned poll_interval_ms = 4;
+    unsigned class_timeout_ms = 5000;
 };
 
 /** Execute one OpProgram against `wire`, appending to `out` (so a caller
     can run several programs into one RunResult if it wants a combined
     log; a fresh RunResult per program is the normal case). Throws
-    OpsError, fail-closed, per docs/sane-hook2-offset.md section 3:
+    OpsError, fail-closed, per docs/sane-hook2-offset.md section 3 and
+    docs/sane-hook4-shading.md section 3:
 
       Write         -> control_write(request, value, index, data, len) --
                        or, for a Write the program injects into (see
@@ -169,11 +187,25 @@ struct RunPolicy {
                        never fails on a mismatch.
       PollDataReady -> loop: control_read(0x04, 0x018e, 0x0122, ..., 2);
                        (reply[0] & 0x01) -> done, recorded; else timeout
-                       -> OpsError{PollTimeout} (message carries first/
-                       last), nothing further sent; else sleep_ms(...).
+                       (policy.poll_timeout_ms) -> OpsError{PollTimeout}
+                       (message carries first/last), nothing further
+                       sent; else sleep_ms(...).
+      PollClass     -> loop: control_read(op's own request/value/index,
+                       ..., 2); (reply[0] & 0xf0) == (op.data[0] & 0xf0)
+                       -> done, recorded (a PollRecord, same as
+                       PollDataReady); else timeout
+                       (policy.class_timeout_ms) -> OpsError{PollTimeout}
+                       (message carries first/last), nothing further
+                       sent; else sleep_ms(...).
       BulkIn        -> bulk_read(len); short -> OpsError{ShortBulk}
                        (message carries got/want) -- the partial data is
                        still appended to out.buffers before the throw.
+      BulkOut       -> bulk_write(data, len) -- `data` is the op's own
+                       captured chunk, or, for a BulkOut a bulk
+                       injection covers (see below), the matching slice
+                       of the injected payload; short write -> OpsError
+                       {ShortBulkOut} (message carries got/want), nothing
+                       further sent.
       BulkDone      -> control_read(0x0c, 0x008e, 0x0018, ..., 1);
                        recorded, never fails on a mismatch.
 
@@ -183,10 +215,24 @@ struct RunPolicy {
     present) -- checked BEFORE any transfer, so a missing name throws
     OpsError{MissingInjection} (the message names it) with zero
     transfers done. Names in `values` that no injection uses are
-    ignored. */
+    ignored.
+
+    Bulk injections (docs/sane-hook4-shading.md section 6, Part B/2): if
+    `prog.bulk_injection_count` is nonzero, every one of its
+    OpBulkInjection names must be present in `bulk_values` (a null
+    `bulk_values` counts as none present) -- checked BEFORE any transfer
+    (before the byte-injection check above even runs a single transfer),
+    so a missing name throws OpsError{MissingInjection}; a present value
+    longer than its BulkOut ops' combined length throws OpsError
+    {BadInjection} -- both with zero transfers done. A present, short-
+    enough value is zero-padded to that combined length and sliced
+    across the covered BulkOut ops in order (of135i/tables.py's
+    Phase.patched() "bo" rule, exactly). Names in `bulk_values` that no
+    bulk injection uses are ignored. */
 void run_program(Wire& wire, const OpProgram& prog, RunResult& out,
                  const RunPolicy& policy = RunPolicy(),
-                 const std::map<std::string, std::uint8_t>* values = nullptr);
+                 const std::map<std::string, std::uint8_t>* values = nullptr,
+                 const std::map<std::string, std::vector<std::uint8_t>>* bulk_values = nullptr);
 
 // ---------------------------------------------------------------- S5/S6
 
@@ -310,6 +356,78 @@ WarmupOutcome gain_with_warmup(const std::function<std::vector<std::uint8_t>()>&
                                const std::function<double()>& now_s,
                                const WarmupPolicy& policy, WarmupRecord& rec,
                                std::uint8_t codes_out[3]);
+
+// ------------------------------------------------------- hook 4: shading
+
+/** The plain (visible-only) 3600 dpi profile's own shading-measurement
+    shape (docs/sane-hook4-shading.md section 1/4): 128 lines, 3762 px
+    wide. Every pure function below takes `lines`/`width` explicitly
+    rather than defaulting to these -- they are for callers (and tests)
+    that want the plain-profile shape by name. */
+constexpr unsigned kShadingWidth = 3762;
+constexpr unsigned kShadingLines = 128;
+
+/** Per-channel (R, G, B) white-uniformity targets for shading_table2()'s
+    default overload, ported from of135i/calibrate.py's SHADING2_TARGETS
+    (docs/sane-hook4-shading.md section 4). */
+extern const double kShading2Targets[3];
+
+/** _pack_shading()'s output length for `width`, ported from of135i/
+    calibrate.py's _shading_upload_len() (docs/sane-hook4-shading.md
+    section 4): 126 payload + 2 zero trailer (offset, gain) u16 LE pairs
+    per full 512 B block, the final block a shorter unpadded tail.
+    Validated: shading_upload_len(3762) == 45856,
+    shading_upload_len(5184) == 63192. */
+std::size_t shading_upload_len(unsigned width);
+
+/** Packs (offset, gain) u16 LE pairs into the wire block format --
+    ported from of135i/calibrate.py's _pack_shading(). `offsets`/`gains`
+    must each hold exactly `width * 3` values (pixel-interleaved
+    R,G,B,R,G,B...), else throws std::invalid_argument. Returns
+    shading_upload_len(width) bytes. */
+std::vector<std::uint8_t> pack_shading(const std::vector<std::uint16_t>& offsets,
+                                       const std::vector<std::uint16_t>& gains,
+                                       unsigned width);
+
+/** The first shading-correction upload payload (H2, docs/sane-hook4-
+    shading.md section 1/4), ported from of135i/calibrate.py's
+    shading_table(): `meas` is a `lines * width * 6` byte RGB16LE buffer
+    (pixel-interleaved, one row per measured line -- the dark-current-
+    free 128-line measurement), else throws std::invalid_argument. Per
+    pixel/channel: offset = round-half-even of the mean over `lines`;
+    gain is the constant 0x4000 for every pixel. Returns
+    shading_upload_len(width) bytes (pack_shading()'s packing).
+    Reference: cal-data/capture/cal-frame00797-len2889216.bin (lines=128,
+    width=3762) against cal-data/capture/shading-upload-len45856.bin,
+    byte-identical to of135i.calibrate.shading_table() on the same
+    input. */
+std::vector<std::uint8_t> shading_table(const std::uint8_t* meas, std::size_t len,
+                                        unsigned lines, unsigned width);
+
+/** The second (white-uniformity) shading upload payload (H5, docs/sane-
+    hook4-shading.md section 1/4), ported from of135i/calibrate.py's
+    shading_table2(): `white`/`dark` are each a `lines * width * 6` byte
+    RGB16LE buffer (the re-measured white map and the H1 dark map), else
+    throws std::invalid_argument. Per pixel/channel: f0 = round-half-
+    even of the mean of `dark` over `lines` (the SAME offsets
+    shading_table() would compute from that buffer); gain =
+    clip(round-half-even(targets[c] * 0x4000 / max(mean(white) - f0,
+    1.0)), 1, 65535). Returns shading_upload_len(width) bytes. This
+    overload's `targets` lets a caller pass its own (docs/sane-hook4-
+    shading.md scopes the dual-light profiles' own targets/formula --
+    shading_table2_dual() in of135i/calibrate.py -- as a later step, not
+    ported here); the other overload below uses kShading2Targets. */
+std::vector<std::uint8_t> shading_table2(const std::uint8_t* white, std::size_t white_len,
+                                         const std::uint8_t* dark, std::size_t dark_len,
+                                         unsigned lines, unsigned width,
+                                         const double targets[3]);
+
+/** shading_table2() with of135i/calibrate.py's default SHADING2_TARGETS
+    (kShading2Targets: 81752, 83490, 87083 for R, G, B) -- the plain
+    3600 dpi profile's own formula. */
+std::vector<std::uint8_t> shading_table2(const std::uint8_t* white, std::size_t white_len,
+                                         const std::uint8_t* dark, std::size_t dark_len,
+                                         unsigned lines, unsigned width);
 
 } // namespace gl126
 } // namespace genesys

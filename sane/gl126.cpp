@@ -202,6 +202,13 @@ public:
         return n;
     }
 
+    std::size_t bulk_write(const std::uint8_t* data, std::size_t len) override
+    {
+        std::size_t n = len;
+        usb_.bulk_write(data, &n);
+        return n;
+    }
+
     void sleep_ms(unsigned ms) override
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(ms));
@@ -234,13 +241,14 @@ const OpProgram& find_program(const Profile& profile, const char* name)
     failure ending the hook with zero further writes and no recovery. */
 void run_phase_program(Genesys_Device* dev, const Profile& profile, const char* name,
                        RunResult& out,
-                       const std::map<std::string, std::uint8_t>* values = nullptr)
+                       const std::map<std::string, std::uint8_t>* values = nullptr,
+                       const std::map<std::string, std::vector<std::uint8_t>>* bulk_values = nullptr)
 {
     DBG_HELPER_ARGS(dbg, "phase %s", name);
     const OpProgram& prog = find_program(profile, name);
     UsbWire wire(dev->interface->get_usb_device());
     try {
-        run_program(wire, prog, out, RunPolicy(), values);
+        run_program(wire, prog, out, RunPolicy(), values, bulk_values);
     } catch (const OpsError& e) {
         SANE_Status status = SANE_STATUS_IO_ERROR;
         const char* what = "I/O failure";
@@ -255,6 +263,11 @@ void run_phase_program(Genesys_Device* dev, const Profile& profile, const char* 
                 status = SANE_STATUS_INVAL;
                 what = "computed value missing (the captured byte must not be written)";
                 break;
+            case OpsFailure::BadInjection:
+                status = SANE_STATUS_INVAL;
+                what = "computed payload does not fit the captured transfer";
+                break;
+            case OpsFailure::ShortBulkOut: what = "short bulk write"; break;
         }
         throw SaneException(status,
                             "gl126: %s in phase %s at op %zu (%s). Nothing further was "
@@ -313,6 +326,100 @@ void log_dark_means(const char* label, const std::vector<std::uint8_t>& buf)
     }
     DBG(DBG_info, "gl126: %s means R %.1f G %.1f B %.1f (%zu px)\n", label,
         sum[0] / n, sum[1] / n, sum[2] / n, n);
+}
+
+/** Statistics of a packed shading table, for the log (cal-analysis.md §4
+    gives the reference ranges: offsets 93-344, gains at 0x4000 for the
+    first upload). */
+void log_shading_table(const char* label, const std::vector<std::uint8_t>& table)
+{
+    if (table.size() < 4) {
+        return;
+    }
+    unsigned off_min = 0xffff, off_max = 0, g_min = 0xffff, g_max = 0;
+    double off_sum = 0, g_sum = 0;
+    std::size_t n = 0;
+    for (std::size_t i = 0; i + 4 <= table.size(); i += 4) {
+        unsigned off = table[i] | (table[i + 1] << 8);
+        unsigned g = table[i + 2] | (table[i + 3] << 8);
+        if (off == 0 && g == 0) {
+            continue;   // block trailer pairs
+        }
+        off_min = std::min(off_min, off); off_max = std::max(off_max, off); off_sum += off;
+        g_min = std::min(g_min, g); g_max = std::max(g_max, g); g_sum += g;
+        n++;
+    }
+    if (n == 0) {
+        return;
+    }
+    DBG(DBG_info, "gl126: %s: %zu pairs, offsets %u..%u (mean %.1f), gains 0x%04x..0x%04x "
+        "(mean %.1f)\n", label, n, off_min, off_max, off_sum / n, g_min, g_max, g_sum / n);
+}
+
+/* Hook 4: the vendor's shading calibration (docs/sane-hook4-shading.md):
+   the dark 128-line measurement with the computed AFE offsets patched in,
+   shading_table() uploaded to scanner RAM, the white 128-line measurement,
+   shading_table2() uploaded. Runs right after the gain checks, on their
+   state; plain 3600 dpi only until the dual-light tables are brought up. */
+void run_shading_calibration(Genesys_Device* dev, const Profile& profile)
+{
+    DBG_HELPER(dbg);
+    if (std::string(profile.name) != "plain3600") {
+        throw SaneException(SANE_STATUS_UNSUPPORTED,
+                            "gl126: shading calibration is brought up for the plain 3600 dpi "
+                            "profile only; %s uses two shading tables and a different gain "
+                            "formula (a later step). Nothing was written for it.", profile.name);
+    }
+    const std::size_t meas_len = std::size_t(kShadingLines) * kShadingWidth * 6;
+
+    // H1: dark measurement at the computed offsets (hook 2's codes).
+    std::map<std::string, std::uint8_t> values;
+    static const char* const ch[3] = { "r", "g", "b" };
+    for (unsigned c = 0; c < 3; c++) {
+        std::uint16_t code = dev->frontend.regs.get_value(static_cast<std::uint16_t>(0x05 + c));
+        values[std::string("offset_") + ch[c] + "_hi"] = static_cast<std::uint8_t>(code >> 8);
+        values[std::string("offset_") + ch[c] + "_lo"] = static_cast<std::uint8_t>(code & 0xff);
+    }
+    RunResult dark;
+    run_phase_program(dev, profile, "cal_shading_measure", dark, &values);
+    std::vector<std::uint8_t> dark_buf = joined_buffers(dark);
+    if (dark_buf.size() != meas_len) {
+        throw SaneException(SANE_STATUS_IO_ERROR,
+                            "gl126: shading dark measurement is %zu bytes, expected %zu "
+                            "(%u lines x %u px). Nothing further was written.",
+                            dark_buf.size(), meas_len, kShadingLines, kShadingWidth);
+    }
+
+    // H2 + H3: the dark map, uploaded.
+    std::vector<std::uint8_t> table1 = shading_table(dark_buf.data(), dark_buf.size(),
+                                                     kShadingLines, kShadingWidth);
+    log_shading_table("shading table 1 (dark map)", table1);
+    std::map<std::string, std::vector<std::uint8_t>> bulk;
+    bulk["shading_table"] = table1;
+    RunResult upload;
+    run_phase_program(dev, profile, "cal_shading_upload", upload, nullptr, &bulk);
+
+    // H4: white measurement with the dark map applied.
+    RunResult white;
+    run_phase_program(dev, profile, "cal_shading_verify", white);
+    std::vector<std::uint8_t> white_buf = joined_buffers(white);
+    if (white_buf.size() != meas_len) {
+        throw SaneException(SANE_STATUS_IO_ERROR,
+                            "gl126: shading white measurement is %zu bytes, expected %zu. "
+                            "Nothing further was written.", white_buf.size(), meas_len);
+    }
+
+    // H5 + H6: the white-uniformity table, uploaded.
+    std::vector<std::uint8_t> table2 = shading_table2(white_buf.data(), white_buf.size(),
+                                                      dark_buf.data(), dark_buf.size(),
+                                                      kShadingLines, kShadingWidth);
+    log_shading_table("shading table 2 (white uniformity)", table2);
+    bulk.clear();
+    bulk["shading_table2"] = table2;
+    RunResult upload2;
+    run_phase_program(dev, profile, "cal_shading_verify_upload", upload2, nullptr, &bulk);
+    log_dark_means("shading dark measurement", dark_buf);
+    log_dark_means("shading white measurement", white_buf);
 }
 
 /** A hook that has not been brought up against the hardware yet.
@@ -612,6 +719,11 @@ void CommandSetGl126::coarse_gain_calibration(Genesys_Device* dev,
     for (unsigned ch = 0; ch < 3; ch++) {
         dev->frontend.regs.set_value(static_cast<std::uint16_t>(0x02 + ch), codes[ch]);
     }
+
+    // Hook 4 follows here, on the gain checks' state: the model sets
+    // DISABLE_SHADING_CALIBRATION, so the core never runs a shading pass of
+    // its own (docs/sane-hook4-shading.md, section 5).
+    run_shading_calibration(dev, *profile);
 }
 
 /* The lamp is warmed by the gain phase's own retry loop, not by a
