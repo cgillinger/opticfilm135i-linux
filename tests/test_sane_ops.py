@@ -1474,6 +1474,62 @@ def test_feedl_and_position_budget():
           f"position_timeout_ms(6743)={ms1}, ({feedl4})={ms4} ~= {want_s4:.1f}s)")
 
 
+def test_position_frames_2_to_4_match_python_replayer():
+    """Frame selection (docs/sane-hook5-frame.md section 10): for frames
+    2-4 the driver's POSITION differs from frame 1's only in the three
+    FEEDL bytes; the C++ "position" program fed the same frame's
+    feedl_for_frame() must produce the same transfers, and the
+    FEEDL-scaled budget must match position_timeout_scale()."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_position_frames_2_to_4_match_python_replayer SKIPPED (no g++)")
+        return "skipped"
+    from of135i.device import position_timeout_scale  # noqa: E402
+
+    results = []
+    for frame in (2, 3, 4):
+        fake = FakeUsbDevice(reg01=0x22, cal_buffers=_build_cal_buffers())
+        scanner = Scanner(UsbIo(fake))
+        slices: dict[str, list[tuple[int, int]]] = {}
+        orig_run_phase = scanner._run_phase
+
+        def wrapped(phase, *a, **kw):
+            start = len(fake.wire_log)
+            result = orig_run_phase(phase, *a, **kw)
+            slices.setdefault(phase.name, []).append((start, len(fake.wire_log)))
+            return result
+
+        scanner._run_phase = wrapped  # type: ignore[method-assign]
+        with fast_time():
+            scanner.initialize()
+            scanner.scan(frame=frame)
+        pos_start, pos_end = slices["position"][0]
+        py_position = _python_transfers(fake.wire_log[pos_start:pos_end])
+
+        feedl = tables.feedl_for_frame(frame)
+        injects = {"feedl_hi": (feedl >> 16) & 0xFF, "feedl_mid": (feedl >> 8) & 0xFF,
+                   "feedl_lo": feedl & 0xFF}
+        rc, out, err = _run_probe_program(probe, "plain3600", "position", None,
+                                          injects=injects)
+        assert rc == 0, (out, err)
+        cpp_position = _parse_probe_transfers(out)
+        assert py_position == cpp_position, (
+            f"frame {frame}: python and C++ POSITION transfer logs differ\n"
+            f"python ({len(py_position)}): {py_position}\n"
+            f"cpp    ({len(cpp_position)}): {cpp_position}")
+
+        # The budget: C++ position_timeout_ms(feedl) vs 3 x 1.6141 s x scale.
+        r = subprocess.run([probe, "position_timeout", str(feedl)],
+                           capture_output=True, text=True)
+        assert r.returncode == 0, (r.stdout, r.stderr)
+        ms = int(r.stdout.strip().split("=")[1])
+        expected_ms = 3 * 1.6141 * position_timeout_scale(tables, feedl) * 1000
+        assert abs(ms - expected_ms) <= 2, (frame, ms, expected_ms)
+        results.append((frame, feedl, len(py_position), ms))
+    print(f"test_position_frames_2_to_4_match_python_replayer OK "
+          f"({', '.join(f'f{f}: feedl {fl}, {n} transfers, budget {ms} ms' for f, fl, n, ms in results)})")
+
+
 # ---------------------------------------------------- 8. scan-pass state
 CHUNK = 519156
 RAW_TOTAL = 3762 * 3 * 2 * 5137   # frame 1 at 3600 dpi: 115 952 364 raw bytes
@@ -1596,6 +1652,7 @@ def main() -> int:
         test_poll_masked_waits_then_continues,
         test_poll_masked_timeout_fails_closed,
         test_feedl_and_position_budget,
+        test_position_frames_2_to_4_match_python_replayer,
         test_scan_pass_complete_then_park,
         test_scan_pass_aborted_never_parks,
         test_scan_pass_park_failure_is_terminal,

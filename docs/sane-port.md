@@ -402,8 +402,12 @@ own run-to-run band against its reference, and the driver's `eject`
 worked straight from the post-PARK state. Attempts 1 and 2 the same
 day found and fixed a third ungated move-to-TA, a PARK reached from the
 wrong state via `sane_cancel`, and the gray default mode
-(`HOST_SIDE_GRAY`). Not yet in the port: frame selection (frame 1 is
-pinned), other resolutions, IR, and install/packaging.
+(`HOST_SIDE_GRAY`). Frame selection: a `--frame` option (1-4, GL126
+only) implemented offline 2026-09-08 (docs/sane-hook5-frame.md section
+10) -- the driver's `scan --frame N`, i.e. the same POSITION program with
+the frame's absolute FEEDL and the FEEDL-scaled budget; wire-equal to the
+Python replayer for frames 2-4; hardware run pending. Not yet in the
+port: other resolutions, IR, and install/packaging.
 
 Hook 2 is `offset_calibration()` and nothing else: the driver's
 CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and

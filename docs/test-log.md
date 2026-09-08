@@ -3389,3 +3389,15 @@ through the verified path, the four abort shapes and the PARK failure;
 31/31 op tests, backend build clean. No hardware run: the change only
 removes writes, the verified frame-1 path is unchanged on the wire
 (the same programs, the same chunks, the same park).
+
+## 2026-09-08 — Offline: `--frame` option for the SANE backend
+
+Frame selection implemented as a GL126-only integer option (1-4) that
+reaches `begin_scan` through the settings; the driver's `scan --frame
+N` is the same POSITION program with the frame's FEEDL and budget, both
+already ported (docs/sane-hook5-frame.md §10). Wire equality for
+POSITION frames 2-4 against the Python replayer (48 transfers each) and
+the budgets (12.6 / 20.3 / 28.0 s) added to the op tests: 32/32, 183
+total. Backend built clean; `scanimage -A` on the idle unit (read-only,
+reg 0x01 = 0x22 before and after) lists `--frame 1..4 (in steps of 1)
+[1]`. Hardware run pending (plan in §10).

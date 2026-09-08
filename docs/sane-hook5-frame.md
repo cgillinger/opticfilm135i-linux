@@ -254,3 +254,38 @@ verified 224-chunk path parks once and is re-armable; a failed chunk, a
 cancel after 12 chunks, a cancel before the first chunk and a failed
 `sane_start` never reach PARK and never retry; a PARK failure is
 terminal. 31/31 op tests, backend build clean.
+
+## 10. Frame selection (2026-09-08, offline)
+
+Decision 5 pinned frame 1 for the first run. The driver's `scan
+--frame N` differs from frame 1 in exactly two things, both already
+ported for hook 5: the absolute FEEDL from home (`feedl_for_frame`,
+6743 / 17503 / 28263 / 39023) and the FEEDL-scaled completion budget
+for W3 (`position_timeout_ms`: 4.8 / 12.6 / 20.3 / 28.0 s). Everything
+else -- the calibration, the POSITION program, the scan pass, PARK -- is
+the same bytes.
+
+The backend exposes it as a `--frame` option (1-4, integer range),
+active for GL126 only (`SANE_CAP_INACTIVE` elsewhere), flowing
+`Genesys_Scanner::frame` → `Genesys_Settings::frame` → `begin_scan`,
+which checks the range itself before writing anything. The scan area
+options do not apply: the frame's geometry is fixed and
+`init_regs_for_scan_session` still refuses any other session. Batch
+(`scanimage --batch` with a changing frame) is not addressed here: each
+`sane_start` calibrates and parks as its own pass, which is the
+driver's single-frame flow, not its batch flow (the residual-dark_b
+substitution of Test 32/33 belongs to a later frame in the same
+session; it is ported in `gl126_ops` but not exercised by this option).
+
+Offline evidence: `test_position_frames_2_to_4_match_python_replayer`
+-- the driver's actual POSITION transfers for `scan(frame=2..4)` over
+the fake device equal the C++ program's with the same FEEDL (48
+transfers each), and the budgets equal `position_timeout_scale()`.
+`scanimage -A` lists `--frame 1..4 (in steps of 1) [1]`.
+
+Hardware run (needs its own go): one load of the reference strip,
+driver `scan --frame 2` as the reference, `scanimage --frame 2`, then
+driver `scan --frame 4` and `scanimage --frame 4` (the longest move,
+28 s budget), images compared as in Test 52 and looked at, exit by
+`eject` from post-PARK. Frame 3 follows the same rule and is not run
+separately unless 2 or 4 deviates.

@@ -311,7 +311,7 @@ std::map<const Genesys_Device*, ScanPass>& scan_pass()
    count (tables.py DEFAULT_LINES: reg 0x25-0x27 of the frame-1 capture).
    Other profiles refuse in begin_scan() until their own run. */
 constexpr unsigned kFrameLinesPlain3600 = 5137;
-constexpr unsigned kFrameNumber = 1;   // docs/sane-hook5-frame.md, decision 5
+constexpr unsigned kFrameMax = 4;      // the magazine's strip; the option's range
 std::map<const Genesys_Device*, CalStage>& cal_stage()
 {
     static std::map<const Genesys_Device*, CalStage> stages;
@@ -851,8 +851,17 @@ void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*se
                             dev->session.params.channels, dev->session.params.depth);
     }
 
-    // Hook 5: POSITION to the frame.
-    unsigned feedl = feedl_for_frame(kFrameNumber);
+    // Hook 5: POSITION to the frame -- the driver's scan(frame=N): the same
+    // program with the frame's absolute FEEDL and the FEEDL-scaled budget
+    // (docs/sane-hook5-frame.md section 10). The option's range is 1-4; the
+    // check here is the backend's own, in case the value arrives otherwise.
+    unsigned frame = dev->settings.frame;
+    if (frame < 1 || frame > kFrameMax) {
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: frame %u is outside 1-%u. Nothing was written.",
+                            frame, kFrameMax);
+    }
+    unsigned feedl = feedl_for_frame(frame);
     std::map<std::string, std::uint8_t> values;
     values["feedl_hi"] = static_cast<std::uint8_t>((feedl >> 16) & 0xff);
     values["feedl_mid"] = static_cast<std::uint8_t>((feedl >> 8) & 0xff);
@@ -860,7 +869,7 @@ void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*se
     RunPolicy position_policy;
     position_policy.masked_timeout_ms = position_timeout_ms(feedl);
     DBG(DBG_info, "gl126: positioning to frame %u (FEEDL %u), completion budget %u ms\n",
-        kFrameNumber, feedl, position_policy.masked_timeout_ms);
+        frame, feedl, position_policy.masked_timeout_ms);
     RunResult position;
     run_phase_program(dev, *profile, "position", position, &values, nullptr, &position_policy);
 

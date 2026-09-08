@@ -85,8 +85,10 @@ step for wider distribution.
 **Status: v0.1.1 released. The standalone CLI driver is complete —
 magazine loading, single-frame and whole-strip batch scanning, all five
 resolutions, IR and dust removal, and eject. The SANE backend builds,
-opens the scanner and scans frame 1 at 3600 dpi in colour; frame
-selection, other resolutions, IR and packaging are still to come.** Scan, calibration, IR and dust removal are stable and
+opens the scanner and scans a frame at 3600 dpi in colour (frame 1
+verified on hardware; the `--frame 1..4` option is implemented, its
+hardware run pending); other resolutions, IR and packaging are still to
+come.** Scan, calibration, IR and dust removal are stable and
 hardware-verified, per frame and across a 4-frame strip in one
 invocation, frame for frame against the vendor application's output of
 the same strip (2026-09-05). Complete does not mean polished: this is
