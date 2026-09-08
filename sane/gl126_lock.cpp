@@ -37,8 +37,15 @@ namespace {
 
 /* One fd for the whole process -- one lock path per host, exactly like
    the driver (of135i/safety.py: a single ProcessLock instance per
-   session, no per-device path). -1 means not held. */
+   session, no per-device path). -1 means not held. flock() is a
+   property of the open file description, so a second fd in the same
+   process would conflict with the first rather than share it -- hence
+   one fd, reference-counted rather than reopened. */
 int g_lock_fd = -1;
+
+/* How many acquire() calls are currently outstanding. 0 means not held
+   (g_lock_fd == -1 iff g_lock_refs == 0). */
+int g_lock_refs = 0;
 
 std::string now_iso8601_utc()
 {
@@ -88,7 +95,10 @@ std::string process_lock_path()
 bool process_lock_acquire(std::string* holder)
 {
     if (g_lock_fd != -1) {
-        // Idempotent: already held by this process.
+        // Already held by this process: hand out another reference
+        // rather than retaking the flock (which would be a harmless
+        // no-op anyway, but refs must track how many releases are owed).
+        ++g_lock_refs;
         return true;
     }
 
@@ -120,6 +130,7 @@ bool process_lock_acquire(std::string* holder)
     }
 
     g_lock_fd = fd;
+    g_lock_refs = 1;
 
     // Best-effort holder line, exactly the driver's format (safety.py
     // ProcessLock.acquire); a read-only fd cannot be written to, and
@@ -136,7 +147,15 @@ bool process_lock_acquire(std::string* holder)
 
 void process_lock_release()
 {
-    if (g_lock_fd == -1) {
+    if (g_lock_refs == 0) {
+        // No-op: nothing to release. Covers both "never acquired" and
+        // "already released" -- callers are not required to track
+        // whether their own acquire succeeded before calling this.
+        return;
+    }
+    --g_lock_refs;
+    if (g_lock_refs > 0) {
+        // Another owner in this process still holds a reference.
         return;
     }
     flock(g_lock_fd, LOCK_UN);
@@ -146,7 +165,12 @@ void process_lock_release()
 
 bool process_lock_held()
 {
-    return g_lock_fd != -1;
+    return g_lock_refs > 0;
+}
+
+int process_lock_refs()
+{
+    return g_lock_refs;
 }
 
 } // namespace gl126

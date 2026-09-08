@@ -45,6 +45,15 @@
    GL126-only: no other genesys ASIC has a conflicting driver, so no
    other command set includes this header or calls into this namespace.
 
+   Reference-counted within a process: process_lock_acquire() and
+   process_lock_release() must be called in matched pairs (an acquire
+   while already held just adds a reference), so that one owner's
+   release -- e.g. a failed sane_open of a second handle -- cannot drop
+   another owner's still-open session. genesys.cpp's sane_open_impl/
+   sane_close_impl ties one reference to the lifetime of one successful
+   open via a small RAII guard; see the "Mutual exclusion with the
+   driver" section of docs/sane-port.md for why.
+
    Deliberately free of genesys headers (no genesys.h, no Genesys_Device)
    so it can be compiled and exercised standalone, without pulling in the
    rest of the backend -- see tests/test_sane_lock.py in the driver repo,
@@ -64,11 +73,19 @@ const char* process_lock_default_path();
 /** Effective lock path: $OF135I_LOCK_FILE if set, else the default. */
 std::string process_lock_path();
 
-/** Acquire the driver's process lock, non-blocking.
+/** Acquire the driver's process lock, non-blocking. Reference-counted:
+    each successful call to process_lock_acquire() -- whether it takes
+    the flock for the first time or finds it already held by this
+    process -- increments an internal reference count, and must be
+    paired with exactly one call to process_lock_release(). This lets
+    two independent owners in the same process (e.g. one open session
+    and a second, still-being-opened one) hold the lock without either
+    one's release dropping the other's.
 
-    Returns true once the lock is held -- either newly acquired, or
-    already held by this process (idempotent: a second call is a no-op
-    that still returns true). Returns false if another process holds it
+    Returns true once the lock is held -- either newly acquired (fresh
+    flock, reference count set to 1), or already held by this process
+    (idempotent: the flock is not retaken, the reference count is
+    incremented). Returns false if another process holds it
     (EWOULDBLOCK/EAGAIN on flock); when `holder` is non-null, it is set
     to the holder line read back from the lock file (may be empty if the
     file could not be read).
@@ -78,11 +95,17 @@ std::string process_lock_path();
     being held) -- nothing is considered acquired in that case. */
 bool process_lock_acquire(std::string* holder);
 
-/** Release the lock. No-op if not currently held by this process. */
+/** Release one reference taken by process_lock_acquire(). No-op if the
+    reference count is already zero. Only the release that brings the
+    count to zero actually unlocks (LOCK_UN) and closes the fd. */
 void process_lock_release();
 
-/** Whether this process currently holds the lock. */
+/** Whether this process currently holds the lock (reference count > 0). */
 bool process_lock_held();
+
+/** Current reference count (0 if not held). Exposed for the probe and
+    the test suite; not needed by ordinary callers. */
+int process_lock_refs();
 
 } // namespace gl126
 } // namespace genesys

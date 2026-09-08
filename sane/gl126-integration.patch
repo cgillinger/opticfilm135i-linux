@@ -72,7 +72,7 @@ index 02cfc43..8813651 100644
  
  
 diff --git a/backend/genesys/genesys.cpp b/backend/genesys/genesys.cpp
-index d7ec422..c3988b7 100644
+index d7ec422..2de60bc 100644
 --- a/backend/genesys/genesys.cpp
 +++ b/backend/genesys/genesys.cpp
 @@ -38,6 +38,11 @@
@@ -87,55 +87,106 @@ index d7ec422..c3988b7 100644
  #include "gl124_registers.h"
  #include "gl841_registers.h"
  #include "gl842_registers.h"
-@@ -5473,15 +5478,37 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5457,6 +5462,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+         throw SaneException("could not find the device to open: %s", devicename);
+     }
+ 
++    // GL126 (OpticFilm 135i) process lock: RAII guard covering the rest of
++    // this function. sane_open_impl acquires the lock and sane_close_impl
++    // releases it, but they are two different functions with an unbounded
++    // amount of throwing code in between (USB open, cmd_set->init,
++    // update_hardware_sensors) -- a try/catch around just the USB-open
++    // block missed all of that, and a catch(...) that released
++    // unconditionally would drop another GL126 session's lock if this
++    // open failed after that session had already added a reference
++    // (external review, 2026-09-08; see docs/sane-port.md, "Mutual
++    // exclusion with the driver"). The guard is armed right after a
++    // successful acquire and disarmed only once this function is about to
++    // return successfully -- from then, the new handle owns that
++    // reference and sane_close_impl releases it. Any throw in between
++    // releases exactly the one reference this open took; a non-GL126 open
++    // (or the testing-mode branch) never arms it, so it never touches the
++    // lock at all.
++    struct Gl126LockGuard {
++        bool armed = false;
++        ~Gl126LockGuard()
++        {
++            if (armed) {
++                gl126::process_lock_release();
++            }
++        }
++    } gl126_lock_guard;
++
+     if (is_testing_mode()) {
+         // during testing we need to initialize dev->model before test scanner interface is created
+         // as that it needs to know what type of chip it needs to mimic.
+@@ -5473,6 +5504,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
          dev->interface->get_usb_device().open(dev->file_name.c_str());
      } else {
--        dev->interface = std::unique_ptr<ScannerInterfaceUsb>{new ScannerInterfaceUsb{dev}};
 +        // GL126 (OpticFilm 135i): take the driver's process lock before any
 +        // USB transfer (docs/sane-port.md, "Mutual exclusion with the
 +        // driver"). Claiming the USB interface alone does not exclude the
 +        // driver's read-only sessions (status, doctor), which hold this
 +        // same lock without claiming the interface.
 +        std::string gl126_lock_holder;
-+        if (dev->model->asic_type == AsicType::GL126 &&
-+            !gl126::process_lock_acquire(&gl126_lock_holder)) {
-+            throw SaneException(SANE_STATUS_DEVICE_BUSY,
-+                                "OpticFilm 135i is held by another process (%s); "
-+                                "nothing was sent to the scanner",
-+                                gl126_lock_holder.empty() ? "unknown" : gl126_lock_holder.c_str());
++        if (dev->model->asic_type == AsicType::GL126) {
++            if (!gl126::process_lock_acquire(&gl126_lock_holder)) {
++                throw SaneException(SANE_STATUS_DEVICE_BUSY,
++                                    "OpticFilm 135i is held by another process (%s); "
++                                    "nothing was sent to the scanner",
++                                    gl126_lock_holder.empty() ? "unknown" : gl126_lock_holder.c_str());
++            }
++            gl126_lock_guard.armed = true;
 +        }
- 
--        dbg.vstatus("open device '%s'", dev->file_name.c_str());
--        dev->interface->get_usb_device().open(dev->file_name.c_str());
--        dbg.clear();
-+        try {
-+            dev->interface = std::unique_ptr<ScannerInterfaceUsb>{new ScannerInterfaceUsb{dev}};
- 
--        auto bcd_device = dev->interface->get_usb_device().get_bcd_device();
-+            dbg.vstatus("open device '%s'", dev->file_name.c_str());
-+            dev->interface->get_usb_device().open(dev->file_name.c_str());
-+            dbg.clear();
 +
-+            auto bcd_device = dev->interface->get_usb_device().get_bcd_device();
+         dev->interface = std::unique_ptr<ScannerInterfaceUsb>{new ScannerInterfaceUsb{dev}};
  
--        dev->model = &get_matching_usb_dev(dev->vendorId, dev->productId, bcd_device).model();
-+            dev->model = &get_matching_usb_dev(dev->vendorId, dev->productId, bcd_device).model();
-+        } catch (...) {
-+            // A failed open must not leave the lock held inside a long-lived
-+            // process (saned, xsane) that keeps calling sane_open. No-op if
-+            // the lock was never taken (non-GL126, or the throw above).
-+            gl126::process_lock_release();
-+            throw;
+         dbg.vstatus("open device '%s'", dev->file_name.c_str());
+@@ -5523,6 +5570,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+ 
+     // some hardware capabilities are detected through sensors
+     dev->cmd_set->update_hardware_sensors (s);
++
++    // Reaching here means sane_open_impl is returning successfully: the
++    // new handle now owns the GL126 lock reference (if any was taken),
++    // and sane_close_impl releases it. Disarm so the guard's destructor
++    // -- run on this normal return, same as on a throw -- does nothing.
++    gl126_lock_guard.armed = false;
+ }
+ 
+ SANE_GENESYS_API_LINKAGE
+@@ -5556,6 +5609,20 @@ sane_close_impl(SANE_Handle handle)
+ 
+     auto* dev = it->dev;
+ 
++    // GL126: release the driver's process lock reference this handle took in
++    // sane_open_impl, at scope exit so that a throw anywhere below (eject,
++    // park wait, close) cannot leave it held inside a long-lived process.
++    // Runs after the USB close on the normal path.
++    struct Gl126LockRelease {
++        bool armed;
++        ~Gl126LockRelease()
++        {
++            if (armed) {
++                gl126::process_lock_release();
++            }
 +        }
-     }
- 
-     dbg.vlog(DBG_info, "Opened device %s", dev->model->name);
-@@ -5579,16 +5606,35 @@ sane_close_impl(SANE_Handle handle)
++    } gl126_lock_release{dev->model->asic_type == AsicType::GL126};
++
+     // eject document for sheetfed scanners
+     if (dev->model->is_sheetfed) {
+         catch_all_exceptions(__func__, [&](){ dev->cmd_set->eject_document(dev); });
+@@ -5579,12 +5646,26 @@ sane_close_impl(SANE_Handle handle)
      dev->clear();
  
      // LAMP OFF : same register across all the ASICs */
 -    dev->interface->write_register(0x03, 0x00);
+-
+-    catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().clear_halt(); });
+-
+-    // we need this to avoid these ASIC getting stuck in bulk writes
+-    catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().reset(); });
 +    // Not for GL126: its reference driver writes nothing at session close,
 +    // and the vendor's 0x03 = 0x00 only ever appears inside its PARK and
 +    // cold-init sequences. A lone lamp-off on a loaded magazine left the
@@ -143,8 +194,7 @@ index d7ec422..c3988b7 100644
 +    if (dev->model->asic_type != AsicType::GL126) {
 +        dev->interface->write_register(0x03, 0x00);
 +    }
- 
--    catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().clear_halt(); });
++
 +    // The GL126 unit (OpticFilm 135i) has never been driven with a port
 +    // reset or an endpoint clear-halt: its reference driver releases the
 +    // interface and nothing else, and the unit is known to leave the bus
@@ -153,24 +203,13 @@ index d7ec422..c3988b7 100644
 +    // until it is made the close path does what the reference driver does.
 +    if (dev->model->asic_type != AsicType::GL126) {
 +        catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().clear_halt(); });
- 
--    // we need this to avoid these ASIC getting stuck in bulk writes
--    catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().reset(); });
++
 +        // we need this to avoid these ASIC getting stuck in bulk writes
 +        catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().reset(); });
 +    }
  
      // not freeing dev because it's in the dev list
      catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().close(); });
- 
-+    // Release the driver's process lock taken in sane_open_impl (GL126 only).
-+    if (dev->model->asic_type == AsicType::GL126) {
-+        gl126::process_lock_release();
-+    }
-+
-     s_scanners->erase(it);
- }
- 
 diff --git a/backend/genesys/low.cpp b/backend/genesys/low.cpp
 index 3ffc24a..eda72e8 100644
 --- a/backend/genesys/low.cpp

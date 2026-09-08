@@ -78,7 +78,7 @@ def test_driver_holding_lock_refuses_sane_open():
     probe = _build_probe()
     if probe is None:
         print("test_driver_holding_lock_refuses_sane_open SKIPPED (no g++)")
-        return
+        return "skipped"
 
     with tempfile.TemporaryDirectory() as td:
         path = str(Path(td) / "of135i.lock")
@@ -105,7 +105,7 @@ def test_sane_holding_lock_refuses_driver():
     probe = _build_probe()
     if probe is None:
         print("test_sane_holding_lock_refuses_driver SKIPPED (no g++)")
-        return
+        return "skipped"
 
     with tempfile.TemporaryDirectory() as td:
         path = str(Path(td) / "of135i.lock")
@@ -142,7 +142,7 @@ def test_lock_file_format_matches_driver():
     probe = _build_probe()
     if probe is None:
         print("test_lock_file_format_matches_driver SKIPPED (no g++)")
-        return
+        return "skipped"
 
     with tempfile.TemporaryDirectory() as td:
         path = str(Path(td) / "of135i.lock")
@@ -161,12 +161,12 @@ def test_read_only_lock_file_still_locks():
     if os.geteuid() == 0:
         print("test_read_only_lock_file_still_locks SKIPPED (running as root, "
               "chmod 0444 does not restrict root)")
-        return
+        return "skipped"
 
     probe = _build_probe()
     if probe is None:
         print("test_read_only_lock_file_still_locks SKIPPED (no g++)")
-        return
+        return "skipped"
 
     with tempfile.TemporaryDirectory() as td:
         path = str(Path(td) / "of135i.lock")
@@ -194,16 +194,97 @@ def test_read_only_lock_file_still_locks():
     print("test_read_only_lock_file_still_locks OK")
 
 
+def test_failed_second_open_keeps_first_sessions_lock():
+    """A failed second GL126 open must not release the first session's
+    lock (external review, 2026-09-08): probe nested models a process
+    that already holds the lock (A) taking a second reference (B, a
+    second open attempt) and releasing only B's reference when B fails.
+    The lock must still refuse a third party (the driver) until A itself
+    releases."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_failed_second_open_keeps_first_sessions_lock SKIPPED (no g++)")
+        return "skipped"
+
+    with tempfile.TemporaryDirectory() as td:
+        path = str(Path(td) / "of135i.lock")
+
+        holder = subprocess.Popen([probe, "nested"], stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, text=True,
+                                   env=_probe_env(path))
+        try:
+            line_a = holder.stdout.readline()
+            assert line_a.strip() == "A_HELD refs=1", line_a
+
+            line_b_acquired = holder.stdout.readline()
+            assert line_b_acquired.strip() == "B_ACQUIRED refs=2", line_b_acquired
+
+            line_b_released = holder.stdout.readline()
+            assert line_b_released.strip() == "B_RELEASED refs=1 held=1", line_b_released
+
+            # B's failure released only its own reference -- A's session
+            # must still exclude the driver.
+            error = None
+            try:
+                ProcessLock(path).acquire()
+            except ScannerBusyError as exc:
+                error = exc
+            assert error is not None, (
+                "driver acquired the lock while probe session A still held a reference")
+        finally:
+            holder.stdin.close()
+            rest = holder.stdout.read()
+            holder.wait(timeout=5)
+            assert rest.strip() == "A_RELEASED refs=0 held=0", rest
+
+        # A released for good: the driver can now take it.
+        lock = ProcessLock(path)
+        lock.acquire()
+        assert lock.held
+        lock.release()
+    print("test_failed_second_open_keeps_first_sessions_lock OK")
+
+
+def test_release_without_acquire_is_noop():
+    probe = _build_probe()
+    if probe is None:
+        print("test_release_without_acquire_is_noop SKIPPED (no g++)")
+        return "skipped"
+
+    with tempfile.TemporaryDirectory() as td:
+        path = str(Path(td) / "of135i.lock")
+        r = subprocess.run([probe, "release-unheld"], capture_output=True, text=True,
+                            env=_probe_env(path))
+        assert r.returncode == 0, r
+        assert r.stdout.strip() == "OK", r.stdout
+    print("test_release_without_acquire_is_noop OK")
+
+
 def main() -> int:
     tests = [
         test_driver_holding_lock_refuses_sane_open,
         test_sane_holding_lock_refuses_driver,
         test_lock_file_format_matches_driver,
         test_read_only_lock_file_still_locks,
+        test_failed_second_open_keeps_first_sessions_lock,
+        test_release_without_acquire_is_noop,
     ]
+    passed = 0
+    skipped = 0
     for t in tests:
-        t()
-    print(f"\n{len(tests)} tests passed.")
+        result = t()
+        # Each test prints its own "SKIPPED (...)" line and returns the
+        # string "skipped" in that case; a test that ran to completion
+        # prints an "OK" line and returns None (the implicit return of a
+        # plain `print(...)` as the last statement).
+        if result == "skipped":
+            skipped += 1
+        else:
+            passed += 1
+    if skipped:
+        print(f"\n{passed} tests passed, {skipped} skipped.")
+    else:
+        print(f"\n{passed} tests passed.")
     return 0
 
 

@@ -322,16 +322,35 @@ buffers. From `tables_dpi*.py`:
    byte-for-byte -- same path (`/tmp/of135i-07b3-1436.lock`, or
    `OF135I_LOCK_FILE`), same holder-line format. The GL126 branch of
    `sane_open_impl` in `genesys.cpp` takes the lock non-blocking before
-   the USB open, releases it at once if that open fails, and otherwise in
-   `sane_close_impl`; `EWOULDBLOCK` → `SANE_STATUS_DEVICE_BUSY`, zero
+   the USB open; `EWOULDBLOCK` → `SANE_STATUS_DEVICE_BUSY`, zero
    transfers. Offline tests in both directions:
    `tests/test_sane_lock.py` (driver holding the lock refuses the
    backend, backend holding it refuses the driver, holder-line format,
-   read-only-lock-file fallback) -- 4/4 passing, standalone build of
-   `gl126_lock.cpp` with a tiny probe, zero new compiler warnings on
-   the full `libsane-genesys.la` build. Still pending: the one hardware
-   check (`scanimage -A` returns busy while `of135i status` holds the
-   lock, zero transfers).
+   read-only-lock-file fallback) -- standalone build of `gl126_lock.cpp`
+   with a tiny probe, zero new compiler warnings on the full
+   `libsane-genesys.la` build. Still pending: the one hardware check
+   (`scanimage -A` returns busy while `of135i status` holds the lock,
+   zero transfers).
+
+   *Reference-counted ownership -- fixed 2026-09-08, external review:*
+   the first version released the lock from an unconditional
+   `catch (...)`, so a second, failing GL126 open in the same
+   long-lived process (saned, xsane) could drop an already-open first
+   session's lock. `gl126_lock.{h,cpp}` now counts references
+   (`process_lock_acquire`/`process_lock_release` are paired calls, an
+   acquire while already held just adds a reference), and
+   `sane_open_impl` ties ownership of one reference to one successful
+   open via a small RAII guard that is armed right after acquiring and
+   disarmed only once the open is about to return successfully --
+   `sane_close_impl` releases from there, also through a scope guard,
+   so a throw before its USB close (sheetfed eject, park wait) cannot
+   leave the reference held. A throw anywhere in between
+   (USB open, `cmd_set->init`, `update_hardware_sensors`) now releases
+   exactly the reference this open took, never another session's; a
+   non-GL126 open never touches the lock at all. Covered by
+   `test_failed_second_open_keeps_first_sessions_lock` and
+   `test_release_without_acquire_is_noop` in `test_sane_lock.py`
+   (6/6 passing).
 
    Documentation and code are kept in step: a hook that writes is
    enabled only together with the note here that says what guards it.
