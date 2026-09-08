@@ -1,13 +1,14 @@
 diff --git a/backend/Makefile.am b/backend/Makefile.am
-index 64c6cb1..b4543ea 100644
+index 64c6cb1..5ea4358 100644
 --- a/backend/Makefile.am
 +++ b/backend/Makefile.am
-@@ -765,6 +765,8 @@ libgenesys_la_SOURCES = genesys/genesys.cpp genesys/genesys.h \
+@@ -765,6 +765,9 @@ libgenesys_la_SOURCES = genesys/genesys.cpp genesys/genesys.h \
      genesys/fwd.h \
      genesys/gl646.cpp genesys/gl646.h genesys/gl646_registers.h \
      genesys/gl124.cpp genesys/gl124.h genesys/gl124_registers.h \
 +    genesys/gl126.cpp genesys/gl126.h genesys/gl126_registers.h \
 +    genesys/gl126_tables.cpp genesys/gl126_tables.h \
++    genesys/gl126_lock.cpp genesys/gl126_lock.h \
      genesys/gl841.cpp genesys/gl841.h genesys/gl841_registers.h \
      genesys/gl842.cpp genesys/gl842.h genesys/gl842_registers.h \
      genesys/gl843.cpp genesys/gl843.h genesys/gl843_registers.h \
@@ -71,19 +72,70 @@ index 02cfc43..8813651 100644
  
  
 diff --git a/backend/genesys/genesys.cpp b/backend/genesys/genesys.cpp
-index d7ec422..887c373 100644
+index d7ec422..c3988b7 100644
 --- a/backend/genesys/genesys.cpp
 +++ b/backend/genesys/genesys.cpp
-@@ -5579,12 +5579,26 @@ sane_close_impl(SANE_Handle handle)
+@@ -38,6 +38,11 @@
+ #define DEBUG_NOT_STATIC
+ 
+ #include "genesys.h"
++// GL126 (OpticFilm 135i) process lock: mutual exclusion with the of135i
++// driver, taken/released around sane_open/sane_close below. The rest of
++// the GL126 command set is reached through low.cpp's create_cmd_set(),
++// which is the only other file that needs gl126.h.
++#include "gl126_lock.h"
+ #include "gl124_registers.h"
+ #include "gl841_registers.h"
+ #include "gl842_registers.h"
+@@ -5473,15 +5478,37 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+ 
+         dev->interface->get_usb_device().open(dev->file_name.c_str());
+     } else {
+-        dev->interface = std::unique_ptr<ScannerInterfaceUsb>{new ScannerInterfaceUsb{dev}};
++        // GL126 (OpticFilm 135i): take the driver's process lock before any
++        // USB transfer (docs/sane-port.md, "Mutual exclusion with the
++        // driver"). Claiming the USB interface alone does not exclude the
++        // driver's read-only sessions (status, doctor), which hold this
++        // same lock without claiming the interface.
++        std::string gl126_lock_holder;
++        if (dev->model->asic_type == AsicType::GL126 &&
++            !gl126::process_lock_acquire(&gl126_lock_holder)) {
++            throw SaneException(SANE_STATUS_DEVICE_BUSY,
++                                "OpticFilm 135i is held by another process (%s); "
++                                "nothing was sent to the scanner",
++                                gl126_lock_holder.empty() ? "unknown" : gl126_lock_holder.c_str());
++        }
+ 
+-        dbg.vstatus("open device '%s'", dev->file_name.c_str());
+-        dev->interface->get_usb_device().open(dev->file_name.c_str());
+-        dbg.clear();
++        try {
++            dev->interface = std::unique_ptr<ScannerInterfaceUsb>{new ScannerInterfaceUsb{dev}};
+ 
+-        auto bcd_device = dev->interface->get_usb_device().get_bcd_device();
++            dbg.vstatus("open device '%s'", dev->file_name.c_str());
++            dev->interface->get_usb_device().open(dev->file_name.c_str());
++            dbg.clear();
++
++            auto bcd_device = dev->interface->get_usb_device().get_bcd_device();
+ 
+-        dev->model = &get_matching_usb_dev(dev->vendorId, dev->productId, bcd_device).model();
++            dev->model = &get_matching_usb_dev(dev->vendorId, dev->productId, bcd_device).model();
++        } catch (...) {
++            // A failed open must not leave the lock held inside a long-lived
++            // process (saned, xsane) that keeps calling sane_open. No-op if
++            // the lock was never taken (non-GL126, or the throw above).
++            gl126::process_lock_release();
++            throw;
++        }
+     }
+ 
+     dbg.vlog(DBG_info, "Opened device %s", dev->model->name);
+@@ -5579,16 +5606,35 @@ sane_close_impl(SANE_Handle handle)
      dev->clear();
  
      // LAMP OFF : same register across all the ASICs */
 -    dev->interface->write_register(0x03, 0x00);
--
--    catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().clear_halt(); });
--
--    // we need this to avoid these ASIC getting stuck in bulk writes
--    catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().reset(); });
 +    // Not for GL126: its reference driver writes nothing at session close,
 +    // and the vendor's 0x03 = 0x00 only ever appears inside its PARK and
 +    // cold-init sequences. A lone lamp-off on a loaded magazine left the
@@ -91,7 +143,8 @@ index d7ec422..887c373 100644
 +    if (dev->model->asic_type != AsicType::GL126) {
 +        dev->interface->write_register(0x03, 0x00);
 +    }
-+
+ 
+-    catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().clear_halt(); });
 +    // The GL126 unit (OpticFilm 135i) has never been driven with a port
 +    // reset or an endpoint clear-halt: its reference driver releases the
 +    // interface and nothing else, and the unit is known to leave the bus
@@ -100,13 +153,24 @@ index d7ec422..887c373 100644
 +    // until it is made the close path does what the reference driver does.
 +    if (dev->model->asic_type != AsicType::GL126) {
 +        catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().clear_halt(); });
-+
+ 
+-    // we need this to avoid these ASIC getting stuck in bulk writes
+-    catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().reset(); });
 +        // we need this to avoid these ASIC getting stuck in bulk writes
 +        catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().reset(); });
 +    }
  
      // not freeing dev because it's in the dev list
      catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().close(); });
+ 
++    // Release the driver's process lock taken in sane_open_impl (GL126 only).
++    if (dev->model->asic_type == AsicType::GL126) {
++        gl126::process_lock_release();
++    }
++
+     s_scanners->erase(it);
+ }
+ 
 diff --git a/backend/genesys/low.cpp b/backend/genesys/low.cpp
 index 3ffc24a..eda72e8 100644
 --- a/backend/genesys/low.cpp

@@ -135,13 +135,16 @@ Precondition: reg 0x01 = 0x22 or 0x00. Trigger: `scanimage -d genesys:… -A`.
 
 | Step | Wire | Same as the driver? |
 |---|---|---|
+| process lock | `gl126::process_lock_acquire()` (`sane/gl126_lock.{h,cpp}`), no wire traffic; `EWOULDBLOCK` refuses with `SANE_STATUS_DEVICE_BUSY` before `sanei_usb_open` | yes (same lock file/path as `ProcessLock`, see "Mutual exclusion with the driver" below) |
 | `sanei_usb_open` | `libusb_open`, read the current configuration, claim interface 0 -- no SET_CONFIGURATION when the kernel has already configured the unit (it has: one configuration, value 1), no kernel-driver detach | driver: `set_configuration` after the check (step 6 of `UsbIo.open`) -- see decision 6 |
 | `check_start_state` | read reg 0x01 (`0xc0/0x04 0x8e`) | yes (`safety.py`) |
 | `init` / `asic_boot` | nothing | yes (`Scanner.open()` writes nothing) |
-| `sane_close` | release interface; no register write, no clear-halt, no reset | yes |
+| `sane_close` | release interface; no register write, no clear-halt, no reset; then `gl126::process_lock_release()` | yes |
 
 Measured 2026-09-07 (Test 46): exactly one control transfer, the 0x8e
 read of reg 0x01, zero writes; a driver eject afterwards was normal.
+The process-lock row was added 2026-09-08, offline-verified only (see
+below) -- Test 46 predates it and did not exercise the lock.
 
 ### HISTORICAL — hook 1 as first implemented (Test 43), superseded by Test 46
 
@@ -304,8 +307,8 @@ buffers. From `tables_dpi*.py`:
    only the engine-running states are then unprotected by that one
    request, and no write follows a failed check either way.
 
-   *Mutual exclusion with the driver -- decided 2026-09-07, to be
-   implemented before hook 2 is enabled:* today it rests on the interface claim alone. That
+   *Mutual exclusion with the driver -- decided 2026-09-07, implemented
+   2026-09-08:* before this it rested on the interface claim alone. That
    fails closed in both directions (the driver's `set_configuration`
    gets `EBUSY` after its check and refuses with zero writes, Test 45;
    the backend's `claim_interface` gets `EBUSY` while the driver holds
@@ -313,15 +316,22 @@ buffers. From `tables_dpi*.py`:
    then reports a half-configured session and asks for a power cycle
    that is not needed, and the driver's read-only sessions (`status`,
    `doctor`) hold the lock without claiming the interface, so the claim
-   does not see them. Decision: the GL126 branch of `sane_open` takes
-   the driver's `flock` (`/tmp/of135i-07b3-1436.lock`, or
-   `OF135I_LOCK_FILE`) non-blocking before `sanei_usb_open` and releases
-   it in `sane_close`; `EWOULDBLOCK` → `SANE_STATUS_DEVICE_BUSY`, zero
-   transfers. About 30 lines in `gl126.cpp` plus two lines in the
-   integration patch, GL126-only; noted for the maintainer as a local
-   convention. Implemented first thing next session, with an offline
-   test in each direction and one hardware check (`scanimage -A` returns
-   busy while `of135i status` holds the lock, zero transfers).
+   does not see them. Implemented: a new standalone pair,
+   `sane/gl126_lock.{h,cpp}` (no genesys headers, POSIX `flock` only, so
+   it compiles and tests on its own), mirrors the driver's `ProcessLock`
+   byte-for-byte -- same path (`/tmp/of135i-07b3-1436.lock`, or
+   `OF135I_LOCK_FILE`), same holder-line format. The GL126 branch of
+   `sane_open_impl` in `genesys.cpp` takes the lock non-blocking before
+   the USB open, releases it at once if that open fails, and otherwise in
+   `sane_close_impl`; `EWOULDBLOCK` → `SANE_STATUS_DEVICE_BUSY`, zero
+   transfers. Offline tests in both directions:
+   `tests/test_sane_lock.py` (driver holding the lock refuses the
+   backend, backend holding it refuses the driver, holder-line format,
+   read-only-lock-file fallback) -- 4/4 passing, standalone build of
+   `gl126_lock.cpp` with a tiny probe, zero new compiler warnings on
+   the full `libsane-genesys.la` build. Still pending: the one hardware
+   check (`scanimage -A` returns busy while `of135i status` holds the
+   lock, zero transfers).
 
    Documentation and code are kept in step: a hook that writes is
    enabled only together with the note here that says what guards it.
