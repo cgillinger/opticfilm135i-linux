@@ -3562,11 +3562,10 @@ Wire and waits, all as Test 52 attempt 3 and Test 53:
 | after `sane_close` | 0x01 = 0x22, 0x101 = 0xf8 | same |
 
 The scan pass itself took 65 s wall clock (20:15:05 → 20:16:10) against
-≈ 46 s in Test 52. Not investigated; the likely cost is the core's
-shift node, which walks every pixel through `get_raw_channel_from_row`
-/ `set_raw_channel_to_row` per row (58 M samples). Host CPU, not the
-wire: every chunk was full and the pass completed. Noted for the speed
-work later.
+≈ 46 s in Test 52. *This entry first blamed the core's shift node; that
+was a guess and it is wrong — see the next entry (the debug hexdump of
+the bulk data, written inside `sanei_usb_read_bulk`, is the cost; the
+node's share is under 2 s). Left here as written, corrected below.*
 
 Image check (uint16, banded, under a 3 GB scope; report and images in
 `~/Bilder/opticfilm-granskning/hw-f1-*`):
@@ -3602,3 +3601,35 @@ frame, completeness, sharpness and the absence of fringing.
 
 Logs: `plustek-135i-analys/stagger-20260908/` (frame1-sane-fixed.pnm,
 .out, .err.zst).
+
+## 2026-09-08 — Offline: the scan-pass time is the USB debug hexdump, not the pipeline (correction to Test 54's guess)
+
+External review of the Test 54 entry rightly called the "shift node"
+explanation a hypothesis. Measured from the four backend logs (every
+`sanei_usb_read_bulk` "trying to read" / "wanted … got" pair of the
+image chunks):
+
+| run | `SANE_DEBUG_SANEI_USB` | log size | scan pass | inside the 224 bulk reads | between reads (host: pipeline, `sane_read`) |
+|---|---|---|---|---|---|
+| Test 52 attempt 3 (frame 1, no colour-line node) | 255 | 721 MiB | 45.8 s | 44.0 s | 1.8 s |
+| Test 53 frame 2 | low | 1.2 MiB | 18 s | — | — |
+| Test 53 frame 4 | low | 1.5 MiB | 18 s | — | — |
+| Test 54 (frame 1, colour-line node on) | 255 | 721 MiB | 65.0 s | 63.1 s | 2.0 s |
+| driver `scan --frame 1` (ref7, same evening) | — | — | 20.6 s (`phase_seconds/scan`) | | |
+
+So: the host's work between reads — where the `ComponentShiftLines`
+node runs — is 1.8 s without the node and 2.0 s with it. The node costs
+0.2 s. The time is inside the bulk reads, and the runs with a 721 MiB
+log are the slow ones: at level 255 `sanei_usb` hex-dumps every bulk
+payload (115 MB of image → ~700 MB of text) to stderr *before* the read
+call returns, the scanner fills its buffer meanwhile and the motor
+waits. With the low debug level (Test 53) the same wire scans in 18 s,
+the driver's 20 s. The 46 s / 65 s difference between the two level-255
+runs is the disk (the second log went to the analysis directory on the
+same evening a 1.6 GB scratchpad was being cleared; not pursued).
+
+Consequences: (1) the scan-pass duration in Tests 52 and 54 is a
+logging artefact, not a property of the backend; (2) the full transfer
+log stays the right tool for wire-equality checks but must not be used
+when timing anything; (3) no speed work is implied. Test 54's entry is
+annotated in place.
