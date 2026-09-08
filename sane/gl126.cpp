@@ -311,6 +311,14 @@ std::map<const Genesys_Device*, ScanPass>& scan_pass()
    count (tables.py DEFAULT_LINES: reg 0x25-0x27 of the frame-1 capture).
    Other profiles refuse in begin_scan() until their own run. */
 constexpr unsigned kFrameLinesPlain3600 = 5137;
+/* The sensor reads R, G and B on separate CCD lines: at 3600 dpi the raw
+   stream carries R 24 lines after B and G halfway (vendor ini LineSpace,
+   docs/protocol-notes.md pass 18; the driver's image.align_channels).
+   The model declares it as ld_shift_r/g/b = 24/12/0 at the motor's base
+   3600 dpi and the core's ComponentShiftLines node re-aligns the channels
+   on the host, dropping this many lines from the delivered image. The
+   wire line count is unchanged (Test 53 root cause, docs/test-log.md). */
+constexpr unsigned kColourShiftLinesPlain3600 = 24;
 constexpr unsigned kFrameMax = 4;      // the magazine's strip; the option's range
 std::map<const Genesys_Device*, CalStage>& cal_stage()
 {
@@ -535,17 +543,21 @@ ScanSession CommandSetGl126::calculate_scan_session(const Genesys_Device* dev,
 
     /* The frame is scanned as captured, whatever the frontend's window:
        the vendor's scan pass delivers the full 3762 x 5137 px, RGB16LE,
-       pixel-interleaved, with no colour line shift or stagger to undo on
-       the host (the driver writes the raw stream as the image;
-       docs/sane-hook5-frame.md section 4). Pinning the geometry here
-       also makes sane_get_parameters report it. */
+       pixel-interleaved (docs/sane-hook5-frame.md section 4). The colour
+       line shift is undone on the host by the core's pipeline, exactly as
+       the driver's image.align_channels does: `params.lines` is what the
+       frontend receives (5137 - 24 = 5113), and the core's
+       `output_line_count` -- lines + max_color_shift_lines -- is the wire's
+       5137, the count begin_scan() writes and the scan pass expects.
+       Pinning the geometry here also makes sane_get_parameters report
+       the delivered size. */
     bool ir = settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
     const Profile* profile = find_profile(settings.xres, ir);
     bool pinned = profile != nullptr && std::string(profile->name) == "plain3600";
     if (pinned) {
         session.params.pixels = profile->image_width;
         session.params.requested_pixels = profile->image_width;
-        session.params.lines = kFrameLinesPlain3600;
+        session.params.lines = kFrameLinesPlain3600 - kColourShiftLinesPlain3600;
         session.params.startx = 0;
         session.params.starty = 0;
     }
@@ -556,10 +568,27 @@ ScanSession CommandSetGl126::calculate_scan_session(const Genesys_Device* dev,
     session.params.contrast_adjustment = dev->settings.contrast;
     session.params.brightness_adjustment = dev->settings.brightness;
     session.params.exposure_lperiod = dev->settings.exposure_lperiod;
-    session.params.flags = ScanFlag::IGNORE_COLOR_OFFSET | ScanFlag::IGNORE_STAGGER_OFFSET;
+    /* No pixel stagger (the sensor is a single line per colour); the colour
+       line shift is NOT ignored: compute_session() takes it from the
+       model's ld_shift and build_image_pipeline() inserts the
+       ComponentShiftLines node. */
+    session.params.flags = ScanFlag::IGNORE_STAGGER_OFFSET;
 
     compute_session(dev, session, sensor);
     if (pinned) {
+        if (session.max_color_shift_lines != kColourShiftLinesPlain3600 ||
+            session.output_line_count != kFrameLinesPlain3600)
+        {
+            /* The model's ld_shift, the motor's base_ydpi and this pin must
+               agree, or the wire count would differ from the captured one.
+               Pure computation: nothing has been written. */
+            throw SaneException(SANE_STATUS_INVAL,
+                                "gl126: colour shift %u lines and %u raw lines do not match the "
+                                "captured frame (%u + %u). Nothing was written.",
+                                session.max_color_shift_lines, session.output_line_count,
+                                kFrameLinesPlain3600 - kColourShiftLinesPlain3600,
+                                kColourShiftLinesPlain3600);
+        }
         // one image request = one captured chunk (23 lines); the last one is
         // the remainder (8 lines), exactly as the vendor streams the frame
         session.buffer_size_read = profile->chunk_len;
@@ -581,27 +610,33 @@ void CommandSetGl126::init_regs_for_scan_session(Genesys_Device* dev,
     bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
     const Profile* profile = find_profile(dev->settings.xres, ir);
     if (profile == nullptr || session.params.pixels != profile->image_width ||
-        session.params.lines != kFrameLinesPlain3600 || session.params.channels != 3 ||
-        session.params.depth != 16)
+        session.output_line_count != kFrameLinesPlain3600 ||
+        session.params.lines != kFrameLinesPlain3600 - kColourShiftLinesPlain3600 ||
+        session.params.channels != 3 || session.params.depth != 16)
     {
         /* Any session but the captured frame comes from a core path that is
            not the vendor's (a scanner_move, a core calibration pass): refuse
            before the bookkeeping so nothing downstream acts on it. */
         throw SaneException(SANE_STATUS_INVAL,
-                            "gl126: session %u x %u px, %u ch, %u bit is not the captured "
-                            "frame; the backend scans only that. Nothing was written.",
+                            "gl126: session %u x %u px (%u raw lines), %u ch, %u bit is not the "
+                            "captured frame; the backend scans only that. Nothing was written.",
                             session.params.pixels, session.params.lines,
-                            session.params.channels, session.params.depth);
+                            session.output_line_count, session.params.channels,
+                            session.params.depth);
     }
     dev->session = session;
     setup_image_pipeline(*dev, session);
     dev->read_active = true;
     dev->total_bytes_read = 0;
+    /* What the frontend receives: the raw lines less the colour shift the
+       pipeline consumes (the node needs raw line k + 24 for output line k,
+       so the last raw chunk is still read in full). */
     dev->total_bytes_to_read = static_cast<std::size_t>(session.output_line_bytes_requested) *
                                static_cast<std::size_t>(session.params.lines);
-    DBG(DBG_info, "gl126: scan session %u x %u px, %u B per chunk, %zu B to the frontend\n",
-        session.params.pixels, session.params.lines, static_cast<unsigned>(session.buffer_size_read),
-        dev->total_bytes_to_read);
+    DBG(DBG_info, "gl126: scan session %u x %u px delivered from %u raw lines, %u B per chunk, "
+        "%zu B to the frontend\n",
+        session.params.pixels, session.params.lines, session.output_line_count,
+        static_cast<unsigned>(session.buffer_size_read), dev->total_bytes_to_read);
 }
 
 void CommandSetGl126::init_regs_for_warmup(Genesys_Device* /*dev*/,
@@ -873,8 +908,9 @@ void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*se
     RunResult position;
     run_phase_program(dev, *profile, "position", position, &values, nullptr, &position_policy);
 
-    // Hook 6a: the scan pass's setup, with the frame's line count.
-    unsigned lines = dev->session.params.lines;
+    // Hook 6a: the scan pass's setup, with the frame's RAW line count (the
+    // wire's 5137; the frontend receives params.lines = 5137 - 24).
+    unsigned lines = dev->session.output_line_count;
     values.clear();
     values["lines_hi"] = static_cast<std::uint8_t>((lines >> 8) & 0xff);
     values["lines_lo"] = static_cast<std::uint8_t>(lines & 0xff);
@@ -888,7 +924,7 @@ void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*se
                             scan_pass_state_name(pass.state()));
     }
     dev->parking = false;
-    DBG(DBG_info, "gl126: scan pass started, %u lines, %zu raw bytes expected; the image "
+    DBG(DBG_info, "gl126: scan pass started, %u raw lines, %zu raw bytes expected; the image "
         "follows chunk by chunk\n", lines, expected);
 }
 

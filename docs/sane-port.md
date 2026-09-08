@@ -234,7 +234,7 @@ buffers. From `tables_dpi*.py`:
 | 600 | 876 | 98 | 1764 |
 | 1200 | 1752 | 48 | 3552 |
 | 2400 | 5256 | 16 | 7088 |
-| 3600 (plain) | 3762 (windowed) | — | 5137 |
+| 3600 (plain) | 3762 (windowed) | 23 (519156 B) | 5137 raw → 5113 delivered (colour shift 24) |
 | 3600 (dual) | 5184 | 16 | 10622 |
 | 7200 | 10512 | 8 | 21248 |
 
@@ -248,8 +248,15 @@ buffers. From `tables_dpi*.py`:
   First target is TRANSPARENCY only from the plain 3600 table and the
   dual tables with IR lines dropped; TRANSPARENCY_INFRARED (IR as gray)
   comes in stage 4.
-- Colour-line stagger in dual-light mode (pass 18, `image.align_channels`)
-  maps onto `ScanSession.color_shift_lines_{r,g,b}`.
+- Colour-line shift (pass 18, `image.align_channels`) maps onto
+  `ScanSession.color_shift_lines_{r,g,b}` from the model's
+  `ld_shift_r/g/b = 24/12/0` (lines at the motor's base 3600 dpi); the
+  core's `ImagePipelineNodeComponentShiftLines` does on the host exactly
+  what `align_channels` does (output line k = R[k+24], G[k+12], B[k],
+  24 lines fewer, no wrap). The session's `params.lines` is the
+  delivered count (5137 − 24 = 5113 at 3600 dpi) and the core's
+  `output_line_count` the wire's (5137). Enabled 2026-09-08 after
+  Test 53; before that `IGNORE_COLOR_OFFSET` dropped the node.
 - Frame selection: model `y_size` = the 4-frame strip; frame *n* is
   `tl_y = (n-1) × pitch`. FEEDL = `FEEDL_FRAME1 + (n-1) × FEEDL_PITCH`.
   The core's own `scanner_move` (motor tables) is bypassed for positioning.
@@ -275,9 +282,14 @@ buffers. From `tables_dpi*.py`:
 4. **`is_sheetfed = false`.** The sheetfed path ejects after every scan
    and reloads before calibration, which breaks batch (`--frames 1-4`).
    Eject/load are exposed differently — open question below.
-5. **Stagger, dust removal, positive inversion stay out of the backend.**
-   Dust removal (`image.remove_dust`) is a frontend feature; SANE
-   delivers the IR channel as a separate gray scan the way gl843 does.
+5. **Dust removal and positive inversion stay out of the backend;
+   the colour-line alignment does not.** (Revised 2026-09-08 after
+   Test 53.) The channel shift is a geometric sensor artefact, not
+   colour interpretation: every genesys CCD backend corrects it through
+   the core's `ComponentShiftLines` node, and the driver does the same
+   in `image.align_channels`. The backend now does too (above). Dust
+   removal (`image.remove_dust`) is a frontend feature; SANE delivers
+   the IR channel as a separate gray scan the way gl843 does.
 6. **Safety model: the C++ mirrors `of135i.safety`, it cannot reuse it.**
    (Revised 2026-09-07 evening, after Test 46 and a review of the whole
    `sane_open` → hook → `sane_close` chain against docs/hardware-safety.md.)
@@ -406,8 +418,14 @@ wrong state via `sane_cancel`, and the gray default mode
 only) implemented offline 2026-09-08 (docs/sane-hook5-frame.md section
 10) -- the driver's `scan --frame N`, i.e. the same POSITION program with
 the frame's absolute FEEDL and the FEEDL-scaled budget; wire-equal to the
-Python replayer for frames 2-4; hardware run pending. Not yet in the
-port: other resolutions, IR, and install/packaging.
+Python replayer for frames 2-4; **hardware-verified for frames 2 and 4
+(Test 53)**. Test 53's eye check of the images found the colour-line
+shift uncorrected (`IGNORE_COLOR_OFFSET` dropped the core's node): fixed
+2026-09-08 through the model's `ld_shift` and the core's pipeline, wire
+unchanged, verified offline against the Test 52/53 images; its hardware
+run and Christian's eye check are the next step — until then no backend
+image is accepted. Not yet in the port: other resolutions, IR, and
+install/packaging.
 
 Hook 2 is `offset_calibration()` and nothing else: the driver's
 CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and

@@ -508,10 +508,10 @@ index 5713912..4bab044 100644
      int exposure_lperiod = 0;
  
 diff --git a/backend/genesys/tables_model.cpp b/backend/genesys/tables_model.cpp
-index 321d179..9bd1db1 100644
+index 321d179..a7aae36 100644
 --- a/backend/genesys/tables_model.cpp
 +++ b/backend/genesys/tables_model.cpp
-@@ -2311,6 +2311,104 @@ void genesys_init_usb_device_tables()
+@@ -2311,6 +2311,108 @@ void genesys_init_usb_device_tables()
  
  
  
@@ -572,11 +572,15 @@ index 321d179..9bd1db1 100644
 +    model.post_scan = 0.0;
 +    model.eject_feed = 0.0;
 +
-+    /* Colour-line stagger at 3600 dpi: 24 lines between R and B
-+       (docs/protocol-notes.md pass 18). */
-+    model.ld_shift_r = 0;
++    /* Colour-line shift at the motor's base 3600 dpi: in the raw stream a
++       feature appears in R 24 lines after B, in G 12 lines after B
++       (docs/protocol-notes.md pass 18; the driver's image.align_channels,
++       whose output the core's ComponentShiftLines node reproduces exactly:
++       output line k = R[k+24], G[k+12], B[k]; verified offline on the
++       Test 52/53 images, docs/test-log.md). */
++    model.ld_shift_r = 24;
 +    model.ld_shift_g = 12;
-+    model.ld_shift_b = 24;
++    model.ld_shift_b = 0;
 +
 +    model.line_mode_color_order = ColorOrder::RGB;
 +

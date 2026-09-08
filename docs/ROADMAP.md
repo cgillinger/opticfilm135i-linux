@@ -176,8 +176,15 @@ request flow at submission time). Delivered = submitted, review-ready.
   `sane_open` initialises the unit exactly as the driver does (Test 43).
   Calibration, positioning, scan pass and park verified on hardware
   (Tests 48–52): `scanimage` delivers frame 1 at 3600 dpi in colour,
-  equal to the driver's output within its run-to-run band. Still to
-  do for B1: frame selection, the other resolutions, IR, install/
+  equal to the driver's output within its run-to-run band. Frame
+  selection (`--frame 1..4`) positions correctly on hardware (Test 53).
+  **Image acceptance is blocked:** the backend's image carried the
+  sensor's colour-line offset uncorrected (Test 53); the correction —
+  the core's own channel-shift node, host side, wire unchanged — is
+  implemented and verified offline against the saved images and awaits
+  one hardware run plus the eye check. No backend image has been seen
+  by Christian yet, so none is accepted under the human-eyes rule.
+  Still to do for B1 after that: the other resolutions, IR, install/
   packaging (docs/sane-port.md). **B2** not started.
 - **A6 note** (Test 44/46): the driver's eject stalled from a state only
   the backend's first `init()` produced; that `init()` now writes nothing.

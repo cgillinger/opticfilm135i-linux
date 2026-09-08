@@ -3423,8 +3423,11 @@ present, nothing abnormal). The `--frame` option positions correctly and
 delivers the right frame; the longest move (frame 4, 8.0 s) sat well
 inside its 28 s budget.
 
-**Defect found by the eye check (Christian's new acceptance rule):** the
-SANE image carries an uncorrected colour-line stagger. Measured per
+**Defect found by my own inspection of the side-by-side images** (not
+by Christian's eye check — as of Test 53 he had not yet seen a single
+SANE image, so no backend image is accepted under the human-eyes rule;
+corrected 2026-09-08 after his note): the SANE image carries an
+uncorrected colour-line stagger. Measured per
 channel against each frame's own driver reference:
 
 - SANE: R is +12 rows and B is −12 rows relative to G (24-row R↔B
@@ -3446,13 +3449,85 @@ to undo on the host") was wrong.
 Left as an open decision (CLAUDE.md TODO), two questions unanswered
 2026-09-08: (1) should the backend correct the stagger at all — it
 touches the raw-data principle, my read is yes (geometry, not colour
-interpretation); (2) method — a host-side circular roll matching
-`image.py` (wire unchanged, small 12-row wrap artefact at the edges, as
-the driver already ships) versus dropping `IGNORE_COLOR_OFFSET` and
-scanning 24 extra lines (no wrap, but the wire changes and the frame
-guard needs rework). The fix is offline; verifying it needs one hardware
-run plus Christian's eye check. Stopped here at Christian's request.
+interpretation); (2) method — a host-side shift matching `image.py` (wire unchanged)
+versus scanning 24 extra lines (the wire changes and the frame guard
+needs rework). *Correction (2026-09-08, external review of 18c179a):
+this entry first said the driver ships "a small 12-row wrap artefact at
+the edges" — wrong. `align_channels` rolls and then crops
+`out[shift:-shift]`, so the driver's image is 24 rows shorter and
+wrap-free.* The fix is offline; verifying it needs one hardware run plus
+Christian's eye check. Stopped here at Christian's request.
 
 Logs kept privately in `plustek-135i-analys/hook5-20260908/`
 (frame2/4-sane.pnm, ref-f2/f4.tiff, debug logs zstd-compressed); the
 side-by-side PNGs in `~/Bilder/opticfilm-sane-test52/`.
+
+## 2026-09-08 — Offline: the colour-line shift corrected in the backend (Test 53 follow-up), verified against the saved images
+
+Decision (Christian, 2026-09-08, on the external review of 18c179a and
+my recommendation): the backend corrects the colour-line shift, on the
+host, with the wire unchanged. Geometry of the sensor's separate colour
+lines is not colour interpretation; every genesys CCD backend does it
+and the driver does it in `image.align_channels`.
+
+Two corrections to Test 53's entry first (made in place): the driver
+does *not* ship a wrap artefact — `align_channels` crops the 24 shifted
+rows; and the defect was found by my inspection of the side-by-side
+images, not by Christian's eye check. Christian has not yet seen any
+SANE image, so nothing from the backend is accepted under the
+human-eyes rule.
+
+**Implementation** (`sane/gl126.cpp`, the model entry in the patch):
+
+- The model's `ld_shift_r/g/b` becomes **24/12/0** (lines at the
+  motor's base 3600 dpi). The declared 0/12/24 was the wrong direction
+  — see the verification below.
+- `calculate_scan_session` no longer sets `IGNORE_COLOR_OFFSET`
+  (`IGNORE_STAGGER_OFFSET` stays: no pixel stagger). The pinned session's
+  `params.lines` is the delivered count, 5137 − 24 = **5113**; the core's
+  `output_line_count` (= lines + max_color_shift_lines) is the wire's
+  **5137**, checked after `compute_session` and refused (nothing written)
+  if the model, the motor's base dpi and the pin disagree.
+- `init_regs_for_scan_session`'s frame guard checks both counts;
+  `total_bytes_to_read` is 5113 lines. The pipeline's
+  `ComponentShiftLines` node needs raw line k + 24 for output line k, so
+  the last raw chunk (8 lines) is still read in full and the scan pass
+  still completes before PARK.
+- `begin_scan` writes `output_line_count` (5137) into reg 0x26/0x27 —
+  the wire is unchanged; the 32 op tests (wire-equality of position,
+  scan_setup, the 224 chunks, park) pass unchanged, 183 total, build
+  clean.
+- `sane_get_parameters` reports the pipeline's output height, so the
+  frontend sees 3762 × 5113.
+
+**Verification offline** (`tools/sane_stagger_check.py`, run under
+`systemd-run --scope -p MemoryMax=3G`, peak RSS 0.65 GB, on the Test
+52/53 images frames 1, 2 and 4 against each frame's driver reference):
+
+| check | frame 1 | frame 2 | frame 4 |
+|---|---|---|---|
+| raw SANE stagger R vs G / B vs G | +12 / −12 | +12 / −12 | +12 / −12 |
+| residual after (24,12,0) | 0 / 0 | 0 / 0 | 0 / 0 |
+| residual after the old (0,12,24) | +24 / −24 | +24 / −24 | +24 / −24 |
+| `align_channels` on the SANE raw byte-identical to (24,12,0) | yes | yes | yes |
+| corrected vs reference, Pearson R / G / B | 0.998 / 0.997 / 0.994 | 0.997 / 0.996 / 0.992 | 0.995 / 0.993 / 0.983 |
+| per-channel residual row shift vs reference | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
+
+So the core's node with 24/12/0 reproduces the driver's correction
+exactly, wrap-free; the old declaration would have doubled the fringing.
+A synthetic edge test (staggered edge realigned by 24/12/0, not by
+0/12/24, top and bottom rows equal to the expected slices, no wrap)
+passes. Note found on the way: Pillow (12.3) opens the driver's 16-bit
+RGB TIFFs as 8-bit — the script reads them with its own tag parser.
+
+Review images for Christian (the acceptance step still ahead) are in
+`~/Bilder/opticfilm-granskning/`: `stagger-f{1,2,4}-ref-vs-raw-vs-corrected.png`
+(700 px crops: driver reference | SANE raw | SANE corrected) and the
+1/8-scale full frames; the report is `stagger-check-report.txt` there.
+I looked at frame 1's crop: the middle panel fringes on every edge, the
+left and right panels match.
+
+**Next:** one hardware run of frame 1 through `scanimage` on the fixed
+backend (expected 3762 × 5113, same wire, same W3/Wait A/B), then
+Christian's own eye check of that image — the first backend image
+anyone but me has looked at.

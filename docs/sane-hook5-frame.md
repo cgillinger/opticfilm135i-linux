@@ -80,8 +80,10 @@ says neither is replayed as such; §4 says what replaces them.
 The Python driver's own frame quirk: it keeps 223 chunks (5129 lines)
 as the image and discards the 180576 B chunk as a "drain of unclear
 purpose". It is not a drain — it is the last 8 of the 5137 lines the
-register holds. The backend reports 5137 lines and reads them all;
-the wire is identical either way.
+register holds. The backend reads all 5137 and, since the colour-line
+fix (Test 53 follow-up), delivers 5113: the core's channel-shift node
+consumes 24 (section 4 of docs/sane-port.md, decision 5); the wire is
+identical either way.
 
 ## 3. Wait points
 
@@ -209,8 +211,10 @@ If the run stops before PARK completes: power cycle → `load
 4. **Image path through the core's pipeline** with 519156-byte
    requests and a GL126 branch of `bulk_read_data` (descriptor with
    wIndex 8 first / 0 after, bulk-done read), the core's GL124 wait
-   loops gated; 5137 lines reported, the driver's "drain" included as
-   image.
+   loops gated; 5137 raw lines read, the driver's "drain" included as
+   image. *(Amended after Test 53: 5113 lines reported and delivered —
+   the core's colour-line shift node consumes 24, as `align_channels`
+   crops them in the driver.)*
 5. **Frame 1 fixed** for this run; a `--frame` backend option comes
    with batch support later.
 6. **Exit by `eject` from the post-PARK state** if the run completes;
