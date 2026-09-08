@@ -65,11 +65,15 @@ enum class OpKind : std::uint8_t {
     BulkDone,       /* control read after a bulk transfer, logged only */
 };
 
-/** One op-program transfer. `data` is the write payload (Write/BulkOut)
- *  or the captured reply (AckRead/Read/PollDataReady/PollClass/
- *  BulkDone, provenance only -- the runner does not require a live
- *  reply to match it, except AckRead's fixed 0x55, PollDataReady's
- *  bit 0x01 and PollClass's upper nibble); nullptr for BulkIn. */
+/** One op-program transfer. `data` is the write payload (Write, and a
+ *  BulkOut NOT covered by a bulk injection) or the captured reply
+ *  (AckRead/Read/PollDataReady/PollClass/BulkDone, provenance only --
+ *  the runner does not require a live reply to match it, except
+ *  AckRead's fixed 0x55, PollDataReady's bit 0x01 and PollClass's
+ *  upper nibble). `data` is nullptr for BulkIn, and for a BulkOut a
+ *  bulk injection covers -- its captured chunk is the reference
+ *  unit's own calibration data and must not be kept; `len` still
+ *  gives the wire length. */
 struct Op {
     OpKind kind;
     std::uint8_t request;    /* bRequest; 0 for BulkIn/BulkOut */

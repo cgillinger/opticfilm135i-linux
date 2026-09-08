@@ -34,6 +34,16 @@
          point of test_missing_injection_* and
          test_missing_bulk_injection_*.
 
+     probe program_info <profile> <phase>
+         Prints one "OP <i> kind=<OpKind> len=<n> has_data=<0|1>" line per
+         op in the named OpProgram, in order -- no Wire, no run_program()
+         involved. Used only to check the generator's own output (docs/
+         sane-hook4-shading.md section 6, Part B/2): a BulkOut a bulk
+         injection covers is emitted with has_data=0 (the captured chunk
+         is the reference unit's own calibration data and must never be
+         kept); every other op keeps has_data=1 (or 0 for BulkIn, which
+         never carries data).
+
      probe offset <dark_a.bin> <dark_b.bin>
          Runs gl126::offset_codes() on two raw RGB16LE buffers and prints
          one "ch=<0|1|2> mean_a=<f> mean_b=<f> slope=<f> code=<hex4>
@@ -604,6 +614,21 @@ private:
     unsigned clock_ms_ = 0;
 };
 
+const char* op_kind_name(OpKind k)
+{
+    switch (k) {
+    case OpKind::Write:          return "Write";
+    case OpKind::AckRead:        return "AckRead";
+    case OpKind::Read:           return "Read";
+    case OpKind::PollDataReady:  return "PollDataReady";
+    case OpKind::PollClass:      return "PollClass";
+    case OpKind::BulkIn:         return "BulkIn";
+    case OpKind::BulkOut:        return "BulkOut";
+    case OpKind::BulkDone:       return "BulkDone";
+    }
+    return "Unknown";
+}
+
 const OpProgram* find_program(const std::string& profile, const std::string& phase)
 {
     for (std::size_t i = 0; i < PROFILE_COUNT; ++i) {
@@ -685,6 +710,28 @@ int cmd_run(int argc, char** argv)
         return 1;
     }
     std::cout << "DONE ops=" << result.ops_done << "\n";
+    return 0;
+}
+
+int cmd_program_info(int argc, char** argv)
+{
+    if (argc != 4) {
+        std::cerr << "usage: probe program_info <profile> <phase>\n";
+        return 2;
+    }
+    const std::string profile = argv[2];
+    const std::string phase = argv[3];
+    const OpProgram* prog = find_program(profile, phase);
+    if (prog == nullptr) {
+        std::cerr << "unknown profile/phase: " << profile << "/" << phase << "\n";
+        return 2;
+    }
+    for (std::size_t i = 0; i < prog->count; ++i) {
+        const Op& op = prog->ops[i];
+        std::cout << "OP " << i << " kind=" << op_kind_name(op.kind)
+                  << " len=" << op.len
+                  << " has_data=" << (op.data != nullptr ? 1 : 0) << "\n";
+    }
     return 0;
 }
 
@@ -880,7 +927,7 @@ int cmd_upload_len(int argc, char** argv)
 int main(int argc, char** argv)
 {
     static const char* usage_line =
-        "run|offset|residual|gain|percentile|warmup|"
+        "run|program_info|offset|residual|gain|percentile|warmup|"
         "shading_table|shading_table2|upload_len ...\n";
     if (argc < 2) {
         std::cerr << "usage: " << argv[0] << " " << usage_line;
@@ -889,6 +936,7 @@ int main(int argc, char** argv)
     std::string mode = argv[1];
     try {
         if (mode == "run") return cmd_run(argc, argv);
+        if (mode == "program_info") return cmd_program_info(argc, argv);
         if (mode == "offset") return cmd_offset(argc, argv);
         if (mode == "residual") return cmd_residual(argc, argv);
         if (mode == "gain") return cmd_gain(argc, argv);

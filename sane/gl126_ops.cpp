@@ -251,6 +251,33 @@ const OpBulkInjection* bulk_injection_covering(const OpProgram& prog, std::size_
     return nullptr;
 }
 
+// Checked once, before any transfer, and before check_bulk_injections()'s
+// value-presence check (docs/sane-hook4-shading.md section 6): every
+// BulkOut op whose captured payload was stripped at generation time
+// (`data == nullptr` -- tools/gen_sane_tables.py never keeps a captured
+// chunk that is a bulk injection's own reference-unit calibration data)
+// must be covered by an OpBulkInjection. This is a structural check on
+// the generated table itself, not on the caller's `bulk_values` map --
+// a BulkOut with no data and no covering injection is a mis-generated
+// table (see the module doc comment on `Op` in gl126_tables.h) and must
+// fail closed rather than hand a null pointer to bulk_write().
+void check_bulk_out_coverage(const OpProgram& prog)
+{
+    for (std::size_t i = 0; i < prog.count; ++i) {
+        const Op& op = prog.ops[i];
+        if (op.kind != OpKind::BulkOut || op.data != nullptr) {
+            continue;
+        }
+        if (bulk_injection_covering(prog, i) == nullptr) {
+            std::ostringstream oss;
+            oss << "gl126_ops: BulkOut at op " << i << " has no captured "
+                << "payload and is not covered by any bulk injection -- "
+                << "nothing sent";
+            throw OpsError(OpsFailure::MissingInjection, i, oss.str());
+        }
+    }
+}
+
 void do_bulk_out(Wire& wire, const Op& op, const OpProgram& prog, std::size_t idx,
                  const std::map<std::string, std::vector<std::uint8_t>>* bulk_values)
 {
@@ -332,6 +359,7 @@ void run_program(Wire& wire, const OpProgram& prog, RunResult& out,
                  const std::map<std::string, std::uint8_t>* values,
                  const std::map<std::string, std::vector<std::uint8_t>>* bulk_values)
 {
+    check_bulk_out_coverage(prog);
     if (prog.bulk_injection_count > 0) {
         check_bulk_injections(prog, bulk_values);
     }

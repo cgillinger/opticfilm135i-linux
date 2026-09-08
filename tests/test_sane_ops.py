@@ -35,9 +35,12 @@ script format).
      MissingInjection rule, a multi-chunk short bulk, gain_codes()/
      percentile_linear() against reference data and numpy, and the
      warmup retry policy.
-  15-21. hook 4 (docs/sane-hook4-shading.md section 6): the shading
+  15-22. hook 4 (docs/sane-hook4-shading.md section 6): the shading
      phases' wire equality (four programs, byte and bulk injections
-     applied on both sides, BulkOut payloads compared by digest),
+     applied on both sides, BulkOut payloads compared by digest), that
+     none of the four programs' generated BulkOut ops carries the
+     reference unit's captured chunk as `data` (checked structurally via
+     the probe's `program_info` mode, no run_program() involved),
      PollClass wait/timeout, a short BulkOut, the two bulk-injection
      failure rules, and the shading computation (shading_table/
      shading_table2/shading_upload_len) against reference vectors and
@@ -870,6 +873,36 @@ def test_shading_programs_match_python_replayer():
           f"({total} transfers across {len(SHADING_PROGRAM_NAMES)} programs: {counts_str})")
 
 
+def test_shading_bulk_out_ops_carry_no_captured_data():
+    """No emitted BulkOut op of the four shading programs carries the
+    reference unit's captured chunk as `data`: tools/gen_sane_tables.py
+    clears it for every BulkOut a bulk injection covers (docs/sane-
+    hook4-shading.md section 6, Part B/2 -- the captured chunk is the
+    reference unit's own shading table, calibration data of ONE unit,
+    the same principle as a register injection); only `len` survives.
+    Checked structurally, without running a program at all, via the
+    probe's `program_info` mode (kind/len/has_data per op)."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_shading_bulk_out_ops_carry_no_captured_data SKIPPED (no g++)")
+        return "skipped"
+
+    total_bulk_out = 0
+    for prog_name in SHADING_PROGRAM_NAMES:
+        r = subprocess.run([probe, "program_info", "plain3600", prog_name],
+                           capture_output=True, text=True)
+        assert r.returncode == 0, (prog_name, r.stdout, r.stderr)
+        for line in _lines(r.stdout):
+            if " kind=BulkOut " in line:
+                assert line.endswith("has_data=0"), (prog_name, line)
+                total_bulk_out += 1
+    assert total_bulk_out > 0, (
+        "expected at least one BulkOut op across the four shading programs")
+    print(f"test_shading_bulk_out_ops_carry_no_captured_data OK "
+          f"({total_bulk_out} BulkOut ops across {len(SHADING_PROGRAM_NAMES)} "
+          f"programs, all has_data=0)")
+
+
 def test_poll_class_waits_then_continues():
     """docs/sane-hook4-shading.md section 3, W2: the poll on reg 0x100
     (cal_shading_measure op 448) waits through non-matching classes then
@@ -1093,6 +1126,7 @@ def main() -> int:
         test_percentile_matches_numpy,
         test_warmup_policy,
         test_shading_programs_match_python_replayer,
+        test_shading_bulk_out_ops_carry_no_captured_data,
         test_poll_class_waits_then_continues,
         test_poll_class_timeout_fails_closed,
         test_short_bulk_out_fails_closed,

@@ -104,7 +104,11 @@ enum class OpsFailure : std::uint8_t {
                        // the map(s) passed to run_program() -- checked
                        // before any transfer (docs/sane-hook3-gain.md
                        // section 6, Part B/1; docs/sane-hook4-shading.md
-                       // section 6)
+                       // section 6); also thrown, before any of that, if
+                       // the generated table itself has a BulkOut with no
+                       // captured payload (data == nullptr) that no
+                       // OpBulkInjection covers -- a mis-generated table,
+                       // never a live-data condition
     BadInjection,     // a bulk injection value is longer than its BulkOut
                        // ops' combined length -- checked before any
                        // transfer (docs/sane-hook4-shading.md section 6,
@@ -208,6 +212,18 @@ struct RunPolicy {
                        further sent.
       BulkDone      -> control_read(0x0c, 0x008e, 0x0018, ..., 1);
                        recorded, never fails on a mismatch.
+
+    BulkOut coverage (structural, checked first of all, before either
+    injection check below): every BulkOut op the table generator emitted
+    with `data == nullptr` -- tools/gen_sane_tables.py never keeps a
+    captured chunk that a bulk injection replaces, since it is the
+    reference unit's own calibration data -- must be covered by an
+    OpBulkInjection. A BulkOut with no data and no covering injection is
+    a mis-generated table and throws OpsError{MissingInjection}
+    (message names the op) with zero transfers done; this cannot happen
+    for any table gen_sane_tables.py currently emits (op_bulk_injections_
+    for()'s own contiguity check would already have failed at generation
+    time) and exists as defensive fail-closed behaviour.
 
     Injections (docs/sane-hook3-gain.md section 6, Part B/1): if
     `prog.injection_count` is nonzero, every one of its OpInjection
