@@ -422,9 +422,10 @@ Python replayer for frames 2-4; **hardware-verified for frames 2 and 4
 (Test 53)**. Test 53's eye check of the images found the colour-line
 shift uncorrected (`IGNORE_COLOR_OFFSET` dropped the core's node): fixed
 2026-09-08 through the model's `ld_shift` and the core's pipeline, wire
-unchanged, verified offline against the Test 52/53 images; its hardware
-run and Christian's eye check are the next step — until then no backend
-image is accepted. Not yet in the port: other resolutions, IR, and
+unchanged, verified offline against the Test 52/53 images and on
+hardware (Test 54: residual 0 rows, 5113 lines delivered, wire and
+waits as Test 52); Christian's eye check of that image is the open
+acceptance step. Not yet in the port: other resolutions, IR, and
 install/packaging.
 
 Hook 2 is `offset_calibration()` and nothing else: the driver's

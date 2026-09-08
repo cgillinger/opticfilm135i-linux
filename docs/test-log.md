@@ -3531,3 +3531,74 @@ left and right panels match.
 backend (expected 3762 × 5113, same wire, same W3/Wait A/B), then
 Christian's own eye check of that image — the first backend image
 anyone but me has looked at.
+
+## 2026-09-08 — Test 54: frame 1 through `scanimage` with the colour-line fix — 3762 × 5113 delivered, stagger residual 0/0, wire and waits as Test 52, eject from post-PARK
+
+Setup: the reference strip loaded with `of135i load` straight from Test
+53's ejected state (no power cycle; Christian reported the scanner in
+the loaded state), backend at 0809e73 (built 19:52), the same command
+as Test 52 with `--force-calibration --mode Color --resolution 3600`
+and full debug. No fresh driver reference: compared against Test 52's
+ref7-f1 (a different load).
+
+**Result: exit 0 after 73.2 s, a complete P6 image 3762 × 5113 × 16 bit
+(115 410 636 payload bytes), backend RSS 21 MB.** The pipeline log shows
+the `ComponentShiftLines` node inserted with shifts {24, 12, 0}; the
+session line reads "3762 x 5113 px delivered from 5137 raw lines,
+519156 B per chunk". (At option-init the node is also built once with
+{4, 2, 0} for the 600 dpi default — `sane_get_parameters` bookkeeping,
+no wire.)
+
+Wire and waits, all as Test 52 attempt 3 and Test 53:
+
+| step | Test 54 | Test 52/3 |
+|---|---|---|
+| offset codes | 0x010a / 0x0109 / 0x010a | 0x010a / 0x0109 / 0x010a |
+| gain codes | 0x2e / 0x20 / 0x27 | 0x2e / 0x20 / 0x27 |
+| shading table 2 gains | 0x547d..0x6faa | 0x5535..0x705f |
+| POSITION W3 (op 47) | 0xdd → 0xf5, 185 polls, 1474 ms | 185 polls, 1473 ms |
+| scan pass | 5137 raw lines, 115 952 364 raw bytes, complete | same |
+| PARK Wait A / Wait B | 0xfb / 0xf8, first poll | 0xfb / 0xf8, first poll |
+| after `sane_close` | 0x01 = 0x22, 0x101 = 0xf8 | same |
+
+The scan pass itself took 65 s wall clock (20:15:05 → 20:16:10) against
+≈ 46 s in Test 52. Not investigated; the likely cost is the core's
+shift node, which walks every pixel through `get_raw_channel_from_row`
+/ `set_raw_channel_to_row` per row (58 M samples). Host CPU, not the
+wire: every chunk was full and the pass completed. Noted for the speed
+work later.
+
+Image check (uint16, banded, under a 3 GB scope; report and images in
+`~/Bilder/opticfilm-granskning/hw-f1-*`):
+
+- **Residual colour-line stagger in the delivered image: R vs G 0 rows,
+  B vs G 0 rows** — the defect of Test 53 is gone on hardware.
+- Registration against ref7-f1 (a different load): dy = 8 rows, dx = 3
+  columns — the load-to-load geometry band (Test 21 saw ±4 rows within
+  one load; this is across loads). Per-channel residual row shift at
+  that registration −2 / −1 / −2, i.e. the three channels move
+  together (no stagger), sub-band registration only.
+- Per-channel Pearson vs reference 0.963 / 0.960 / 0.938 (lower than
+  the offline 0.998 because of the load-to-load misregistration, not
+  the fix); channel means within +0.11 / −0.63 / −0.14 % of the
+  reference.
+- The 700 px crop (reference | SANE, positive) shows no fringing on
+  either side; I looked at it.
+
+Then `of135i eject` from post-PARK (0x22 / 0xf8): "ejected", 0x01 =
+0x22 afterwards — 4/4 now (Tests 52, 53 ×2, 54). Sound: Christian was
+present; his report is recorded in the next entry if it differs from
+normal.
+
+**Christian's eye check:** the positive review images were sent to him
+(the crop pair, the SANE frame alone at quarter scale, and the
+reference/SANE pair at eighth scale). His verdict is the acceptance
+step and is recorded when given. His first comment on the earlier
+offline positives: "hard to say much; not production-ready, but maybe
+that is not the intent" — correct: the positive is the driver's
+preview inversion (per-frame density inversion, no colour pipeline),
+the deliverable is the raw negative; what the eye check decides is
+frame, completeness, sharpness and the absence of fringing.
+
+Logs: `plustek-135i-analys/stagger-20260908/` (frame1-sane-fixed.pnm,
+.out, .err.zst).
