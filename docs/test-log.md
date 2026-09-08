@@ -3223,3 +3223,45 @@ the documented property of `power cycle with a latched magazine →
 load`.
 Driver `eject` afterwards: "ejected", magazine loose, LED off on
 removal. Unit back at 0x22 with the magazine out.
+
+## 2026-09-08 — Test 52, attempt 1: the frame run stopped before the scan pass; PARK ran from the wrong state and its Wait B timed out
+
+Setup as Test 50/51 exits + `of135i load` with the reference strip,
+driver `scan --frame 1` as reference (gain 0x2e/0x21/0x27, offset
+0x010a ×3, post-PARK 0x22 / 0x101 = 0xf8), then the uninstalled backend
+at 5683cdb, `scanimage --force-calibration --resolution 3600 --format
+pnm -o frame1-sane.pnm`.
+
+What happened: hooks 2–4 ran as in Test 50 (gain 0x2e/0x21/0x27,
+offset 0x010a ×3, tables in range). Then, in `genesys_start_scan`
+after `wait_for_motor_stop`, a **third** `scanner_move_to_ta()` (not
+gated — the analysis had found two) built a 50 × 3 px move session,
+passed it through the new `init_regs_for_scan_session` (bookkeeping
+only) and threw "Unsupported asic" in `scanner_clear_scan_and_feed_counts`
+before any write. `sane_start` failed there — no POSITION, no scan
+pass. `scanimage` then called `sane_cancel`, whose `end_scan` ran the
+**semantic PARK from the post-shading state**, the case the analysis
+listed as never done: the teardown writes went out (0x8d, 0x03, 0x01 =
+0x22, 0x3a, RMW 0x15, **0x02 = 0x30**, the idle batch, 0x03 = 0x10/0x00,
+the two 0x8b writes, RMW 0x32), Wait A completed (0x35 bit 0x40), the
+0x35 RMW went out, and **Wait B timed out after 15 s with the status
+word at 0xd8 throughout** (class D, bit 0x20 clear). Nothing further
+was written. State after: reg 0x01 = 0x22, 0x101 = 0xd8, 0x32 = 0x9d,
+0x35 = 0xbb. Total 2391 control transfers, 773 bulk IN, 8 bulk OUT,
+all full length; no image (0 bytes).
+
+What it says: (1) the vendor's return-home write from a carriage that
+is already home, on a unit in the post-shading register state, does
+not produce the park-complete status within 15 s — consistent with
+PARK being defined from the end of a scan pass only; (2) the core's
+cancel path must never reach PARK unless a scan pass started.
+
+Fixes (offline, same evening): the third `move_to_ta` gated for GL126;
+`end_scan` is a no-op unless `begin_scan` armed a scan pass (the
+first-chunk flag); `init_regs_for_scan_session` refuses any session
+that is not the captured frame (a `scanner_move`'s 50 × 3 session
+included); and the core's `write_registers(dev->reg)` right before
+`begin_scan` gated for GL126 (found while re-reading the path: with an
+empty `dev->reg` it writes nothing, but nothing on this path may
+depend on that). Exit per rule: power cycle → `load --double-jog` →
+rerun.

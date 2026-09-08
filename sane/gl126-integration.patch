@@ -73,7 +73,7 @@ index 02cfc43..8813651 100644
  
  
 diff --git a/backend/genesys/genesys.cpp b/backend/genesys/genesys.cpp
-index d7ec422..b41be10 100644
+index d7ec422..0a9d167 100644
 --- a/backend/genesys/genesys.cpp
 +++ b/backend/genesys/genesys.cpp
 @@ -38,6 +38,11 @@
@@ -151,7 +151,21 @@ index d7ec422..b41be10 100644
      {
          scanner_move_to_ta(*dev);
      }
-@@ -4070,6 +4093,13 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -4039,8 +4062,11 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+         dev->cmd_set->move_back_home(dev, true);
+     }
+ 
+-    if (dev->settings.scan_method == ScanMethod::TRANSPARENCY ||
+-        dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED)
++    // Not for GL126: no calibration area to move to; the frame is reached by
++    // the absolute POSITION move inside begin_scan (docs/sane-hook5-frame.md).
++    if ((dev->settings.scan_method == ScanMethod::TRANSPARENCY ||
++         dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED) &&
++        dev->model->asic_type != AsicType::GL126)
+     {
+         scanner_move_to_ta(*dev);
+     }
+@@ -4070,6 +4096,13 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
          dev->interface->test_checkpoint("start_scan");
          return;
      }
@@ -165,7 +179,7 @@ index d7ec422..b41be10 100644
  
    /*do we really need this? the valid data check should be sufficient -- pierre*/
    /* waits for head to reach scanning position */
-@@ -5457,6 +5487,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5457,6 +5490,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
          throw SaneException("could not find the device to open: %s", devicename);
      }
  
@@ -198,7 +212,7 @@ index d7ec422..b41be10 100644
      if (is_testing_mode()) {
          // during testing we need to initialize dev->model before test scanner interface is created
          // as that it needs to know what type of chip it needs to mimic.
-@@ -5473,6 +5529,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5473,6 +5532,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
          dev->interface->get_usb_device().open(dev->file_name.c_str());
      } else {
@@ -221,7 +235,7 @@ index d7ec422..b41be10 100644
          dev->interface = std::unique_ptr<ScannerInterfaceUsb>{new ScannerInterfaceUsb{dev}};
  
          dbg.vstatus("open device '%s'", dev->file_name.c_str());
-@@ -5523,6 +5595,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5523,6 +5598,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
      // some hardware capabilities are detected through sensors
      dev->cmd_set->update_hardware_sensors (s);
@@ -234,7 +248,7 @@ index d7ec422..b41be10 100644
  }
  
  SANE_GENESYS_API_LINKAGE
-@@ -5556,6 +5634,20 @@ sane_close_impl(SANE_Handle handle)
+@@ -5556,6 +5637,20 @@ sane_close_impl(SANE_Handle handle)
  
      auto* dev = it->dev;
  
@@ -255,7 +269,7 @@ index d7ec422..b41be10 100644
      // eject document for sheetfed scanners
      if (dev->model->is_sheetfed) {
          catch_all_exceptions(__func__, [&](){ dev->cmd_set->eject_document(dev); });
-@@ -5579,12 +5671,26 @@ sane_close_impl(SANE_Handle handle)
+@@ -5579,12 +5674,26 @@ sane_close_impl(SANE_Handle handle)
      dev->clear();
  
      // LAMP OFF : same register across all the ASICs */

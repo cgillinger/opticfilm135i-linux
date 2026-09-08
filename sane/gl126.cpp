@@ -572,6 +572,21 @@ void CommandSetGl126::init_regs_for_scan_session(Genesys_Device* dev,
                                                  const ScanSession& session) const
 {
     DBG_HELPER(dbg);
+    bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
+    const Profile* profile = find_profile(dev->settings.xres, ir);
+    if (profile == nullptr || session.params.pixels != profile->image_width ||
+        session.params.lines != kFrameLinesPlain3600 || session.params.channels != 3 ||
+        session.params.depth != 16)
+    {
+        /* Any session but the captured frame comes from a core path that is
+           not the vendor's (a scanner_move, a core calibration pass): refuse
+           before the bookkeeping so nothing downstream acts on it. */
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: session %u x %u px, %u ch, %u bit is not the captured "
+                            "frame; the backend scans only that. Nothing was written.",
+                            session.params.pixels, session.params.lines,
+                            session.params.channels, session.params.depth);
+    }
     dev->session = session;
     setup_image_pipeline(*dev, session);
     dev->read_active = true;
@@ -858,6 +873,15 @@ void CommandSetGl126::end_scan(Genesys_Device* dev, Genesys_Register_Set* /*regs
     DBG_HELPER(dbg);
     if (dev->parking) {
         DBG(DBG_info, "gl126: end_scan: already parked, nothing to do\n");
+        return;
+    }
+    if (first_chunk_pending().count(dev) == 0) {
+        /* The core calls end_scan from sane_cancel after ANY failed
+           sane_start, including one that never reached begin_scan. PARK is
+           defined from the end of a scan pass and nowhere else (Test 52,
+           attempt 1: run from the post-shading state, its Wait B never
+           completed). No scan pass, no park. */
+        DBG(DBG_info, "gl126: end_scan: no scan pass was started, nothing written\n");
         return;
     }
     bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
