@@ -1,0 +1,190 @@
+# SANE stage 3, hooks 5–7: the frame — POSITION, SCAN, PARK (offline analysis)
+
+Written 2026-09-08, after hook 4 (Test 50). Hook 5 was scoped as
+"POSITION" on its own. This analysis argues that it cannot be brought
+up on its own, and lays out hooks 5, 6 and 7 as one unit — the
+vendor's frame: position → scan pass → park — with one hardware run
+that scans frame 1 end to end. Every decision at the end is asked for
+explicitly; nothing here is taken under the earlier hooks' principles,
+because this is the first motor movement of the port.
+
+## 1. Why POSITION cannot be tested alone
+
+POSITION is one absolute feed (mode 0x18, FEEDL from home) that leaves
+the transport at the frame. Every verified flow continues with the
+scan pass and PARK; the driver never leaves the unit positioned, and
+no verified sequence starts from that state:
+
+- `eject` from a positioned, unparked transport: never done (Test
+  44's lesson — an unverified eject origin stalled the motor).
+- PARK straight after POSITION, without the scan pass: never done;
+  the carriage return is the scan pass's end plus PARK's `0x02 = 0x30`
+  write, and whether PARK alone returns a merely positioned carriage
+  is unknown.
+- Power cycle with the transport at the frame: cold_init's homing
+  rounds have only been run with the transport at home (post-PARK or
+  post-load). A vendor power-on from mid-frame is a normal scenario
+  for the vendor firmware, but not one this project has observed.
+
+So the smallest hardware step with a verified exit is the whole frame:
+POSITION → SCAN → PARK, after which the unit is in the post-PARK state
+every driver `eject` starts from. That is the run proposed in §7.
+
+## 2. The sequence
+
+After the shading calibration (post-verify state, reg 0x01 = 0x22),
+`_scan_plain()` runs:
+
+| Step | Python | Wire content | Transfers |
+|---|---|---|---|
+| P1 | `POSITION` (48 ops), injections `feedl_{hi,mid,lo}` (op 35 bytes 7/9/11) | 0x0a = 0x48; 3 × 0xd0–0xd2; the 25 slope pairs; 0xf8 = 05; read 0x101; the mode batch (0x01 = 0x22, 0x04 = 0x42, 0x05 = 0x48, **0x3d–0x3f = FEEDL**, 0xa6–0xa9, 0x7d–0x7f = 00 36 b0, 0x80–0x87, 0x2c/0x2d = 0x04b0, 0x1d, 0x1c, 0xa4/0xa5, 0xaa/0xab, **0x02 = 0x18**, 0xae/0xaf); slope table → 0x1000c000 (512 B), slope table → 0x10010000 (the same 512 B); 0x0f = 0x01; **W3** | 21 writes, 2 bulk OUT |
+| S1 | `SCAN` ops 0–320 | slope table → 0x10000000 / 0x10004000 / 0x10008000 (the scan table, 512 B ×3); 0x03 = 0x30; the scan batch (0x1c, **0x02 = 0x30**, 0x3d–0x3f = 1, 0x7d–0x7f, 0x8a–0x92, 0xae/0xaf, 0xac/0xad, 0x0d = 07, 0x28–0x2b, **0x25–0x27 = line count** (injections `lines_{hi,lo}`, op 14 bytes 55/57), 0x05 = 0x40); 0x01 = 0x23; **a read-back of every register 0x00–0xff and 0x100–0x120** (288 reads, provenance); 0x0f = 0x01; 4 × (read 0x06 → f8, read 0x101 → c5, c5, e5, a5); read 0x102–0x105 | 6 writes, 3 bulk OUT, 288 + 13 reads |
+| S2 | `SCAN` ops 321–8139 | **224 image chunks**: descriptor (wIndex **8** for the first, 0 after) of 519156 B (= 23 lines × 22572 B) followed by the bulk INs, then bulk-done; the last descriptor 180576 B (= 8 lines); 223 × 519156 + 180576 = 115,952,364 B = **5137 lines** exactly | 224 descriptors, 7371 bulk IN |
+| K1 | `PARK` (135 ops), verbatim | `0x8d` end-of-access; read 0x101 (d5); 0x03 = 0x30, 0x03 = 0x20, 0x01 = 0x22, 0x3a = 0x00; read 0x15 → 0x15 = 0x80; read 0x06; **0x02 = 0x30**; 0x36/0x3a/0x36/0x33; reads; 0x03 = 0x10, 0x03 = 0x00 (lamp off); two `0x8b` control writes (wIndex 0x0b: 0c000100, 0x0f: e0ff); read 0x32 → write back; reads; **0.74 s + 2.06 s pauses**; read 0x35 → 0x35 = 0xbb; then five idle-loop rounds (0x36/0x3a/0x36/0x33, read 0x32 → write, 2 s pause, read 0x35, poll 0x32) | 42 writes, 6 lenient polls, 13 paced ops |
+
+Two things the Python driver does here that the C++ machinery does
+not yet have: **pacing** (13 sleeps in PARK, one 1.6 s sleep before
+POSITION's completion poll, two ~80 ms sleeps in SCAN — the replayer
+sleeps the captured `dt` when it exceeds 50 ms, capped at 2 s) and
+**lenient polls** (PARK's six 0x32 polls wait up to 1 s for the
+captured value under a mask, then continue). Decision 3 of the port
+says neither is replayed as such; §4 says what replaces them.
+
+The Python driver's own frame quirk: it keeps 223 chunks (5129 lines)
+as the image and discards the 180576 B chunk as a "drain of unclear
+purpose". It is not a drain — it is the last 8 of the 5137 lines the
+register holds. The backend reports 5137 lines and reads them all;
+the wire is identical either way.
+
+## 3. Wait points
+
+| | Captured | Condition for C++ | Timeout | Evidence |
+|---|---|---|---|---|
+| **W3** POSITION completion (op 47) | poll reg 0x101, settled 0xf4 after 1.61 s for FEEDL 6743; the driver polls strictly under mask 0xF0 (class only) | **class 0xF** on reg 0x101 (`PollClass`) | 3 × 1.61 s × max(1, FEEDL / 6743) — frame 1: 4.8 s, frame 4: 28 s (Test 28) | Tests 17–33: frame 1 settles f455, longer moves settle **f555** (bit 0x01 set, Test 31), so a DATAENB condition would be wrong here and the class mask is the verified one |
+| SCAN start (ops 308–316) | 4 alternating reads of 0x06 (f8) and 0x101: c5, c5, e5, **a5** — class C → E → A with DATAENB set — then the counters | read as captured (`Read` ×8), then let the first bulk IN block: the data arrives when the sensor streams (the driver reads verbatim, 60 s USB timeout) | bulk timeout | every scan to date |
+| image chunks | none between descriptors | USB flow control — a 519156 B read blocks until 23 lines are in the buffer (~0.18 s at 3600 dpi) | bulk timeout per chunk | every scan to date |
+| **PARK Wait A** (after 0x02 = 0x30, before 0x35's RMW) | 0.74 + 2.06 s of pacing, then read 0x35 = 0xfb → write 0xbb | **reg 0x35 bit 0x40 set** (`park_semantic` Wait A) | 15 s | Test 23: Wait A completed on hardware; the pacing it replaces is the vendor's own delay |
+| **PARK Wait B** (end of park) | five idle-loop rounds with 2 s pauses, polls on 0x32 that settle on session-variable values (0x81 / 0x95 / 0xb5 …) | **`park_complete_status_matches()`** on reg 0x101: bits 0x80/0x40/0x20 set, 0x01 and 0x02 clear, 0x10/0x04/0x08 ignored (park-completion-analysis.md) | 15 s | Test 23 stopped on the *old* Wait B (0x32 = 0x95); the status-word rule that replaced it is derived from every captured park end (e8 / ec / f8) and has **not** run on hardware yet |
+
+## 4. Structure
+
+- **`PollClass` is already there** (W2 of hook 4); W3 reuses it with
+  the FEEDL-scaled timeout passed per program (`RunPolicy` override).
+- **`PollBit`**: poll a register until a bit mask is set (Wait A: reg
+  0x35 & 0x40). A generic form of `PollDataReady`.
+- **`PollStatusPark`**: Wait B, the three-part rule above; or a
+  general "poll until (v & mask) == want" op — `PollMasked {reg, mask,
+  want}` covers PollDataReady, PollClass, PollBit and Wait B alike.
+  Recommendation: add `PollMasked` and express all four through it;
+  the generator's rules map each captured poll site to its mask/want.
+- **RMW ops**: PARK reads 0x15 and writes it back with bit 0x10
+  cleared, reads 0x32 and writes it back, reads 0x35 and clears bit
+  0x40. `park_semantic` does real RMW; the verbatim replay writes the
+  captured constants. The captured 0x32 constant is session-variable
+  (Test 23), so this is the one place where the constant form is
+  *known* to write a value the unit did not have. `OpKind::ReadModifyWrite
+  {reg, and_mask, or_mask}` — three sites.
+- **Pacing**: none. The two PARK pauses become Wait A; the idle-loop
+  pauses go with the loop (one round, no pause, as `park_semantic`);
+  POSITION's 1.6 s pre-sleep becomes polling from t = 0 (W3 reads the
+  moving classes 9/D until F — harmless, and it is what `park_semantic`'s
+  waits do too); SCAN's two 80 ms sleeps before register reads are
+  dropped (reads).
+- **PARK program = `park_semantic`'s op list**, not the verbatim
+  capture: the same writes in the same order, real RMW, Wait A, Wait
+  B, one idle round. Emitted by the generator from `tables.PARK` with
+  the same reduction `park_semantic()` applies (it takes its
+  constants — the two `0x8b` payloads, the optional 0x19 write — from
+  the captured phase), so the two stay in step.
+- **Injections**: FEEDL (three bytes) from the frame number; line
+  count (two bytes) from the profile; both computed, never captured.
+- **Slope tables**: the captured 512 B payloads, uploaded as constants
+  — the one `BulkOut` case that keeps its captured data (they are
+  motor profiles, not calibration; A10 classifies them green).
+
+The genesys side — where the three hooks live and what the core does
+around them:
+
+| Core call | GL126 hook | Content |
+|---|---|---|
+| `init_regs_for_scan()` → `init_regs_for_scan_session()` | no wire; fills `dev->reg` with nothing the core writes (the core writes `dev->reg` only through `begin_scan` on this path — verified: `init_regs_for_scan` computes, `begin_scan` is the hook) | sets `session.buffer_size_read = 519156` so the image pipeline requests exactly the captured chunk size; reports 3762 × 5137 px, 3 × 16 bit |
+| `begin_scan()` | **hooks 5 + 6a**: P1 (with FEEDL for the frame), W3, S1 through the settle reads | after it the core runs three wait loops on GL124 registers (feed steps 0x108–0x10a, valid words 0x102–0x105) whose GL126 semantics are unknown (the vendor reads 0x102–0x105 once, values that match neither "words" nor "lines") — **gated for GL126**, our begin_scan has already waited |
+| image pipeline → `bulk_read_data(0x45, data, 519156)` per chunk | **hook 6b**: a GL126 branch of `bulk_read_data`: one descriptor (wIndex 8 for the first chunk of a scan, 0 after — a flag `begin_scan` arms), one bulk IN of the full request, one bulk-done read | the core's total is 5137 lines × 22572 B, so the last request is 180576 B, as captured |
+| EOF in `genesys_read_ordered_data` → `end_scan()` | **hook 7**: K1 as the semantic park program | then the core sets `parking` via `move_back_home(false)` — gated for GL126, `dev->parking = true` set directly so `sane_cancel` does not run `end_scan` a second time; `sanei_genesys_wait_for_home` at the next `sane_start` (reads GL124 home regs) gated too |
+| `wait_for_motor_stop()` before `init_regs_for_scan` | no-op for GL126 (the vendor has no such wait; hook 4's run ended on its refusal) | |
+
+Failure rules as before: any poll timeout, short bulk (IN or OUT) or
+missing injection ends the hook with zero further writes and a named
+error. A failure *after* POSITION leaves the transport positioned —
+the exit is then the power cycle + `load --double-jog` route (§7), the
+same as after any failed session today.
+
+## 5. What the run verifies, and against what
+
+- The image: the backend's PNM (3762 × 5137, 16-bit RGB) against the
+  driver's raw scan of the same strip and load (`scan --frame 1`,
+  5129 lines): pixel statistics per channel, and the film-edge rows
+  from `hwblock.film_rows()` within Test 21's band (±4 rows). A
+  visual check by Christian of both images.
+- W3's settled value and time (f455 expected for frame 1).
+- Wait A's and Wait B's first/last values and times — Wait B's first
+  hardware evidence.
+- The state after: reg 0x01 = 0x22, 0x101 in the park-complete class,
+  0x32 / 0x35 as after a driver park; then a driver `eject` — from the
+  post-PARK state, the verified origin — closes the run.
+
+## 6. Offline tests (before any hardware)
+
+1. Wire equality with the Python replayer for POSITION and SCAN's
+   setup (S1) — injections on both sides.
+2. The image path: a C++ probe driving `bulk_read_data`'s GL126 branch
+   through the `Wire` fake with 519156-byte requests must emit the
+   captured descriptor/bulk/bulk-done sequence for the 224 chunks
+   (wIndex 8 then 0, 180576 last) — compared with the Python
+   replayer's S2 transfer list.
+3. PARK: the semantic program compared with `park_semantic()`'s
+   transfers over the fake (tests/test_park.py drives it), op for op,
+   including the RMW values and the two waits' read sequences.
+4. `PollMasked` timeout/continue cases for W3, Wait A, Wait B; the
+   FEEDL-scaled budget; the frame → FEEDL mapping against
+   `tables.feedl_for_frame`.
+
+## 7. The hardware run
+
+Power cycle → `of135i load` with the reference strip → the driver's
+`scan --frame 1` (reference image + diag) → `scanimage
+--force-calibration --resolution 3600 --format pnm -o frame1-sane.pnm`
+with the debug log. Expected: hooks 2–4 (≈ 4 s), POSITION (1.6 s),
+the scan pass (≈ 40 s, the driver's time), PARK (≈ 5 s), `sane_read`
+delivers 5137 lines, `scanimage` exits 0. Christian listens through the
+whole run; the motor sounds are the driver's (position move, scan
+pass, carriage return). Then `of135i status` (0x22, park-complete
+status) and `of135i eject` — no power cycle.
+
+If the run stops before PARK completes: power cycle → `load
+--double-jog` → `eject`, and the log says where.
+
+## 8. Decisions — each needs an explicit go
+
+1. **Bundle hooks 5, 6, 7 into one hardware run** (the full frame),
+   because POSITION alone has no verified exit (§1).
+2. **W3 = class-F poll on reg 0x101** with the FEEDL-scaled budget —
+   the driver's verified rule (Test 31 rules out the bit-0x01
+   variant); polling from t = 0 instead of the 1.6 s pre-sleep.
+3. **PARK as the semantic program** (real RMW, Wait A on 0x35 bit
+   0x40, Wait B on the status-word class rule, one idle round), whose
+   Wait B has not run on hardware since it was rewritten after Test
+   23. The alternative — verbatim PARK with replayed pacing and
+   lenient polls — is the driver's verified form, but replaying
+   pacing and tolerated timeouts is what decision 3 rejects. If the
+   semantic park fails closed, the unit is mid-return with nothing
+   further written, and the exit is the power cycle route.
+4. **Image path through the core's pipeline** with 519156-byte
+   requests and a GL126 branch of `bulk_read_data` (descriptor with
+   wIndex 8 first / 0 after, bulk-done read), the core's GL124 wait
+   loops gated; 5137 lines reported, the driver's "drain" included as
+   image.
+5. **Frame 1 fixed** for this run; a `--frame` backend option comes
+   with batch support later.
+6. **Exit by `eject` from the post-PARK state** if the run completes;
+   power cycle + `load --double-jog` otherwise.

@@ -389,9 +389,11 @@ decision that turns decision 2 around: `has_send_shading_data()` true
 with a no-op send + `DISABLE_SHADING_CALIBRATION`, the vendor's shading
 inside `coarse_gain_calibration()`. Implemented offline the same day
 (21/21 op tests). Hardware run done (Test 50): hooks 2–4 complete, both
-tables uploaded, all transfers at full length. Next: hook 5, POSITION
-(the first motor move of the port — FEEDL injection, strict completion
-poll scaled with FEEDL, the slope-table bulk OUT), then SCAN and PARK.
+tables uploaded, all transfers at full length. Hooks 5–7 (POSITION,
+SCAN, PARK): offline analysis in `docs/sane-hook5-frame.md` (2026-09-08)
+— POSITION has no verified exit on its own, so the three are one unit
+and one hardware run (a full frame 1); six decisions await an explicit
+go, the first motor movement of the port.
 
 Hook 2 is `offset_calibration()` and nothing else: the driver's
 CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and
