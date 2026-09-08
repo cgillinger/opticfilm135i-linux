@@ -24,6 +24,7 @@
 #include "gl126_registers.h"
 #include "gl126_tables.h"
 #include "gl126_ops.h"
+#include "image_pipeline.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -317,8 +318,45 @@ constexpr unsigned kFrameLinesPlain3600 = 5137;
    The model declares it as ld_shift_r/g/b = 24/12/0 at the motor's base
    3600 dpi and the core's ComponentShiftLines node re-aligns the channels
    on the host, dropping this many lines from the delivered image. The
-   wire line count is unchanged (Test 53 root cause, docs/test-log.md). */
+   wire line count is unchanged (Test 53 root cause, docs/test-log.md).
+   Every profile's figures come from frame_geometry() (gl126_ops); these
+   two are the plain profile's, kept by name. */
 constexpr unsigned kColourShiftLinesPlain3600 = 24;
+
+/* Hook 8: the dual-light image stream keeps one line in two on the host
+   (docs/sane-hook8-dual.md section 4). Height = source height / 2; row k
+   of the output is source row 2k + parity. */
+class ImagePipelineNodeGl126KeepParity : public ImagePipelineNode
+{
+public:
+    ImagePipelineNodeGl126KeepParity(ImagePipelineNode& source, unsigned parity) :
+        source_(source), parity_(parity), height_(source.get_height() / 2),
+        skip_(source.get_row_bytes())
+    {
+        DBG_HELPER_ARGS(dbg, "parity=%u height=%zu", parity, height_);
+    }
+    std::size_t get_width() const override { return source_.get_width(); }
+    std::size_t get_height() const override { return height_; }
+    PixelFormat get_format() const override { return source_.get_format(); }
+    bool eof() const override { return source_.eof(); }
+    bool get_next_row_data(std::uint8_t* out_data) override
+    {
+        bool got = true;
+        if (parity_ == 0) {
+            got &= source_.get_next_row_data(out_data);
+            got &= source_.get_next_row_data(skip_.data());
+        } else {
+            got &= source_.get_next_row_data(skip_.data());
+            got &= source_.get_next_row_data(out_data);
+        }
+        return got;
+    }
+private:
+    ImagePipelineNode& source_;
+    unsigned parity_;
+    std::size_t height_;
+    std::vector<std::uint8_t> skip_;
+};
 constexpr unsigned kFrameMax = 4;      // the magazine's strip; the option's range
 std::map<const Genesys_Device*, CalStage>& cal_stage()
 {
@@ -387,14 +425,87 @@ void log_shading_table(const char* label, const std::vector<std::uint8_t>& table
    shading_table() uploaded to scanner RAM, the white 128-line measurement,
    shading_table2() uploaded. Runs right after the gain checks, on their
    state; plain 3600 dpi only until the dual-light tables are brought up. */
+/* Hook 8: the dual-light profiles' shading (docs/sane-hook8-dual.md
+   section 3), the driver's _scan_dual() step for step. The measurement is
+   shading_lines alternating lines at the full width; the visible (odd)
+   lines make table A (address 0x10014000, applied by the scanner to the
+   odd/visible scan lines), the IR (even) lines table B (0x10034000, the
+   even/IR lines) -- the empirically corrected assignment, not pass 18's.
+   Table 1 is the dark map (offsets, gain 0x4000); table 2 the white
+   uniformity with the vendor's per-address targets and the dual formula
+   (gain from the white mean alone). */
+void run_shading_calibration_dual(Genesys_Device* dev, const Profile& profile)
+{
+    DBG_HELPER(dbg);
+    const unsigned lines = profile.shading_lines;
+    const unsigned width = profile.image_width;
+    const std::size_t meas_len = std::size_t(lines) * width * 6;
+    if (lines == 0 || lines % 2 != 0) {
+        throw SaneException(SANE_STATUS_INVAL, "gl126: profile %s has no dual shading shape",
+                            profile.name);
+    }
+
+    std::map<std::string, std::uint8_t> values;
+    static const char* const ch[3] = { "r", "g", "b" };
+    for (unsigned c = 0; c < 3; c++) {
+        std::uint16_t code = dev->frontend.regs.get_value(static_cast<std::uint16_t>(0x05 + c));
+        values[std::string("offset_") + ch[c] + "_hi"] = static_cast<std::uint8_t>(code >> 8);
+        values[std::string("offset_") + ch[c] + "_lo"] = static_cast<std::uint8_t>(code & 0xff);
+    }
+    RunResult dark;
+    run_phase_program(dev, profile, "cal_shading_measure", dark, &values);
+    std::vector<std::uint8_t> dark_buf = joined_buffers(dark);
+    if (dark_buf.size() != meas_len) {
+        throw SaneException(SANE_STATUS_IO_ERROR,
+                            "gl126: shading dark measurement is %zu bytes, expected %zu "
+                            "(%u lines x %u px). Nothing further was written.",
+                            dark_buf.size(), meas_len, lines, width);
+    }
+    std::vector<std::uint8_t> dark_ir = alternate_lines(dark_buf.data(), dark_buf.size(), lines, width, 0);
+    std::vector<std::uint8_t> dark_vis = alternate_lines(dark_buf.data(), dark_buf.size(), lines, width, 1);
+
+    std::map<std::string, std::vector<std::uint8_t>> bulk;
+    bulk["shading_table_a"] = shading_table(dark_vis.data(), dark_vis.size(), lines / 2, width);
+    bulk["shading_table_b"] = shading_table(dark_ir.data(), dark_ir.size(), lines / 2, width);
+    log_shading_table("shading table 1A (dark map, visible lines)", bulk["shading_table_a"]);
+    log_shading_table("shading table 1B (dark map, IR lines)", bulk["shading_table_b"]);
+    RunResult upload;
+    run_phase_program(dev, profile, "cal_shading_upload", upload, nullptr, &bulk);
+
+    RunResult white;
+    run_phase_program(dev, profile, "cal_shading_verify", white);
+    std::vector<std::uint8_t> white_buf = joined_buffers(white);
+    if (white_buf.size() != meas_len) {
+        throw SaneException(SANE_STATUS_IO_ERROR,
+                            "gl126: shading white measurement is %zu bytes, expected %zu. "
+                            "Nothing further was written.", white_buf.size(), meas_len);
+    }
+    std::vector<std::uint8_t> white_ir = alternate_lines(white_buf.data(), white_buf.size(), lines, width, 0);
+    std::vector<std::uint8_t> white_vis = alternate_lines(white_buf.data(), white_buf.size(), lines, width, 1);
+    bulk.clear();
+    bulk["shading_table2_a"] = shading_table2_dual(white_vis.data(), white_vis.size(),
+                                                   dark_vis.data(), dark_vis.size(),
+                                                   lines / 2, width, kShading2TargetA);
+    bulk["shading_table2_b"] = shading_table2_dual(white_ir.data(), white_ir.size(),
+                                                   dark_ir.data(), dark_ir.size(),
+                                                   lines / 2, width, kShading2TargetB);
+    log_shading_table("shading table 2A (white uniformity, visible lines)", bulk["shading_table2_a"]);
+    log_shading_table("shading table 2B (white uniformity, IR lines)", bulk["shading_table2_b"]);
+    RunResult upload2;
+    run_phase_program(dev, profile, "cal_shading_verify_upload", upload2, nullptr, &bulk);
+    log_dark_means("shading dark measurement (visible lines)", dark_vis);
+    log_dark_means("shading dark measurement (IR lines)", dark_ir);
+    log_dark_means("shading white measurement (visible lines)", white_vis);
+    log_dark_means("shading white measurement (IR lines)", white_ir);
+    cal_stage()[dev] = CalStage::ShadingDone;
+}
+
 void run_shading_calibration(Genesys_Device* dev, const Profile& profile)
 {
     DBG_HELPER(dbg);
-    if (std::string(profile.name) != "plain3600") {
-        throw SaneException(SANE_STATUS_UNSUPPORTED,
-                            "gl126: shading calibration is brought up for the plain 3600 dpi "
-                            "profile only; %s uses two shading tables and a different gain "
-                            "formula (a later step). Nothing was written for it.", profile.name);
+    if (profile.lines_per_chunk != 0) {
+        run_shading_calibration_dual(dev, profile);
+        return;
     }
     const std::size_t meas_len = std::size_t(kShadingLines) * kShadingWidth * 6;
 
@@ -553,11 +664,17 @@ ScanSession CommandSetGl126::calculate_scan_session(const Genesys_Device* dev,
        the delivered size. */
     bool ir = settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
     const Profile* profile = find_profile(settings.xres, ir);
-    bool pinned = profile != nullptr && std::string(profile->name) == "plain3600";
+    bool pinned = profile != nullptr;
+    FrameGeometry geo;
     if (pinned) {
-        session.params.pixels = profile->image_width;
-        session.params.requested_pixels = profile->image_width;
-        session.params.lines = kFrameLinesPlain3600 - kColourShiftLinesPlain3600;
+        /* Hook 8 generalises the pin to every captured profile: the dual-
+           light ones (600/1200/2400/7200 dpi, and 3600 dpi with IR) stream
+           IR and visible lines alternately at the full sensor width; the
+           host keeps one line in two (docs/sane-hook8-dual.md section 3). */
+        geo = frame_geometry(*profile);
+        session.params.pixels = geo.width;
+        session.params.requested_pixels = geo.width;
+        session.params.lines = geo.delivered_lines;
         session.params.startx = 0;
         session.params.starty = 0;
     }
@@ -569,28 +686,45 @@ ScanSession CommandSetGl126::calculate_scan_session(const Genesys_Device* dev,
     session.params.brightness_adjustment = dev->settings.brightness;
     session.params.exposure_lperiod = dev->settings.exposure_lperiod;
     /* No pixel stagger (the sensor is a single line per colour); the colour
-       line shift is NOT ignored: compute_session() takes it from the
-       model's ld_shift and build_image_pipeline() inserts the
-       ComponentShiftLines node. */
+       line shift is NOT ignored for the visible image: compute_session()
+       takes it from the model's ld_shift and build_image_pipeline() inserts
+       the ComponentShiftLines node. The IR pass has one line per position
+       (R = G = B), so shifting it would only smear every dust speck across
+       the shift: it is cropped instead (push_dual_light_nodes). */
     session.params.flags = ScanFlag::IGNORE_STAGGER_OFFSET;
+    if (ir) {
+        session.params.flags |= ScanFlag::IGNORE_COLOR_OFFSET;
+    }
 
     compute_session(dev, session, sensor);
     if (pinned) {
-        if (session.max_color_shift_lines != kColourShiftLinesPlain3600 ||
-            session.output_line_count != kFrameLinesPlain3600)
+        unsigned expect_shift = ir ? 0 : geo.shift_lines;
+        if (session.max_color_shift_lines != expect_shift ||
+            session.output_line_count != geo.delivered_lines + expect_shift ||
+            (ir && session.color_shift_lines_g * 2 != geo.shift_lines))
         {
-            /* The model's ld_shift, the motor's base_ydpi and this pin must
-               agree, or the wire count would differ from the captured one.
-               Pure computation: nothing has been written. */
+            /* The model's ld_shift, the motor's base_ydpi and the profile's
+               geometry must agree, or the wire count would differ from the
+               captured one. Pure computation: nothing has been written. */
             throw SaneException(SANE_STATUS_INVAL,
-                                "gl126: colour shift %u lines and %u raw lines do not match the "
-                                "captured frame (%u + %u). Nothing was written.",
+                                "gl126: colour shift %u lines and %u output lines do not match "
+                                "profile %s (%u + %u). Nothing was written.",
                                 session.max_color_shift_lines, session.output_line_count,
-                                kFrameLinesPlain3600 - kColourShiftLinesPlain3600,
-                                kColourShiftLinesPlain3600);
+                                profile->name, geo.delivered_lines, expect_shift);
         }
-        // one image request = one captured chunk (23 lines); the last one is
-        // the remainder (8 lines), exactly as the vendor streams the frame
+        /* The USB source reads every raw line the vendor read: for the plain
+           profile the whole register value (5137, its last 8 lines the chunk
+           the driver calls a drain); for a dual profile both passes
+           (chunk_count * lines_per_chunk, e.g. 10544 of ir3600's 10622 --
+           the vendor cancelled the 660th descriptor). The pipeline's nodes
+           bring that down to params.lines. */
+        session.optical_line_count = geo.read_lines;
+        session.output_total_bytes_raw =
+            static_cast<std::size_t>(session.output_line_bytes_raw) * geo.read_lines;
+        session.gl126_keep_parity = geo.dual ? (ir ? 0u : 1u) : 2u;
+        session.gl126_crop_lines = (geo.dual && ir) ? geo.shift_lines / 2 : 0u;
+        // one image request = one captured chunk; the last one is the
+        // remainder when the line count is not a multiple of the chunk
         session.buffer_size_read = profile->chunk_len;
     }
 
@@ -609,9 +743,13 @@ void CommandSetGl126::init_regs_for_scan_session(Genesys_Device* dev,
     DBG_HELPER(dbg);
     bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
     const Profile* profile = find_profile(dev->settings.xres, ir);
-    if (profile == nullptr || session.params.pixels != profile->image_width ||
-        session.output_line_count != kFrameLinesPlain3600 ||
-        session.params.lines != kFrameLinesPlain3600 - kColourShiftLinesPlain3600 ||
+    FrameGeometry geo;
+    if (profile != nullptr) {
+        geo = frame_geometry(*profile);
+    }
+    if (profile == nullptr || session.params.pixels != geo.width ||
+        session.optical_line_count != geo.read_lines ||
+        session.params.lines != geo.delivered_lines ||
         session.params.channels != 3 || session.params.depth != 16)
     {
         /* Any session but the captured frame comes from a core path that is
@@ -633,9 +771,10 @@ void CommandSetGl126::init_regs_for_scan_session(Genesys_Device* dev,
        so the last raw chunk is still read in full). */
     dev->total_bytes_to_read = static_cast<std::size_t>(session.output_line_bytes_requested) *
                                static_cast<std::size_t>(session.params.lines);
-    DBG(DBG_info, "gl126: scan session %u x %u px delivered from %u raw lines, %u B per chunk, "
-        "%zu B to the frontend\n",
-        session.params.pixels, session.params.lines, session.output_line_count,
+    DBG(DBG_info, "gl126: scan session %s: %u x %u px delivered from %u raw lines (%s), %u B "
+        "per chunk, %zu B to the frontend\n", profile->name,
+        session.params.pixels, session.params.lines, session.optical_line_count,
+        geo.dual ? (ir ? "the IR lines" : "the visible lines") : "all",
         static_cast<unsigned>(session.buffer_size_read), dev->total_bytes_to_read);
 }
 
@@ -765,6 +904,7 @@ void CommandSetGl126::coarse_gain_calibration(Genesys_Device* dev,
     WarmupRecord rec;
     WarmupPolicy policy;
     std::uint8_t codes[3] = { 0, 0, 0 };
+    const bool dual = profile->lines_per_chunk != 0;
     auto measure = [&]() {
         RunResult white;
         run_phase_program(dev, *profile, "cal_white", white);
@@ -773,6 +913,18 @@ void CommandSetGl126::coarse_gain_calibration(Genesys_Device* dev,
             throw SaneException(SANE_STATUS_IO_ERROR,
                                 "gl126: malformed white line (%zu bytes). Nothing further "
                                 "was written.", buf.size());
+        }
+        if (dual) {
+            /* Two lines, IR first: the gain (one AFE register set) is
+               computed from the visible line only, as the driver's
+               _scan_dual() does -- the IR line's flat, bright values would
+               skew the peak (docs/sane-hook8-dual.md section 3). */
+            if (buf.size() % 12 != 0) {
+                throw SaneException(SANE_STATUS_IO_ERROR,
+                                    "gl126: dual-light white measurement is %zu bytes, not two "
+                                    "lines. Nothing further was written.", buf.size());
+            }
+            buf.erase(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(buf.size() / 2));
         }
         return buf;
     };
@@ -873,11 +1025,10 @@ void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*se
 
     bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
     const Profile* profile = find_profile(dev->settings.xres, ir);
-    if (profile == nullptr || std::string(profile->name) != "plain3600") {
+    if (profile == nullptr) {
         throw SaneException(SANE_STATUS_UNSUPPORTED,
-                            "gl126: the frame hooks are brought up for the plain 3600 dpi "
-                            "profile only. Nothing was written for %s.",
-                            profile ? profile->name : "this resolution");
+                            "gl126: no captured profile for %u dpi%s. Nothing was written.",
+                            dev->settings.xres, ir ? " with IR" : "");
     }
     if (dev->session.params.channels != 3 || dev->session.params.depth != 16) {
         throw SaneException(SANE_STATUS_UNSUPPORTED,
@@ -896,7 +1047,7 @@ void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*se
                             "gl126: frame %u is outside 1-%u. Nothing was written.",
                             frame, kFrameMax);
     }
-    unsigned feedl = feedl_for_frame(frame);
+    unsigned feedl = feedl_for_frame(frame, *profile);
     std::map<std::string, std::uint8_t> values;
     values["feedl_hi"] = static_cast<std::uint8_t>((feedl >> 16) & 0xff);
     values["feedl_mid"] = static_cast<std::uint8_t>((feedl >> 8) & 0xff);
@@ -908,10 +1059,14 @@ void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*se
     RunResult position;
     run_phase_program(dev, *profile, "position", position, &values, nullptr, &position_policy);
 
-    // Hook 6a: the scan pass's setup, with the frame's RAW line count (the
-    // wire's 5137; the frontend receives params.lines = 5137 - 24).
-    unsigned lines = dev->session.output_line_count;
+    // Hook 6a: the scan pass's setup, with the frame's line-count register
+    // value as captured (plain: 5137, both bytes; dual: three bytes, e.g.
+    // ir3600's 10622 of which 10544 are read). The frontend receives
+    // params.lines; the raw lines read are session.optical_line_count.
+    FrameGeometry geo = frame_geometry(*profile);
+    unsigned lines = geo.wire_lines;
     values.clear();
+    values["lines_top"] = static_cast<std::uint8_t>((lines >> 16) & 0xff);
     values["lines_hi"] = static_cast<std::uint8_t>((lines >> 8) & 0xff);
     values["lines_lo"] = static_cast<std::uint8_t>(lines & 0xff);
     RunResult setup;
@@ -924,8 +1079,9 @@ void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*se
                             scan_pass_state_name(pass.state()));
     }
     dev->parking = false;
-    DBG(DBG_info, "gl126: scan pass started, %u raw lines, %zu raw bytes expected; the image "
-        "follows chunk by chunk\n", lines, expected);
+    DBG(DBG_info, "gl126: scan pass started (%s), line register %u, %u raw lines to read, %zu "
+        "raw bytes expected; the image follows chunk by chunk\n", profile->name, lines,
+        geo.read_lines, expected);
 }
 
 /* Hook 7: PARK, as the driver's park_semantic(): the vendor's teardown
@@ -1074,6 +1230,24 @@ void CommandSetGl126::save_power(Genesys_Device* /*dev*/, bool /*enable*/) const
     /* The unit leaves the USB bus a few minutes after a session releases
        it and only a power cycle brings it back, so there is nothing safe
        to do here. */
+}
+
+void push_dual_light_nodes(const ScanSession& session, ImagePipelineStack& pipeline)
+{
+    if (session.gl126_keep_parity > 1) {
+        return;   // the plain profile: every line is the image
+    }
+    pipeline.push_node<ImagePipelineNodeGl126KeepParity>(session.gl126_keep_parity);
+    if (session.gl126_crop_lines > 0) {
+        std::size_t crop = session.gl126_crop_lines;
+        std::size_t height = pipeline.get_output_height();
+        if (height < 2 * crop) {
+            throw SaneException(SANE_STATUS_INVAL, "gl126: IR image of %zu lines cannot be "
+                                "cropped by %zu at each end", height, crop);
+        }
+        pipeline.push_node<ImagePipelineNodeExtract>(0, crop, pipeline.get_output_width(),
+                                                     height - 2 * crop);
+    }
 }
 
 void read_image_chunk_usb(Genesys_Device* dev, std::uint8_t* data, std::size_t size)

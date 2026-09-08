@@ -941,6 +941,13 @@ def emit() -> tuple[str, str]:
     h.append("    unsigned lines_per_chunk;")
     h.append("    unsigned shading_lines;")
     h.append("    unsigned shading_upload_len;")
+    h.append("    unsigned captured_lines;   /* the line-count register value as captured")
+    h.append("                                  (DEFAULT_LINES); written to the wire as is */")
+    h.append("    unsigned chunk_count;      /* image chunks the vendor read (IMAGE_CHUNK_COUNT):")
+    h.append("                                  chunk_count * lines_per_chunk lines are read,")
+    h.append("                                  which for ir3600 is fewer than captured_lines */")
+    h.append("    unsigned feedl_frame1;     /* POSITION FEEDL of frame 1, this capture's own */")
+    h.append("    unsigned feedl_pitch;      /* FEEDL between frames */")
     h.append("    const std::uint8_t* slope_position;")
     h.append("    std::size_t slope_position_len;")
     h.append("    const std::uint8_t* slope_scan;")
@@ -1174,6 +1181,8 @@ def emit() -> tuple[str, str]:
             f'{getattr(mod, "LINES_PER_CHUNK", 0)}, '
             f'{getattr(mod, "SHADING_LINES", 0)}, '
             f'{getattr(mod, "SHADING_UPLOAD_LEN", 0)}, '
+            f'{mod.DEFAULT_LINES}, {mod.IMAGE_CHUNK_COUNT}, '
+            f'{mod.FEEDL_FRAME1}, {mod.FEEDL_PITCH}, '
             f'{pos}, {pos}_LEN, {scan}, {scan}_LEN, '
             f'{key.upper()}_PHASES, {len(phase_entries)}, '
             f'{progs_name}, {len(program_entries)}}},   /* {doc} */')

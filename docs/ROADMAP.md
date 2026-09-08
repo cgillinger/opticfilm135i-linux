@@ -191,7 +191,9 @@ request flow at submission time). Delivered = submitted, review-ready.
   Test 52). **Image acceptance:** Christian's eye check of the Test 54
   image is the open step — no backend image is accepted until he has
   said so.
-  Still to do for B1 after that: the other resolutions, IR, install/
+  The other resolutions and infrared (hook 8, docs/sane-hook8-dual.md)
+  are implemented offline and wire-equal to the driver; their hardware
+  runs and eye checks are next. Still to do for B1 after that: install/
   packaging (docs/sane-port.md). **B2** not started.
 - **A6 note** (Test 44/46): the driver's eject stalled from a state only
   the backend's first `init()` produced; that `init()` now writes nothing.

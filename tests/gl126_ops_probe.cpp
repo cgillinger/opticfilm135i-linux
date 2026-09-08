@@ -1019,6 +1019,68 @@ int cmd_shading_table2(int argc, char** argv)
     return 0;
 }
 
+/* shading_table2_dual <white.bin> <dark.bin> <lines> <width> <target> <out.bin> */
+int cmd_shading_table2_dual(int argc, char** argv)
+{
+    if (argc != 8) {
+        std::cerr << "usage: probe shading_table2_dual <white.bin> <dark.bin> <lines> <width> "
+                     "<target> <out.bin>\n";
+        return 2;
+    }
+    std::vector<std::uint8_t> white = read_file(argv[2]);
+    std::vector<std::uint8_t> dark = read_file(argv[3]);
+    unsigned lines = static_cast<unsigned>(std::stoul(argv[4]));
+    unsigned width = static_cast<unsigned>(std::stoul(argv[5]));
+    double target = std::stod(argv[6]);
+    std::vector<std::uint8_t> out = shading_table2_dual(
+        white.data(), white.size(), dark.data(), dark.size(), lines, width, target);
+    write_file(argv[7], out);
+    std::cout << "OK len=" << out.size() << "\n";
+    return 0;
+}
+
+/* alternate_lines <buf.bin> <lines> <width> <parity> <out.bin> */
+int cmd_alternate_lines(int argc, char** argv)
+{
+    if (argc != 7) {
+        std::cerr << "usage: probe alternate_lines <buf.bin> <lines> <width> <parity> <out.bin>\n";
+        return 2;
+    }
+    std::vector<std::uint8_t> buf = read_file(argv[2]);
+    unsigned lines = static_cast<unsigned>(std::stoul(argv[3]));
+    unsigned width = static_cast<unsigned>(std::stoul(argv[4]));
+    unsigned parity = static_cast<unsigned>(std::stoul(argv[5]));
+    std::vector<std::uint8_t> out = alternate_lines(buf.data(), buf.size(), lines, width, parity);
+    write_file(argv[6], out);
+    std::cout << "OK len=" << out.size() << "\n";
+    return 0;
+}
+
+/* geometry <profile> -- frame_geometry() of a named profile. */
+int cmd_geometry(int argc, char** argv)
+{
+    if (argc != 3) {
+        std::cerr << "usage: probe geometry <profile>\n";
+        return 2;
+    }
+    const Profile* p = nullptr;
+    for (std::size_t i = 0; i < PROFILE_COUNT; i++) {
+        if (std::string(PROFILES[i].name) == argv[2]) p = &PROFILES[i];
+    }
+    if (p == nullptr) {
+        std::cerr << "no profile " << argv[2] << "\n";
+        return 2;
+    }
+    FrameGeometry g = frame_geometry(*p);
+    std::cout << "GEOMETRY dual=" << (g.dual ? 1 : 0) << " width=" << g.width
+              << " wire_lines=" << g.wire_lines << " read_lines=" << g.read_lines
+              << " image_lines=" << g.image_lines << " shift_lines=" << g.shift_lines
+              << " delivered_lines=" << g.delivered_lines << " chunk_len=" << g.chunk_len
+              << " chunk_count=" << g.chunk_count << " feedl_frame1=" << p->feedl_frame1
+              << " feedl_pitch=" << p->feedl_pitch << "\n";
+    return 0;
+}
+
 int cmd_upload_len(int argc, char** argv)
 {
     if (argc != 3) {
@@ -1097,12 +1159,17 @@ int cmd_image_chunks(int argc, char** argv)
 
 int cmd_feedl(int argc, char** argv)
 {
-    if (argc != 3) {
-        std::cerr << "usage: probe feedl <frame>\n";
+    if (argc != 3 && argc != 4) {
+        std::cerr << "usage: probe feedl <frame> [profile]\n";
         return 2;
     }
     unsigned frame = static_cast<unsigned>(std::stoul(argv[2]));
     unsigned feedl = feedl_for_frame(frame);
+    if (argc == 4) {
+        for (std::size_t i = 0; i < PROFILE_COUNT; i++) {
+            if (std::string(PROFILES[i].name) == argv[3]) feedl = feedl_for_frame(frame, PROFILES[i]);
+        }
+    }
     FeedlBytes b = feedl_bytes(feedl);
     std::cout << "FEEDL=" << feedl << " hi=" << hex2(b.hi) << " mid=" << hex2(b.mid)
               << " lo=" << hex2(b.lo) << "\n";
@@ -1196,6 +1263,9 @@ int main(int argc, char** argv)
         if (mode == "shading_table") return cmd_shading_table(argc, argv);
         if (mode == "shading_table2") return cmd_shading_table2(argc, argv);
         if (mode == "upload_len") return cmd_upload_len(argc, argv);
+        if (mode == "shading_table2_dual") return cmd_shading_table2_dual(argc, argv);
+        if (mode == "alternate_lines") return cmd_alternate_lines(argc, argv);
+        if (mode == "geometry") return cmd_geometry(argc, argv);
         if (mode == "image_chunks") return cmd_image_chunks(argc, argv);
         if (mode == "feedl") return cmd_feedl(argc, argv);
         if (mode == "position_timeout") return cmd_position_timeout(argc, argv);

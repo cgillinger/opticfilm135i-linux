@@ -56,6 +56,7 @@ needs the probe prints a SKIP line and passes trivially.
 from __future__ import annotations
 
 import hashlib
+from collections import deque
 import shutil
 import subprocess
 import sys
@@ -1622,6 +1623,308 @@ def test_scan_pass_park_failure_is_terminal():
     print("test_scan_pass_park_failure_is_terminal OK")
 
 
+
+# ------------------------------------------------ 9. hook 8: dual-light
+DUAL_PROFILES = (
+    ("ir3600", 3600), ("dpi600", 600), ("dpi1200", 1200), ("dpi2400", 2400), ("dpi7200", 7200),
+)
+DUAL_PROGRAM_NAMES = (
+    "prep", "afe_base", "cal_dark_a", "cal_dark_b", "cal_white", "cal_gain_check_a",
+    "cal_gain_check_b", "cal_shading_measure", "cal_shading_upload", "cal_shading_verify",
+    "cal_shading_verify_upload", "position", "scan_setup",
+)
+
+
+def _dual_module(dpi):
+    from of135i import device
+    return device.dual_tables(dpi)
+
+
+def _dual_cal_buffers(t):
+    """Canned buffers for a dual-light scan over FakeUsbDevice, keyed by
+    descriptor length: the 2-line white buffer (IR line first) crafted so
+    gain_codes() on the visible line returns the trace's own codes, and
+    the alternating 256-line shading measurement served to both the
+    measure and the verify read (test_dpi.py's construction)."""
+    import test_dpi
+    gc = t.CAL_GAIN_CHECK_A
+    codes = tuple(gc.ops[gc.injections[k][1]].data[gc.injections[k][2]]
+                  for k in ("gain_r", "gain_g", "gain_b"))
+    a_off = test_dpi._captured_shading_offsets(t, t.CAL_SHADING_UPLOAD, "shading_table_a")
+    b_off = test_dpi._captured_shading_offsets(t, t.CAL_SHADING_UPLOAD, "shading_table_b")
+    meas = test_dpi._synthetic_measurement(t, b_off, a_off)
+    white, white_len = test_dpi._white_buffer(t, codes)
+    return {white_len: deque([white]), len(meas): deque([meas, meas])}
+
+
+def _run_dual_python(t, dpi, n_chunks=2):
+    """The driver's scan(frame=1, ir=True, dpi=dpi, lines=<two chunks>) over
+    FakeUsbDevice, every _exec_ops call sliced out of the wire log."""
+    fake = FakeUsbDevice(reg01=0x22, cal_buffers=_dual_cal_buffers(t))
+    scanner = Scanner(UsbIo(fake))
+    calls: list[tuple[str, int, int, list]] = []
+    orig_exec_ops = scanner._exec_ops
+
+    def wrapped(ops, *a, **kw):
+        start = len(fake.wire_log)
+        result = orig_exec_ops(ops, *a, **kw)
+        end = len(fake.wire_log)
+        calls.append((scanner.session.phase, start, end, ops))
+        return result
+
+    scanner._exec_ops = wrapped  # type: ignore[method-assign]
+    n_lines = n_chunks * t.LINES_PER_CHUNK
+    with fast_time():
+        scanner.initialize(ir=True, dpi=dpi)
+        scanner.scan(frame=1, ir=True, dpi=dpi, lines=n_lines)
+    return fake, calls, n_lines
+
+
+def test_dual_programs_match_python_replayer():
+    """Hook 8 (docs/sane-hook8-dual.md section 6): wire equality of every
+    op program of the five dual-light profiles against the driver's own
+    transfers for the same profile -- the calibration chain with its
+    injections recovered from the patched ops the driver sent (offset
+    codes, gain codes, the four shading tables), POSITION with the
+    profile's own FEEDL, the scan setup with the driver's three-byte
+    line count, and the semantic PARK. Two image chunks are scanned so
+    7200 dpi stays cheap; the chunk transfers themselves are covered by
+    test_dual_image_chunks."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_dual_programs_match_python_replayer SKIPPED (no g++)")
+        return "skipped"
+
+    summary = []
+    for profile_name, dpi in DUAL_PROFILES:
+        t = _dual_module(dpi)
+        fake, calls, n_lines = _run_dual_python(t, dpi)
+
+        def calls_named(name):
+            return [c for c in calls if c[0] == name]
+
+        # scan is one _exec_ops call covering setup + chunks + tail;
+        # cut it at the first image descriptor like the plain test.
+        scan_calls = calls_named("scan")
+        assert len(scan_calls) == 1, (profile_name, len(scan_calls))
+        _, s_start, s_end, s_ops = scan_calls[0]
+        first_desc = next(i for i, op in enumerate(s_ops)
+                          if op.kind == "cw" and op.wv == 0x0082 and op.data == t.IMAGE_DESC_DATA)
+        verify_calls = calls_named("cal_shading_verify")
+        assert len(verify_calls) == 2, (profile_name, len(verify_calls))
+        split_at = t.CAL_SHADING_VERIFY.split_at
+
+        program_calls = {}
+        for name in DUAL_PROGRAM_NAMES:
+            if name == "cal_shading_verify":
+                program_calls[name] = verify_calls[0]
+            elif name == "cal_shading_verify_upload":
+                program_calls[name] = verify_calls[1]
+            elif name == "scan_setup":
+                program_calls[name] = ("scan", s_start, s_start + first_desc, s_ops)
+            else:
+                cs = calls_named(name)
+                assert len(cs) == 1, (profile_name, name, len(cs))
+                program_calls[name] = cs[0]
+
+        total = 0
+        feedl = t.feedl_for_frame(1)
+        for prog_name in DUAL_PROGRAM_NAMES:
+            _, start, end, ops = program_calls[prog_name]
+            py_transfers = _python_transfers(fake.wire_log[start:end])
+            injects: dict[str, int] = {}
+            bulk_injects: dict[str, bytes] = {}
+            phase = {"cal_gain_check_a": t.CAL_GAIN_CHECK_A,
+                     "cal_shading_measure": t.CAL_SHADING_MEASURE,
+                     "cal_shading_upload": t.CAL_SHADING_UPLOAD,
+                     "cal_shading_verify_upload": t.CAL_SHADING_VERIFY}.get(prog_name)
+            if prog_name in ("cal_gain_check_a", "cal_shading_measure"):
+                for name, spec in phase.injections.items():
+                    _, idx, off = spec
+                    injects[name] = ops[idx].data[off]
+            elif prog_name == "cal_shading_upload":
+                for name in ("shading_table_a", "shading_table_b"):
+                    _, idxs = phase.injections[name]
+                    bulk_injects[name] = b"".join(ops[i].data for i in idxs)
+            elif prog_name == "cal_shading_verify_upload":
+                for name in ("shading_table2_a", "shading_table2_b"):
+                    _, idxs = phase.injections[name]
+                    bulk_injects[name] = b"".join(ops[i - split_at].data for i in idxs)
+            elif prog_name == "position":
+                injects = {"feedl_hi": (feedl >> 16) & 0xFF, "feedl_mid": (feedl >> 8) & 0xFF,
+                           "feedl_lo": feedl & 0xFF}
+            elif prog_name == "scan_setup":
+                injects = {"lines_top": (n_lines >> 16) & 0xFF, "lines_hi": (n_lines >> 8) & 0xFF,
+                           "lines_lo": n_lines & 0xFF}
+
+            rc, out, err = _run_probe_program(
+                probe, profile_name, prog_name,
+                injects=injects or None, bulk_injects=bulk_injects or None)
+            assert rc == 0, (profile_name, prog_name, out, err)
+            assert _lines(out)[-1].startswith("DONE"), (profile_name, prog_name, out)
+            cpp_transfers = _parse_probe_transfers(out)
+            py_cmp, cpp_cmp = py_transfers, cpp_transfers
+            assert py_cmp == cpp_cmp, (
+                f"{profile_name}/{prog_name}: python and C++ transfer logs differ\n"
+                f"python ({len(py_cmp)}): {py_cmp[:12]}\n"
+                f"cpp    ({len(cpp_cmp)}): {cpp_cmp[:12]}")
+            total += len(py_cmp)
+        summary.append(f"{profile_name}: {total}")
+    print(f"test_dual_programs_match_python_replayer OK "
+          f"({len(DUAL_PROGRAM_NAMES)} programs x 5 profiles; transfers {', '.join(summary)})")
+
+
+def test_dual_park_programs_match_park_semantic():
+    """Each dual profile's "park" program against the driver's
+    park_semantic(t=<that profile's module>, ir=True) over the scripted
+    park fake, as test_park_program_matches_park_semantic does for
+    plain3600: the profile's own two 0x8b payloads, the same RMW values."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_dual_park_programs_match_park_semantic SKIPPED (no g++)")
+        return "skipped"
+    reg15, reg35 = 0x90, 0xFB
+    reg32_seq = (0x81, 0x95)
+    status_seq = [b"\xe8\x55"]
+    counts = []
+    for profile_name, dpi in DUAL_PROFILES:
+        t = _dual_module(dpi)
+        dev = _ParkWireDev(reg15=reg15, reg32_seq=reg32_seq, reg35=reg35, status_seq=status_seq)
+        scanner = Scanner(_ParkWireIo(dev))
+        with fast_time():
+            scanner.park_semantic(t=t, ir=True)
+        py_transfers = dev.transfers
+        assert py_transfers[0] == ("R", 0x04, 0x008E, 0x0122, 2), py_transfers[0]
+        py_transfers = py_transfers[1:]
+        script = [
+            f"rmw_read_at 0 {reg15:02x}", f"rmw_read_at 1 {reg32_seq[0]:02x}",
+            f"rmw_read_at 2 {reg35:02x}", f"rmw_read_at 3 {reg32_seq[1]:02x}",
+            f"masked_poll_at 0 {reg35:02x}55", f"masked_poll_at 1 {status_seq[0].hex()}",
+        ]
+        rc, out, err = _run_probe_program(probe, profile_name, "park", script)
+        assert rc == 0, (profile_name, out, err)
+        assert _lines(out)[-1].startswith("DONE"), (profile_name, out)
+        cpp_transfers = _parse_probe_transfers(out)
+        assert py_transfers == cpp_transfers, (
+            f"{profile_name}/park: python and C++ transfer logs differ\n"
+            f"python ({len(py_transfers)}): {py_transfers}\n"
+            f"cpp    ({len(cpp_transfers)}): {cpp_transfers}")
+        counts.append(f"{profile_name}={len(py_transfers)}")
+    print(f"test_dual_park_programs_match_park_semantic OK ({', '.join(counts)})")
+
+
+def test_dual_image_chunks():
+    """The dual profiles' image chunks: the driver's descriptor + bulk IN
+    per chunk (two chunks scanned) against read_image_chunk() over the
+    fake wire with the profile's chunk length."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_dual_image_chunks SKIPPED (no g++)")
+        return "skipped"
+    for profile_name, dpi in DUAL_PROFILES:
+        t = _dual_module(dpi)
+        fake, calls, n_lines = _run_dual_python(t, dpi)
+        _, s_start, s_end, s_ops = [c for c in calls if c[0] == "scan"][0]
+        py = _python_transfers(fake.wire_log[s_start:s_end])
+        descs = [i for i, x in enumerate(py)
+                 if x[0] == "W" and x[2] == 0x0082 and x[4] == t.IMAGE_DESC_DATA]
+        assert len(descs) >= 2, (profile_name, len(descs))
+        # the two image chunks: descriptor, ack read, bulk IN, each. The
+        # driver reads a chunk in USB fragments; the C++ side asks for the
+        # chunk in one request -- the same bulk stream (the accepted
+        # equivalence of docs/sane-hook5-frame.md's status section).
+        raw_chunks = py[descs[0]:descs[1] + 40]
+        py_chunks = []
+        for x in raw_chunks:
+            if x[0] == "B" and py_chunks and py_chunks[-1][0] == "B":
+                py_chunks[-1] = ("B", py_chunks[-1][1] + x[1])
+            else:
+                py_chunks.append(x)
+        py_chunks = py_chunks[:6]
+        r = subprocess.run([str(probe), "image_chunks", "1", str(t.IMAGE_CHUNK_LEN),
+                            str(t.IMAGE_CHUNK_LEN)], capture_output=True, text=True)
+        assert r.returncode == 0, (profile_name, r.stdout, r.stderr)
+        cpp = _parse_probe_transfers(r.stdout)
+        assert py_chunks == cpp, (profile_name, py_chunks[:6], cpp[:6])
+    print("test_dual_image_chunks OK (2 chunks x 5 profiles, descriptor wIndex 8 then 0)")
+
+
+def test_shading_table2_dual_reference_vectors():
+    """gl126::shading_table2_dual() byte-identical to calibrate.
+    shading_table2_dual() on synthetic buffers, both targets, two widths."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_shading_table2_dual_reference_vectors SKIPPED (no g++)")
+        return "skipped"
+    rng = np.random.default_rng(8)
+    with tempfile.TemporaryDirectory() as td:
+        for width in (876, 5184):
+            lines = 128
+            white = rng.integers(20000, 65000, size=(lines, width, 3), dtype=np.uint16)
+            dark = rng.integers(100, 500, size=(lines, width, 3), dtype=np.uint16)
+            for target in (calibrate.SHADING2_TARGET_A, calibrate.SHADING2_TARGET_B):
+                want = calibrate.shading_table2_dual(white, dark, width=width, target=target)
+                wp, dp, op = (Path(td) / n for n in ("w.bin", "d.bin", "o.bin"))
+                wp.write_bytes(white.astype("<u2").tobytes())
+                dp.write_bytes(dark.astype("<u2").tobytes())
+                r = subprocess.run([str(probe), "shading_table2_dual", str(wp), str(dp),
+                                    str(lines), str(width), repr(target), str(op)],
+                                   capture_output=True, text=True)
+                assert r.returncode == 0, (r.stdout, r.stderr)
+                got = op.read_bytes()
+                assert got == want, (width, target, len(got), len(want))
+            # alternate_lines == arr[p::2]
+            arr = rng.integers(0, 65535, size=(256, width, 3), dtype=np.uint16)
+            bp = Path(td) / "b.bin"
+            bp.write_bytes(arr.astype("<u2").tobytes())
+            for parity in (0, 1):
+                r = subprocess.run([str(probe), "alternate_lines", str(bp), "256", str(width),
+                                    str(parity), str(op)], capture_output=True, text=True)
+                assert r.returncode == 0, (r.stdout, r.stderr)
+                assert op.read_bytes() == arr[parity::2].astype("<u2").tobytes(), (width, parity)
+    print("test_shading_table2_dual_reference_vectors OK (2 widths x 2 targets, alternate_lines x 2)")
+
+
+def test_frame_geometry_all_profiles():
+    """frame_geometry() and the per-profile FEEDL against the Python tables:
+    the plain profile reads its whole register value (5137), a dual profile
+    reads chunk_count x lines_per_chunk (ir3600: 10544 of 10622), one line
+    in two is the image, the colour shift is 24 lines x dpi / 3600 and the
+    delivered count is the image less the shift."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_frame_geometry_all_profiles SKIPPED (no g++)")
+        return "skipped"
+    rows = []
+    for profile_name, dpi in (("plain3600", 3600),) + DUAL_PROFILES:
+        t = tables if profile_name == "plain3600" else _dual_module(dpi)
+        r = subprocess.run([str(probe), "geometry", profile_name], capture_output=True, text=True)
+        assert r.returncode == 0, (profile_name, r.stdout, r.stderr)
+        got = dict(kv.split("=") for kv in _lines(r.stdout)[-1].split()[1:])
+        got = {k: int(v) for k, v in got.items()}
+        dual = profile_name != "plain3600"
+        read_lines = t.IMAGE_CHUNK_COUNT * t.LINES_PER_CHUNK if dual else t.DEFAULT_LINES
+        image_lines = read_lines // 2 if dual else read_lines
+        shift = 24 * dpi // 3600
+        assert shift == 2 * round(24 * dpi / 7200), (profile_name, shift)  # image.align_channels
+        want = {
+            "dual": int(dual), "width": t.IMAGE_WIDTH, "wire_lines": t.DEFAULT_LINES,
+            "read_lines": read_lines, "image_lines": image_lines, "shift_lines": shift,
+            "delivered_lines": image_lines - shift, "chunk_len": t.IMAGE_CHUNK_LEN,
+            "chunk_count": -(-(read_lines * t.IMAGE_WIDTH * 6) // t.IMAGE_CHUNK_LEN),
+            "feedl_frame1": t.FEEDL_FRAME1, "feedl_pitch": t.FEEDL_PITCH,
+        }
+        assert got == want, (profile_name, got, want)
+        for frame in (1, 4):
+            r = subprocess.run([str(probe), "feedl", str(frame), profile_name],
+                               capture_output=True, text=True)
+            assert r.returncode == 0, r.stderr
+            assert int(_lines(r.stdout)[-1].split()[0].split("=")[1]) == t.feedl_for_frame(frame)
+        rows.append(f"{profile_name} {want['wire_lines']}->{want['read_lines']}->"
+                    f"{want['delivered_lines']}")
+    assert got["read_lines"] == 21248  # 7200 dpi, the last profile
+    print(f"test_frame_geometry_all_profiles OK ({'; '.join(rows)})")
+
 def main() -> int:
     tests = [
         test_programs_match_python_replayer,
@@ -1656,6 +1959,11 @@ def main() -> int:
         test_scan_pass_complete_then_park,
         test_scan_pass_aborted_never_parks,
         test_scan_pass_park_failure_is_terminal,
+        test_dual_programs_match_python_replayer,
+        test_dual_park_programs_match_park_semantic,
+        test_dual_image_chunks,
+        test_shading_table2_dual_reference_vectors,
+        test_frame_geometry_all_profiles,
     ]
     passed = 0
     skipped = 0

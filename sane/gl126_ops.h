@@ -474,10 +474,77 @@ std::vector<std::uint8_t> shading_table2(const std::uint8_t* white, std::size_t 
                                          const std::uint8_t* dark, std::size_t dark_len,
                                          unsigned lines, unsigned width);
 
+// ------------------------------------------- hook 8: dual-light profiles
+
+/** SHADING2_TARGET_A / _B (of135i/calibrate.py): the vendor's per-address
+    white targets of the dual-light profiles' second shading upload.
+    Address A (0x10014000) is applied by the scanner to the ODD (visible)
+    lines, address B (0x10034000) to the EVEN (IR) lines -- the empirically
+    corrected assignment (docs/protocol-notes.md pass 18, device.py's
+    _scan_dual). */
+constexpr double kShading2TargetA = 61440.0;
+constexpr double kShading2TargetB = 90112.0;
+
+/** One line subset of an alternating-line buffer: every second line of a
+    `lines * width * 6` byte RGB16LE buffer starting at line `parity`
+    (0 = even = the IR pass, 1 = odd = the visible pass), as a contiguous
+    `(lines/2) * width * 6` byte buffer -- numpy's `arr[parity::2]`.
+    Throws std::invalid_argument on a malformed buffer or an odd line
+    count. */
+std::vector<std::uint8_t> alternate_lines(const std::uint8_t* buf, std::size_t len,
+                                          unsigned lines, unsigned width, unsigned parity);
+
+/** The dual-light profiles' second (white-uniformity) shading upload for
+    ONE table -- ported from of135i/calibrate.py's shading_table2_dual().
+    `white`/`dark`: one line subset each (alternate_lines() of the verify
+    and the shading measurement), `lines` lines of `width` px. Per
+    pixel/channel: offset = round-half-even of the mean of `dark`; gain =
+    clip(round-half-even(target * 0x4000 / max(mean(white), 1)), 1, 65535)
+    -- NOT the plain profile's (white - f0) denominator. Returns
+    shading_upload_len(width) bytes. */
+std::vector<std::uint8_t> shading_table2_dual(const std::uint8_t* white, std::size_t white_len,
+                                              const std::uint8_t* dark, std::size_t dark_len,
+                                              unsigned lines, unsigned width, double target);
+
+/** The image geometry of one profile's frame, pure arithmetic from the
+    captured constants (docs/sane-hook8-dual.md section 3):
+      wire_lines     the line-count register value written (captured_lines);
+      read_lines     raw lines the backend reads: for the plain profile the
+                     whole register value (its last 8 lines are the chunk the
+                     vendor read as a "drain"); for a dual profile
+                     chunk_count * lines_per_chunk, what the vendor read
+                     (ir3600: 10544 of 10622, the 660th descriptor was
+                     cancelled -- docs/protocol-notes.md pass 12);
+      image_lines    lines of one pass: read_lines for plain, read_lines/2
+                     for dual (even = IR, odd = visible);
+      shift_lines    the colour-line shift consumed on the host, R to B, at
+                     this dpi: 24 * dpi / 3600 (the model's ld_shift at the
+                     motor's base dpi, scaled as the core scales it);
+      delivered_lines image_lines - shift_lines: the visible image after
+                     ComponentShiftLines, and the IR image after the crop of
+                     shift_lines/2 rows at each end that keeps it on the
+                     visible image's row grid (image.align_channels);
+      chunk_count    bulk reads of chunk_len, the last one shorter when
+                     read_lines is not a multiple of lines_per_chunk. */
+struct FrameGeometry {
+    bool dual = false;
+    unsigned width = 0;
+    unsigned wire_lines = 0;
+    unsigned read_lines = 0;
+    unsigned image_lines = 0;
+    unsigned shift_lines = 0;
+    unsigned delivered_lines = 0;
+    unsigned chunk_len = 0;
+    unsigned chunk_count = 0;
+};
+FrameGeometry frame_geometry(const Profile& profile);
+
 // ------------------------------------------------- hooks 5-7: the frame
 
 /** FEEDL_FRAME1 (of135i/tables.py) -- the absolute POSITION target for
-    frame 1, 1/7200 inch (HWDPI) units from home. */
+    frame 1, 1/7200 inch (HWDPI) units from home. The dual-light captures
+    carry 6746 (Profile::feedl_frame1); feedl_for_frame(frame, profile)
+    uses the profile's own. */
 constexpr unsigned kFeedlFrame1 = 6743;
 /** FEEDL_PITCH (of135i/tables.py) -- steps between frames (38.0 mm film
     pitch). */
@@ -487,6 +554,8 @@ constexpr unsigned kFeedlPitch = 10760;
     of135i/tables.py's feedl_for_frame() (docs/sane-hook5-frame.md
     section 4, "Injections"). */
 unsigned feedl_for_frame(unsigned frame);
+/** The same from `profile`'s own captured FEEDL_FRAME1 / FEEDL_PITCH. */
+unsigned feedl_for_frame(unsigned frame, const Profile& profile);
 
 /** feedl split into its three POSITION injection bytes (hi/mid/lo --
     of135i/tables.py's feedl_hi/feedl_mid/feedl_lo, POSITION's op-array

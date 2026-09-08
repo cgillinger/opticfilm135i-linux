@@ -26,7 +26,7 @@ functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md]
 - **M3 — Robustness and honest limits** ✅ (every acceptance-matrix row met;
   the residual-dark_b fix is hardware-verified — A10/Test 36 — positioning
   verified, cross-unit a documented limitation)
-- **M4 — SANE backend** — in progress: builds and links against sane-backends; calibration, positioning, the scan pass and park all run on the unit, and `scanimage` delivers a full 3600 dpi colour frame equal to the driver's within its run-to-run band (hardware-checked 2026-09-08); frame selection (`--frame 1..4`) positions correctly on hardware (Test 53). The sensor's colour-line offset found in Test 53 is now corrected in the backend and hardware-verified (Test 54: residual 0 rows, 3762 × 5113 delivered); the human eye check of that image is the remaining acceptance step. Other resolutions, IR and packaging remain
+- **M4 — SANE backend** — in progress: builds and links against sane-backends; calibration, positioning, the scan pass and park all run on the unit, and `scanimage` delivers a full 3600 dpi colour frame equal to the driver's within its run-to-run band (hardware-checked 2026-09-08); frame selection (`--frame 1..4`) positions correctly on hardware (Test 53). The sensor's colour-line offset found in Test 53 is now corrected in the backend and hardware-verified (Test 54: residual 0 rows, 3762 × 5113 delivered); the human eye check of that image is the remaining acceptance step. The other resolutions and infrared are implemented in the backend offline (wire-equal to the driver, hardware runs pending); packaging remains
 
 See **[docs/ROADMAP.md](docs/ROADMAP.md)** for the acceptance matrix,
 frozen scope, and exactly what remains before the driver is "complete".
@@ -89,8 +89,9 @@ opens the scanner and scans any of the four frames at 3600 dpi in colour
 (positioning verified on hardware for frames 1, 2 and 4). The colour-line
 alignment the driver does was missing from the backend (Test 53) and is
 now in place and hardware-verified (Test 54); the human eye check of the
-backend's image is the remaining acceptance step. Other resolutions, IR
-and packaging are still to come.** Scan, calibration, IR and dust removal are stable and
+backend's image is the remaining acceptance step. The other resolutions
+and infrared are implemented and verified offline against the driver,
+their hardware runs are still to come; packaging too.** Scan, calibration, IR and dust removal are stable and
 hardware-verified, per frame and across a 4-frame strip in one
 invocation, frame for frame against the vendor application's output of
 the same strip (2026-09-05). Complete does not mean polished: this is
@@ -392,7 +393,7 @@ interoperability constants and our own code.
 - [x] Loader sensor and button event reading
 - [x] ICC-tagged output (`--positive` TIFFs carry an sRGB profile; raw negatives are untagged linear data)
 - [x] Baseline-conformant TIFF resolution tags (the file states its own dpi, so physical size survives)
-- [ ] SANE genesys backend support for GL126 (upstream goal) — plan and hook mapping in [`docs/sane-port.md`](docs/sane-port.md); register tables generated from the driver's own tables and the command set in `sane/`; calibration, positioning (frames 1–4), the scan pass and park run on hardware through `scanimage` (2026-09-08); colour-line alignment hardware-verified (Test 54), eye-check acceptance pending; other resolutions, IR, packaging open
+- [ ] SANE genesys backend support for GL126 (upstream goal) — plan and hook mapping in [`docs/sane-port.md`](docs/sane-port.md); register tables generated from the driver's own tables and the command set in `sane/`; calibration, positioning (frames 1–4), the scan pass and park run on hardware through `scanimage` (2026-09-08); colour-line alignment hardware-verified (Test 54), eye-check acceptance pending; other resolutions and infrared implemented offline (hardware runs pending); packaging open
 
 ## Status & disclaimer
 

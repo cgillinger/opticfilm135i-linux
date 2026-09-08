@@ -126,6 +126,15 @@ public:
    bulk IN; bulk-done read). */
 void read_image_chunk_usb(Genesys_Device* dev, std::uint8_t* data, std::size_t size);
 
+/** Hook 8 (docs/sane-hook8-dual.md): the dual-light profiles' image stream
+    alternates IR (even) and visible (odd) lines. Called by the core's
+    build_image_pipeline() right after the USB source node for GL126;
+    pushes, when the session asks for it (ScanSession::gl126_keep_parity),
+    a node that keeps every second line, and for the IR pass the crop
+    that puts it on the visible image's row grid. No-op for the plain
+    profile. */
+void push_dual_light_nodes(const ScanSession& session, ImagePipelineStack& pipeline);
+
 } // namespace gl126
 } // namespace genesys
 

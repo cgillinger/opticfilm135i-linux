@@ -3632,3 +3632,45 @@ logging artefact, not a property of the backend; (2) the full transfer
 log stays the right tool for wire-equality checks but must not be used
 when timing anything; (3) no speed work is implied. Test 54's entry is
 annotated in place.
+
+## 2026-09-08 — Offline: hook 8, the dual-light profiles (600/1200/2400/7200 dpi and infrared) in the backend, wire-equal to the driver
+
+Christian: "do everything that is offline." Analysis and implementation
+in docs/sane-hook8-dual.md (six decisions in its section 8, taken under
+the hook 2 principles, listed for review).
+
+- `frame_geometry()` (gl126_ops) pins every profile from the captured
+  constants — the generator now emits `captured_lines`, `chunk_count`,
+  `feedl_frame1`, `feedl_pitch` per profile. ir3600 reads 659 chunks
+  (10544 of the 10622 register lines) as the vendor did; the others
+  their whole count.
+- The core's pipeline gets a GL126 branch after the USB source: a
+  keep-one-line-in-two node (odd = visible, even = IR) and, for the
+  infrared, a crop of shift/2 rows per end so both images share a row
+  grid. Two `ScanSession` fields carry the choice. The colour shift is
+  the core's node as for the plain frame; disabled for the infrared.
+- `TRANSPARENCY_INFRARED` added to the model and to every resolution's
+  sensor entry: `--source "Transparency Adapter Infrared"`, a separate
+  pass, `--mode Gray` for one channel.
+- Calibration: gain from the visible line; `run_shading_calibration_dual`
+  = the driver's step list with `alternate_lines()` and
+  `shading_table2_dual()` (targets 61440/90112, gain from the white mean).
+- `begin_scan` takes any captured profile; FEEDL from the profile; the
+  line register written as captured (three bytes).
+
+Offline evidence: `test_dual_programs_match_python_replayer` — 13
+programs × 5 profiles wire-equal to the driver's scan over the fake
+device (ir3600 2015, dpi600 1366, dpi1200 1832, dpi2400 2389, dpi7200
+3470 transfers); `test_dual_park_programs_match_park_semantic` (22
+transfers each); `test_dual_image_chunks`;
+`test_shading_table2_dual_reference_vectors` (byte-identical to
+calibrate.py, two widths, both targets, both parities);
+`test_frame_geometry_all_profiles` (5137→5137→5113, 10622→10544→5248,
+1764→1764→878, 3552→3552→1768, 7088→7088→3528, 21248→21248→10576).
+37 op tests, build clean.
+
+**Next (hardware, Christian's go):** one `scanimage` per resolution and
+one infrared run, order 2400 → 600 → 1200 → IR 3600 → 7200, low debug
+level, `eject` from post-PARK after each, images to the review folder,
+eye check each. Read-only first: `scanimage -A` on the idle unit to see
+the new source option (Test 47's route, one register read).

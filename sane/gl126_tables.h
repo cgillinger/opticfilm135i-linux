@@ -158,6 +158,13 @@ struct Profile {
     unsigned lines_per_chunk;
     unsigned shading_lines;
     unsigned shading_upload_len;
+    unsigned captured_lines;   /* the line-count register value as captured
+                                  (DEFAULT_LINES); written to the wire as is */
+    unsigned chunk_count;      /* image chunks the vendor read (IMAGE_CHUNK_COUNT):
+                                  chunk_count * lines_per_chunk lines are read,
+                                  which for ir3600 is fewer than captured_lines */
+    unsigned feedl_frame1;     /* POSITION FEEDL of frame 1, this capture's own */
+    unsigned feedl_pitch;      /* FEEDL between frames */
     const std::uint8_t* slope_position;
     std::size_t slope_position_len;
     const std::uint8_t* slope_scan;

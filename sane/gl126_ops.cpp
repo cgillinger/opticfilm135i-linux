@@ -925,11 +925,78 @@ std::vector<std::uint8_t> shading_table2(const std::uint8_t* white, std::size_t 
     return shading_table2(white, white_len, dark, dark_len, lines, width, kShading2Targets);
 }
 
+// ------------------------------------------- hook 8: dual-light profiles
+
+std::vector<std::uint8_t> alternate_lines(const std::uint8_t* buf, std::size_t len,
+                                          unsigned lines, unsigned width, unsigned parity)
+{
+    check_shading_buffer("alternate_lines", buf, len, lines, width);
+    if (lines % 2 != 0 || parity > 1) {
+        throw std::invalid_argument("alternate_lines: even line count and parity 0/1 required");
+    }
+    const std::size_t row = static_cast<std::size_t>(width) * 6;
+    std::vector<std::uint8_t> out;
+    out.reserve(row * (lines / 2));
+    for (unsigned l = parity; l < lines; l += 2) {
+        out.insert(out.end(), buf + std::size_t(l) * row, buf + std::size_t(l + 1) * row);
+    }
+    return out;
+}
+
+std::vector<std::uint8_t> shading_table2_dual(const std::uint8_t* white, std::size_t white_len,
+                                              const std::uint8_t* dark, std::size_t dark_len,
+                                              unsigned lines, unsigned width, double target)
+{
+    check_shading_buffer("shading_table2_dual", white, white_len, lines, width);
+    check_shading_buffer("shading_table2_dual", dark, dark_len, lines, width);
+    std::size_t n_pairs = static_cast<std::size_t>(width) * 3;
+    std::vector<std::uint16_t> f0(n_pairs);
+    std::vector<std::uint16_t> gains(n_pairs);
+    for (std::size_t p = 0; p < n_pairs; ++p) {
+        double w = std::max(mean_over_lines(white, lines, width, p), 1.0);
+        f0[p] = static_cast<std::uint16_t>(round_half_even(mean_over_lines(dark, lines, width, p)));
+        double g = round_half_even(target * 0x4000 / w);
+        if (g < 1.0) {
+            g = 1.0;
+        } else if (g > 65535.0) {
+            g = 65535.0;
+        }
+        gains[p] = static_cast<std::uint16_t>(g);
+    }
+    return pack_shading(f0, gains, width);
+}
+
+FrameGeometry frame_geometry(const Profile& profile)
+{
+    FrameGeometry g;
+    g.dual = profile.lines_per_chunk != 0;   // the plain profile carries no chunk plan
+    g.width = profile.image_width;
+    g.wire_lines = profile.captured_lines;
+    g.chunk_len = profile.chunk_len;
+    if (g.dual) {
+        g.read_lines = profile.chunk_count * profile.lines_per_chunk;
+        g.image_lines = g.read_lines / 2;
+    } else {
+        g.read_lines = profile.captured_lines;
+        g.image_lines = g.read_lines;
+    }
+    g.shift_lines = 24 * profile.dpi / 3600;
+    g.delivered_lines = g.image_lines - g.shift_lines;
+    std::size_t raw = std::size_t(g.read_lines) * g.width * 6;
+    g.chunk_count = static_cast<unsigned>((raw + g.chunk_len - 1) / g.chunk_len);
+    return g;
+}
+
 // ------------------------------------------------- hooks 5-7: the frame
 
 unsigned feedl_for_frame(unsigned frame)
 {
     return kFeedlFrame1 + (frame - 1) * kFeedlPitch;
+}
+
+unsigned feedl_for_frame(unsigned frame, const Profile& profile)
+{
+    return profile.feedl_frame1 + (frame - 1) * profile.feedl_pitch;
 }
 
 FeedlBytes feedl_bytes(unsigned feedl)

@@ -405,7 +405,7 @@ index 87855fd..224805f 100644
      SANE_Word exposure_time = 0;
  
 diff --git a/backend/genesys/low.cpp b/backend/genesys/low.cpp
-index 3ffc24a..eda72e8 100644
+index 3ffc24a..2b236e4 100644
 --- a/backend/genesys/low.cpp
 +++ b/backend/genesys/low.cpp
 @@ -35,6 +35,7 @@
@@ -434,6 +434,20 @@ index 3ffc24a..eda72e8 100644
          case AsicType::GL646:
          case AsicType::GL841:
          case AsicType::GL842:
+@@ -1165,6 +1168,13 @@ ImagePipelineStack build_image_pipeline(const Genesys_Device& dev, const ScanSes
+     if (log_image_data) {
+         pipeline.push_node<ImagePipelineNodeDebug>(debug_prefix + "_0_from_usb.tiff");
+     }
++    if (dev.model->asic_type == AsicType::GL126) {
++        // the dual-light profiles: one line in two is the image (gl126.cpp)
++        gl126::push_dual_light_nodes(session, pipeline);
++        if (log_image_data) {
++            pipeline.push_node<ImagePipelineNodeDebug>(debug_prefix + "_1_after_gl126_parity.tiff");
++        }
++    }
+ 
+     if (session.segment_count > 1) {
+         auto output_width = session.output_segment_pixel_group_count * session.segment_count;
 diff --git a/backend/genesys/scanner_interface_usb.cpp b/backend/genesys/scanner_interface_usb.cpp
 index 542d4ff..b21e534 100644
 --- a/backend/genesys/scanner_interface_usb.cpp
@@ -493,7 +507,7 @@ index 542d4ff..b21e534 100644
          reg.init_reg(0x5e, value & 0xff);
      } else {
 diff --git a/backend/genesys/settings.h b/backend/genesys/settings.h
-index 5713912..4bab044 100644
+index 5713912..fa00b0d 100644
 --- a/backend/genesys/settings.h
 +++ b/backend/genesys/settings.h
 @@ -64,6 +64,10 @@ struct Genesys_Settings
@@ -507,11 +521,25 @@ index 5713912..4bab044 100644
      // exposure time sent to scanner (i.e. LPERIOD)
      int exposure_lperiod = 0;
  
+@@ -247,6 +251,13 @@ struct ScanSession {
+     // thinner than the CCD element). Computed according to stagger_y.
+     unsigned num_staggered_lines = 0;
+ 
++    // GL126 (OpticFilm 135i) dual-light stream: 0 keep the even (IR) lines,
++    // 1 keep the odd (visible) lines, 2 keep every line (the plain profile);
++    // gl126_crop_lines rows are cut at each end of the IR image so it sits on
++    // the visible image's row grid (gl126.cpp, docs/sane-hook8-dual.md).
++    unsigned gl126_keep_parity = 2;
++    unsigned gl126_crop_lines = 0;
++
+     // the number of lines that color channels shift due to different physical positions of
+     // different color channels.
+     unsigned max_color_shift_lines = 0;
 diff --git a/backend/genesys/tables_model.cpp b/backend/genesys/tables_model.cpp
-index 321d179..a7aae36 100644
+index 321d179..33c4788 100644
 --- a/backend/genesys/tables_model.cpp
 +++ b/backend/genesys/tables_model.cpp
-@@ -2311,6 +2311,108 @@ void genesys_init_usb_device_tables()
+@@ -2311,6 +2311,112 @@ void genesys_init_usb_device_tables()
  
  
  
@@ -534,9 +562,13 @@ index 321d179..a7aae36 100644
 +    model.model_id = ModelId::PLUSTEK_OPTICFILM_135I;
 +    model.asic_type = AsicType::GL126;
 +
++    /* Every resolution is captured with the dual-light (IR + visible) pass
++       except 3600 dpi, which also has the vendor's visible-only pass; the
++       IR method delivers the IR lines of the same dual pass as a separate
++       scan (docs/sane-hook8-dual.md). */
 +    model.resolutions = {
 +        {
-+            { ScanMethod::TRANSPARENCY },
++            { ScanMethod::TRANSPARENCY, ScanMethod::TRANSPARENCY_INFRARED },
 +            { 7200, 3600, 2400, 1200, 600 },
 +            { 7200, 3600, 2400, 1200, 600 },
 +        }
@@ -621,10 +653,10 @@ index 321d179..a7aae36 100644
      model.name = "plustek-opticfilm-7200";
      model.vendor = "PLUSTEK";
 diff --git a/backend/genesys/tables_sensor.cpp b/backend/genesys/tables_sensor.cpp
-index 09ca861..d40a24e 100644
+index 09ca861..a8df6a0 100644
 --- a/backend/genesys/tables_sensor.cpp
 +++ b/backend/genesys/tables_sensor.cpp
-@@ -3355,6 +3355,55 @@ void genesys_init_sensor_tables()
+@@ -3355,6 +3355,58 @@ void genesys_init_sensor_tables()
      }
  
  
@@ -667,13 +699,16 @@ index 09ca861..d40a24e 100644
 +        };
 +
 +        for (const CustomSensorSettings& setting : custom_settings) {
-+            sensor.resolutions = setting.resolutions;
-+            sensor.method = ScanMethod::TRANSPARENCY;
-+            sensor.shading_resolution = setting.resolutions.values().front();
-+            sensor.register_dpiset = setting.register_dpiset;
-+            sensor.pixel_count_ratio = Ratio{1, 1};
-+            sensor.output_pixel_offset = 0;
-+            s_sensors->push_back(sensor);
++            for (ScanMethod method : { ScanMethod::TRANSPARENCY,
++                                       ScanMethod::TRANSPARENCY_INFRARED }) {
++                sensor.resolutions = setting.resolutions;
++                sensor.method = method;
++                sensor.shading_resolution = setting.resolutions.values().front();
++                sensor.register_dpiset = setting.register_dpiset;
++                sensor.pixel_count_ratio = Ratio{1, 1};
++                sensor.output_pixel_offset = 0;
++                s_sensors->push_back(sensor);
++            }
 +        }
 +    }
 +

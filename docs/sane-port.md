@@ -182,7 +182,7 @@ tables.
 | 1 | Skeleton: `gl126.{cpp,h,_registers.h}` cloned from gl124, `AsicType::GL126` wired everywhere GL124 is special-cased, model/sensor/motor/gpo/adc/memory-layout placeholders, `.desc`, `genesys.conf.in`, `Makefile.am`. Compiles, model shows in `scanimage -L`, flagged UNTESTED. | no |
 | 2 | Table generator: emit the base register table and the per-DPI phase register sets from `of135i/tables*.py` as C++ (`gl126_tables.cpp`). Replace gl124 placeholder bodies with the 135i flow (below). | no (compile only) |
 | 3 | Bring-up against hardware, one hook at a time: boot/status → offset → gain → shading → position → scan → park → eject. | yes |
-| 4 | IR (dual-light) output, dust removal stays host-side (frontend), `.desc` status → `:good`, man page, sane-devel announcement, MR. | yes |
+| 4 | IR (dual-light) output — **implemented offline 2026-09-08 as hook 8 (docs/sane-hook8-dual.md): the other resolutions and `TRANSPARENCY_INFRARED`, wire-equal to the driver, hardware runs pending**; dust removal stays host-side (frontend), `.desc` status → `:good`, man page, sane-devel announcement, MR. | yes |
 
 ## Why genesys fits
 
@@ -425,8 +425,12 @@ shift uncorrected (`IGNORE_COLOR_OFFSET` dropped the core's node): fixed
 unchanged, verified offline against the Test 52/53 images and on
 hardware (Test 54: residual 0 rows, 5113 lines delivered, wire and
 waits as Test 52); Christian's eye check of that image is the open
-acceptance step. Not yet in the port: other resolutions, IR, and
-install/packaging.
+acceptance step. **Hook 8 (2026-09-08, offline): the dual-light
+profiles — 600/1200/2400/7200 dpi and infrared at every resolution as
+the `Transparency Adapter Infrared` source — implemented and wire-equal
+to the driver for all five profiles (docs/sane-hook8-dual.md; 37 op
+tests, 188 total); their hardware runs and eye checks are pending.** Not
+yet in the port: install/packaging.
 
 Hook 2 is `offset_calibration()` and nothing else: the driver's
 CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and
