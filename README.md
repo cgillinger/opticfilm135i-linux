@@ -103,6 +103,14 @@ rough edges you should know about:
   transport states (e.g. after the older `--full` load flow) stalled
   the mechanism with the magazine stuck part-way; recovery was a power
   cycle plus an initialization with the vendor software.
+- **Standard 35 mm strip holder only.** The driver knows the geometry of
+  the standard 4-frame magazine: four frames at a fixed 38.0 mm pitch,
+  each 36.2 mm long (5137 lines at 3600 dpi). Plustek's optional
+  panorama holder (24 × 65 mm frames) is **not supported** — it needs
+  its own frame count, pitch and frame length, which have not been
+  captured from the vendor software, and neither `--frame` nor the SANE
+  backend offers it. Not a mechanical question: the driver never sees
+  the holder, only the positions it drives to.
 - **Speed: not tuned yet.** The driver replays the vendor's complete
   captured command stream, including every status read and the
   captured pacing between commands, because slimmed-down variants

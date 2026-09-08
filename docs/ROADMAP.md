@@ -130,6 +130,9 @@ Each is outside the promised function or has a verified safe handling:
   is the application's job. (Out of scope by design.)
 - **Speed:** correct but not tuned. (Out of scope for A; a functional scan
   is not blocked.)
+- **Panorama holder:** only the standard 4-frame 35 mm holder's geometry
+  (frame count, pitch, frame length) is known; the panorama holder would
+  need a vendor capture and its own geometry profile. (Out of scope.)
 
 ---
 
