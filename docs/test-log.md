@@ -3352,9 +3352,8 @@ frame, the same density and colour, no banding, no missing chunk. The
 row offset between loads (16 here, 22 between the two driver scans) is
 the known load-to-load geometry, not a SANE property.
 
-Sound: the operator's report for the three motor steps was not taken —
-the session crashed right after the run (below) — to be asked for and
-appended.
+Sound: normal in all three motor steps (positioning, scan pass, park)
+— Christian's report, given after the session crash below.
 
 **Two Claude sessions killed during the analysis, not during scanner
 traffic.** `systemd-oomd` killed the Konsole tab scope twice (16:43:54
