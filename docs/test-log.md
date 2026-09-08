@@ -3625,8 +3625,7 @@ payload (115 MB of image → ~700 MB of text) to stderr *before* the read
 call returns, the scanner fills its buffer meanwhile and the motor
 waits. With the low debug level (Test 53) the same wire scans in 18 s,
 the driver's 20 s. The 46 s / 65 s difference between the two level-255
-runs is the disk (the second log went to the analysis directory on the
-same evening a 1.6 GB scratchpad was being cleared; not pursued).
+runs is not explained (both wrote 721 MiB; not pursued).
 
 Consequences: (1) the scan-pass duration in Tests 52 and 54 is a
 logging artefact, not a property of the backend; (2) the full transfer
