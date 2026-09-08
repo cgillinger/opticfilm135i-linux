@@ -382,8 +382,12 @@ Hook 3, coarse gain: offline analysis in `docs/sane-hook3-gain.md`
 multi-chunk bulk reads, the warmup retry, and two more core gates
 (default shading upload, second move-to-TA). Implemented offline the same
 day (14/14 op tests, 163 total). Hardware run done (Test 49): gain codes
-identical to the driver's. Next: hook 4, shading (CAL_SHADING_MEASURE
-with the computed offsets, `shading_table()`, upload, verify pass).
+identical to the driver's. Hook 4, shading: offline analysis in
+`docs/sane-hook4-shading.md` (2026-09-08) — bulk OUT, a second explicit
+wait on reg 0x100, split programs for the verify pass, and the
+decision that turns decision 2 around: `has_send_shading_data()` true
+with a no-op send + `DISABLE_SHADING_CALIBRATION`, the vendor's shading
+inside `coarse_gain_calibration()`.
 
 Hook 2 is `offset_calibration()` and nothing else: the driver's
 CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and
