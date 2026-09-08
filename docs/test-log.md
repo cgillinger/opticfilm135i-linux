@@ -3265,3 +3265,8 @@ included); and the core's `write_registers(dev->reg)` right before
 empty `dev->reg` it writes nothing, but nothing on this path may
 depend on that). Exit per rule: power cycle → `load --double-jog` →
 rerun.
+Sound during the 15 s Wait B timeout: nothing in particular noticed
+(Christian) — and, fairly, "listen for an unknown length of time" is
+not a usable instruction; from the next run on the operator gets the
+expected timeline (calibration ≈ 5 s quiet, position ≈ 1.5 s, scan pass
+≈ 40 s, park ≈ 5 s) up front.
