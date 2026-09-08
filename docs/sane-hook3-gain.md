@@ -7,6 +7,22 @@ tests, and the single hardware run. The structure of hook 2 (op
 programs, the genesys-free runner, the `Wire` over `UsbDevice`) is
 reused unchanged; what hook 3 adds is listed in §6.
 
+## Status (2026-09-08, same day)
+
+Implemented offline: op programs for the three phases with injection
+tables, `run_program()` with an injection map (missing name → error
+before any transfer), `percentile_linear` / `gain_codes` /
+`gain_with_warmup` in `gl126_ops`, `coarse_gain_calibration()` in
+`gl126.cpp` (requires hook 2 in the same sane_start, consumes the mark),
+the two core gates of §5 in the patch. `tests/test_sane_ops.py` 14/14:
+wire equality with the Python replayer for cal_white / cal_gain_check_a
+/ cal_gain_check_b (72 / 37 / 29 transfers, gain bytes patched on both
+sides), injection and multi-chunk failure rules, gain codes on the
+reference vectors (equal to the driver's on the vendor white line),
+percentile against numpy, the warmup policy on the harness sequences.
+163 tests green, build clean. **The hardware run of §7 has not happened
+yet.**
+
 ## 1. Scope
 
 In the Python driver, after the dark bracket, `_scan_plain()` runs:

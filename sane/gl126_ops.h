@@ -40,9 +40,13 @@
 
 #include "gl126_tables.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <map>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace genesys {
@@ -86,9 +90,12 @@ public:
     is fail-closed: zero further transfers after the one that failed
     (docs/sane-hook2-offset.md section 3's failure-rules table). */
 enum class OpsFailure : std::uint8_t {
-    BadAck,        // AckRead did not reply 0x55
-    PollTimeout,   // PollDataReady never saw bit 0x01 within the budget
-    ShortBulk,     // BulkIn returned fewer bytes than the op called for
+    BadAck,           // AckRead did not reply 0x55
+    PollTimeout,      // PollDataReady never saw bit 0x01 within the budget
+    ShortBulk,        // BulkIn returned fewer bytes than the op called for
+    MissingInjection, // a program injection has no value in the map passed
+                       // to run_program() -- checked before any transfer
+                       // (docs/sane-hook3-gain.md section 6, Part B/1)
 };
 
 const char* to_string(OpsFailure failure);
@@ -151,7 +158,11 @@ struct RunPolicy {
     log; a fresh RunResult per program is the normal case). Throws
     OpsError, fail-closed, per docs/sane-hook2-offset.md section 3:
 
-      Write         -> control_write(request, value, index, data, len).
+      Write         -> control_write(request, value, index, data, len) --
+                       or, for a Write the program injects into (see
+                       below), the same call with `data` replaced by a
+                       copy of the payload patched at the injection's
+                       byte offset(s).
       AckRead       -> control_read(0x0c, 0x008e, 0x0020, ..., 1); reply
                        != 0x55 -> OpsError{BadAck}, nothing further sent.
       Read          -> control_read with the op's own setup; recorded,
@@ -164,9 +175,18 @@ struct RunPolicy {
                        (message carries got/want) -- the partial data is
                        still appended to out.buffers before the throw.
       BulkDone      -> control_read(0x0c, 0x008e, 0x0018, ..., 1);
-                       recorded, never fails on a mismatch. */
+                       recorded, never fails on a mismatch.
+
+    Injections (docs/sane-hook3-gain.md section 6, Part B/1): if
+    `prog.injection_count` is nonzero, every one of its OpInjection
+    names must be present in `values` (a null `values` counts as none
+    present) -- checked BEFORE any transfer, so a missing name throws
+    OpsError{MissingInjection} (the message names it) with zero
+    transfers done. Names in `values` that no injection uses are
+    ignored. */
 void run_program(Wire& wire, const OpProgram& prog, RunResult& out,
-                 const RunPolicy& policy = RunPolicy());
+                 const RunPolicy& policy = RunPolicy(),
+                 const std::map<std::string, std::uint8_t>* values = nullptr);
 
 // ---------------------------------------------------------------- S5/S6
 
@@ -198,6 +218,98 @@ OffsetResult offset_codes(const std::uint8_t* dark_a, std::size_t len_a,
     all-zero buffer) is deliberately NOT residual -- offset_codes()'s
     slope-fallback already owns that case. */
 bool dark_is_residual(const std::uint8_t* buf, std::size_t len);
+
+// ------------------------------------------------- hook 3: gain (S4 above)
+
+/** numpy.percentile(values[0..n), q) with the default 'linear'
+    interpolation method, computed on a sorted copy (docs/sane-hook3-
+    gain.md section 4). `n` must be >= 1 (throws std::invalid_argument
+    otherwise); `q` is expected in [0, 100] (not itself validated -- the
+    caller here, gain_codes(), always passes 99.9). */
+double percentile_linear(const std::uint16_t* values, std::size_t n, double q);
+
+/** gain_codes()'s result, per channel (R, G, B): the measured 99.9th-
+    percentile peak, the AFE gain code it maps to, and whether ANY
+    channel's peak reached full scale (65535) -- the hook's "implausible
+    AFE state" trigger, not a per-channel property. */
+struct GainResult {
+    double peak[3];
+    std::uint8_t code[3];
+    bool saturated;
+};
+
+/** AFE gain codes (regs 2/3/4, R/G/B) from a white-line measurement,
+    ported from of135i/calibrate.py's gain_codes() (docs/sane-hook3-gain.md
+    section 4). `white` is RGB16LE, pixel-interleaved; `len` must be a
+    positive multiple of 6 (a whole number of RGB16 pixels), else throws
+    std::invalid_argument -- the hook (gl126.cpp, not here) maps that to
+    the driver's "malformed white-line measurement" failure. Per channel:
+    peak = percentile_linear(channel, 99.9); code = 63 when peak <= 0
+    (clamp_nonpositive, the cold-lamp/warmup case), else
+    clamp(round_half_even(32 * 31673 / peak), 0, 63). Validated against
+    cal-data/capture/cal-frame00501-len31104.bin: expect
+    (0x2e, 0x21, 0x29), +/-1 per channel. */
+GainResult gain_codes(const std::uint8_t* white, std::size_t len);
+
+/** Tunable warmup retry policy, ported from of135i/device.py's
+    _WARMUP_BUDGET_S/_WARMUP_INTERVAL_S/_WARMUP_STABLE_PCT (docs/sane-
+    hook3-gain.md section 4). Defaults match the Python driver's. */
+struct WarmupPolicy {
+    double budget_s = 60.0;
+    double interval_s = 5.0;
+    double stable_pct = 3.0;
+};
+
+/** Everything one gain_with_warmup() call collected -- mirrors
+    of135i/device.py's Scanner._diag_warmup dict (attempts, gain_history,
+    peak_history, elapsed_s, exhausted) for the hook's diagnostics log. */
+struct WarmupRecord {
+    unsigned attempts = 0;
+    std::vector<std::array<double, 3>> peak_history;
+    std::vector<std::array<std::uint8_t, 3>> gain_history;
+    double elapsed_s = 0;
+    bool exhausted = false;
+};
+
+/** Why gain_with_warmup() stopped: Ready (codes_out is valid), Saturated
+    (a white line hit full scale -- the driver's "implausible AFE state"
+    failure, at any attempt), or Exhausted (the retry budget/measurement
+    cap ran out without two stable consecutive non-maxed measurements --
+    the driver's LampWarmupError). */
+enum class WarmupOutcome : std::uint8_t {
+    Ready,
+    Saturated,
+    Exhausted,
+};
+
+/** Port of of135i/device.py's Scanner._gain_with_warmup() (docs/sane-
+    hook3-gain.md section 4): `measure()` runs one CAL_WHITE and returns
+    the raw white-line buffer (RGB16LE; may throw -- propagated
+    untouched, as the Python side's USB errors and Ctrl-C do); `sleep`/
+    `now_s` are injected so a test drives the retry loop without wall-
+    clock time passing (a fake clock advanced only inside `sleep`).
+
+    Policy: the first measurement's gain_codes() is computed; if it is
+    saturated (any channel's peak >= 65535), returns Saturated at once,
+    at any attempt -- this check always runs before the "maxed" check
+    below. If not maxed (not all three codes == 63), returns Ready at
+    once with that measurement's codes -- the verified single-
+    measurement path. Otherwise the lamp is warming: `max_measurements
+    = 1 + floor(policy.budget_s / policy.interval_s)`; before each
+    retry, if `rec.attempts >= max_measurements` or `elapsed +
+    policy.interval_s > policy.budget_s`, returns Exhausted (with
+    `rec.exhausted = true`) before sleeping again; otherwise sleeps
+    `policy.interval_s`, measures again, and returns Ready as soon as
+    this measurement AND the previous one are both non-maxed and every
+    channel's peak agrees with the previous one within
+    `policy.stable_pct` percent (of the previous peak, floor 1.0).
+    `rec` records every measurement's peaks/codes and the elapsed time,
+    like the Python diag dict, regardless of outcome. */
+WarmupOutcome gain_with_warmup(const std::function<std::vector<std::uint8_t>()>& measure,
+                               const std::function<void(double)>& sleep,
+                               const std::function<double()>& now_s,
+                               const WarmupPolicy& policy, WarmupRecord& rec,
+                               std::uint8_t codes_out[3]);
 
 } // namespace gl126
 } // namespace genesys

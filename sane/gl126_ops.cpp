@@ -20,6 +20,7 @@
 
 #include "gl126_ops.h"
 
+#include <algorithm>
 #include <cmath>
 #include <ios>
 #include <sstream>
@@ -30,9 +31,10 @@ namespace gl126 {
 const char* to_string(OpsFailure failure)
 {
     switch (failure) {
-    case OpsFailure::BadAck:      return "BadAck";
-    case OpsFailure::PollTimeout: return "PollTimeout";
-    case OpsFailure::ShortBulk:   return "ShortBulk";
+    case OpsFailure::BadAck:           return "BadAck";
+    case OpsFailure::PollTimeout:      return "PollTimeout";
+    case OpsFailure::ShortBulk:        return "ShortBulk";
+    case OpsFailure::MissingInjection: return "MissingInjection";
     }
     return "Unknown";
 }
@@ -41,9 +43,53 @@ namespace {
 
 // ------------------------------------------------------------- run_program
 
-void do_write(Wire& wire, const Op& op)
+// Checked once, before any transfer (docs/sane-hook3-gain.md section 6,
+// Part B/1): every injection this program needs must be present in
+// `values` (a null `values` counts as none present). Names in `values`
+// the program has no injection for are ignored -- not checked here.
+void check_injections(const OpProgram& prog,
+                      const std::map<std::string, std::uint8_t>* values)
 {
-    wire.control_write(op.request, op.value, op.index, op.data, op.len);
+    for (std::size_t k = 0; k < prog.injection_count; ++k) {
+        const OpInjection& inj = prog.injections[k];
+        if (values == nullptr || values->find(inj.name) == values->end()) {
+            std::ostringstream oss;
+            oss << "gl126_ops: missing injection value for \"" << inj.name
+                << "\" (op " << inj.op_index << ", byte " << inj.byte_offset
+                << ") -- nothing sent";
+            throw OpsError(OpsFailure::MissingInjection, inj.op_index, oss.str());
+        }
+    }
+}
+
+void do_write(Wire& wire, const Op& op, const OpProgram& prog, std::size_t idx,
+             const std::map<std::string, std::uint8_t>* values)
+{
+    if (prog.injection_count == 0) {
+        wire.control_write(op.request, op.value, op.index, op.data, op.len);
+        return;
+    }
+    bool has_injection = false;
+    for (std::size_t k = 0; k < prog.injection_count; ++k) {
+        if (prog.injections[k].op_index == idx) {
+            has_injection = true;
+            break;
+        }
+    }
+    if (!has_injection) {
+        wire.control_write(op.request, op.value, op.index, op.data, op.len);
+        return;
+    }
+    // check_injections() already guaranteed every name is in `values`.
+    std::vector<std::uint8_t> patched(op.data, op.data + op.len);
+    for (std::size_t k = 0; k < prog.injection_count; ++k) {
+        const OpInjection& inj = prog.injections[k];
+        if (inj.op_index != idx) {
+            continue;
+        }
+        patched[inj.byte_offset] = values->at(inj.name);
+    }
+    wire.control_write(op.request, op.value, op.index, patched.data(), patched.size());
 }
 
 void do_ack_read(Wire& wire, const Op& op, std::size_t idx)
@@ -148,13 +194,17 @@ void do_bulk_in(Wire& wire, const Op& op, std::size_t idx, RunResult& out)
 } // namespace
 
 void run_program(Wire& wire, const OpProgram& prog, RunResult& out,
-                 const RunPolicy& policy)
+                 const RunPolicy& policy,
+                 const std::map<std::string, std::uint8_t>* values)
 {
+    if (prog.injection_count > 0) {
+        check_injections(prog, values);
+    }
     for (std::size_t i = 0; i < prog.count; ++i) {
         const Op& op = prog.ops[i];
         switch (op.kind) {
         case OpKind::Write:
-            do_write(wire, op);
+            do_write(wire, op, prog, i, values);
             break;
         case OpKind::AckRead:
             do_ack_read(wire, op, i);
@@ -291,6 +341,160 @@ bool dark_is_residual(const std::uint8_t* buf, std::size_t len)
         }
     }
     return distinct > 1;
+}
+
+// --------------------------------------------------------- hook 3: gain
+
+namespace {
+
+// docs/sane-hook3-gain.md section 4 / of135i/calibrate.py's gain_codes().
+constexpr double kGainTarget = 31673.0;
+constexpr double kGainDivisor = 32.0;
+constexpr std::uint8_t kGainMaxCode = 63;
+
+} // namespace
+
+double percentile_linear(const std::uint16_t* values, std::size_t n, double q)
+{
+    if (n == 0) {
+        throw std::invalid_argument(
+            "gl126_ops::percentile_linear: n == 0 (numpy.percentile requires "
+            "at least one value)");
+    }
+    std::vector<double> sorted(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        sorted[i] = static_cast<double>(values[i]);
+    }
+    std::sort(sorted.begin(), sorted.end());
+    if (n == 1) {
+        return sorted[0];
+    }
+    // numpy's default 'linear' method: pos = q/100 * (n - 1); the value
+    // interpolates linearly between the sorted neighbours at floor(pos)
+    // and floor(pos) + 1.
+    double pos = (q / 100.0) * static_cast<double>(n - 1);
+    double floor_pos = std::floor(pos);
+    std::size_t i = static_cast<std::size_t>(floor_pos);
+    double frac = pos - floor_pos;
+    if (i + 1 >= n) {
+        return sorted[n - 1];
+    }
+    return sorted[i] + frac * (sorted[i + 1] - sorted[i]);
+}
+
+GainResult gain_codes(const std::uint8_t* white, std::size_t len)
+{
+    if (len == 0 || len % 6 != 0) {
+        throw std::invalid_argument(
+            "gl126_ops::gain_codes: white buffer length is not a positive "
+            "multiple of 6 (RGB16LE pixels)");
+    }
+    const std::size_t n = len / 6;
+
+    GainResult r{};
+    r.saturated = false;
+    std::vector<std::uint16_t> channel(n);
+    for (int ch = 0; ch < 3; ++ch) {
+        for (std::size_t i = 0; i < n; ++i) {
+            channel[i] = read_u16le(white + i * 6 + ch * 2);
+        }
+        double peak = percentile_linear(channel.data(), n, 99.9);
+        r.peak[ch] = peak;
+        if (peak >= 65535.0) {
+            r.saturated = true;
+        }
+        if (peak <= 0.0) {
+            r.code[ch] = kGainMaxCode;   // clamp_nonpositive: the warmup path
+            continue;
+        }
+        double raw = round_half_even(kGainDivisor * kGainTarget / peak);
+        if (raw < 0.0) {
+            raw = 0.0;
+        } else if (raw > static_cast<double>(kGainMaxCode)) {
+            raw = static_cast<double>(kGainMaxCode);
+        }
+        r.code[ch] = static_cast<std::uint8_t>(raw);
+    }
+    return r;
+}
+
+WarmupOutcome gain_with_warmup(const std::function<std::vector<std::uint8_t>()>& measure,
+                               const std::function<void(double)>& sleep,
+                               const std::function<double()>& now_s,
+                               const WarmupPolicy& policy, WarmupRecord& rec,
+                               std::uint8_t codes_out[3])
+{
+    struct Measurement {
+        std::array<double, 3> peaks;
+        std::array<std::uint8_t, 3> codes;
+        bool maxed;
+        bool saturated;
+    };
+
+    const double t0 = now_s();
+    const unsigned max_measurements =
+        1 + static_cast<unsigned>(std::floor(policy.budget_s / policy.interval_s));
+
+    auto measure_once = [&]() -> Measurement {
+        std::vector<std::uint8_t> white = measure();   // may throw; propagated
+        GainResult g = gain_codes(white.data(), white.size());
+        Measurement m{};
+        for (int ch = 0; ch < 3; ++ch) {
+            m.peaks[ch] = g.peak[ch];
+            m.codes[ch] = g.code[ch];
+        }
+        m.saturated = g.saturated;
+        m.maxed = (g.code[0] == kGainMaxCode && g.code[1] == kGainMaxCode &&
+                  g.code[2] == kGainMaxCode);
+        ++rec.attempts;
+        rec.elapsed_s = now_s() - t0;
+        rec.peak_history.push_back(m.peaks);
+        rec.gain_history.push_back(m.codes);
+        return m;
+    };
+
+    Measurement cur = measure_once();
+    if (cur.saturated) {
+        return WarmupOutcome::Saturated;
+    }
+    if (!cur.maxed) {
+        codes_out[0] = cur.codes[0];
+        codes_out[1] = cur.codes[1];
+        codes_out[2] = cur.codes[2];
+        return WarmupOutcome::Ready;   // the verified single-measurement path
+    }
+
+    Measurement prev = cur;
+    for (;;) {
+        double elapsed = now_s() - t0;
+        if (rec.attempts >= max_measurements || elapsed + policy.interval_s > policy.budget_s) {
+            rec.exhausted = true;
+            return WarmupOutcome::Exhausted;
+        }
+        sleep(policy.interval_s);
+        cur = measure_once();
+        if (cur.saturated) {
+            return WarmupOutcome::Saturated;
+        }
+        if (!cur.maxed && !prev.maxed) {
+            bool stable = true;
+            for (int ch = 0; ch < 3; ++ch) {
+                double allowed = (policy.stable_pct / 100.0) *
+                                 std::max(prev.peaks[ch], 1.0);
+                if (std::fabs(cur.peaks[ch] - prev.peaks[ch]) > allowed) {
+                    stable = false;
+                    break;
+                }
+            }
+            if (stable) {
+                codes_out[0] = cur.codes[0];
+                codes_out[1] = cur.codes[1];
+                codes_out[2] = cur.codes[2];
+                return WarmupOutcome::Ready;
+            }
+        }
+        prev = cur;
+    }
 }
 
 } // namespace gl126

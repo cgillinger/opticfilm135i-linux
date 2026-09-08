@@ -791,7 +791,7 @@ static const std::uint8_t PLAIN3600_PREP_OPS_DATA[61] = {
     0x55,
 };
 
-/* plain3600 / prep: op program, 39 ops (docs/sane-hook2-offset.md section 6). */
+/* plain3600 / prep: op program, 39 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op PLAIN3600_PREP_OPS[39] = {
     {OpKind::Read, 0x04, 0x008e, 0x3522, PLAIN3600_PREP_OPS_DATA + 0, 2, 0},
     {OpKind::Read, 0x04, 0x008e, 0x3222, PLAIN3600_PREP_OPS_DATA + 2, 2, 4},
@@ -877,7 +877,7 @@ static const std::uint8_t PLAIN3600_AFE_BASE_OPS_DATA[480] = {
     0x5d, 0x00, 0x5e, 0x00, 0x55, 0x51, 0x04, 0x5d, 0x00, 0x5e, 0x00, 0x55,
 };
 
-/* plain3600 / afe_base: op program, 71 ops (docs/sane-hook2-offset.md section 6). */
+/* plain3600 / afe_base: op program, 71 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op PLAIN3600_AFE_BASE_OPS[71] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_AFE_BASE_OPS_DATA + 0, 64, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_AFE_BASE_OPS_DATA + 64, 1, 0},
@@ -961,7 +961,7 @@ static const std::uint8_t PLAIN3600_CAL_DARK_A_OPS_DATA[63] = {
     0x55, 0xdc, 0x55,
 };
 
-/* plain3600 / cal_dark_a: op program, 29 ops (docs/sane-hook2-offset.md section 6). */
+/* plain3600 / cal_dark_a: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op PLAIN3600_CAL_DARK_A_OPS[29] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_DARK_A_OPS_DATA + 0, 6, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_DARK_A_OPS_DATA + 6, 1, 0},
@@ -1003,7 +1003,7 @@ static const std::uint8_t PLAIN3600_CAL_DARK_B_OPS_DATA[63] = {
     0x55, 0xdc, 0x55,
 };
 
-/* plain3600 / cal_dark_b: op program, 29 ops (docs/sane-hook2-offset.md section 6). */
+/* plain3600 / cal_dark_b: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op PLAIN3600_CAL_DARK_B_OPS[29] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_DARK_B_OPS_DATA + 0, 6, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_DARK_B_OPS_DATA + 6, 1, 0},
@@ -1036,11 +1036,214 @@ static const Op PLAIN3600_CAL_DARK_B_OPS[29] = {
     {OpKind::Read, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_DARK_B_OPS_DATA + 61, 2, 0},
 };
 
-static const OpProgram PLAIN3600_PROGRAMS[4] = {
-    {"prep", PLAIN3600_PREP_OPS, 39},
-    {"afe_base", PLAIN3600_AFE_BASE_OPS, 71},
-    {"cal_dark_a", PLAIN3600_CAL_DARK_A_OPS, 29},
-    {"cal_dark_b", PLAIN3600_CAL_DARK_B_OPS, 29},
+static const std::uint8_t PLAIN3600_CAL_WHITE_OPS_DATA[227] = {
+    0x51, 0x05, 0x5d, 0x01, 0x5e, 0x8f, 0x55, 0x51, 0x06, 0x5d, 0x01, 0x5e,
+    0x71, 0x55, 0x51, 0x07, 0x5d, 0x01, 0x5e, 0x83, 0x55, 0xdc, 0x55, 0xd0,
+    0x0a, 0x55, 0xd1, 0x0a, 0x55, 0xd2, 0x0a, 0x55, 0xe0, 0x00, 0xe1, 0x68,
+    0x55, 0xe2, 0x0b, 0xe3, 0x00, 0x55, 0xe4, 0x0b, 0xe5, 0x01, 0x55, 0xe6,
+    0x15, 0xe7, 0x99, 0x55, 0xe8, 0x15, 0xe9, 0x9a, 0x55, 0xea, 0x20, 0xeb,
+    0x32, 0x55, 0xec, 0x20, 0xed, 0x33, 0x55, 0xee, 0x2a, 0xef, 0xcb, 0x55,
+    0xf0, 0x2a, 0xf1, 0xcc, 0x55, 0xf2, 0x35, 0xf3, 0x64, 0x55, 0xf4, 0x35,
+    0xf5, 0x65, 0x55, 0xf6, 0x3f, 0xf7, 0xfd, 0x55, 0xf8, 0x05, 0x55, 0x01,
+    0x02, 0x04, 0x42, 0x05, 0x40, 0x3d, 0x00, 0x3e, 0x00, 0x3f, 0x01, 0xa6,
+    0x00, 0xa7, 0x01, 0xa8, 0x00, 0xa9, 0x01, 0x2c, 0x04, 0x2d, 0xb0, 0x02,
+    0x00, 0xa2, 0x00, 0xa3, 0x00, 0x1d, 0x00, 0xa4, 0x00, 0xa5, 0x01, 0xac,
+    0x00, 0xad, 0x01, 0x80, 0x00, 0x81, 0x23, 0x82, 0x00, 0x83, 0x00, 0x84,
+    0x23, 0x85, 0x00, 0x86, 0x14, 0x87, 0x63, 0x25, 0x00, 0x26, 0x00, 0x27,
+    0x01, 0x28, 0x00, 0x55, 0x29, 0x34, 0x2a, 0x83, 0x2b, 0x1f, 0x55, 0x51,
+    0x02, 0x5d, 0x00, 0x5e, 0x00, 0x55, 0x51, 0x03, 0x5d, 0x00, 0x5e, 0x00,
+    0x55, 0x51, 0x04, 0x5d, 0x00, 0x5e, 0x00, 0x55, 0x0d, 0x07, 0x55, 0x0d,
+    0x07, 0x55, 0x01, 0x03, 0x55, 0x0f, 0x01, 0x55, 0xbd, 0x55, 0x00, 0x55,
+    0x00, 0x55, 0x0a, 0x55, 0x08, 0x55, 0x00, 0x00, 0x00, 0x10, 0x80, 0x79,
+    0x00, 0x00, 0x55, 0x02, 0x01, 0x02, 0x55, 0xf0, 0x55, 0xdc, 0x55,
+};
+
+/* plain3600 / cal_white: op program, 72 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op PLAIN3600_CAL_WHITE_OPS[72] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 20, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_WHITE_OPS_DATA + 21, 2, 4},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 23, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 25, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 26, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 28, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 29, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 31, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 32, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 36, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 37, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 41, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 42, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 46, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 47, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 51, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 52, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 56, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 57, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 61, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 62, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 66, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 67, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 71, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 72, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 76, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 77, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 81, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 82, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 86, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 87, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 91, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 92, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 94, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 95, 64, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 159, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 160, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 166, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 167, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 173, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 174, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 180, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 181, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 187, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 188, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 190, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 191, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 193, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 194, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 196, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 197, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 199, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_WHITE_OPS_DATA + 200, 2, 16},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, PLAIN3600_CAL_WHITE_OPS_DATA + 202, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, PLAIN3600_CAL_WHITE_OPS_DATA + 204, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, PLAIN3600_CAL_WHITE_OPS_DATA + 206, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, PLAIN3600_CAL_WHITE_OPS_DATA + 208, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 210, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 218, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 14336, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 384, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, PLAIN3600_CAL_WHITE_OPS_DATA + 219, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 220, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 222, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_WHITE_OPS_DATA + 223, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_WHITE_OPS_DATA + 225, 2, 0},
+};
+
+static const std::uint8_t PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA[97] = {
+    0x51, 0x02, 0x5d, 0x00, 0x5e, 0x2e, 0x55, 0x51, 0x03, 0x5d, 0x00, 0x5e,
+    0x21, 0x55, 0x51, 0x04, 0x5d, 0x00, 0x5e, 0x29, 0x55, 0x82, 0x00, 0x83,
+    0x00, 0x84, 0x23, 0x85, 0x00, 0x86, 0x02, 0x87, 0x23, 0x55, 0x51, 0x05,
+    0x5d, 0x00, 0x5e, 0x80, 0x55, 0x51, 0x06, 0x5d, 0x00, 0x5e, 0x80, 0x55,
+    0x51, 0x07, 0x5d, 0x00, 0x5e, 0x80, 0x55, 0x0d, 0x07, 0x55, 0x0d, 0x07,
+    0x55, 0x0d, 0x07, 0x55, 0x01, 0x03, 0x55, 0x0f, 0x01, 0x55, 0xbd, 0x55,
+    0x00, 0x55, 0x00, 0x55, 0x00, 0x55, 0xe4, 0x55, 0x00, 0x00, 0x00, 0x10,
+    0x00, 0x0c, 0x00, 0x00, 0x55, 0x02, 0x01, 0x02, 0x55, 0xf0, 0x55, 0xdc,
+    0x55,
+};
+
+/* plain3600 / cal_gain_check_a: op program, 37 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op PLAIN3600_CAL_GAIN_CHECK_A_OPS[37] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 20, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 21, 12, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 33, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 34, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 40, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 41, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 47, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 48, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 54, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 55, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 57, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 58, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 60, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 61, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 63, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 64, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 66, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 67, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 69, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 70, 2, 12},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 72, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 74, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 76, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 78, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 80, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 88, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 3072, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 89, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 90, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 92, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0},
+};
+
+/* Computed values patched into PLAIN3600_CAL_GAIN_CHECK_A_OPS at run time (docs/sane-hook3-gain.md section 6). */
+static const OpInjection PLAIN3600_CAL_GAIN_CHECK_A_OPS_INJ[3] = {
+    {"gain_r", 0, 5},
+    {"gain_g", 2, 5},
+    {"gain_b", 4, 5},
+};
+
+static const std::uint8_t PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA[63] = {
+    0x51, 0x05, 0x5d, 0x00, 0x5e, 0xff, 0x55, 0x51, 0x06, 0x5d, 0x00, 0x5e,
+    0xff, 0x55, 0x51, 0x07, 0x5d, 0x00, 0x5e, 0xff, 0x55, 0x0d, 0x07, 0x55,
+    0x0d, 0x07, 0x55, 0x0d, 0x07, 0x55, 0x01, 0x03, 0x55, 0x0f, 0x01, 0x55,
+    0xbd, 0x55, 0x00, 0x55, 0x00, 0x55, 0x00, 0x55, 0xe4, 0x55, 0x00, 0x00,
+    0x00, 0x10, 0x00, 0x0c, 0x00, 0x00, 0x55, 0x02, 0x01, 0x02, 0x55, 0xf0,
+    0x55, 0xdc, 0x55,
+};
+
+/* plain3600 / cal_gain_check_b: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op PLAIN3600_CAL_GAIN_CHECK_B_OPS[29] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 20, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 21, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 23, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 24, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 26, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 27, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 29, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 30, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 32, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 33, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 35, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 36, 2, 16},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 38, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 40, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 42, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 44, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 46, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 54, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 3072, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 55, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 56, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 58, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0},
+};
+
+static const OpProgram PLAIN3600_PROGRAMS[7] = {
+    {"prep", PLAIN3600_PREP_OPS, 39, nullptr, 0},
+    {"afe_base", PLAIN3600_AFE_BASE_OPS, 71, nullptr, 0},
+    {"cal_dark_a", PLAIN3600_CAL_DARK_A_OPS, 29, nullptr, 0},
+    {"cal_dark_b", PLAIN3600_CAL_DARK_B_OPS, 29, nullptr, 0},
+    {"cal_white", PLAIN3600_CAL_WHITE_OPS, 72, nullptr, 0},
+    {"cal_gain_check_a", PLAIN3600_CAL_GAIN_CHECK_A_OPS, 37, PLAIN3600_CAL_GAIN_CHECK_A_OPS_INJ, 3},
+    {"cal_gain_check_b", PLAIN3600_CAL_GAIN_CHECK_B_OPS, 29, nullptr, 0},
 };
 
 const std::uint8_t SLOPE_IR3600_SCAN[512] = {
@@ -2090,7 +2293,7 @@ static const std::uint8_t IR3600_PREP_OPS_DATA[93] = {
     0xfe, 0x55, 0x31, 0xfe, 0x55, 0x0e, 0x55, 0x0e, 0x55,
 };
 
-/* ir3600 / prep: op program, 58 ops (docs/sane-hook2-offset.md section 6). */
+/* ir3600 / prep: op program, 58 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op IR3600_PREP_OPS[58] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_PREP_OPS_DATA + 0, 2, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_PREP_OPS_DATA + 2, 1, 0},
@@ -2195,7 +2398,7 @@ static const std::uint8_t IR3600_AFE_BASE_OPS_DATA[475] = {
     0x51, 0x04, 0x5d, 0x00, 0x5e, 0x00, 0x55,
 };
 
-/* ir3600 / afe_base: op program, 69 ops (docs/sane-hook2-offset.md section 6). */
+/* ir3600 / afe_base: op program, 69 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op IR3600_AFE_BASE_OPS[69] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_AFE_BASE_OPS_DATA + 0, 64, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_AFE_BASE_OPS_DATA + 64, 1, 0},
@@ -2277,7 +2480,7 @@ static const std::uint8_t IR3600_CAL_DARK_A_OPS_DATA[63] = {
     0x55, 0xdc, 0x55,
 };
 
-/* ir3600 / cal_dark_a: op program, 29 ops (docs/sane-hook2-offset.md section 6). */
+/* ir3600 / cal_dark_a: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op IR3600_CAL_DARK_A_OPS[29] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_DARK_A_OPS_DATA + 0, 6, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_DARK_A_OPS_DATA + 6, 1, 0},
@@ -2319,7 +2522,7 @@ static const std::uint8_t IR3600_CAL_DARK_B_OPS_DATA[63] = {
     0x55, 0xdc, 0x55,
 };
 
-/* ir3600 / cal_dark_b: op program, 29 ops (docs/sane-hook2-offset.md section 6). */
+/* ir3600 / cal_dark_b: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op IR3600_CAL_DARK_B_OPS[29] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_DARK_B_OPS_DATA + 0, 6, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_DARK_B_OPS_DATA + 6, 1, 0},
@@ -2352,11 +2555,214 @@ static const Op IR3600_CAL_DARK_B_OPS[29] = {
     {OpKind::Read, 0x04, 0x018e, 0x0122, IR3600_CAL_DARK_B_OPS_DATA + 61, 2, 0},
 };
 
-static const OpProgram IR3600_PROGRAMS[4] = {
-    {"prep", IR3600_PREP_OPS, 58},
-    {"afe_base", IR3600_AFE_BASE_OPS, 69},
-    {"cal_dark_a", IR3600_CAL_DARK_A_OPS, 29},
-    {"cal_dark_b", IR3600_CAL_DARK_B_OPS, 29},
+static const std::uint8_t IR3600_CAL_WHITE_OPS_DATA[224] = {
+    0x51, 0x05, 0x5d, 0x01, 0x5e, 0x15, 0x55, 0x51, 0x06, 0x5d, 0x01, 0x5e,
+    0x1a, 0x55, 0x51, 0x07, 0x5d, 0x01, 0x5e, 0x1b, 0x55, 0xdc, 0x55, 0xd0,
+    0x0a, 0x55, 0xd1, 0x1a, 0x55, 0xe0, 0x00, 0xe1, 0xa8, 0x55, 0xe2, 0x0b,
+    0xe3, 0x35, 0x55, 0xe4, 0x0b, 0xe5, 0x36, 0x55, 0xe6, 0x15, 0xe7, 0xc3,
+    0x55, 0xe8, 0x15, 0xe9, 0xc4, 0x55, 0xea, 0x20, 0xeb, 0x51, 0x55, 0xec,
+    0x20, 0xed, 0x52, 0x55, 0xee, 0x2a, 0xef, 0xdf, 0x55, 0xf0, 0x2a, 0xf1,
+    0xe0, 0x55, 0xf2, 0x35, 0xf3, 0x6d, 0x55, 0xf4, 0x35, 0xf5, 0x6e, 0x55,
+    0xf6, 0x3f, 0xf7, 0xfb, 0x55, 0xf8, 0x05, 0x55, 0x01, 0x02, 0x04, 0x42,
+    0x05, 0x40, 0x3d, 0x00, 0x3e, 0x00, 0x3f, 0x01, 0xa6, 0x00, 0xa7, 0x01,
+    0xa8, 0x00, 0xa9, 0x01, 0x2c, 0x04, 0x2d, 0xb0, 0x02, 0x00, 0xa2, 0x00,
+    0xa3, 0x00, 0x1d, 0x00, 0xa4, 0x00, 0xa5, 0x01, 0xac, 0x00, 0xad, 0x01,
+    0x80, 0x00, 0x81, 0x23, 0x82, 0x00, 0x83, 0x00, 0x84, 0x23, 0x85, 0x00,
+    0x86, 0x14, 0x87, 0x63, 0x25, 0x00, 0x26, 0x00, 0x27, 0x02, 0x28, 0x00,
+    0x55, 0x29, 0x34, 0x2a, 0x57, 0x2b, 0x1f, 0x55, 0x51, 0x02, 0x5d, 0x00,
+    0x5e, 0x00, 0x55, 0x51, 0x03, 0x5d, 0x00, 0x5e, 0x00, 0x55, 0x51, 0x04,
+    0x5d, 0x00, 0x5e, 0x00, 0x55, 0x0d, 0x07, 0x55, 0x0d, 0x07, 0x55, 0x01,
+    0x03, 0x55, 0x0f, 0x01, 0x55, 0xbd, 0x55, 0x00, 0x55, 0x00, 0x55, 0x14,
+    0x55, 0x28, 0x55, 0x00, 0x00, 0x00, 0x10, 0x00, 0xf3, 0x00, 0x00, 0x55,
+    0x02, 0x01, 0x02, 0x55, 0xf0, 0x55, 0xdc, 0x55,
+};
+
+/* ir3600 / cal_white: op program, 72 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op IR3600_CAL_WHITE_OPS[72] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 20, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, IR3600_CAL_WHITE_OPS_DATA + 21, 2, 4},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 23, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 25, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 26, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 28, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 29, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 33, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 34, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 38, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 39, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 43, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 44, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 48, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 49, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 53, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 54, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 58, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 59, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 63, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 64, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 68, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 69, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 73, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 74, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 78, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 79, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 83, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 84, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 88, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 89, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 91, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 92, 64, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 156, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 157, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 163, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 164, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 170, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 171, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 177, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 178, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 184, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 185, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 187, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 188, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 190, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 191, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 193, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 194, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 196, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, IR3600_CAL_WHITE_OPS_DATA + 197, 2, 20},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, IR3600_CAL_WHITE_OPS_DATA + 199, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, IR3600_CAL_WHITE_OPS_DATA + 201, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, IR3600_CAL_WHITE_OPS_DATA + 203, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, IR3600_CAL_WHITE_OPS_DATA + 205, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 207, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 215, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 12800, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 256, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, IR3600_CAL_WHITE_OPS_DATA + 216, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 217, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 219, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, IR3600_CAL_WHITE_OPS_DATA + 220, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, IR3600_CAL_WHITE_OPS_DATA + 222, 2, 0},
+};
+
+static const std::uint8_t IR3600_CAL_GAIN_CHECK_A_OPS_DATA[97] = {
+    0x51, 0x02, 0x5d, 0x00, 0x5e, 0x2d, 0x55, 0x51, 0x03, 0x5d, 0x00, 0x5e,
+    0x23, 0x55, 0x51, 0x04, 0x5d, 0x00, 0x5e, 0x29, 0x55, 0x82, 0x00, 0x83,
+    0x00, 0x84, 0x23, 0x85, 0x00, 0x86, 0x02, 0x87, 0x23, 0x55, 0x51, 0x05,
+    0x5d, 0x00, 0x5e, 0x80, 0x55, 0x51, 0x06, 0x5d, 0x00, 0x5e, 0x80, 0x55,
+    0x51, 0x07, 0x5d, 0x00, 0x5e, 0x80, 0x55, 0x0d, 0x07, 0x55, 0x0d, 0x07,
+    0x55, 0x0d, 0x07, 0x55, 0x01, 0x03, 0x55, 0x0f, 0x01, 0x55, 0xad, 0x55,
+    0x00, 0x55, 0x00, 0x55, 0x01, 0x55, 0xe0, 0x55, 0x00, 0x00, 0x00, 0x10,
+    0x00, 0x18, 0x00, 0x00, 0x55, 0x02, 0x01, 0x02, 0x55, 0xf0, 0x55, 0xdc,
+    0x55,
+};
+
+/* ir3600 / cal_gain_check_a: op program, 37 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op IR3600_CAL_GAIN_CHECK_A_OPS[37] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 20, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 21, 12, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 33, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 34, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 40, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 41, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 47, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 48, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 54, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 55, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 57, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 58, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 60, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 61, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 63, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 64, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 66, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 67, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 69, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 70, 2, 16},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 72, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 74, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 76, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 78, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 80, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 88, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 6144, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 89, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 90, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 92, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0},
+};
+
+/* Computed values patched into IR3600_CAL_GAIN_CHECK_A_OPS at run time (docs/sane-hook3-gain.md section 6). */
+static const OpInjection IR3600_CAL_GAIN_CHECK_A_OPS_INJ[3] = {
+    {"gain_r", 0, 5},
+    {"gain_g", 2, 5},
+    {"gain_b", 4, 5},
+};
+
+static const std::uint8_t IR3600_CAL_GAIN_CHECK_B_OPS_DATA[63] = {
+    0x51, 0x05, 0x5d, 0x00, 0x5e, 0xff, 0x55, 0x51, 0x06, 0x5d, 0x00, 0x5e,
+    0xff, 0x55, 0x51, 0x07, 0x5d, 0x00, 0x5e, 0xff, 0x55, 0x0d, 0x07, 0x55,
+    0x0d, 0x07, 0x55, 0x0d, 0x07, 0x55, 0x01, 0x03, 0x55, 0x0f, 0x01, 0x55,
+    0xad, 0x55, 0x00, 0x55, 0x00, 0x55, 0x01, 0x55, 0xe0, 0x55, 0x00, 0x00,
+    0x00, 0x10, 0x00, 0x18, 0x00, 0x00, 0x55, 0x02, 0x01, 0x02, 0x55, 0xf0,
+    0x55, 0xdc, 0x55,
+};
+
+/* ir3600 / cal_gain_check_b: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op IR3600_CAL_GAIN_CHECK_B_OPS[29] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 20, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 21, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 23, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 24, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 26, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 27, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 29, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 30, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 32, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 33, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 35, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 36, 2, 24},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 38, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 40, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 42, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 44, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 46, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 54, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 6144, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 55, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 56, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 58, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0},
+};
+
+static const OpProgram IR3600_PROGRAMS[7] = {
+    {"prep", IR3600_PREP_OPS, 58, nullptr, 0},
+    {"afe_base", IR3600_AFE_BASE_OPS, 69, nullptr, 0},
+    {"cal_dark_a", IR3600_CAL_DARK_A_OPS, 29, nullptr, 0},
+    {"cal_dark_b", IR3600_CAL_DARK_B_OPS, 29, nullptr, 0},
+    {"cal_white", IR3600_CAL_WHITE_OPS, 72, nullptr, 0},
+    {"cal_gain_check_a", IR3600_CAL_GAIN_CHECK_A_OPS, 37, IR3600_CAL_GAIN_CHECK_A_OPS_INJ, 3},
+    {"cal_gain_check_b", IR3600_CAL_GAIN_CHECK_B_OPS, 29, nullptr, 0},
 };
 
 const std::uint8_t SLOPE_DPI600_SCAN[512] = {
@@ -2769,7 +3175,7 @@ static const std::uint8_t DPI600_PREP_OPS_DATA[91] = {
     0x31, 0xfe, 0x55, 0x0e, 0x55, 0x0e, 0x55,
 };
 
-/* dpi600 / prep: op program, 57 ops (docs/sane-hook2-offset.md section 6). */
+/* dpi600 / prep: op program, 57 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op DPI600_PREP_OPS[57] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_PREP_OPS_DATA + 0, 2, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_PREP_OPS_DATA + 2, 1, 0},
@@ -2873,7 +3279,7 @@ static const std::uint8_t DPI600_AFE_BASE_OPS_DATA[475] = {
     0x51, 0x04, 0x5d, 0x00, 0x5e, 0x00, 0x55,
 };
 
-/* dpi600 / afe_base: op program, 69 ops (docs/sane-hook2-offset.md section 6). */
+/* dpi600 / afe_base: op program, 69 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op DPI600_AFE_BASE_OPS[69] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_AFE_BASE_OPS_DATA + 0, 64, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_AFE_BASE_OPS_DATA + 64, 1, 0},
@@ -2955,7 +3361,7 @@ static const std::uint8_t DPI600_CAL_DARK_A_OPS_DATA[63] = {
     0x55, 0xdc, 0x55,
 };
 
-/* dpi600 / cal_dark_a: op program, 29 ops (docs/sane-hook2-offset.md section 6). */
+/* dpi600 / cal_dark_a: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op DPI600_CAL_DARK_A_OPS[29] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_DARK_A_OPS_DATA + 0, 6, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_DARK_A_OPS_DATA + 6, 1, 0},
@@ -2997,7 +3403,7 @@ static const std::uint8_t DPI600_CAL_DARK_B_OPS_DATA[63] = {
     0x55, 0xdc, 0x55,
 };
 
-/* dpi600 / cal_dark_b: op program, 29 ops (docs/sane-hook2-offset.md section 6). */
+/* dpi600 / cal_dark_b: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op DPI600_CAL_DARK_B_OPS[29] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_DARK_B_OPS_DATA + 0, 6, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_DARK_B_OPS_DATA + 6, 1, 0},
@@ -3030,11 +3436,215 @@ static const Op DPI600_CAL_DARK_B_OPS[29] = {
     {OpKind::Read, 0x04, 0x018e, 0x0122, DPI600_CAL_DARK_B_OPS_DATA + 61, 2, 0},
 };
 
-static const OpProgram DPI600_PROGRAMS[4] = {
-    {"prep", DPI600_PREP_OPS, 57},
-    {"afe_base", DPI600_AFE_BASE_OPS, 69},
-    {"cal_dark_a", DPI600_CAL_DARK_A_OPS, 29},
-    {"cal_dark_b", DPI600_CAL_DARK_B_OPS, 29},
+static const std::uint8_t DPI600_CAL_WHITE_OPS_DATA[224] = {
+    0x51, 0x05, 0x5d, 0x01, 0x5e, 0x16, 0x55, 0x51, 0x06, 0x5d, 0x01, 0x5e,
+    0x1c, 0x55, 0x51, 0x07, 0x5d, 0x01, 0x5e, 0x1b, 0x55, 0xdc, 0x55, 0xd0,
+    0x0a, 0x55, 0xd1, 0x1a, 0x55, 0xe0, 0x00, 0xe1, 0xa8, 0x55, 0xe2, 0x0b,
+    0xe3, 0x35, 0x55, 0xe4, 0x0b, 0xe5, 0x36, 0x55, 0xe6, 0x15, 0xe7, 0xc3,
+    0x55, 0xe8, 0x15, 0xe9, 0xc4, 0x55, 0xea, 0x20, 0xeb, 0x51, 0x55, 0xec,
+    0x20, 0xed, 0x52, 0x55, 0xee, 0x2a, 0xef, 0xdf, 0x55, 0xf0, 0x2a, 0xf1,
+    0xe0, 0x55, 0xf2, 0x35, 0xf3, 0x6d, 0x55, 0xf4, 0x35, 0xf5, 0x6e, 0x55,
+    0xf6, 0x3f, 0xf7, 0xfb, 0x55, 0xf8, 0x05, 0x55, 0x01, 0x02, 0x04, 0x42,
+    0x05, 0x40, 0x3d, 0x00, 0x3e, 0x00, 0x3f, 0x01, 0xa6, 0x00, 0xa7, 0x01,
+    0xa8, 0x00, 0xa9, 0x01, 0x2c, 0x04, 0x2d, 0xb0, 0x02, 0x00, 0xa2, 0x00,
+    0xa3, 0x00, 0x1d, 0x00, 0xa4, 0x00, 0xa5, 0x01, 0xac, 0x00, 0xad, 0x01,
+    0x80, 0x00, 0x81, 0x23, 0x82, 0x00, 0x83, 0x00, 0x84, 0x23, 0x85, 0x00,
+    0x86, 0x14, 0x87, 0x63, 0x25, 0x00, 0x26, 0x00, 0x27, 0x02, 0x28, 0x00,
+    0x55, 0x29, 0x2f, 0x2a, 0x47, 0x2b, 0x04, 0x55, 0x51, 0x02, 0x5d, 0x00,
+    0x5e, 0x00, 0x55, 0x51, 0x03, 0x5d, 0x00, 0x5e, 0x00, 0x55, 0x51, 0x04,
+    0x5d, 0x00, 0x5e, 0x00, 0x55, 0x0d, 0x07, 0x55, 0x0d, 0x07, 0x55, 0x01,
+    0x03, 0x55, 0x0f, 0x01, 0x55, 0xad, 0x55, 0x00, 0x55, 0x00, 0x55, 0x14,
+    0x55, 0x28, 0x55, 0x00, 0x00, 0x00, 0x10, 0x00, 0xf3, 0x00, 0x00, 0x55,
+    0x02, 0x01, 0x02, 0x55, 0xf0, 0x55, 0xdc, 0x55,
+};
+
+/* dpi600 / cal_white: op program, 73 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op DPI600_CAL_WHITE_OPS[73] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 20, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI600_CAL_WHITE_OPS_DATA + 21, 2, 5},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 23, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 25, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 26, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 28, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 29, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 33, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 34, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 38, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 39, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 43, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 44, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 48, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 49, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 53, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 54, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 58, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 59, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 63, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 64, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 68, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 69, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 73, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 74, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 78, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 79, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 83, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 84, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 88, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 89, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 91, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 92, 64, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 156, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 157, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 163, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 164, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 170, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 171, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 177, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 178, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 184, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 185, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 187, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 188, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 190, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 191, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 193, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 194, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 196, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, DPI600_CAL_WHITE_OPS_DATA + 197, 2, 22},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, DPI600_CAL_WHITE_OPS_DATA + 199, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, DPI600_CAL_WHITE_OPS_DATA + 201, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, DPI600_CAL_WHITE_OPS_DATA + 203, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, DPI600_CAL_WHITE_OPS_DATA + 205, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 207, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 215, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 3584, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 9216, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 256, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI600_CAL_WHITE_OPS_DATA + 216, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 217, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 219, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI600_CAL_WHITE_OPS_DATA + 220, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI600_CAL_WHITE_OPS_DATA + 222, 2, 0},
+};
+
+static const std::uint8_t DPI600_CAL_GAIN_CHECK_A_OPS_DATA[97] = {
+    0x51, 0x02, 0x5d, 0x00, 0x5e, 0x2c, 0x55, 0x51, 0x03, 0x5d, 0x00, 0x5e,
+    0x22, 0x55, 0x51, 0x04, 0x5d, 0x00, 0x5e, 0x28, 0x55, 0x82, 0x00, 0x83,
+    0x00, 0x84, 0x23, 0x85, 0x00, 0x86, 0x02, 0x87, 0x23, 0x55, 0x51, 0x05,
+    0x5d, 0x00, 0x5e, 0x80, 0x55, 0x51, 0x06, 0x5d, 0x00, 0x5e, 0x80, 0x55,
+    0x51, 0x07, 0x5d, 0x00, 0x5e, 0x80, 0x55, 0x0d, 0x07, 0x55, 0x0d, 0x07,
+    0x55, 0x0d, 0x07, 0x55, 0x01, 0x03, 0x55, 0x0f, 0x01, 0x55, 0xad, 0x55,
+    0x00, 0x55, 0x00, 0x55, 0x01, 0x55, 0xe0, 0x55, 0x00, 0x00, 0x00, 0x10,
+    0x00, 0x18, 0x00, 0x00, 0x55, 0x02, 0x01, 0x02, 0x55, 0xf0, 0x55, 0xdc,
+    0x55,
+};
+
+/* dpi600 / cal_gain_check_a: op program, 37 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op DPI600_CAL_GAIN_CHECK_A_OPS[37] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 20, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 21, 12, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 33, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 34, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 40, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 41, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 47, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 48, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 54, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 55, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 57, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 58, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 60, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 61, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 63, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 64, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 66, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 67, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 69, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 70, 2, 21},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 72, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 74, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 76, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 78, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 80, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 88, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 6144, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 89, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 90, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 92, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0},
+};
+
+/* Computed values patched into DPI600_CAL_GAIN_CHECK_A_OPS at run time (docs/sane-hook3-gain.md section 6). */
+static const OpInjection DPI600_CAL_GAIN_CHECK_A_OPS_INJ[3] = {
+    {"gain_r", 0, 5},
+    {"gain_g", 2, 5},
+    {"gain_b", 4, 5},
+};
+
+static const std::uint8_t DPI600_CAL_GAIN_CHECK_B_OPS_DATA[63] = {
+    0x51, 0x05, 0x5d, 0x00, 0x5e, 0xff, 0x55, 0x51, 0x06, 0x5d, 0x00, 0x5e,
+    0xff, 0x55, 0x51, 0x07, 0x5d, 0x00, 0x5e, 0xff, 0x55, 0x0d, 0x07, 0x55,
+    0x0d, 0x07, 0x55, 0x0d, 0x07, 0x55, 0x01, 0x03, 0x55, 0x0f, 0x01, 0x55,
+    0xad, 0x55, 0x00, 0x55, 0x00, 0x55, 0x01, 0x55, 0xe0, 0x55, 0x00, 0x00,
+    0x00, 0x10, 0x00, 0x18, 0x00, 0x00, 0x55, 0x02, 0x01, 0x02, 0x55, 0xf0,
+    0x55, 0xdc, 0x55,
+};
+
+/* dpi600 / cal_gain_check_b: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op DPI600_CAL_GAIN_CHECK_B_OPS[29] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 20, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 21, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 23, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 24, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 26, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 27, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 29, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 30, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 32, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 33, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 35, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 36, 2, 21},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 38, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 40, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 42, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 44, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 46, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 54, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 6144, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 55, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 56, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 58, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0},
+};
+
+static const OpProgram DPI600_PROGRAMS[7] = {
+    {"prep", DPI600_PREP_OPS, 57, nullptr, 0},
+    {"afe_base", DPI600_AFE_BASE_OPS, 69, nullptr, 0},
+    {"cal_dark_a", DPI600_CAL_DARK_A_OPS, 29, nullptr, 0},
+    {"cal_dark_b", DPI600_CAL_DARK_B_OPS, 29, nullptr, 0},
+    {"cal_white", DPI600_CAL_WHITE_OPS, 73, nullptr, 0},
+    {"cal_gain_check_a", DPI600_CAL_GAIN_CHECK_A_OPS, 37, DPI600_CAL_GAIN_CHECK_A_OPS_INJ, 3},
+    {"cal_gain_check_b", DPI600_CAL_GAIN_CHECK_B_OPS, 29, nullptr, 0},
 };
 
 const std::uint8_t SLOPE_DPI1200_SCAN[512] = {
@@ -3495,7 +4105,7 @@ static const std::uint8_t DPI1200_PREP_OPS_DATA[23] = {
     0xdc, 0x55, 0xfe, 0x55, 0x31, 0xfe, 0x55, 0x0e, 0x55, 0x0e, 0x55,
 };
 
-/* dpi1200 / prep: op program, 17 ops (docs/sane-hook2-offset.md section 6). */
+/* dpi1200 / prep: op program, 17 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op DPI1200_PREP_OPS[17] = {
     {OpKind::Write, 0x0c, 0x008c, 0x0010, DPI1200_PREP_OPS_DATA + 0, 1, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_PREP_OPS_DATA + 1, 1, 0},
@@ -3560,7 +4170,7 @@ static const std::uint8_t DPI1200_AFE_BASE_OPS_DATA[487] = {
     0x51, 0x04, 0x5d, 0x00, 0x5e, 0x00, 0x55,
 };
 
-/* dpi1200 / afe_base: op program, 69 ops (docs/sane-hook2-offset.md section 6). */
+/* dpi1200 / afe_base: op program, 69 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op DPI1200_AFE_BASE_OPS[69] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_AFE_BASE_OPS_DATA + 0, 64, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_AFE_BASE_OPS_DATA + 64, 1, 0},
@@ -3642,7 +4252,7 @@ static const std::uint8_t DPI1200_CAL_DARK_A_OPS_DATA[63] = {
     0x55, 0xdc, 0x55,
 };
 
-/* dpi1200 / cal_dark_a: op program, 29 ops (docs/sane-hook2-offset.md section 6). */
+/* dpi1200 / cal_dark_a: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op DPI1200_CAL_DARK_A_OPS[29] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_DARK_A_OPS_DATA + 0, 6, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_DARK_A_OPS_DATA + 6, 1, 0},
@@ -3684,7 +4294,7 @@ static const std::uint8_t DPI1200_CAL_DARK_B_OPS_DATA[63] = {
     0x55, 0xdc, 0x55,
 };
 
-/* dpi1200 / cal_dark_b: op program, 29 ops (docs/sane-hook2-offset.md section 6). */
+/* dpi1200 / cal_dark_b: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op DPI1200_CAL_DARK_B_OPS[29] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_DARK_B_OPS_DATA + 0, 6, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_DARK_B_OPS_DATA + 6, 1, 0},
@@ -3717,11 +4327,215 @@ static const Op DPI1200_CAL_DARK_B_OPS[29] = {
     {OpKind::Read, 0x04, 0x018e, 0x0122, DPI1200_CAL_DARK_B_OPS_DATA + 61, 2, 0},
 };
 
-static const OpProgram DPI1200_PROGRAMS[4] = {
-    {"prep", DPI1200_PREP_OPS, 17},
-    {"afe_base", DPI1200_AFE_BASE_OPS, 69},
-    {"cal_dark_a", DPI1200_CAL_DARK_A_OPS, 29},
-    {"cal_dark_b", DPI1200_CAL_DARK_B_OPS, 29},
+static const std::uint8_t DPI1200_CAL_WHITE_OPS_DATA[224] = {
+    0x51, 0x05, 0x5d, 0x01, 0x5e, 0x15, 0x55, 0x51, 0x06, 0x5d, 0x01, 0x5e,
+    0x1b, 0x55, 0x51, 0x07, 0x5d, 0x01, 0x5e, 0x1b, 0x55, 0xdc, 0x55, 0xd0,
+    0x0a, 0x55, 0xd1, 0x1a, 0x55, 0xe0, 0x00, 0xe1, 0xa8, 0x55, 0xe2, 0x0b,
+    0xe3, 0x35, 0x55, 0xe4, 0x0b, 0xe5, 0x36, 0x55, 0xe6, 0x15, 0xe7, 0xc3,
+    0x55, 0xe8, 0x15, 0xe9, 0xc4, 0x55, 0xea, 0x20, 0xeb, 0x51, 0x55, 0xec,
+    0x20, 0xed, 0x52, 0x55, 0xee, 0x2a, 0xef, 0xdf, 0x55, 0xf0, 0x2a, 0xf1,
+    0xe0, 0x55, 0xf2, 0x35, 0xf3, 0x6d, 0x55, 0xf4, 0x35, 0xf5, 0x6e, 0x55,
+    0xf6, 0x3f, 0xf7, 0xfb, 0x55, 0xf8, 0x05, 0x55, 0x01, 0x02, 0x04, 0x42,
+    0x05, 0x40, 0x3d, 0x00, 0x3e, 0x00, 0x3f, 0x01, 0xa6, 0x00, 0xa7, 0x01,
+    0xa8, 0x00, 0xa9, 0x01, 0x2c, 0x04, 0x2d, 0xb0, 0x02, 0x00, 0xa2, 0x00,
+    0xa3, 0x00, 0x1d, 0x00, 0xa4, 0x00, 0xa5, 0x01, 0xac, 0x00, 0xad, 0x01,
+    0x80, 0x00, 0x81, 0x23, 0x82, 0x00, 0x83, 0x00, 0x84, 0x23, 0x85, 0x00,
+    0x86, 0x14, 0x87, 0x63, 0x25, 0x00, 0x26, 0x00, 0x27, 0x02, 0x28, 0x00,
+    0x55, 0x29, 0x2f, 0x2a, 0x47, 0x2b, 0x04, 0x55, 0x51, 0x02, 0x5d, 0x00,
+    0x5e, 0x00, 0x55, 0x51, 0x03, 0x5d, 0x00, 0x5e, 0x00, 0x55, 0x51, 0x04,
+    0x5d, 0x00, 0x5e, 0x00, 0x55, 0x0d, 0x07, 0x55, 0x0d, 0x07, 0x55, 0x01,
+    0x03, 0x55, 0x0f, 0x01, 0x55, 0xad, 0x55, 0x00, 0x55, 0x00, 0x55, 0x14,
+    0x55, 0x28, 0x55, 0x00, 0x00, 0x00, 0x10, 0x00, 0xf3, 0x00, 0x00, 0x55,
+    0x02, 0x01, 0x02, 0x55, 0xf0, 0x55, 0xdc, 0x55,
+};
+
+/* dpi1200 / cal_white: op program, 73 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op DPI1200_CAL_WHITE_OPS[73] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 20, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI1200_CAL_WHITE_OPS_DATA + 21, 2, 4},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 23, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 25, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 26, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 28, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 29, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 33, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 34, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 38, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 39, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 43, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 44, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 48, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 49, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 53, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 54, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 58, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 59, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 63, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 64, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 68, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 69, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 73, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 74, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 78, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 79, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 83, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 84, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 88, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 89, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 91, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 92, 64, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 156, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 157, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 163, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 164, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 170, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 171, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 177, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 178, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 184, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 185, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 187, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 188, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 190, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 191, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 193, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 194, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 196, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, DPI1200_CAL_WHITE_OPS_DATA + 197, 2, 21},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, DPI1200_CAL_WHITE_OPS_DATA + 199, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, DPI1200_CAL_WHITE_OPS_DATA + 201, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, DPI1200_CAL_WHITE_OPS_DATA + 203, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, DPI1200_CAL_WHITE_OPS_DATA + 205, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 207, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 215, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 2560, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 10240, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 256, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI1200_CAL_WHITE_OPS_DATA + 216, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 217, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 219, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI1200_CAL_WHITE_OPS_DATA + 220, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI1200_CAL_WHITE_OPS_DATA + 222, 2, 0},
+};
+
+static const std::uint8_t DPI1200_CAL_GAIN_CHECK_A_OPS_DATA[97] = {
+    0x51, 0x02, 0x5d, 0x00, 0x5e, 0x2c, 0x55, 0x51, 0x03, 0x5d, 0x00, 0x5e,
+    0x21, 0x55, 0x51, 0x04, 0x5d, 0x00, 0x5e, 0x28, 0x55, 0x82, 0x00, 0x83,
+    0x00, 0x84, 0x23, 0x85, 0x00, 0x86, 0x02, 0x87, 0x23, 0x55, 0x51, 0x05,
+    0x5d, 0x00, 0x5e, 0x80, 0x55, 0x51, 0x06, 0x5d, 0x00, 0x5e, 0x80, 0x55,
+    0x51, 0x07, 0x5d, 0x00, 0x5e, 0x80, 0x55, 0x0d, 0x07, 0x55, 0x0d, 0x07,
+    0x55, 0x0d, 0x07, 0x55, 0x01, 0x03, 0x55, 0x0f, 0x01, 0x55, 0xad, 0x55,
+    0x00, 0x55, 0x00, 0x55, 0x01, 0x55, 0xe0, 0x55, 0x00, 0x00, 0x00, 0x10,
+    0x00, 0x18, 0x00, 0x00, 0x55, 0x02, 0x01, 0x02, 0x55, 0xf0, 0x55, 0xdc,
+    0x55,
+};
+
+/* dpi1200 / cal_gain_check_a: op program, 37 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op DPI1200_CAL_GAIN_CHECK_A_OPS[37] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 20, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 21, 12, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 33, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 34, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 40, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 41, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 47, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 48, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 54, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 55, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 57, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 58, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 60, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 61, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 63, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 64, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 66, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 67, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 69, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 70, 2, 21},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 72, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 74, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 76, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 78, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 80, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 88, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 6144, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 89, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 90, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 92, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0},
+};
+
+/* Computed values patched into DPI1200_CAL_GAIN_CHECK_A_OPS at run time (docs/sane-hook3-gain.md section 6). */
+static const OpInjection DPI1200_CAL_GAIN_CHECK_A_OPS_INJ[3] = {
+    {"gain_r", 0, 5},
+    {"gain_g", 2, 5},
+    {"gain_b", 4, 5},
+};
+
+static const std::uint8_t DPI1200_CAL_GAIN_CHECK_B_OPS_DATA[63] = {
+    0x51, 0x05, 0x5d, 0x00, 0x5e, 0xff, 0x55, 0x51, 0x06, 0x5d, 0x00, 0x5e,
+    0xff, 0x55, 0x51, 0x07, 0x5d, 0x00, 0x5e, 0xff, 0x55, 0x0d, 0x07, 0x55,
+    0x0d, 0x07, 0x55, 0x0d, 0x07, 0x55, 0x01, 0x03, 0x55, 0x0f, 0x01, 0x55,
+    0xad, 0x55, 0x00, 0x55, 0x00, 0x55, 0x01, 0x55, 0xe0, 0x55, 0x00, 0x00,
+    0x00, 0x10, 0x00, 0x18, 0x00, 0x00, 0x55, 0x02, 0x01, 0x02, 0x55, 0xf0,
+    0x55, 0xdc, 0x55,
+};
+
+/* dpi1200 / cal_gain_check_b: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op DPI1200_CAL_GAIN_CHECK_B_OPS[29] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 20, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 21, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 23, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 24, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 26, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 27, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 29, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 30, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 32, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 33, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 35, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 36, 2, 26},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 38, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 40, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 42, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 44, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 46, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 54, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 6144, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 55, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 56, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 58, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0},
+};
+
+static const OpProgram DPI1200_PROGRAMS[7] = {
+    {"prep", DPI1200_PREP_OPS, 17, nullptr, 0},
+    {"afe_base", DPI1200_AFE_BASE_OPS, 69, nullptr, 0},
+    {"cal_dark_a", DPI1200_CAL_DARK_A_OPS, 29, nullptr, 0},
+    {"cal_dark_b", DPI1200_CAL_DARK_B_OPS, 29, nullptr, 0},
+    {"cal_white", DPI1200_CAL_WHITE_OPS, 73, nullptr, 0},
+    {"cal_gain_check_a", DPI1200_CAL_GAIN_CHECK_A_OPS, 37, DPI1200_CAL_GAIN_CHECK_A_OPS_INJ, 3},
+    {"cal_gain_check_b", DPI1200_CAL_GAIN_CHECK_B_OPS, 29, nullptr, 0},
 };
 
 const std::uint8_t SLOPE_DPI2400_SCAN[512] = {
@@ -4559,7 +5373,7 @@ static const std::uint8_t DPI2400_PREP_OPS_DATA[93] = {
     0xfe, 0x55, 0x31, 0xfe, 0x55, 0x0e, 0x55, 0x0e, 0x55,
 };
 
-/* dpi2400 / prep: op program, 58 ops (docs/sane-hook2-offset.md section 6). */
+/* dpi2400 / prep: op program, 58 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op DPI2400_PREP_OPS[58] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_PREP_OPS_DATA + 0, 2, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_PREP_OPS_DATA + 2, 1, 0},
@@ -4664,7 +5478,7 @@ static const std::uint8_t DPI2400_AFE_BASE_OPS_DATA[475] = {
     0x51, 0x04, 0x5d, 0x00, 0x5e, 0x00, 0x55,
 };
 
-/* dpi2400 / afe_base: op program, 69 ops (docs/sane-hook2-offset.md section 6). */
+/* dpi2400 / afe_base: op program, 69 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op DPI2400_AFE_BASE_OPS[69] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_AFE_BASE_OPS_DATA + 0, 64, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_AFE_BASE_OPS_DATA + 64, 1, 0},
@@ -4746,7 +5560,7 @@ static const std::uint8_t DPI2400_CAL_DARK_A_OPS_DATA[63] = {
     0x55, 0xdc, 0x55,
 };
 
-/* dpi2400 / cal_dark_a: op program, 29 ops (docs/sane-hook2-offset.md section 6). */
+/* dpi2400 / cal_dark_a: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op DPI2400_CAL_DARK_A_OPS[29] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_DARK_A_OPS_DATA + 0, 6, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_DARK_A_OPS_DATA + 6, 1, 0},
@@ -4788,7 +5602,7 @@ static const std::uint8_t DPI2400_CAL_DARK_B_OPS_DATA[63] = {
     0x55, 0xdc, 0x55,
 };
 
-/* dpi2400 / cal_dark_b: op program, 29 ops (docs/sane-hook2-offset.md section 6). */
+/* dpi2400 / cal_dark_b: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op DPI2400_CAL_DARK_B_OPS[29] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_DARK_B_OPS_DATA + 0, 6, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_DARK_B_OPS_DATA + 6, 1, 0},
@@ -4821,11 +5635,215 @@ static const Op DPI2400_CAL_DARK_B_OPS[29] = {
     {OpKind::Read, 0x04, 0x018e, 0x0122, DPI2400_CAL_DARK_B_OPS_DATA + 61, 2, 0},
 };
 
-static const OpProgram DPI2400_PROGRAMS[4] = {
-    {"prep", DPI2400_PREP_OPS, 58},
-    {"afe_base", DPI2400_AFE_BASE_OPS, 69},
-    {"cal_dark_a", DPI2400_CAL_DARK_A_OPS, 29},
-    {"cal_dark_b", DPI2400_CAL_DARK_B_OPS, 29},
+static const std::uint8_t DPI2400_CAL_WHITE_OPS_DATA[224] = {
+    0x51, 0x05, 0x5d, 0x01, 0x5e, 0x15, 0x55, 0x51, 0x06, 0x5d, 0x01, 0x5e,
+    0x1b, 0x55, 0x51, 0x07, 0x5d, 0x01, 0x5e, 0x1b, 0x55, 0xdc, 0x55, 0xd0,
+    0x0a, 0x55, 0xd1, 0x1a, 0x55, 0xe0, 0x00, 0xe1, 0xa8, 0x55, 0xe2, 0x0b,
+    0xe3, 0x35, 0x55, 0xe4, 0x0b, 0xe5, 0x36, 0x55, 0xe6, 0x15, 0xe7, 0xc3,
+    0x55, 0xe8, 0x15, 0xe9, 0xc4, 0x55, 0xea, 0x20, 0xeb, 0x51, 0x55, 0xec,
+    0x20, 0xed, 0x52, 0x55, 0xee, 0x2a, 0xef, 0xdf, 0x55, 0xf0, 0x2a, 0xf1,
+    0xe0, 0x55, 0xf2, 0x35, 0xf3, 0x6d, 0x55, 0xf4, 0x35, 0xf5, 0x6e, 0x55,
+    0xf6, 0x3f, 0xf7, 0xfb, 0x55, 0xf8, 0x05, 0x55, 0x01, 0x02, 0x04, 0x42,
+    0x05, 0x40, 0x3d, 0x00, 0x3e, 0x00, 0x3f, 0x01, 0xa6, 0x00, 0xa7, 0x01,
+    0xa8, 0x00, 0xa9, 0x01, 0x2c, 0x04, 0x2d, 0xb0, 0x02, 0x00, 0xa2, 0x00,
+    0xa3, 0x00, 0x1d, 0x00, 0xa4, 0x00, 0xa5, 0x01, 0xac, 0x00, 0xad, 0x01,
+    0x80, 0x00, 0x81, 0x23, 0x82, 0x00, 0x83, 0x00, 0x84, 0x23, 0x85, 0x00,
+    0x86, 0x14, 0x87, 0x63, 0x25, 0x00, 0x26, 0x00, 0x27, 0x02, 0x28, 0x00,
+    0x55, 0x29, 0x34, 0x2a, 0x57, 0x2b, 0x1f, 0x55, 0x51, 0x02, 0x5d, 0x00,
+    0x5e, 0x00, 0x55, 0x51, 0x03, 0x5d, 0x00, 0x5e, 0x00, 0x55, 0x51, 0x04,
+    0x5d, 0x00, 0x5e, 0x00, 0x55, 0x0d, 0x07, 0x55, 0x0d, 0x07, 0x55, 0x01,
+    0x03, 0x55, 0x0f, 0x01, 0x55, 0xbd, 0x55, 0x00, 0x55, 0x00, 0x55, 0x14,
+    0x55, 0x28, 0x55, 0x00, 0x00, 0x00, 0x10, 0x00, 0xf3, 0x00, 0x00, 0x55,
+    0x02, 0x01, 0x02, 0x55, 0xf0, 0x55, 0xdc, 0x55,
+};
+
+/* dpi2400 / cal_white: op program, 73 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op DPI2400_CAL_WHITE_OPS[73] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 20, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI2400_CAL_WHITE_OPS_DATA + 21, 2, 4},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 23, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 25, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 26, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 28, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 29, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 33, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 34, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 38, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 39, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 43, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 44, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 48, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 49, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 53, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 54, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 58, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 59, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 63, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 64, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 68, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 69, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 73, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 74, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 78, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 79, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 83, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 84, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 88, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 89, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 91, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 92, 64, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 156, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 157, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 163, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 164, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 170, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 171, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 177, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 178, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 184, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 185, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 187, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 188, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 190, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 191, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 193, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 194, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 196, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, DPI2400_CAL_WHITE_OPS_DATA + 197, 2, 21},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, DPI2400_CAL_WHITE_OPS_DATA + 199, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, DPI2400_CAL_WHITE_OPS_DATA + 201, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, DPI2400_CAL_WHITE_OPS_DATA + 203, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, DPI2400_CAL_WHITE_OPS_DATA + 205, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 207, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 215, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 2560, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 10240, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 256, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI2400_CAL_WHITE_OPS_DATA + 216, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 217, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 219, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI2400_CAL_WHITE_OPS_DATA + 220, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI2400_CAL_WHITE_OPS_DATA + 222, 2, 0},
+};
+
+static const std::uint8_t DPI2400_CAL_GAIN_CHECK_A_OPS_DATA[97] = {
+    0x51, 0x02, 0x5d, 0x00, 0x5e, 0x2c, 0x55, 0x51, 0x03, 0x5d, 0x00, 0x5e,
+    0x22, 0x55, 0x51, 0x04, 0x5d, 0x00, 0x5e, 0x28, 0x55, 0x82, 0x00, 0x83,
+    0x00, 0x84, 0x23, 0x85, 0x00, 0x86, 0x02, 0x87, 0x23, 0x55, 0x51, 0x05,
+    0x5d, 0x00, 0x5e, 0x80, 0x55, 0x51, 0x06, 0x5d, 0x00, 0x5e, 0x80, 0x55,
+    0x51, 0x07, 0x5d, 0x00, 0x5e, 0x80, 0x55, 0x0d, 0x07, 0x55, 0x0d, 0x07,
+    0x55, 0x0d, 0x07, 0x55, 0x01, 0x03, 0x55, 0x0f, 0x01, 0x55, 0xad, 0x55,
+    0x00, 0x55, 0x00, 0x55, 0x01, 0x55, 0xe0, 0x55, 0x00, 0x00, 0x00, 0x10,
+    0x00, 0x18, 0x00, 0x00, 0x55, 0x02, 0x01, 0x02, 0x55, 0xf0, 0x55, 0xdc,
+    0x55,
+};
+
+/* dpi2400 / cal_gain_check_a: op program, 37 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op DPI2400_CAL_GAIN_CHECK_A_OPS[37] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 20, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 21, 12, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 33, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 34, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 40, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 41, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 47, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 48, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 54, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 55, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 57, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 58, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 60, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 61, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 63, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 64, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 66, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 67, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 69, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 70, 2, 21},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 72, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 74, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 76, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 78, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 80, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 88, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 6144, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 89, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 90, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 92, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0},
+};
+
+/* Computed values patched into DPI2400_CAL_GAIN_CHECK_A_OPS at run time (docs/sane-hook3-gain.md section 6). */
+static const OpInjection DPI2400_CAL_GAIN_CHECK_A_OPS_INJ[3] = {
+    {"gain_r", 0, 5},
+    {"gain_g", 2, 5},
+    {"gain_b", 4, 5},
+};
+
+static const std::uint8_t DPI2400_CAL_GAIN_CHECK_B_OPS_DATA[63] = {
+    0x51, 0x05, 0x5d, 0x00, 0x5e, 0xff, 0x55, 0x51, 0x06, 0x5d, 0x00, 0x5e,
+    0xff, 0x55, 0x51, 0x07, 0x5d, 0x00, 0x5e, 0xff, 0x55, 0x0d, 0x07, 0x55,
+    0x0d, 0x07, 0x55, 0x0d, 0x07, 0x55, 0x01, 0x03, 0x55, 0x0f, 0x01, 0x55,
+    0xad, 0x55, 0x00, 0x55, 0x00, 0x55, 0x01, 0x55, 0xe0, 0x55, 0x00, 0x00,
+    0x00, 0x10, 0x00, 0x18, 0x00, 0x00, 0x55, 0x02, 0x01, 0x02, 0x55, 0xf0,
+    0x55, 0xdc, 0x55,
+};
+
+/* dpi2400 / cal_gain_check_b: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op DPI2400_CAL_GAIN_CHECK_B_OPS[29] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 20, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 21, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 23, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 24, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 26, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 27, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 29, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 30, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 32, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 33, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 35, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 36, 2, 17},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 38, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 40, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 42, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 44, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 46, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 54, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 6144, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 55, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 56, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 58, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0},
+};
+
+static const OpProgram DPI2400_PROGRAMS[7] = {
+    {"prep", DPI2400_PREP_OPS, 58, nullptr, 0},
+    {"afe_base", DPI2400_AFE_BASE_OPS, 69, nullptr, 0},
+    {"cal_dark_a", DPI2400_CAL_DARK_A_OPS, 29, nullptr, 0},
+    {"cal_dark_b", DPI2400_CAL_DARK_B_OPS, 29, nullptr, 0},
+    {"cal_white", DPI2400_CAL_WHITE_OPS, 73, nullptr, 0},
+    {"cal_gain_check_a", DPI2400_CAL_GAIN_CHECK_A_OPS, 37, DPI2400_CAL_GAIN_CHECK_A_OPS_INJ, 3},
+    {"cal_gain_check_b", DPI2400_CAL_GAIN_CHECK_B_OPS, 29, nullptr, 0},
 };
 
 const std::uint8_t SLOPE_DPI7200_SCAN[512] = {
@@ -7867,7 +8885,7 @@ static const std::uint8_t DPI7200_PREP_OPS_DATA[23] = {
     0xec, 0x55, 0xfe, 0x55, 0x31, 0xfe, 0x55, 0x0e, 0x55, 0x0e, 0x55,
 };
 
-/* dpi7200 / prep: op program, 17 ops (docs/sane-hook2-offset.md section 6). */
+/* dpi7200 / prep: op program, 17 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op DPI7200_PREP_OPS[17] = {
     {OpKind::Write, 0x0c, 0x008c, 0x0010, DPI7200_PREP_OPS_DATA + 0, 1, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_PREP_OPS_DATA + 1, 1, 0},
@@ -7931,7 +8949,7 @@ static const std::uint8_t DPI7200_AFE_BASE_OPS_DATA[475] = {
     0x51, 0x04, 0x5d, 0x00, 0x5e, 0x00, 0x55,
 };
 
-/* dpi7200 / afe_base: op program, 69 ops (docs/sane-hook2-offset.md section 6). */
+/* dpi7200 / afe_base: op program, 69 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op DPI7200_AFE_BASE_OPS[69] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_AFE_BASE_OPS_DATA + 0, 64, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_AFE_BASE_OPS_DATA + 64, 1, 0},
@@ -8013,7 +9031,7 @@ static const std::uint8_t DPI7200_CAL_DARK_A_OPS_DATA[63] = {
     0x55, 0xdc, 0x55,
 };
 
-/* dpi7200 / cal_dark_a: op program, 29 ops (docs/sane-hook2-offset.md section 6). */
+/* dpi7200 / cal_dark_a: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op DPI7200_CAL_DARK_A_OPS[29] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_DARK_A_OPS_DATA + 0, 6, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_DARK_A_OPS_DATA + 6, 1, 0},
@@ -8055,7 +9073,7 @@ static const std::uint8_t DPI7200_CAL_DARK_B_OPS_DATA[63] = {
     0x55, 0xdc, 0x55,
 };
 
-/* dpi7200 / cal_dark_b: op program, 29 ops (docs/sane-hook2-offset.md section 6). */
+/* dpi7200 / cal_dark_b: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
 static const Op DPI7200_CAL_DARK_B_OPS[29] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_DARK_B_OPS_DATA + 0, 6, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_DARK_B_OPS_DATA + 6, 1, 0},
@@ -8088,11 +9106,217 @@ static const Op DPI7200_CAL_DARK_B_OPS[29] = {
     {OpKind::Read, 0x04, 0x018e, 0x0122, DPI7200_CAL_DARK_B_OPS_DATA + 61, 2, 0},
 };
 
-static const OpProgram DPI7200_PROGRAMS[4] = {
-    {"prep", DPI7200_PREP_OPS, 17},
-    {"afe_base", DPI7200_AFE_BASE_OPS, 69},
-    {"cal_dark_a", DPI7200_CAL_DARK_A_OPS, 29},
-    {"cal_dark_b", DPI7200_CAL_DARK_B_OPS, 29},
+static const std::uint8_t DPI7200_CAL_WHITE_OPS_DATA[224] = {
+    0x51, 0x05, 0x5d, 0x01, 0x5e, 0x1c, 0x55, 0x51, 0x06, 0x5d, 0x01, 0x5e,
+    0x24, 0x55, 0x51, 0x07, 0x5d, 0x01, 0x5e, 0x21, 0x55, 0xdc, 0x55, 0xd0,
+    0x0a, 0x55, 0xd1, 0x1a, 0x55, 0xe0, 0x00, 0xe1, 0xa8, 0x55, 0xe2, 0x0b,
+    0xe3, 0x35, 0x55, 0xe4, 0x0b, 0xe5, 0x36, 0x55, 0xe6, 0x15, 0xe7, 0xc3,
+    0x55, 0xe8, 0x15, 0xe9, 0xc4, 0x55, 0xea, 0x20, 0xeb, 0x51, 0x55, 0xec,
+    0x20, 0xed, 0x52, 0x55, 0xee, 0x2a, 0xef, 0xdf, 0x55, 0xf0, 0x2a, 0xf1,
+    0xe0, 0x55, 0xf2, 0x35, 0xf3, 0x6d, 0x55, 0xf4, 0x35, 0xf5, 0x6e, 0x55,
+    0xf6, 0x3f, 0xf7, 0xfb, 0x55, 0xf8, 0x05, 0x55, 0x01, 0x02, 0x04, 0x42,
+    0x05, 0x40, 0x3d, 0x00, 0x3e, 0x00, 0x3f, 0x01, 0xa6, 0x00, 0xa7, 0x01,
+    0xa8, 0x00, 0xa9, 0x01, 0x2c, 0x04, 0x2d, 0xb0, 0x02, 0x00, 0xa2, 0x00,
+    0xa3, 0x00, 0x1d, 0x00, 0xa4, 0x00, 0xa5, 0x01, 0xac, 0x00, 0xad, 0x01,
+    0x80, 0x00, 0x81, 0x23, 0x82, 0x00, 0x83, 0x00, 0x84, 0x23, 0x85, 0x00,
+    0x86, 0x28, 0x87, 0xa3, 0x25, 0x00, 0x26, 0x00, 0x27, 0x02, 0x28, 0x00,
+    0x55, 0x29, 0x3e, 0x2a, 0x77, 0x2b, 0x3d, 0x55, 0x51, 0x02, 0x5d, 0x00,
+    0x5e, 0x00, 0x55, 0x51, 0x03, 0x5d, 0x00, 0x5e, 0x00, 0x55, 0x51, 0x04,
+    0x5d, 0x00, 0x5e, 0x00, 0x55, 0x0d, 0x07, 0x55, 0x0d, 0x07, 0x55, 0x01,
+    0x03, 0x55, 0x0f, 0x01, 0x55, 0xad, 0x55, 0x00, 0x55, 0x00, 0x55, 0x28,
+    0x55, 0x68, 0x55, 0x00, 0x00, 0x00, 0x10, 0x00, 0xe6, 0x01, 0x00, 0x55,
+    0x02, 0x01, 0x02, 0x55, 0xf0, 0x55, 0xdc, 0x55,
+};
+
+/* dpi7200 / cal_white: op program, 75 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op DPI7200_CAL_WHITE_OPS[75] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 20, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI7200_CAL_WHITE_OPS_DATA + 21, 2, 4},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 23, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 25, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 26, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 28, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 29, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 33, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 34, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 38, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 39, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 43, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 44, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 48, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 49, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 53, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 54, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 58, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 59, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 63, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 64, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 68, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 69, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 73, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 74, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 78, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 79, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 83, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 84, 4, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 88, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 89, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 91, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 92, 64, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 156, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 157, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 163, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 164, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 170, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 171, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 177, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 178, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 184, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 185, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 187, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 188, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 190, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 191, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 193, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 194, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 196, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, DPI7200_CAL_WHITE_OPS_DATA + 197, 2, 21},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, DPI7200_CAL_WHITE_OPS_DATA + 199, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, DPI7200_CAL_WHITE_OPS_DATA + 201, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, DPI7200_CAL_WHITE_OPS_DATA + 203, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, DPI7200_CAL_WHITE_OPS_DATA + 205, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 207, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 215, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 16384, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 9728, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI7200_CAL_WHITE_OPS_DATA + 216, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 217, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 219, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI7200_CAL_WHITE_OPS_DATA + 220, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI7200_CAL_WHITE_OPS_DATA + 222, 2, 0},
+};
+
+static const std::uint8_t DPI7200_CAL_GAIN_CHECK_A_OPS_DATA[97] = {
+    0x51, 0x02, 0x5d, 0x00, 0x5e, 0x2c, 0x55, 0x51, 0x03, 0x5d, 0x00, 0x5e,
+    0x21, 0x55, 0x51, 0x04, 0x5d, 0x00, 0x5e, 0x27, 0x55, 0x82, 0x00, 0x83,
+    0x00, 0x84, 0x23, 0x85, 0x00, 0x86, 0x02, 0x87, 0x23, 0x55, 0x51, 0x05,
+    0x5d, 0x00, 0x5e, 0x80, 0x55, 0x51, 0x06, 0x5d, 0x00, 0x5e, 0x80, 0x55,
+    0x51, 0x07, 0x5d, 0x00, 0x5e, 0x80, 0x55, 0x0d, 0x07, 0x55, 0x0d, 0x07,
+    0x55, 0x0d, 0x07, 0x55, 0x01, 0x03, 0x55, 0x0f, 0x01, 0x55, 0xad, 0x55,
+    0x00, 0x55, 0x00, 0x55, 0x01, 0x55, 0xe0, 0x55, 0x00, 0x00, 0x00, 0x10,
+    0x00, 0x18, 0x00, 0x00, 0x55, 0x02, 0x01, 0x02, 0x55, 0xf0, 0x55, 0xdc,
+    0x55,
+};
+
+/* dpi7200 / cal_gain_check_a: op program, 37 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op DPI7200_CAL_GAIN_CHECK_A_OPS[37] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 20, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 21, 12, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 33, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 34, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 40, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 41, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 47, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 48, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 54, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 55, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 57, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 58, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 60, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 61, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 63, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 64, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 66, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 67, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 69, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 70, 2, 17},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 72, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 74, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 76, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 78, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 80, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 88, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 6144, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 89, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 90, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 92, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0},
+};
+
+/* Computed values patched into DPI7200_CAL_GAIN_CHECK_A_OPS at run time (docs/sane-hook3-gain.md section 6). */
+static const OpInjection DPI7200_CAL_GAIN_CHECK_A_OPS_INJ[3] = {
+    {"gain_r", 0, 5},
+    {"gain_g", 2, 5},
+    {"gain_b", 4, 5},
+};
+
+static const std::uint8_t DPI7200_CAL_GAIN_CHECK_B_OPS_DATA[63] = {
+    0x51, 0x05, 0x5d, 0x00, 0x5e, 0xff, 0x55, 0x51, 0x06, 0x5d, 0x00, 0x5e,
+    0xff, 0x55, 0x51, 0x07, 0x5d, 0x00, 0x5e, 0xff, 0x55, 0x0d, 0x07, 0x55,
+    0x0d, 0x07, 0x55, 0x0d, 0x07, 0x55, 0x01, 0x03, 0x55, 0x0f, 0x01, 0x55,
+    0xad, 0x55, 0x00, 0x55, 0x00, 0x55, 0x01, 0x55, 0xe0, 0x55, 0x00, 0x00,
+    0x00, 0x10, 0x00, 0x18, 0x00, 0x00, 0x55, 0x02, 0x01, 0x02, 0x55, 0xf0,
+    0x55, 0xdc, 0x55,
+};
+
+/* dpi7200 / cal_gain_check_b: op program, 29 ops (docs/sane-hook2-offset.md section 6, docs/sane-hook3-gain.md section 6). */
+static const Op DPI7200_CAL_GAIN_CHECK_B_OPS[29] = {
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 0, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 6, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 7, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 13, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 14, 6, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 20, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 21, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 23, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 24, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 26, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 27, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 29, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 30, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 32, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 33, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 35, 1, 0},
+    {OpKind::PollDataReady, 0x04, 0x018e, 0x0122, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 36, 2, 21},
+    {OpKind::Read, 0x04, 0x018e, 0x0222, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 38, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0322, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 40, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0422, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 42, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0522, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 44, 2, 0},
+    {OpKind::Write, 0x04, 0x0082, 0x0000, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 46, 8, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 54, 1, 0},
+    {OpKind::BulkIn, 0x00, 0x0000, 0x0000, nullptr, 6144, 0},
+    {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 55, 1, 0},
+    {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 56, 2, 0},
+    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 58, 1, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0},
+    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0},
+};
+
+static const OpProgram DPI7200_PROGRAMS[7] = {
+    {"prep", DPI7200_PREP_OPS, 17, nullptr, 0},
+    {"afe_base", DPI7200_AFE_BASE_OPS, 69, nullptr, 0},
+    {"cal_dark_a", DPI7200_CAL_DARK_A_OPS, 29, nullptr, 0},
+    {"cal_dark_b", DPI7200_CAL_DARK_B_OPS, 29, nullptr, 0},
+    {"cal_white", DPI7200_CAL_WHITE_OPS, 75, nullptr, 0},
+    {"cal_gain_check_a", DPI7200_CAL_GAIN_CHECK_A_OPS, 37, DPI7200_CAL_GAIN_CHECK_A_OPS_INJ, 3},
+    {"cal_gain_check_b", DPI7200_CAL_GAIN_CHECK_B_OPS, 29, nullptr, 0},
 };
 
 /* magazine / open: 145 register writes from 51 captured ops. */
@@ -8223,12 +9447,12 @@ const Phase MAGAZINE_PHASES[3] = {
 };
 
 const Profile PROFILES[6] = {
-    {"plain3600", 3600, 3762, 519156, 0, 0, 0, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_PLAIN3600_SCAN, SLOPE_PLAIN3600_SCAN_LEN, PLAIN3600_PHASES, 13, PLAIN3600_PROGRAMS, 4},   /* 3600 dpi, visible only (plain scan) */
-    {"ir3600", 3600, 5184, 497664, 16, 256, 63192, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_IR3600_SCAN, SLOPE_IR3600_SCAN_LEN, IR3600_PHASES, 13, IR3600_PROGRAMS, 4},   /* 3600 dpi, dual-light (IR + visible) */
-    {"dpi600", 600, 876, 515088, 98, 256, 10672, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI600_SCAN, SLOPE_DPI600_SCAN_LEN, DPI600_PHASES, 13, DPI600_PROGRAMS, 4},   /* 600 dpi, dual-light */
-    {"dpi1200", 1200, 1752, 504576, 48, 256, 21352, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI1200_SCAN, SLOPE_DPI1200_SCAN_LEN, DPI1200_PHASES, 13, DPI1200_PROGRAMS, 4},   /* 1200 dpi, dual-light */
-    {"dpi2400", 2400, 5256, 504576, 16, 256, 64072, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI2400_SCAN, SLOPE_DPI2400_SCAN_LEN, DPI2400_PHASES, 13, DPI2400_PROGRAMS, 4},   /* 2400 dpi, dual-light */
-    {"dpi7200", 7200, 10512, 504576, 8, 256, 128144, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI7200_SCAN, SLOPE_DPI7200_SCAN_LEN, DPI7200_PHASES, 13, DPI7200_PROGRAMS, 4},   /* 7200 dpi, dual-light */
+    {"plain3600", 3600, 3762, 519156, 0, 0, 0, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_PLAIN3600_SCAN, SLOPE_PLAIN3600_SCAN_LEN, PLAIN3600_PHASES, 13, PLAIN3600_PROGRAMS, 7},   /* 3600 dpi, visible only (plain scan) */
+    {"ir3600", 3600, 5184, 497664, 16, 256, 63192, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_IR3600_SCAN, SLOPE_IR3600_SCAN_LEN, IR3600_PHASES, 13, IR3600_PROGRAMS, 7},   /* 3600 dpi, dual-light (IR + visible) */
+    {"dpi600", 600, 876, 515088, 98, 256, 10672, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI600_SCAN, SLOPE_DPI600_SCAN_LEN, DPI600_PHASES, 13, DPI600_PROGRAMS, 7},   /* 600 dpi, dual-light */
+    {"dpi1200", 1200, 1752, 504576, 48, 256, 21352, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI1200_SCAN, SLOPE_DPI1200_SCAN_LEN, DPI1200_PHASES, 13, DPI1200_PROGRAMS, 7},   /* 1200 dpi, dual-light */
+    {"dpi2400", 2400, 5256, 504576, 16, 256, 64072, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI2400_SCAN, SLOPE_DPI2400_SCAN_LEN, DPI2400_PHASES, 13, DPI2400_PROGRAMS, 7},   /* 2400 dpi, dual-light */
+    {"dpi7200", 7200, 10512, 504576, 8, 256, 128144, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI7200_SCAN, SLOPE_DPI7200_SCAN_LEN, DPI7200_PHASES, 13, DPI7200_PROGRAMS, 7},   /* 7200 dpi, dual-light */
 };
 
 } // namespace gl126

@@ -380,7 +380,8 @@ offset codes within one step of the driver's, W1 = DATAENB confirmed.
 Hook 3, coarse gain: offline analysis in `docs/sane-hook3-gain.md`
 (2026-09-08) — same machinery, plus injections in op programs,
 multi-chunk bulk reads, the warmup retry, and two more core gates
-(default shading upload, second move-to-TA).
+(default shading upload, second move-to-TA). Implemented offline the same
+day (14/14 op tests, 163 total); hardware run pending.
 
 Hook 2 is `offset_calibration()` and nothing else: the driver's
 CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and

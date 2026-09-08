@@ -60,6 +60,15 @@ calibration, so each one is emitted as a named index into the phase's pair
 array. The backend patches those entries before writing; it must not rely
 on the captured value.
 
+The same `injections` dict also feeds an OpInjection table on any phase
+that gets an op program (see above): cal_gain_check_a's gain_r/gain_g/
+gain_b (docs/sane-hook3-gain.md section 6, part A/2) address the op
+program's own `ops` array directly -- op_index is the index into the
+ORIGINAL captured op list, which is exactly the emitted op program's
+index (one-to-one, asserted in op_injections_for()) -- unlike the pair-
+table RegInjection above, which needs the op-index-to-pair-index
+remapping decode_phase() computes.
+
 Usage:  python tools/gen_sane_tables.py [--check]
         --check regenerates into memory and fails if the checked-in
         output differs (for the offline suite).
@@ -110,11 +119,17 @@ WI_BULK_DONE = 0x0018       # read after a bulk transfer -> logged only
 WV_EXT_STATUS = 0x018E      # extended register read (0x100-0x105)
 WI_DATAENB = 0x0122         # reg 0x101: bit 0x01 = data ready
 
-# Phases that get an op program (docs/sane-hook2-offset.md section 6):
-# hook 2's whole scope, in the order they run.
-OP_PROGRAM_PHASES = ("prep", "afe_base", "cal_dark_a", "cal_dark_b")
+# Phases that get an op program: hook 2's whole scope (docs/sane-hook2-
+# offset.md section 6) plus hook 3's (docs/sane-hook3-gain.md section 6),
+# in the order they run.
+OP_PROGRAM_PHASES = ("prep", "afe_base", "cal_dark_a", "cal_dark_b",
+                     "cal_white", "cal_gain_check_a", "cal_gain_check_b")
 # The two phases that must yield exactly one PollDataReady/BulkIn/BulkDone.
 _DARK_PHASES = ("cal_dark_a", "cal_dark_b")
+# Hook 3's three phases: at least one PollDataReady/BulkIn, exactly one
+# BulkDone (cal_white has three BulkIn ops; docs/sane-hook3-gain.md
+# section 6, part A/1).
+_GAIN_PHASES = ("cal_white", "cal_gain_check_a", "cal_gain_check_b")
 
 
 @dataclass
@@ -275,21 +290,78 @@ def decode_ops(phase) -> list[OpEntry]:
 def validate_op_program(phase_name: str, entries: list[OpEntry]) -> None:
     """cal_dark_a/cal_dark_b must each yield exactly one PollDataReady
     (the W1 wait), one BulkIn (the 3072 B dark buffer) and one BulkDone
-    (docs/sane-hook2-offset.md section 1, S4/S5)."""
-    if phase_name not in _DARK_PHASES:
-        return
-    for kind in ("PollDataReady", "BulkIn", "BulkDone"):
-        n = sum(1 for e in entries if e.kind == kind)
-        if n != 1:
+    (docs/sane-hook2-offset.md section 1, S4/S5).
+
+    cal_white/cal_gain_check_a/cal_gain_check_b (hook 3) are looser: at
+    least one PollDataReady and one BulkIn (cal_white has three -- the
+    31104 B white line comes back as 16384+14336+384), exactly one
+    BulkDone, and (like every op-program phase) no bulk OUT -- decode_ops
+    already raises on a `bo` before this function ever runs, so that
+    much is unconditional (docs/sane-hook3-gain.md section 6, part A/1)."""
+    if phase_name in _DARK_PHASES:
+        for kind in ("PollDataReady", "BulkIn", "BulkDone"):
+            n = sum(1 for e in entries if e.kind == kind)
+            if n != 1:
+                raise ValueError(
+                    f"{phase_name}: expected exactly one {kind} op, got {n}")
+    elif phase_name in _GAIN_PHASES:
+        for kind in ("PollDataReady", "BulkIn"):
+            n = sum(1 for e in entries if e.kind == kind)
+            if n < 1:
+                raise ValueError(
+                    f"{phase_name}: expected at least one {kind} op, got {n}")
+        n_done = sum(1 for e in entries if e.kind == "BulkDone")
+        if n_done != 1:
             raise ValueError(
-                f"{phase_name}: expected exactly one {kind} op, got {n}")
+                f"{phase_name}: expected exactly one BulkDone op, got {n_done}")
+
+
+def op_injections_for(phase, entries: list[OpEntry]) -> list[tuple[str, int, int]]:
+    """Derive an op program's OpInjection entries -- (name, op_index,
+    byte_offset) -- from `phase.injections`'s "byte" specs, checked
+    against the op program itself rather than assumed (docs/sane-hook3-
+    gain.md section 6, part A/2). `entries` is one-to-one with
+    `phase.ops` by construction (decode_ops emits exactly one OpEntry
+    per captured op, in order); `spec`'s op_index already addresses that
+    same index, so no re-mapping is needed here (unlike decode_phase's
+    pair-array injections, which do need remapping).
+
+    Only cal_gain_check_a carries any among the phases in scope here
+    (gain_r/gain_g/gain_b -> ops 0/2/4, byte 5); every other program's
+    list is empty."""
+    assert len(entries) == len(phase.ops), (
+        f"{phase.name}: op program has {len(entries)} entries for "
+        f"{len(phase.ops)} captured ops -- expected one-to-one")
+
+    out: list[tuple[str, int, int]] = []
+    for name, spec in phase.injections.items():
+        if spec[0] != "byte":
+            continue
+        _, idx, off = spec
+        if idx >= len(entries) or entries[idx].kind != "Write":
+            raise ValueError(
+                f"{phase.name}: op injection {name!r} targets op {idx}, "
+                f"which is not a Write in the op program")
+        if not (0 <= off < entries[idx].length):
+            raise ValueError(
+                f"{phase.name}: op injection {name!r} targets byte {off}, "
+                f"outside op {idx}'s {entries[idx].length} B payload")
+        if off % 2 == 0:
+            raise ValueError(
+                f"{phase.name}: op injection {name!r} targets byte {off}, "
+                f"a register number rather than a value")
+        out.append((name, idx, off))
+    out.sort(key=lambda t: (t[1], t[0]))
+    return out
 
 
 def emit_op_program(key: str, phase_name: str, entries: list[OpEntry],
-                    c: list[str]) -> str:
+                    injections: list[tuple[str, int, int]],
+                    c: list[str]) -> tuple[str, str, int]:
     """Emit one OpProgram's backing arrays (a byte blob for every op's
-    `data`, then the Op array itself) and return the Op array's C
-    identifier."""
+    `data`, the Op array, and -- if any -- the OpInjection array) and
+    return (ops array identifier, injections array identifier or
+    "nullptr", injection count)."""
     base = c_ident(key.upper(), phase_name.upper())
     blob = bytearray()
     offsets: list[int] = []
@@ -305,7 +377,8 @@ def emit_op_program(key: str, phase_name: str, entries: list[OpEntry],
 
     ops_name = f"{base}_OPS"
     c.append(f"/* {key} / {phase_name}: op program, {len(entries)} ops "
-             f"(docs/sane-hook2-offset.md section 6). */")
+             f"(docs/sane-hook2-offset.md section 6, "
+             f"docs/sane-hook3-gain.md section 6). */")
     c.append(f"static const Op {ops_name}[{len(entries)}] = {{")
     for e, off in zip(entries, offsets):
         data_expr = f"{data_name} + {off}" if e.data else "nullptr"
@@ -313,7 +386,19 @@ def emit_op_program(key: str, phase_name: str, entries: list[OpEntry],
                  f"0x{e.value:04x}, 0x{e.index:04x}, {data_expr}, "
                  f"{e.length}, {e.dur_ms}}},")
     c.append("};\n")
-    return ops_name
+
+    if injections:
+        inj_name = f"{base}_OPS_INJ"
+        c.append(f"/* Computed values patched into {ops_name} at run time "
+                 f"(docs/sane-hook3-gain.md section 6). */")
+        c.append(f"static const OpInjection {inj_name}[{len(injections)}] = {{")
+        for name, op_idx, byte_off in injections:
+            c.append(f'    {{"{name}", {op_idx}, {byte_off}}},')
+        c.append("};\n")
+    else:
+        inj_name = "nullptr"
+
+    return ops_name, inj_name, len(injections)
 
 
 def c_ident(*parts: str) -> str:
@@ -421,12 +506,30 @@ def emit() -> tuple[str, str]:
     h.append("    std::uint16_t len;       /* Write/reads: byte length; BulkIn: bulk length */")
     h.append("    std::uint16_t dur_ms;    /* captured poll duration, ms (0 otherwise) */")
     h.append("};\n")
+    h.append("/** A value the op-program runner must compute and patch into a")
+    h.append(" *  Write op's payload before sending it (docs/sane-hook3-gain.md")
+    h.append(" *  section 6/Part B) -- gl126_ops.cpp's run_program() takes a")
+    h.append(" *  name -> byte map and refuses (OpsFailure::MissingInjection,")
+    h.append(" *  before any transfer) if a name here is not in it. `op_index`")
+    h.append(" *  addresses the OpProgram's own `ops` array (one-to-one with the")
+    h.append(" *  captured ops); `byte_offset` is the byte inside that op's")
+    h.append(" *  payload -- always odd (a value byte, never a register")
+    h.append(" *  number). The captured value standing there belongs to the")
+    h.append(" *  reference unit and must not be written as-is. */")
+    h.append("struct OpInjection {")
+    h.append("    const char* name;")
+    h.append("    std::size_t op_index;")
+    h.append("    std::size_t byte_offset;")
+    h.append("};\n")
     h.append("/** An ordered op program for one phase -- prep/afe_base/cal_dark_a/")
-    h.append(" *  cal_dark_b only, the whole scope of SANE hook 2. */")
+    h.append(" *  cal_dark_b (SANE hook 2) plus cal_white/cal_gain_check_a/")
+    h.append(" *  cal_gain_check_b (SANE hook 3, docs/sane-hook3-gain.md). */")
     h.append("struct OpProgram {")
     h.append("    const char* name;")
     h.append("    const Op* ops;")
     h.append("    std::size_t count;")
+    h.append("    const OpInjection* injections;  /* nullptr/0 when none */")
+    h.append("    std::size_t injection_count;")
     h.append("};\n")
     h.append("/** One scan profile: a resolution and its phase sequence. */")
     h.append("struct Profile {")
@@ -443,7 +546,8 @@ def emit() -> tuple[str, str]:
     h.append("    std::size_t slope_scan_len;")
     h.append("    const Phase* phases;")
     h.append("    std::size_t phase_count;")
-    h.append("    const OpProgram* programs;  /* prep/afe_base/cal_dark_a/cal_dark_b */")
+    h.append("    const OpProgram* programs;  /* prep/afe_base/cal_dark_a/cal_dark_b/")
+    h.append("                                   cal_white/cal_gain_check_a/cal_gain_check_b */")
     h.append("    std::size_t program_count;")
     h.append("};\n")
 
@@ -555,17 +659,22 @@ def emit() -> tuple[str, str]:
         c.extend(phase_entries)
         c.append("};\n")
 
-        # ---- op programs: prep/afe_base/cal_dark_a/cal_dark_b only, the
-        # whole scope of SANE hook 2 (docs/sane-hook2-offset.md section 6).
+        # ---- op programs: hook 2's prep/afe_base/cal_dark_a/cal_dark_b
+        # (docs/sane-hook2-offset.md section 6) plus hook 3's cal_white/
+        # cal_gain_check_a/cal_gain_check_b (docs/sane-hook3-gain.md
+        # section 6).
         program_entries: list[str] = []
         for phase in mod.PHASES:
             if phase.name not in OP_PROGRAM_PHASES:
                 continue
             entries = decode_ops(phase)
             validate_op_program(phase.name, entries)
-            ops_name = emit_op_program(key, phase.name, entries, c)
-            program_entries.append(f'    {{"{phase.name}", {ops_name}, '
-                                    f'{len(entries)}}},')
+            injections = op_injections_for(phase, entries)
+            ops_name, inj_name, inj_count = emit_op_program(
+                key, phase.name, entries, injections, c)
+            program_entries.append(
+                f'    {{"{phase.name}", {ops_name}, {len(entries)}, '
+                f'{inj_name}, {inj_count}}},')
 
         progs_name = f"{key.upper()}_PROGRAMS"
         c.append(f"static const OpProgram {progs_name}[{len(program_entries)}] = {{")

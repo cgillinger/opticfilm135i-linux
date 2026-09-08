@@ -2,7 +2,7 @@
    tests/test_sane_ops.py. Not part of the SANE backend build.
 
    Usage:
-     probe run <profile> <phase> <script>
+     probe run <profile> <phase> <script> [--inject name=0xNN ...]
          Runs the named profile/phase's OpProgram (sane/gl126_tables.h)
          against a scripted Wire fake and prints one line per transfer,
          in the order run_program() performs it:
@@ -12,10 +12,17 @@
              B len=<n>
 
          then either "DONE ops=<n>" or "FAIL <failure> op=<i> ops=<n>"
-         (failure is BadAck, PollTimeout or ShortBulk -- see OpsFailure).
-         `n` after "ops=" is RunResult::ops_done: completed ops, so a
-         test can confirm nothing ran after a failure just by checking no
-         further lines follow the FAIL line.
+         (failure is BadAck, PollTimeout, ShortBulk or MissingInjection --
+         see OpsFailure). `n` after "ops=" is RunResult::ops_done:
+         completed ops, so a test can confirm nothing ran after a failure
+         just by checking no further lines follow the FAIL line.
+
+         `--inject name=0xNN` (repeatable) builds the name -> byte map
+         run_program() takes for the program's OpInjection entries (docs/
+         sane-hook3-gain.md section 6, Part B/1 -- only cal_gain_check_a
+         has any, at present). Omitting it passes a null map, so a
+         program with injections fails MissingInjection before any
+         transfer -- that is the point of test_missing_injection_*.
 
      probe offset <dark_a.bin> <dark_b.bin>
          Runs gl126::offset_codes() on two raw RGB16LE buffers and prints
@@ -25,6 +32,28 @@
      probe residual <buf.bin>
          Runs gl126::dark_is_residual() on a raw buffer and prints
          RESIDUAL or NOT_RESIDUAL.
+
+     probe gain <white.bin>
+         Runs gl126::gain_codes() on a raw RGB16LE white-line buffer and
+         prints one "ch=<0|1|2> peak=<f> code=<hex2>" line per channel,
+         then "saturated=<0|1>".
+
+     probe percentile <u16.bin> <q>
+         Runs gl126::percentile_linear() on a raw little-endian uint16
+         array and prints "VALUE=<f>".
+
+     probe warmup <script>
+         Runs gl126::gain_with_warmup() with `measure` returning the next
+         file `script` names (one raw RGB16LE white-line buffer path per
+         line, one per measurement attempt) and a fake clock advanced
+         only inside `sleep` (default WarmupPolicy). Prints one line per
+         attempt, in order --
+
+             ATTEMPT <n> peaks=<f>,<f>,<f> codes=<hex2>,<hex2>,<hex2>
+
+         then "OUTCOME Ready|Saturated|Exhausted attempts=<n>
+         elapsed=<f> codes=<hex2>,<hex2>,<hex2>" (codes are 00,00,00
+         when the outcome is not Ready).
 
    Script format (tests/gl126_ops_probe.cpp's `run` mode; a missing or
    empty file means "use every op program's own captured values", which
@@ -42,17 +71,23 @@
                                          never sets bit 0x01 models a
                                          timeout, and a settling value
                                          needs only be listed once)
-     bulk_len <n>                     -- override the (single) BulkIn's
-                                         returned length (a short read:
-                                         n < the op's own len)
+     bulk_len <n>                     -- override every BulkIn's returned
+                                         length (a short read: n < the
+                                         op's own len)
+     bulk_len_at <occurrence> <n>     -- override only the Nth BulkIn's
+                                         returned length (0-indexed
+                                         occurrence in this run) --
+                                         cal_white has three; overrides
+                                         here take priority over a plain
+                                         `bulk_len` for that occurrence
      bulkdone <hex-byte>              -- override the (single) BulkDone's
                                          reply
      read_at <occurrence> <hex-bytes> -- override the Nth plain Read's
                                          reply (0-indexed occurrence)
 
-   Every op program in scope here (prep, afe_base, cal_dark_a,
-   cal_dark_b) has at most one PollDataReady/BulkIn/BulkDone, so `poll`/
-   `bulk_len`/`bulkdone` need no occurrence index. */
+   Every op program in scope here has at most one PollDataReady/BulkDone,
+   so `poll`/`bulkdone` need no occurrence index; cal_white alone has
+   three BulkIn ops (`bulk_len_at` addresses those individually). */
 
 #include "../sane/gl126_ops.h"
 
@@ -60,6 +95,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <sstream>
@@ -124,6 +160,7 @@ struct Script {
     std::vector<std::array<std::uint8_t, 2>> poll_list;   // empty: use default
     bool has_bulk_len = false;
     std::size_t bulk_len = 0;
+    std::map<std::size_t, std::size_t> bulk_len_at;   // occurrence -> length
     bool has_bulkdone = false;
     std::uint8_t bulkdone = 0;
     std::map<std::size_t, std::vector<std::uint8_t>> read_overrides;
@@ -176,6 +213,10 @@ Script parse_script(const std::string& path)
             iss >> n;
             s.bulk_len = n;
             s.has_bulk_len = true;
+        } else if (cmd == "bulk_len_at") {
+            std::size_t occurrence = 0, n = 0;
+            iss >> occurrence >> n;
+            s.bulk_len_at[occurrence] = n;
         } else if (cmd == "bulkdone") {
             std::string hex;
             iss >> hex;
@@ -289,10 +330,19 @@ public:
     {
         expect(OpKind::BulkIn);
         const Op& op = current();
-        std::size_t n = script_.has_bulk_len ? script_.bulk_len : static_cast<std::size_t>(op.len);
+        std::size_t n;
+        auto it = script_.bulk_len_at.find(bulk_calls_);
+        if (it != script_.bulk_len_at.end()) {
+            n = it->second;
+        } else if (script_.has_bulk_len) {
+            n = script_.bulk_len;
+        } else {
+            n = static_cast<std::size_t>(op.len);
+        }
         if (n > len) n = len;
         for (std::size_t i = 0; i < n; ++i) data[i] = 0;
         std::cout << "B len=" << n << "\n";
+        ++bulk_calls_;
         advance();
         return n;
     }
@@ -325,6 +375,7 @@ private:
     std::size_t read_calls_ = 0;
     std::vector<std::array<std::uint8_t, 2>> poll_list_;
     std::size_t poll_idx_ = 0;
+    std::size_t bulk_calls_ = 0;
     unsigned clock_ms_ = 0;
 };
 
@@ -345,13 +396,33 @@ const OpProgram* find_program(const std::string& profile, const std::string& pha
 
 int cmd_run(int argc, char** argv)
 {
-    if (argc != 5) {
-        std::cerr << "usage: probe run <profile> <phase> <script>\n";
+    if (argc < 5) {
+        std::cerr << "usage: probe run <profile> <phase> <script> [--inject name=0xNN ...]\n";
         return 2;
     }
     const std::string profile = argv[2];
     const std::string phase = argv[3];
     const std::string script_path = argv[4];
+
+    std::map<std::string, std::uint8_t> injects;
+    bool has_injects = false;
+    for (int i = 5; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg != "--inject" || i + 1 >= argc) {
+            std::cerr << "usage: probe run <profile> <phase> <script> [--inject name=0xNN ...]\n";
+            return 2;
+        }
+        std::string kv = argv[++i];
+        std::size_t eq = kv.find('=');
+        if (eq == std::string::npos) {
+            throw std::runtime_error("gl126_ops_probe: bad --inject argument "
+                                     "(want name=0xNN): " + kv);
+        }
+        std::string name = kv.substr(0, eq);
+        unsigned long v = std::stoul(kv.substr(eq + 1), nullptr, 0);
+        injects[name] = static_cast<std::uint8_t>(v);
+        has_injects = true;
+    }
 
     const OpProgram* prog = find_program(profile, phase);
     if (prog == nullptr) {
@@ -364,7 +435,7 @@ int cmd_run(int argc, char** argv)
     RunResult result;
 
     try {
-        run_program(wire, *prog, result);
+        run_program(wire, *prog, result, RunPolicy(), has_injects ? &injects : nullptr);
     } catch (const OpsError& e) {
         std::cout << "FAIL " << to_string(e.failure) << " op=" << e.op_index
                   << " ops=" << result.ops_done << "\n";
@@ -405,12 +476,112 @@ int cmd_residual(int argc, char** argv)
     return 0;
 }
 
+int cmd_gain(int argc, char** argv)
+{
+    if (argc != 3) {
+        std::cerr << "usage: probe gain <white.bin>\n";
+        return 2;
+    }
+    std::vector<std::uint8_t> white = read_file(argv[2]);
+    GainResult r = gain_codes(white.data(), white.size());
+    std::cout << std::setprecision(17);
+    for (int ch = 0; ch < 3; ++ch) {
+        std::cout << "ch=" << ch << " peak=" << r.peak[ch]
+                  << " code=" << hex2(r.code[ch]) << "\n";
+    }
+    std::cout << "saturated=" << (r.saturated ? 1 : 0) << "\n";
+    return 0;
+}
+
+int cmd_percentile(int argc, char** argv)
+{
+    if (argc != 4) {
+        std::cerr << "usage: probe percentile <u16.bin> <q>\n";
+        return 2;
+    }
+    std::vector<std::uint8_t> buf = read_file(argv[2]);
+    if (buf.size() % 2 != 0) {
+        throw std::runtime_error("gl126_ops_probe: percentile input length "
+                                 "is not a multiple of 2");
+    }
+    std::size_t n = buf.size() / 2;
+    std::vector<std::uint16_t> values(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        values[i] = static_cast<std::uint16_t>(buf[i * 2]) |
+                   static_cast<std::uint16_t>(static_cast<std::uint16_t>(buf[i * 2 + 1]) << 8);
+    }
+    double q = std::stod(argv[3]);
+    double v = percentile_linear(values.data(), n, q);
+    std::cout << std::setprecision(17) << "VALUE=" << v << "\n";
+    return 0;
+}
+
+int cmd_warmup(int argc, char** argv)
+{
+    if (argc != 3) {
+        std::cerr << "usage: probe warmup <script>\n";
+        return 2;
+    }
+    std::ifstream f(argv[2]);
+    if (!f) {
+        throw std::runtime_error("could not open " + std::string(argv[2]));
+    }
+    std::vector<std::string> paths;
+    std::string line;
+    while (std::getline(f, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
+            line.pop_back();
+        }
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        paths.push_back(line);
+    }
+
+    std::size_t next = 0;
+    double clock_s = 0.0;
+    auto measure = [&]() -> std::vector<std::uint8_t> {
+        if (next >= paths.size()) {
+            throw std::runtime_error(
+                "gl126_ops_probe: warmup script ran out of measurements");
+        }
+        return read_file(paths[next++]);
+    };
+    auto sleep_fn = [&](double s) { clock_s += s; };
+    auto now_fn = [&]() -> double { return clock_s; };
+
+    WarmupPolicy policy;
+    WarmupRecord rec;
+    std::uint8_t codes[3] = {0, 0, 0};
+    WarmupOutcome outcome = gain_with_warmup(measure, sleep_fn, now_fn, policy, rec, codes);
+
+    std::cout << std::setprecision(17);
+    for (unsigned i = 0; i < rec.attempts; ++i) {
+        const auto& peaks = rec.peak_history[i];
+        const auto& codes_i = rec.gain_history[i];
+        std::cout << "ATTEMPT " << (i + 1) << " peaks=" << peaks[0] << "," << peaks[1]
+                  << "," << peaks[2] << " codes=" << hex2(codes_i[0]) << ","
+                  << hex2(codes_i[1]) << "," << hex2(codes_i[2]) << "\n";
+    }
+
+    const char* outcome_str = "Unknown";
+    switch (outcome) {
+    case WarmupOutcome::Ready:     outcome_str = "Ready"; break;
+    case WarmupOutcome::Saturated: outcome_str = "Saturated"; break;
+    case WarmupOutcome::Exhausted: outcome_str = "Exhausted"; break;
+    }
+    std::cout << "OUTCOME " << outcome_str << " attempts=" << rec.attempts
+              << " elapsed=" << rec.elapsed_s << " codes=" << hex2(codes[0]) << ","
+              << hex2(codes[1]) << "," << hex2(codes[2]) << "\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
     if (argc < 2) {
-        std::cerr << "usage: " << argv[0] << " run|offset|residual ...\n";
+        std::cerr << "usage: " << argv[0] << " run|offset|residual|gain|percentile|warmup ...\n";
         return 2;
     }
     std::string mode = argv[1];
@@ -418,10 +589,13 @@ int main(int argc, char** argv)
         if (mode == "run") return cmd_run(argc, argv);
         if (mode == "offset") return cmd_offset(argc, argv);
         if (mode == "residual") return cmd_residual(argc, argv);
+        if (mode == "gain") return cmd_gain(argc, argv);
+        if (mode == "percentile") return cmd_percentile(argc, argv);
+        if (mode == "warmup") return cmd_warmup(argc, argv);
     } catch (const std::exception& e) {
         std::cerr << "ERROR " << e.what() << "\n";
         return 2;
     }
-    std::cerr << "usage: " << argv[0] << " run|offset|residual ...\n";
+    std::cerr << "usage: " << argv[0] << " run|offset|residual|gain|percentile|warmup ...\n";
     return 2;
 }

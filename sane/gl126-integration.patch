@@ -73,7 +73,7 @@ index 02cfc43..8813651 100644
  
  
 diff --git a/backend/genesys/genesys.cpp b/backend/genesys/genesys.cpp
-index d7ec422..b1e0509 100644
+index d7ec422..913ca4c 100644
 --- a/backend/genesys/genesys.cpp
 +++ b/backend/genesys/genesys.cpp
 @@ -38,6 +38,11 @@
@@ -88,7 +88,32 @@ index d7ec422..b1e0509 100644
  #include "gl124_registers.h"
  #include "gl841_registers.h"
  #include "gl842_registers.h"
-@@ -3990,15 +3995,20 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -3657,11 +3662,19 @@ static void genesys_flatbed_calibration(Genesys_Device* dev, Genesys_Sensor& sen
+     }
+ 
+     // send default shading data
+-    dev->interface->record_progress_message("sanei_genesys_init_shading_data");
+-    sanei_genesys_init_shading_data(dev, sensor, pixels_per_line);
+-
+-    if (dev->settings.scan_method == ScanMethod::TRANSPARENCY ||
+-        dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED)
++    // Not for GL126 (OpticFilm 135i): the default table would go to scanner
++    // RAM through write_buffer, a transfer this unit has never been driven
++    // with; its shading table is measured and uploaded by the vendor's own
++    // phases (docs/sane-hook3-gain.md, section 5).
++    if (dev->model->asic_type != AsicType::GL126) {
++        dev->interface->record_progress_message("sanei_genesys_init_shading_data");
++        sanei_genesys_init_shading_data(dev, sensor, pixels_per_line);
++    }
++
++    // Not for GL126 either: no calibration area to move to (see genesys_start_scan).
++    if ((dev->settings.scan_method == ScanMethod::TRANSPARENCY ||
++         dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED) &&
++        dev->model->asic_type != AsicType::GL126)
+     {
+         scanner_move_to_ta(*dev);
+     }
+@@ -3990,15 +4003,20 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
      }
  
    /* set top left x and y values by scanning the internals if flatbed scanners */
@@ -112,7 +137,7 @@ index d7ec422..b1e0509 100644
      {
          scanner_move_to_ta(*dev);
      }
-@@ -5457,6 +5467,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5457,6 +5475,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
          throw SaneException("could not find the device to open: %s", devicename);
      }
  
@@ -145,7 +170,7 @@ index d7ec422..b1e0509 100644
      if (is_testing_mode()) {
          // during testing we need to initialize dev->model before test scanner interface is created
          // as that it needs to know what type of chip it needs to mimic.
-@@ -5473,6 +5509,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5473,6 +5517,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
          dev->interface->get_usb_device().open(dev->file_name.c_str());
      } else {
@@ -168,7 +193,7 @@ index d7ec422..b1e0509 100644
          dev->interface = std::unique_ptr<ScannerInterfaceUsb>{new ScannerInterfaceUsb{dev}};
  
          dbg.vstatus("open device '%s'", dev->file_name.c_str());
-@@ -5523,6 +5575,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5523,6 +5583,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
      // some hardware capabilities are detected through sensors
      dev->cmd_set->update_hardware_sensors (s);
@@ -181,7 +206,7 @@ index d7ec422..b1e0509 100644
  }
  
  SANE_GENESYS_API_LINKAGE
-@@ -5556,6 +5614,20 @@ sane_close_impl(SANE_Handle handle)
+@@ -5556,6 +5622,20 @@ sane_close_impl(SANE_Handle handle)
  
      auto* dev = it->dev;
  
@@ -202,7 +227,7 @@ index d7ec422..b1e0509 100644
      // eject document for sheetfed scanners
      if (dev->model->is_sheetfed) {
          catch_all_exceptions(__func__, [&](){ dev->cmd_set->eject_document(dev); });
-@@ -5579,12 +5651,26 @@ sane_close_impl(SANE_Handle handle)
+@@ -5579,12 +5659,26 @@ sane_close_impl(SANE_Handle handle)
      dev->clear();
  
      // LAMP OFF : same register across all the ASICs */

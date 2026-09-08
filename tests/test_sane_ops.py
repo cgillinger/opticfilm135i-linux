@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Offline tests for the GL126 SANE backend's op-program runner (hook 2).
+"""Offline tests for the GL126 SANE backend's op-program runner
+(hooks 2 and 3).
 
 sane/gl126_ops.{h,cpp} executes the op programs tools/gen_sane_tables.py
 generates into sane/gl126_tables.{h,cpp} for the prep/afe_base/
 cal_dark_a/cal_dark_b phases (docs/sane-hook2-offset.md, sections 3 and
-6): the whole wire sequence hook 2 (offset calibration) needs, with
-transfer boundaries and interleaving kept exactly as captured. These
-tests check it without building the full SANE backend or touching
-hardware: gl126_ops.cpp is compiled standalone (no genesys headers)
-together with sane/gl126_tables.cpp and a tiny probe program,
-tests/gl126_ops_probe.cpp (see its file comment for the script format).
+6, hook 2) and the cal_white/cal_gain_check_a/cal_gain_check_b phases
+(docs/sane-hook3-gain.md, sections 3, 4 and 6, hook 3): the whole wire
+sequence offset and gain calibration need, with transfer boundaries and
+interleaving kept exactly as captured. These tests check it without
+building the full SANE backend or touching hardware: gl126_ops.cpp is
+compiled standalone (no genesys headers) together with
+sane/gl126_tables.cpp and a tiny probe program, tests/gl126_ops_probe.cpp
+(see its file comment for the script format).
 
   1. test_programs_match_python_replayer -- the plan's wire-equality
      test: the Python driver (of135i.device.Scanner) runs the same four
@@ -24,6 +27,11 @@ tests/gl126_ops_probe.cpp (see its file comment for the script format).
   7-8. the S5/S6 computation (offset_codes/dark_is_residual), against
      the same reference vectors as tests/test_calibrate.py and cross-
      checked against of135i.calibrate at runtime.
+  9-14. hook 3 (docs/sane-hook3-gain.md section 6): the gain phases'
+     wire equality (with the gain injection applied on both sides), the
+     MissingInjection rule, a multi-chunk short bulk, gain_codes()/
+     percentile_linear() against reference data and numpy, and the
+     warmup retry policy.
 
 Run with:
     .venv/bin/python tests/test_sane_ops.py
@@ -51,16 +59,23 @@ from of135i.device import Scanner  # noqa: E402
 from of135i.usbio import UsbIo  # noqa: E402
 
 from test_safety import FakeUsbDevice, fast_time  # noqa: E402
-from test_calibrate import _build_cal_buffers  # noqa: E402
+from test_calibrate import _build_cal_buffers, _peak_for_gain_code  # noqa: E402
+
+try:
+    from test_calibrate import _WarmupHarness  # noqa: E402
+except ImportError:   # pragma: no cover -- cross-check is best-effort
+    _WarmupHarness = None
 
 SANE_DIR = REPO / "sane"
 TESTS_DIR = Path(__file__).resolve().parent
 PROBE_SRC = TESTS_DIR / "gl126_ops_probe.cpp"
+CAPTURE_DIR = REPO / "cal-data" / "capture"
 
 _probe_bin: str | None = None
 _build_attempted = False
 
 PHASE_NAMES = ("prep", "afe_base", "cal_dark_a", "cal_dark_b")
+GAIN_PHASE_NAMES = ("cal_white", "cal_gain_check_a", "cal_gain_check_b")
 
 
 def _build_probe() -> str | None:
@@ -93,12 +108,15 @@ def _build_probe() -> str | None:
 
 
 def _run_probe_program(probe: str, profile: str, phase: str,
-                       script_lines: list[str] | None = None):
+                       script_lines: list[str] | None = None,
+                       injects: dict[str, int] | None = None):
     with tempfile.TemporaryDirectory() as td:
         script_path = str(Path(td) / "script.txt")
         Path(script_path).write_text("\n".join(script_lines or []) + "\n")
-        r = subprocess.run([probe, "run", profile, phase, script_path],
-                            capture_output=True, text=True)
+        cmd = [probe, "run", profile, phase, script_path]
+        for name, val in (injects or {}).items():
+            cmd += ["--inject", f"{name}=0x{val:02x}"]
+        r = subprocess.run(cmd, capture_output=True, text=True)
         return r.returncode, r.stdout, r.stderr
 
 
@@ -420,6 +438,299 @@ def test_dark_is_residual():
     print("test_dark_is_residual OK")
 
 
+# ------------------------------------------------- 9-14. hook 3 (gain)
+
+
+def test_gain_programs_match_python_replayer():
+    """docs/sane-hook3-gain.md section 6, test 1: wire equality for
+    cal_white/cal_gain_check_a/cal_gain_check_b, gain injections applied
+    on both sides -- the Python driver's own computed codes (read back
+    from the _run_phase kwargs it passes cal_gain_check_a) fed to the
+    C++ runner via --inject."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_gain_programs_match_python_replayer SKIPPED (no g++)")
+        return "skipped"
+
+    fake = FakeUsbDevice(reg01=0x22, cal_buffers=_build_cal_buffers())
+    scanner = Scanner(UsbIo(fake))
+
+    slices: dict[str, list[tuple[int, int]]] = {}
+    gain_kwargs: dict[str, bytes] = {}
+    orig_run_phase = scanner._run_phase
+
+    def wrapped(phase, *a, **kw):
+        start = len(fake.wire_log)
+        result = orig_run_phase(phase, *a, **kw)
+        end = len(fake.wire_log)
+        slices.setdefault(phase.name, []).append((start, end))
+        if phase.name == "cal_gain_check_a":
+            gain_kwargs.update(kw)
+        return result
+
+    scanner._run_phase = wrapped  # type: ignore[method-assign]
+
+    with fast_time():
+        scanner.initialize()          # runs "prep" then "afe_base"
+        scanner.scan(frame=1)         # runs the gain phases along the way
+
+    assert set(("gain_r", "gain_g", "gain_b")) <= set(gain_kwargs), gain_kwargs
+    injects = {name: gain_kwargs[name][0] for name in ("gain_r", "gain_g", "gain_b")}
+
+    total = 0
+    for phase_name in GAIN_PHASE_NAMES:
+        assert phase_name in slices, (phase_name, sorted(slices))
+        start, end = slices[phase_name][0]
+        py_transfers = _python_transfers(fake.wire_log[start:end])
+
+        this_injects = injects if phase_name == "cal_gain_check_a" else None
+        rc, out, err = _run_probe_program(probe, "plain3600", phase_name,
+                                          injects=this_injects)
+        assert rc == 0, (phase_name, out, err)
+        assert _lines(out)[-1].startswith("DONE"), (phase_name, out)
+        cpp_transfers = _parse_probe_transfers(out)
+
+        assert py_transfers == cpp_transfers, (
+            f"{phase_name}: python and C++ transfer logs differ\n"
+            f"python ({len(py_transfers)}): {py_transfers}\n"
+            f"cpp    ({len(cpp_transfers)}): {cpp_transfers}")
+        total += len(py_transfers)
+
+    print(f"test_gain_programs_match_python_replayer OK "
+          f"({total} transfers across {len(GAIN_PHASE_NAMES)} phases, "
+          f"gain={[hex(v) for v in injects.values()]})")
+
+
+def test_missing_injection_fails_before_any_transfer():
+    """docs/sane-hook3-gain.md section 6, test 2: no --inject at all, and
+    only two of three names, both fail MissingInjection with zero
+    transfers logged (checked before any transfer, per gl126_ops.h)."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_missing_injection_fails_before_any_transfer SKIPPED (no g++)")
+        return "skipped"
+
+    rc, out, err = _run_probe_program(probe, "plain3600", "cal_gain_check_a")
+    assert rc == 1, (out, err)
+    lines = _lines(out)
+    assert len(lines) == 1, lines
+    assert lines[0].startswith("FAIL MissingInjection "), lines
+    assert lines[0].endswith("ops=0"), lines
+
+    rc2, out2, err2 = _run_probe_program(
+        probe, "plain3600", "cal_gain_check_a",
+        injects={"gain_r": 0x2E, "gain_g": 0x21})
+    assert rc2 == 1, (out2, err2)
+    lines2 = _lines(out2)
+    assert len(lines2) == 1, lines2
+    assert lines2[0].startswith("FAIL MissingInjection "), lines2
+    assert lines2[0].endswith("ops=0"), lines2
+
+    print(f"test_missing_injection_fails_before_any_transfer OK "
+          f"({lines[0]!r}, {lines2[0]!r})")
+
+
+def test_multi_chunk_bulk_short_second_chunk():
+    """docs/sane-hook3-gain.md section 6, test 3: cal_white's second
+    BulkIn (of three) returns short -> ShortBulk after exactly two bulk
+    transfers, nothing sent after."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_multi_chunk_bulk_short_second_chunk SKIPPED (no g++)")
+        return "skipped"
+
+    rc, out, err = _run_probe_program(
+        probe, "plain3600", "cal_white", ["bulk_len_at 1 1000"])
+    assert rc == 1, (out, err)
+    lines = _lines(out)
+    assert lines[-1].startswith("FAIL ShortBulk op="), lines[-1]
+    bulk_lines = [ln for ln in lines if ln.startswith("B len=")]
+    assert bulk_lines == ["B len=16384", "B len=1000"], bulk_lines
+    assert lines[-2] == "B len=1000", lines[-2]   # nothing sent after the short read
+    print(f"test_multi_chunk_bulk_short_second_chunk OK ({lines[-1]})")
+
+
+def test_gain_codes_reference_vectors():
+    """docs/sane-hook3-gain.md section 4: the vendor's white line, a
+    synthetic all-0x21 line, an all-zero line, and a one-channel-
+    saturated line."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_gain_codes_reference_vectors SKIPPED (no g++)")
+        return "skipped"
+
+    with tempfile.TemporaryDirectory() as td:
+        # Vector 1: the vendor's own capture.
+        raw = (CAPTURE_DIR / "cal-frame00501-len31104.bin").read_bytes()
+        white = np.frombuffer(raw, dtype="<u2").reshape(-1, 3)
+        assert white.shape == (5184, 3), white.shape
+        path1 = Path(td) / "v1.bin"
+        path1.write_bytes(raw)
+        r1 = subprocess.run([probe, "gain", str(path1)], capture_output=True, text=True)
+        assert r1.returncode == 0, r1
+        lines1 = _lines(r1.stdout)
+        codes1 = [int(ln.split("code=")[1], 16) for ln in lines1[:3]]
+        expected = (0x2E, 0x21, 0x29)
+        for got, want, ch in zip(codes1, expected, "RGB"):
+            assert abs(got - want) <= 1, (ch, got, want)
+        py_codes1 = calibrate.gain_codes(white)
+        assert tuple(codes1) == tuple(py_codes1), (codes1, py_codes1)
+        assert lines1[3] == "saturated=0", lines1
+
+        # Vector 2: every pixel at _peak_for_gain_code(0x21) -> (0x21,)*3.
+        peak = _peak_for_gain_code(0x21)
+        arr2 = np.full((5184, 3), peak, dtype=np.uint16)
+        path2 = Path(td) / "v2.bin"
+        path2.write_bytes(arr2.astype("<u2").tobytes())
+        r2 = subprocess.run([probe, "gain", str(path2)], capture_output=True, text=True)
+        assert r2.returncode == 0, r2
+        lines2 = _lines(r2.stdout)
+        codes2 = [int(ln.split("code=")[1], 16) for ln in lines2[:3]]
+        assert codes2 == [0x21, 0x21, 0x21], codes2
+        assert lines2[3] == "saturated=0", lines2
+
+        # Vector 3: all-zero -> (63, 63, 63), not saturated.
+        arr3 = np.zeros((5184, 3), dtype=np.uint16)
+        path3 = Path(td) / "v3.bin"
+        path3.write_bytes(arr3.astype("<u2").tobytes())
+        r3 = subprocess.run([probe, "gain", str(path3)], capture_output=True, text=True)
+        assert r3.returncode == 0, r3
+        lines3 = _lines(r3.stdout)
+        codes3 = [int(ln.split("code=")[1], 16) for ln in lines3[:3]]
+        assert codes3 == [63, 63, 63], codes3
+        assert lines3[3] == "saturated=0", lines3
+
+        # Vector 4: one channel at 65535 -> saturated. The 99.9th
+        # percentile needs the TOP ~0.1% of samples at full scale (a
+        # single outlier sorts below it and never reaches the
+        # percentile), so the last 16 of 5184 samples are set.
+        arr4 = np.full((5184, 3), peak, dtype=np.uint16)
+        arr4[-16:, 1] = 65535
+        path4 = Path(td) / "v4.bin"
+        path4.write_bytes(arr4.astype("<u2").tobytes())
+        r4 = subprocess.run([probe, "gain", str(path4)], capture_output=True, text=True)
+        assert r4.returncode == 0, r4
+        lines4 = _lines(r4.stdout)
+        assert lines4[3] == "saturated=1", lines4
+
+    print(f"test_gain_codes_reference_vectors OK ({[hex(c) for c in codes1]})")
+
+
+def test_percentile_matches_numpy():
+    """docs/sane-hook3-gain.md section 4: percentile_linear() against
+    numpy.percentile's default 'linear' method, seeded random arrays of
+    several sizes and several q values."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_percentile_matches_numpy SKIPPED (no g++)")
+        return "skipped"
+
+    rng = np.random.default_rng(1234)
+    sizes = (1, 2, 7, 5184)
+    qs = (50.0, 99.9, 100.0, 0.0)
+
+    with tempfile.TemporaryDirectory() as td:
+        checked = 0
+        for n in sizes:
+            arr = rng.integers(0, 65536, n, dtype=np.uint16)
+            path = Path(td) / f"n{n}.bin"
+            path.write_bytes(arr.astype("<u2").tobytes())
+            for q in qs:
+                want = float(np.percentile(arr.astype(np.float64), q))
+                r = subprocess.run([probe, "percentile", str(path), repr(q)],
+                                   capture_output=True, text=True)
+                assert r.returncode == 0, r
+                got = float(r.stdout.strip().split("=")[1])
+                assert abs(got - want) <= 1e-6, (n, q, got, want)
+                checked += 1
+
+    print(f"test_percentile_matches_numpy OK ({checked} (size, q) pairs)")
+
+
+def test_warmup_policy():
+    """docs/sane-hook3-gain.md section 6, test 5: the warmup retry
+    policy against literal sequences (mirroring tests/test_calibrate.py's
+    _WarmupHarness sequences, cross-checked against it directly when it
+    can be imported)."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_warmup_policy SKIPPED (no g++)")
+        return "skipped"
+
+    def white_bytes(peak) -> bytes:
+        arr = np.full((5184, 3), round(peak), dtype=np.uint16)
+        return arr.astype("<u2").tobytes()
+
+    def run_sequence(td, peaks) -> tuple[str, dict]:
+        script_lines = []
+        for i, pk in enumerate(peaks):
+            p = Path(td) / f"m{i}.bin"
+            p.write_bytes(white_bytes(pk))
+            script_lines.append(str(p))
+        script_path = Path(td) / "warmup_script.txt"
+        script_path.write_text("\n".join(script_lines) + "\n")
+        r = subprocess.run([probe, "warmup", str(script_path)],
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r
+        lines = _lines(r.stdout)
+        outcome_line = lines[-1]
+        assert outcome_line.startswith("OUTCOME "), lines
+        tokens = outcome_line.split()
+        outcome = tokens[1]
+        kv = dict(p.split("=", 1) for p in tokens[2:])
+        return outcome, kv
+
+    good = _peak_for_gain_code(0x21)
+    jump = good * 1.05
+
+    with tempfile.TemporaryDirectory() as td:
+        # 1. [p(0x21)] -> Ready after 1.
+        outcome, kv = run_sequence(td, [good])
+        assert outcome == "Ready", (outcome, kv)
+        assert kv["attempts"] == "1", kv
+        assert kv["codes"] == "21,21,21", kv
+
+        # 2. [0, 0, p(0x21), p(0x21)] -> Ready after 4, elapsed 15s.
+        outcome2, kv2 = run_sequence(td, [0, 0, good, good])
+        assert outcome2 == "Ready", (outcome2, kv2)
+        assert kv2["attempts"] == "4", kv2
+        assert kv2["codes"] == "21,21,21", kv2
+        assert abs(float(kv2["elapsed"]) - 15.0) < 1e-9, kv2
+
+        # 3. 15 x [0] -> Exhausted, attempts == 13 (the cap).
+        outcome3, kv3 = run_sequence(td, [0] * 15)
+        assert outcome3 == "Exhausted", (outcome3, kv3)
+        assert kv3["attempts"] == "13", kv3
+
+        # 4. [0, p(0x21), p(0x21)*1.05, p(0x21)*1.05] -> Ready after 4
+        # (the 5% jump fails the 3% stability check once).
+        outcome4, kv4 = run_sequence(td, [0, good, jump, jump])
+        assert outcome4 == "Ready", (outcome4, kv4)
+        assert kv4["attempts"] == "4", kv4
+
+        # 5. a saturated line -> Saturated after 1.
+        outcome5, kv5 = run_sequence(td, [65535])
+        assert outcome5 == "Saturated", (outcome5, kv5)
+        assert kv5["attempts"] == "1", kv5
+
+    if _WarmupHarness is not None:
+        h1 = _WarmupHarness([good])
+        assert h1.run() == (0x21, 0x21, 0x21), "harness cross-check 1 failed"
+        h2 = _WarmupHarness([0, 0, good, good])
+        assert h2.run() == (0x21, 0x21, 0x21), "harness cross-check 2 failed"
+        assert h2.runs == 4, h2.runs
+        from of135i import safety
+        h3 = _WarmupHarness([0] * 15)
+        try:
+            h3.run()
+        except safety.LampWarmupError as e:
+            assert e.measurements == 13, e.measurements
+        else:
+            raise AssertionError("harness cross-check 3: dark lamp did not fail")
+
+    print(f"test_warmup_policy OK ({outcome}, {outcome2}, {outcome3}, {outcome4}, {outcome5})")
+
+
 def main() -> int:
     tests = [
         test_programs_match_python_replayer,
@@ -430,6 +741,12 @@ def main() -> int:
         test_bulk_done_mismatch_is_logged_only,
         test_offset_codes_reference_vectors,
         test_dark_is_residual,
+        test_gain_programs_match_python_replayer,
+        test_missing_injection_fails_before_any_transfer,
+        test_multi_chunk_bulk_short_second_chunk,
+        test_gain_codes_reference_vectors,
+        test_percentile_matches_numpy,
+        test_warmup_policy,
     ]
     passed = 0
     skipped = 0

@@ -28,7 +28,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <chrono>
+#include <functional>
 #include <map>
 #include <thread>
 #include <string>
@@ -231,13 +233,14 @@ const OpProgram& find_program(const Profile& profile, const char* name)
     wait (data-ready) as an explicit poll with a timeout, and every
     failure ending the hook with zero further writes and no recovery. */
 void run_phase_program(Genesys_Device* dev, const Profile& profile, const char* name,
-                       RunResult& out)
+                       RunResult& out,
+                       const std::map<std::string, std::uint8_t>* values = nullptr)
 {
     DBG_HELPER_ARGS(dbg, "phase %s", name);
     const OpProgram& prog = find_program(profile, name);
     UsbWire wire(dev->interface->get_usb_device());
     try {
-        run_program(wire, prog, out);
+        run_program(wire, prog, out, RunPolicy(), values);
     } catch (const OpsError& e) {
         SANE_Status status = SANE_STATUS_IO_ERROR;
         const char* what = "I/O failure";
@@ -248,6 +251,10 @@ void run_phase_program(Genesys_Device* dev, const Profile& profile, const char* 
                 what = "data-ready never set";
                 break;
             case OpsFailure::ShortBulk: what = "short bulk read"; break;
+            case OpsFailure::MissingInjection:
+                status = SANE_STATUS_INVAL;
+                what = "computed value missing (the captured byte must not be written)";
+                break;
         }
         throw SaneException(status,
                             "gl126: %s in phase %s at op %zu (%s). Nothing further was "
@@ -265,6 +272,47 @@ void run_phase_program(Genesys_Device* dev, const Profile& profile, const char* 
                 r.captured[0]);
         }
     }
+}
+
+/** Which calibration hook last completed in the current sane_start, per
+    device. Hook 3 (gain) runs on the state hook 2 (offset) leaves -- the
+    post-dark_b state, not the idle-homed one -- so it cannot re-check reg
+    0x01 against 0x22; it checks that hook 2 ran in this sane_start instead,
+    and consumes the mark so a later sane_start cannot reuse it
+    (docs/sane-hook3-gain.md, section 5). */
+enum class CalStage { None, OffsetDone };
+std::map<const Genesys_Device*, CalStage>& cal_stage()
+{
+    static std::map<const Genesys_Device*, CalStage> stages;
+    return stages;
+}
+
+/** Concatenate a run's bulk buffers (a phase with several BulkIn ops, like
+    cal_white's three chunks, delivers one measurement). */
+std::vector<std::uint8_t> joined_buffers(const RunResult& r)
+{
+    std::vector<std::uint8_t> out;
+    for (const auto& b : r.buffers) {
+        out.insert(out.end(), b.begin(), b.end());
+    }
+    return out;
+}
+
+void log_dark_means(const char* label, const std::vector<std::uint8_t>& buf)
+{
+    if (buf.size() < 6) {
+        return;
+    }
+    double sum[3] = { 0, 0, 0 };
+    std::size_t n = buf.size() / 6;
+    for (std::size_t i = 0; i < n; i++) {
+        for (unsigned ch = 0; ch < 3; ch++) {
+            std::size_t k = i * 6 + ch * 2;
+            sum[ch] += buf[k] | (buf[k + 1] << 8);
+        }
+    }
+    DBG(DBG_info, "gl126: %s means R %.1f G %.1f B %.1f (%zu px)\n", label,
+        sum[0] / n, sum[1] / n, sum[2] / n, n);
 }
 
 /** A hook that has not been brought up against the hardware yet.
@@ -466,15 +514,104 @@ void CommandSetGl126::offset_calibration(Genesys_Device* dev,
             r.code[ch], r.fallback[ch] ? " (FALLBACK: slope below 1 count/code)" : "");
         dev->frontend.regs.set_value(static_cast<std::uint16_t>(0x05 + ch), r.code[ch]);
     }
+    cal_stage()[dev] = CalStage::OffsetDone;
 }
 
-void CommandSetGl126::coarse_gain_calibration(Genesys_Device* /*dev*/,
+/* Hook 3: the driver's _gain_with_warmup() (CAL_WHITE, repeated while the
+   lamp is not ready) + gain_codes(), then CAL_GAIN_CHECK_A/B replayed for
+   fidelity (docs/sane-hook3-gain.md). Runs on the state hook 2 leaves in
+   the same sane_start; `regs` and `dpi` are the core's GL124 notions and
+   are not consulted. The gain codes land in dev->frontend under their AFE
+   addresses 2/3/4. */
+void CommandSetGl126::coarse_gain_calibration(Genesys_Device* dev,
                                               const Genesys_Sensor& /*sensor*/,
                                               Genesys_Register_Set& /*regs*/,
                                               int /*dpi*/) const
 {
     DBG_HELPER(dbg);
-    not_brought_up("coarse_gain_calibration");
+
+    auto stage = cal_stage().find(dev);
+    if (stage == cal_stage().end() || stage->second != CalStage::OffsetDone) {
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: gain calibration needs the offset calibration of the "
+                            "same sane_start before it (the white line is measured on the "
+                            "state that leaves). Nothing was written.");
+    }
+    cal_stage().erase(stage);   // single use: a later sane_start starts over
+
+    bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
+    const Profile* profile = find_profile(dev->settings.xres, ir);
+    if (profile == nullptr) {
+        throw SaneException(SANE_STATUS_INVAL, "gl126: no captured profile for %u dpi%s",
+                            dev->settings.xres, ir ? " with IR" : "");
+    }
+
+    // G1 + G2: the white line, with the driver's lamp-warmup retry.
+    WarmupRecord rec;
+    WarmupPolicy policy;
+    std::uint8_t codes[3] = { 0, 0, 0 };
+    auto measure = [&]() {
+        RunResult white;
+        run_phase_program(dev, *profile, "cal_white", white);
+        std::vector<std::uint8_t> buf = joined_buffers(white);
+        if (buf.empty() || buf.size() % 6 != 0) {
+            throw SaneException(SANE_STATUS_IO_ERROR,
+                                "gl126: malformed white line (%zu bytes). Nothing further "
+                                "was written.", buf.size());
+        }
+        return buf;
+    };
+    auto sleep_s = [](double s) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<long>(s * 1000.0)));
+    };
+    auto now_s = []() {
+        auto t = std::chrono::steady_clock::now().time_since_epoch();
+        return std::chrono::duration_cast<std::chrono::milliseconds>(t).count() / 1000.0;
+    };
+    WarmupOutcome outcome;
+    try {
+        outcome = gain_with_warmup(measure, sleep_s, now_s, policy, rec, codes);
+    } catch (const std::invalid_argument& e) {
+        throw SaneException(SANE_STATUS_IO_ERROR, "gl126: white line rejected: %s", e.what());
+    }
+    for (std::size_t i = 0; i < rec.peak_history.size(); i++) {
+        DBG(DBG_info, "gl126: white measurement %zu: peaks R %.1f G %.1f B %.1f -> gain "
+            "0x%02x 0x%02x 0x%02x\n", i + 1, rec.peak_history[i][0], rec.peak_history[i][1],
+            rec.peak_history[i][2], rec.gain_history[i][0], rec.gain_history[i][1],
+            rec.gain_history[i][2]);
+    }
+    if (outcome == WarmupOutcome::Saturated) {
+        throw SaneException(SANE_STATUS_IO_ERROR,
+                            "gl126: white line saturated at gain 0 (implausible AFE state) "
+                            "after %u measurement(s). Nothing further was written.",
+                            rec.attempts);
+    }
+    if (outcome == WarmupOutcome::Exhausted) {
+        throw SaneException(SANE_STATUS_IO_ERROR,
+                            "gl126: lamp did not reach a stable usable level after %u "
+                            "white-line measurement(s) in %.0f s (budget %.0f s). No scan "
+                            "was made and no motor command was sent; run the magazine load "
+                            "flow first (it gives the lamp about a minute).",
+                            rec.attempts, rec.elapsed_s, policy.budget_s);
+    }
+    DBG(DBG_info, "gl126: gain codes R 0x%02x G 0x%02x B 0x%02x after %u measurement(s), "
+        "%.1f s\n", codes[0], codes[1], codes[2], rec.attempts, rec.elapsed_s);
+
+    // G3 + G4: the dark bracket at the computed gain, replayed for fidelity;
+    // the driver discards these buffers, the means are logged as evidence.
+    std::map<std::string, std::uint8_t> values;
+    values["gain_r"] = codes[0];
+    values["gain_g"] = codes[1];
+    values["gain_b"] = codes[2];
+    RunResult check_a, check_b;
+    run_phase_program(dev, *profile, "cal_gain_check_a", check_a, &values);
+    run_phase_program(dev, *profile, "cal_gain_check_b", check_b);
+    log_dark_means("gain check A (offset 0x80)", joined_buffers(check_a));
+    log_dark_means("gain check B (offset 0xff)", joined_buffers(check_b));
+
+    for (unsigned ch = 0; ch < 3; ch++) {
+        dev->frontend.regs.set_value(static_cast<std::uint16_t>(0x02 + ch), codes[ch]);
+    }
 }
 
 /* The lamp is warmed by the gain phase's own retry loop, not by a

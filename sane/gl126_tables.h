@@ -76,12 +76,31 @@ struct Op {
     std::uint16_t dur_ms;    /* captured poll duration, ms (0 otherwise) */
 };
 
+/** A value the op-program runner must compute and patch into a
+ *  Write op's payload before sending it (docs/sane-hook3-gain.md
+ *  section 6/Part B) -- gl126_ops.cpp's run_program() takes a
+ *  name -> byte map and refuses (OpsFailure::MissingInjection,
+ *  before any transfer) if a name here is not in it. `op_index`
+ *  addresses the OpProgram's own `ops` array (one-to-one with the
+ *  captured ops); `byte_offset` is the byte inside that op's
+ *  payload -- always odd (a value byte, never a register
+ *  number). The captured value standing there belongs to the
+ *  reference unit and must not be written as-is. */
+struct OpInjection {
+    const char* name;
+    std::size_t op_index;
+    std::size_t byte_offset;
+};
+
 /** An ordered op program for one phase -- prep/afe_base/cal_dark_a/
- *  cal_dark_b only, the whole scope of SANE hook 2. */
+ *  cal_dark_b (SANE hook 2) plus cal_white/cal_gain_check_a/
+ *  cal_gain_check_b (SANE hook 3, docs/sane-hook3-gain.md). */
 struct OpProgram {
     const char* name;
     const Op* ops;
     std::size_t count;
+    const OpInjection* injections;  /* nullptr/0 when none */
+    std::size_t injection_count;
 };
 
 /** One scan profile: a resolution and its phase sequence. */
@@ -99,7 +118,8 @@ struct Profile {
     std::size_t slope_scan_len;
     const Phase* phases;
     std::size_t phase_count;
-    const OpProgram* programs;  /* prep/afe_base/cal_dark_a/cal_dark_b */
+    const OpProgram* programs;  /* prep/afe_base/cal_dark_a/cal_dark_b/
+                                   cal_white/cal_gain_check_a/cal_gain_check_b */
     std::size_t program_count;
 };
 
