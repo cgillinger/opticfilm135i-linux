@@ -3199,3 +3199,25 @@ POSITION, no PARK ran); the exit stays the documented one. This run's
 exit is also the occasion for the `--double-jog` A/B.
 
 Logs kept privately: `plustek-135i-analys/hook4-20260908/`.
+
+## 2026-09-08 — Test 51: `load --double-jog` from a power cycle with the magazine latched — loads first time (A/B, n = 1)
+
+The exit of Test 50, run as the A/B for the latched-magazine start
+(Test 49 exit note): power cycle with the magazine latched, then
+`of135i load --double-jog`. cold_init with the usual latched-magazine
+deviations (0x4855 timeout, 0x32 = 0x1d ×3), the app-start jog released
+the magazine (event 4, f855 ×4), reinsert, the **second jog from the
+loose position** (f855 ×4, no events), reinsert, then the load: feed
+**f455 exact**, traverse dc55 exact, complete. Sound normal throughout
+(Christian: "allt lät bra", including the hook-4 calibration before
+it). One power cycle instead of two.
+
+Interpretation: consistent with the hypothesis that the first jog from
+a latched cassette leaves the loader where the feed does not catch,
+and that a jog from the loose position — the state the vendor's jog
+always runs from — puts it right. n = 1 against the 2/2 failures of the
+plain path; it becomes the recommended exit after a SANE hook run with
+a latched magazine, marked as such until it has repeated. `--release`
+stays as the fallback. The plain first-attempt failure (fc55) remains
+the documented property of `power cycle with a latched magazine →
+load`.
