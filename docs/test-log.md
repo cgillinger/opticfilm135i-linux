@@ -3144,3 +3144,58 @@ reinsert, load — UNVERIFIED, for the next hardware pass). Both covered
 offline against the trace (release: OPEN + JOG transfers exactly, no
 LOAD, `ask` never called; double-jog: OPEN + JOG + JOG + LOAD byte for
 byte, `ask` twice, 3 + 3 + 2 pulses). 51 safety tests, suite green.
+
+## 2026-09-08 — Test 50: SANE hook 4 (shading) on hardware — complete, both tables uploaded, unit reads 0x22 afterwards
+
+Setup as Tests 48/49: power cycle, `of135i load` with the reference
+strip (0x22, latched, blue), the driver's `scan --frame 1` as
+reference, then the uninstalled backend at d293a99,
+`scanimage -d genesys:libusb:001:013 --force-calibration --resolution
+3600 --format pnm -o /dev/null` with the debug log. Wall time of the
+scanimage run: 4.2 s.
+
+Result: hooks 2, 3 and 4 ran to completion — offset, gain (one white
+measurement), gain checks, then the shading dark measurement with the
+computed offsets patched in, table 1 uploaded, the white measurement,
+table 2 uploaded. 450 control transfers, 773 bulk INs (7 + 383 + 383)
+and 8 bulk OUTs (4 + 4), every one at its full captured length. Then
+`wait_for_motor_stop` refused as designed, `sane_start` failed,
+`sane_cancel`'s `end_scan` refused (logged), `sane_close` wrote
+nothing. Sound: reported by Christian below.
+
+| | Python (same strip, same load) | C++ hooks 2 + 3 + 4 |
+|---|---|---|
+| gain codes R/G/B | 0x2f / 0x21 / 0x27 | 0x2e / 0x21 / 0x27 (R at a rounding boundary: peak 21912 → 46.25) |
+| offset codes | 0x010a ×3 | 0x010a ×3 |
+| W1 data-ready, dark A/B, white, gain checks | — | 0xcd first poll |
+| W1 in the shading dark measurement | — | **0xc9** first poll (DATAENB set, class C) |
+| **W2** class poll on reg 0x100 after the dark measurement | — | **0xf0** first poll |
+| W1 in the shading white measurement | — | 0xcd first poll |
+| shading table 1 (dark map) | (not logged by the CLI) | 11286 pairs, offsets 151–385 (mean 278.9), gains all 0x4000 |
+| shading table 2 (white uniformity) | — | same offsets, gains 0x5593–0x6f8e (mean 24902) |
+| dark measurement means R/G/B | — | 171.9 / 311.5 / 353.3 |
+| white measurement means R/G/B | — | 57754 / 54567 / 54923 |
+
+Plausibility against the reference capture (cal-analysis.md): the
+capture's table-1 offsets span 93–344 (mean 240) with gains 0x4000,
+its dark means 117 / 305 / 302 and its post-correction white means
+56899 / 53503 / 56370 — this run sits in the same ranges on a
+different day and lamp state. Table 2's gains ≈ 1.5 × 0x4000 follow
+from T ≈ 82–87 k over white − offset ≈ 55 k, as the formula says. The
+tables themselves were proven byte-identical to the driver's offline;
+what the run adds is the wire flow (first bulk OUTs of the port), the
+two 2.9 MB reads, and the two explicit waits.
+
+Read deviations logged: the usual `prep` set; the 0x104/0x105
+counters after the shading measurements read 0x00 / 0x38 and 0x00 /
+0x00 where the capture had 0x0e / 0xf0 — informational, both buffers
+arrived complete.
+
+State after: **reg 0x01 = 0x22**, 0x101 = 0xdc, 0x32 = 0x9d, 0x35 =
+0xfb — the verify phase's last register write is 0x01 = 0x22, so
+unlike the post-dark_b / post-gain_check state the unit reads
+idle-homed here. That does not make it a verified eject origin (no
+POSITION, no PARK ran); the exit stays the documented one. This run's
+exit is also the occasion for the `--double-jog` A/B.
+
+Logs kept privately: `plustek-135i-analys/hook4-20260908/`.

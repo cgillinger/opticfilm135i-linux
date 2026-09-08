@@ -388,7 +388,10 @@ wait on reg 0x100, split programs for the verify pass, and the
 decision that turns decision 2 around: `has_send_shading_data()` true
 with a no-op send + `DISABLE_SHADING_CALIBRATION`, the vendor's shading
 inside `coarse_gain_calibration()`. Implemented offline the same day
-(21/21 op tests); hardware run pending.
+(21/21 op tests). Hardware run done (Test 50): hooks 2–4 complete, both
+tables uploaded, all transfers at full length. Next: hook 5, POSITION
+(the first motor move of the port — FEEDL injection, strict completion
+poll scaled with FEEDL, the slope-table bulk OUT), then SCAN and PARK.
 
 Hook 2 is `offset_calibration()` and nothing else: the driver's
 CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and

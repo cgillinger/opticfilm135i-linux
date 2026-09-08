@@ -23,8 +23,11 @@ class poll, short bulk OUT, missing/oversized bulk injection, and the
 tables: `shading_table` on the vendor's measurement byte-identical to
 the driver's and within the driver's tolerance of the vendor's upload
 (100 % of offsets within ±8), `shading_table2` byte-identical to the
-driver's on real and synthetic inputs. Build clean. **The hardware run
-of §7 has not happened yet.**
+driver's on real and synthetic inputs. Build clean. **Hardware run done the same day, Test 50:** hooks 2–4
+complete in 4.2 s, 773 bulk INs and 8 bulk OUTs all at full length, W1
+at 0xc9 / 0xcd and W2 at 0xf0 on the first poll, table statistics in
+the reference capture's ranges, stopped at `wait_for_motor_stop` as
+predicted; the unit reads 0x22 afterwards.
 
 ## 1. Scope
 
