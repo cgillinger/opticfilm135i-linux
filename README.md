@@ -197,6 +197,13 @@ the vendor application does it.
 #    OUT and reinsert it to the stop, then feeds and positions it.
 .venv/bin/python -m of135i load
 
+#    If the last session ended with the magazine still LATCHED (e.g.
+#    after `of135i eject` was never run) and you then power-cycled the
+#    scanner with it still in, the first plain `load` will stop at the
+#    feed instead of engaging (docs/test-log.md Test 49). Run
+#    `of135i load --release` first (releases the magazine, then stops),
+#    power-cycle again, and run `of135i load` from the now-loose magazine.
+
 # 2. Check by hand: the magazine is latched (does not pull out) and the
 #    button LED is blue. The driver cannot sense the latch.
 

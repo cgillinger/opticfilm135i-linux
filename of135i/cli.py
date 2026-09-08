@@ -354,9 +354,13 @@ def _write_diag_sidecar(args: argparse.Namespace, scanner: Scanner, out: str, fr
 def _cmd_load(args: argparse.Namespace) -> int:
     """The magazine load flow (of135i.loadflow). Interactive: it asks the
     operator to take the magazine out and reinsert it to the stop, so it
-    needs a real terminal (a piped stdin ends it at the prompt, exit 130)."""
+    needs a real terminal (a piped stdin ends it at the prompt, exit 130).
+    ``--release`` stops after the jog and never asks."""
     from . import loadflow
-    return loadflow.run(ask=input)
+    if args.release and args.double_jog:
+        print("error: --release and --double-jog exclude each other", file=sys.stderr)
+        return 2
+    return loadflow.run(ask=input, release_only=args.release, double_jog=args.double_jog)
 
 
 def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
@@ -702,7 +706,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_preview.set_defaults(func=_not_wired_yet)
 
     p_load = sub.add_parser("load", help="load the film magazine (the vendor's insert flow; interactive)")
+    p_load.add_argument("--release", action="store_true",
+        help="only release a latched magazine (cold init + the app-start jog), then "
+             "stop: the first cycle of the two-cycle exit after a power cycle with "
+             "the magazine latched (docs/test-log.md Test 49)")
     p_load.set_defaults(func=_cmd_load)
+    p_load.add_argument("--double-jog", action="store_true",
+        help="EXPERIMENT (docs/test-log.md Test 49 exit, unverified): after the first "
+             "jog and reinsert, run the app-start jog a second time from the loose "
+             "position and reinsert again before loading -- the A/B for loading in one "
+             "power cycle from a latched magazine")
 
     p_version = sub.add_parser("version", help="print the driver version and git revision")
     p_version.set_defaults(func=_cmd_version)

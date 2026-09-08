@@ -374,7 +374,8 @@ class FakeUsbDevice:
 def vendor_like_load_status(fake: FakeUsbDevice, after_traverse: int = 0xDC,
                             after_feed: int = 0xF4, later: int | None = None,
                             jog: bool = False, jog_value: int = 0xF8,
-                            pulses_before: int = 0, scan_value: int = 0xF8) -> None:
+                            pulses_before: int = 0, scan_value: int = 0xF8,
+                            jogs: int = 1) -> None:
     """Make the fake answer the LOAD flow's status-word polls like the
     clean-load capture (Test 14): `after_feed` once the first GO (feed
     6690) has completed (captured 0xf4: done class, loader-sensor bit
@@ -385,7 +386,7 @@ def vendor_like_load_status(fake: FakeUsbDevice, after_traverse: int = 0xDC,
     the flow starts with jog_magazine() (three GO pulses, each
     completing at ``jog_value``, captured 0xf8) before the load."""
     state = {"reads_after_traverse": 0}
-    n_jog = 3 if jog else 0
+    n_jog = 3 * jogs if jog else 0      # `jogs`: the double-jog experiment runs two
     n0 = pulses_before      # pulses issued before the flow (e.g. cold_init's 9)
 
     def high(f):
@@ -1030,6 +1031,72 @@ def test_load_magazine_requires_initialize_and_matches_trace():
     else:
         note = "trace absent, table self-check only"
     print(f"test_load_magazine_requires_initialize_and_matches_trace OK ({note})")
+
+
+def test_load_double_jog_runs_jog_twice_then_loads():
+    """loadflow.run(double_jog=True) (`of135i load --double-jog`, the Test 49
+    exit A/B, unverified on hardware): OPEN + JOG + reinsert + JOG +
+    reinsert + LOAD, byte for byte, with `ask` called exactly twice and
+    five execute pulses (3 + 2 -- the second jog's are counted below)."""
+    from of135i import loadflow
+
+    prompts = []
+    fake = FakeUsbDevice(reg01=0x22)
+    vendor_like_load_status(fake, jog=True, jogs=2)
+    with cli_over(fake):
+        rc = loadflow.run(ask=prompts.append, double_jog=True)
+    assert rc == 0, rc
+    assert len(prompts) == 2 and all(p == loadflow.REINSERT_PROMPT for p in prompts), prompts
+
+    expected = [op for op in tables_load.OPEN.ops if op.kind in ("cw", "bo")] + \
+               [op for op in tables_load.JOG.ops if op.kind in ("cw", "bo")] * 2 + \
+               [op for op in tables_load.LOAD.ops if op.kind in ("cw", "bo")]
+    emitted = fake.out_log
+    assert len(emitted) == len(expected), (len(emitted), len(expected))
+    for ev, op in zip(emitted, expected):
+        if op.kind == "cw":
+            assert ev["kind"] == "ctrl_out" and (ev["bm"], ev["br"], ev["wv"], ev["wi"], ev["data"]) == \
+                (op.bm, op.br, op.wv, op.wi, op.data)
+        else:
+            assert ev["kind"] == "bulk_out" and ev["length"] == len(op.data)
+    jog_pulses = sum(1 for op in tables_load.JOG.ops if op.kind == "cw" and op.wv == 0x83 and b"\x0f\x01" in op.data)
+    load_pulses = sum(1 for op in tables_load.LOAD.ops if op.kind == "cw" and op.wv == 0x83 and b"\x0f\x01" in op.data)
+    assert fake.pulses == 2 * jog_pulses + load_pulses, (fake.pulses, jog_pulses, load_pulses)
+    print("test_load_double_jog_runs_jog_twice_then_loads OK")
+
+
+def test_load_release_only_jogs_and_stops():
+    """loadflow.run(release_only=True) (`of135i load --release`, Test 49):
+    runs initialize(prep=False) + jog_magazine() -- the vendor's device-open
+    plus the app-start jog -- then returns 0 without ever calling `ask` and
+    without load_magazine(). Only OPEN + JOG's transfers reach the fake;
+    LOAD's feed/traverse pulses are never sent."""
+    from of135i import loadflow
+
+    def _refuse(prompt):
+        raise AssertionError(f"ask() must not be called with release_only=True: {prompt!r}")
+
+    fake = FakeUsbDevice(reg01=0x22)
+    vendor_like_load_status(fake, jog=True)
+    with cli_over(fake):
+        rc = loadflow.run(ask=_refuse, release_only=True)
+    assert rc == 0
+
+    # Exactly OPEN + JOG's control-write/bulk-out ops, in order, nothing
+    # from LOAD (whose first register write does not appear).
+    expected = [op for op in tables_load.OPEN.ops if op.kind in ("cw", "bo")] + \
+               [op for op in tables_load.JOG.ops if op.kind in ("cw", "bo")]
+    emitted = fake.out_log
+    assert len(emitted) == len(expected), (len(emitted), len(expected))
+    for ev, op in zip(emitted, expected):
+        if op.kind == "cw":
+            assert ev["kind"] == "ctrl_out" and (ev["bm"], ev["br"], ev["wv"], ev["wi"], ev["data"]) == \
+                (op.bm, op.br, op.wv, op.wi, op.data)
+        else:
+            assert ev["kind"] == "bulk_out" and ev["length"] == len(op.data)
+    # JOG's three execute pulses only -- LOAD would add two (feed, traverse).
+    assert fake.pulses == 3, fake.pulses
+    print("test_load_release_only_jogs_and_stops OK")
 
 
 # ======================================================= short transfers
@@ -1850,6 +1917,28 @@ def test_cli_load_and_version():
             code = cli.main(["load"])
         se = _STDERR.getvalue()
     assert code == 1 and "FAILED" in se and fake.pulses == 4, (code, se)
+    # `--release` parses and is passed straight through to loadflow.run
+    # (no USB touched -- loadflow.run itself is stubbed here).
+    captured = {}
+    with patched(loadflow, "run", lambda **kw: captured.update(kw) or 0):
+        with quiet():
+            code = cli.main(["load", "--release"])
+    assert code == 0 and captured.get("release_only") is True, captured
+    captured = {}
+    with patched(loadflow, "run", lambda **kw: captured.update(kw) or 0):
+        with quiet():
+            code = cli.main(["load", "--double-jog"])
+    assert code == 0 and captured.get("double_jog") is True and captured.get("release_only") is False, captured
+    captured = {}
+    with patched(loadflow, "run", lambda **kw: captured.update(kw) or 0):
+        with quiet():
+            code = cli.main(["load", "--release", "--double-jog"])
+    assert code == 2 and not captured, (code, captured)
+    captured = {}
+    with patched(loadflow, "run", lambda **kw: captured.update(kw) or 0):
+        with quiet():
+            code = cli.main(["load"])
+    assert code == 0 and captured.get("release_only") is False, captured
     fake = FakeUsbDevice(reg01=0x22)
     with cli_over(fake):
         with quiet():
@@ -2337,6 +2426,8 @@ def main() -> int:
         test_full_length_and_legitimate_zero_length_out_succeed,
         test_short_transfer_leaving_engine_running_blocks_driver_restart,
         test_load_magazine_requires_initialize_and_matches_trace,
+        test_load_release_only_jogs_and_stops,
+        test_load_double_jog_runs_jog_twice_then_loads,
         test_jog_magazine_is_the_vendor_jog_and_fails_closed,
         test_initialize_prep_false_is_the_vendor_device_open_state,
         test_position_wait_is_strict_and_scaled_with_feedl,

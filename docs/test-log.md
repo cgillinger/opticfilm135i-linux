@@ -3136,3 +3136,11 @@ the feed, second engages". Options recorded for the next session: a
 two-cycle exit without a failed session; a double-jog A/B in one
 session (jog, reinsert, jog again from the loose state, reinsert, load);
 the vendor capture of a power-on with a latched magazine.
+Offline afterwards (same day): `of135i load --release` (cold init +
+jog, then a clean stop with a message; the first cycle of the two-cycle
+exit without a failed session) and `of135i load --double-jog` (the A/B
+for one cycle: jog, reinsert, jog again from the loose position,
+reinsert, load — UNVERIFIED, for the next hardware pass). Both covered
+offline against the trace (release: OPEN + JOG transfers exactly, no
+LOAD, `ask` never called; double-jog: OPEN + JOG + JOG + LOAD byte for
+byte, `ask` twice, 3 + 3 + 2 pulses). 51 safety tests, suite green.
