@@ -172,6 +172,14 @@ struct RunPolicy {
     unsigned poll_timeout_ms = 2000;
     unsigned poll_interval_ms = 4;
     unsigned class_timeout_ms = 5000;
+    /** Budget for PollMasked (docs/sane-hook5-frame.md section 3/4):
+        POSITION's W3 (class F, FEEDL-scaled -- see position_timeout_ms())
+        and PARK's Wait A/Wait B share this one policy value per
+        run_program() call; a caller running "park" should pass a value
+        generous enough for both waits (park_semantic()'s own budgets are
+        15 s and 30 s respectively -- there is no per-op override here,
+        so the hook picks one value for the whole program). */
+    unsigned masked_timeout_ms = 5000;
 };
 
 /** Execute one OpProgram against `wire`, appending to `out` (so a caller
@@ -212,6 +220,27 @@ struct RunPolicy {
                        further sent.
       BulkDone      -> control_read(0x0c, 0x008e, 0x0018, ..., 1);
                        recorded, never fails on a mismatch.
+      PollMasked    -> loop: control_read(op's own request/value/index,
+                       ..., 2); (reply[0] & op.mask) == op.want -> done,
+                       recorded (a PollRecord); else timeout
+                       (policy.masked_timeout_ms) -> OpsError{PollTimeout}
+                       (message carries first/last), nothing further
+                       sent; else sleep_ms(...). docs/sane-hook5-frame.md
+                       section 3/4: POSITION's W3 (class F on reg 0x101)
+                       and PARK's Wait A (reg 0x35 bit 0x40)/Wait B (the
+                       PARK_COMPLETE status word).
+      ReadModifyWrite -> read register (op.index >> 8) via
+                       control_read(op.request, op.value, op.index, ...,
+                       2), UNLESS the immediately preceding op is a
+                       PollMasked with the identical (request, value,
+                       index) -- then the value is that poll's own last
+                       recorded reply instead of a fresh read (docs/sane-
+                       hook5-frame.md section 4: park_semantic()'s reg
+                       0x35 clear reuses Wait A's own last read, verified
+                       by tests/test_sane_ops.py's park wire-equality
+                       test); either way, control_write(0x04, 0x0083,
+                       0x0000, [reg, (v & op.mask) | op.want], 2) --
+                       no ack read (see the Op doc comment above).
 
     BulkOut coverage (structural, checked first of all, before either
     injection check below): every BulkOut op the table generator emitted
@@ -444,6 +473,70 @@ std::vector<std::uint8_t> shading_table2(const std::uint8_t* white, std::size_t 
 std::vector<std::uint8_t> shading_table2(const std::uint8_t* white, std::size_t white_len,
                                          const std::uint8_t* dark, std::size_t dark_len,
                                          unsigned lines, unsigned width);
+
+// ------------------------------------------------- hooks 5-7: the frame
+
+/** FEEDL_FRAME1 (of135i/tables.py) -- the absolute POSITION target for
+    frame 1, 1/7200 inch (HWDPI) units from home. */
+constexpr unsigned kFeedlFrame1 = 6743;
+/** FEEDL_PITCH (of135i/tables.py) -- steps between frames (38.0 mm film
+    pitch). */
+constexpr unsigned kFeedlPitch = 10760;
+
+/** Absolute FEEDL target for `frame` (1-based), from home -- ported from
+    of135i/tables.py's feedl_for_frame() (docs/sane-hook5-frame.md
+    section 4, "Injections"). */
+unsigned feedl_for_frame(unsigned frame);
+
+/** feedl split into its three POSITION injection bytes (hi/mid/lo --
+    of135i/tables.py's feedl_hi/feedl_mid/feedl_lo, POSITION's op-array
+    byte offsets 7/9/11 of the injected Write). */
+struct FeedlBytes {
+    std::uint8_t hi;
+    std::uint8_t mid;
+    std::uint8_t lo;
+};
+FeedlBytes feedl_bytes(unsigned feedl);
+
+/** POSITION's W3 completion budget for a move of `feedl` steps: 3x the
+    captured frame-1 move's duration (1.6141 s), scaled linearly with
+    FEEDL and never below the base budget -- ported from of135i/
+    device.py's position_timeout_scale() (docs/sane-hook5-frame.md
+    section 3/6: "3 * 1.6141 * position_timeout_scale"). Pass the result
+    as RunPolicy::masked_timeout_ms when running the "position" program
+    for a frame other than 1. */
+unsigned position_timeout_ms(unsigned feedl);
+
+/** Read one image-data chunk (docs/sane-hook5-frame.md section 2/4,
+    hook 6b -- the GL126 branch of bulk_read_data()). Failures are
+    reported via the same OpsError/OpsFailure used by run_program()
+    (BadAck, ShortBulk), fail-closed, nothing further sent for this
+    chunk; `op_index` is 0 for a BadAck, 1 for a ShortBulk -- this
+    function is not table-driven, so there is no real op index.
+
+    A control write of
+    the 8-byte buffer descriptor `[00 00 00 10][len LE32]` (address fixed
+    at 0x10000000, wIndex 8 for the very first chunk of a scan and 0 for
+    every one after, `first` selects which), the ack read (0x0c/0x008e/
+    0x0020, must be 0x55 -- OpsError{BadAck} otherwise), then ONE bulk IN
+    of `len` bytes into `data` (OpsError{ShortBulk} on a short read).
+
+    DEVIATION, evidence-backed (see this task's report): the captured
+    wire (of135i/tables.py's SCAN ops 321-356) shows each chunk's `len`
+    bytes arriving as ~33 raw USB-level bulk reads (mostly 16384 B, two
+    odd-sized ones at the end) with NO trailing "bulk-done" read
+    (0x0c/0x008e/0x0018) anywhere in the image-chunk sequence, unlike
+    every other buffer transfer in this codebase. That fragmentation is
+    treated here as a USB-packet-level artifact of the reference
+    capture, not protocol behaviour to reproduce (the same "provenance,
+    not behaviour" principle docs/sane-port.md decision 3 already
+    applies to captured pacing) -- read_image_chunk() issues ONE
+    Wire::bulk_read() call per chunk, and emits NO bulk-done read,
+    matching the capture's own absence of one. A stricter, byte-for-byte
+    replay of the 33/12-fragment breakdown was considered and rejected
+    as overfitting to reference-unit USB artifacts; see the report for
+    the full reasoning. */
+void read_image_chunk(Wire& wire, std::uint8_t* data, std::size_t len, bool first);
 
 } // namespace gl126
 } // namespace genesys

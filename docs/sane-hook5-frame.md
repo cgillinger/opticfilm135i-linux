@@ -8,6 +8,33 @@ that scans frame 1 end to end. Every decision at the end is asked for
 explicitly; nothing here is taken under the earlier hooks' principles,
 because this is the first motor movement of the port.
 
+## Status (2026-09-08, same day)
+
+All six decisions of §8 taken by Christian ("hela konkarongen"). Implemented
+offline: `PollMasked` / `ReadModifyWrite` ops, the `position` and
+`scan_setup` programs, the `park` program built by the generator from
+`park_semantic()`'s step list, `read_image_chunk()` for the image path,
+`begin_scan()` (POSITION with the FEEDL-scaled budget + the scan
+setup), `end_scan()` (the semantic park), the session pinned to
+3762 × 5137 px with 519156-byte requests, the GL126 branch of
+`bulk_read_data`, the core's post-`begin_scan` wait loops and the
+`wait_for_home` at `sane_start` gated. `tests/test_sane_ops.py` 28/28:
+wire equality for `position` (48 transfers) and `scan_setup` (321) with
+the Python replayer, the 224 image chunks (672 transfers) against the
+replayer's SCAN tail, the `park` program against a live `park_semantic()`
+run (21 transfers), the masked-poll waits and timeouts, the FEEDL and
+budget values. 179 tests green, build clean.
+
+Two corrections to the analysis below, found by the wire-equality
+tests: the image chunks carry **no bulk-done read** (descriptor, ack,
+bulk IN — the 0x0018 read follows only the calibration reads), and the
+semantic park has **four** read-modify-write sites (0x15, 0x32 twice,
+0x35 — whose write-back reuses Wait A's last polled value, as
+`park_semantic()` does) and no ack reads (the driver's `write_regs()`
+does none). One accepted equivalence: a chunk is read with one 519156-
+byte bulk request where the capture shows ~33 USB fragments — the same
+bulk stream on the wire. **The hardware run of §7 has not happened yet.**
+
 ## 1. Why POSITION cannot be tested alone
 
 POSITION is one absolute feed (mode 0x18, FEEDL from home) that leaves
@@ -39,7 +66,7 @@ After the shading calibration (post-verify state, reg 0x01 = 0x22),
 |---|---|---|---|
 | P1 | `POSITION` (48 ops), injections `feedl_{hi,mid,lo}` (op 35 bytes 7/9/11) | 0x0a = 0x48; 3 × 0xd0–0xd2; the 25 slope pairs; 0xf8 = 05; read 0x101; the mode batch (0x01 = 0x22, 0x04 = 0x42, 0x05 = 0x48, **0x3d–0x3f = FEEDL**, 0xa6–0xa9, 0x7d–0x7f = 00 36 b0, 0x80–0x87, 0x2c/0x2d = 0x04b0, 0x1d, 0x1c, 0xa4/0xa5, 0xaa/0xab, **0x02 = 0x18**, 0xae/0xaf); slope table → 0x1000c000 (512 B), slope table → 0x10010000 (the same 512 B); 0x0f = 0x01; **W3** | 21 writes, 2 bulk OUT |
 | S1 | `SCAN` ops 0–320 | slope table → 0x10000000 / 0x10004000 / 0x10008000 (the scan table, 512 B ×3); 0x03 = 0x30; the scan batch (0x1c, **0x02 = 0x30**, 0x3d–0x3f = 1, 0x7d–0x7f, 0x8a–0x92, 0xae/0xaf, 0xac/0xad, 0x0d = 07, 0x28–0x2b, **0x25–0x27 = line count** (injections `lines_{hi,lo}`, op 14 bytes 55/57), 0x05 = 0x40); 0x01 = 0x23; **a read-back of every register 0x00–0xff and 0x100–0x120** (288 reads, provenance); 0x0f = 0x01; 4 × (read 0x06 → f8, read 0x101 → c5, c5, e5, a5); read 0x102–0x105 | 6 writes, 3 bulk OUT, 288 + 13 reads |
-| S2 | `SCAN` ops 321–8139 | **224 image chunks**: descriptor (wIndex **8** for the first, 0 after) of 519156 B (= 23 lines × 22572 B) followed by the bulk INs, then bulk-done; the last descriptor 180576 B (= 8 lines); 223 × 519156 + 180576 = 115,952,364 B = **5137 lines** exactly | 224 descriptors, 7371 bulk IN |
+| S2 | `SCAN` ops 321–8139 | **224 image chunks**: descriptor (wIndex **8** for the first, 0 after) of 519156 B (= 23 lines × 22572 B) followed by the bulk INs (no bulk-done read here); the last descriptor 180576 B (= 8 lines); 223 × 519156 + 180576 = 115,952,364 B = **5137 lines** exactly | 224 descriptors, 7371 bulk IN |
 | K1 | `PARK` (135 ops), verbatim | `0x8d` end-of-access; read 0x101 (d5); 0x03 = 0x30, 0x03 = 0x20, 0x01 = 0x22, 0x3a = 0x00; read 0x15 → 0x15 = 0x80; read 0x06; **0x02 = 0x30**; 0x36/0x3a/0x36/0x33; reads; 0x03 = 0x10, 0x03 = 0x00 (lamp off); two `0x8b` control writes (wIndex 0x0b: 0c000100, 0x0f: e0ff); read 0x32 → write back; reads; **0.74 s + 2.06 s pauses**; read 0x35 → 0x35 = 0xbb; then five idle-loop rounds (0x36/0x3a/0x36/0x33, read 0x32 → write, 2 s pause, read 0x35, poll 0x32) | 42 writes, 6 lenient polls, 13 paced ops |
 
 Two things the Python driver does here that the C++ machinery does
@@ -109,7 +136,7 @@ around them:
 |---|---|---|
 | `init_regs_for_scan()` → `init_regs_for_scan_session()` | no wire; fills `dev->reg` with nothing the core writes (the core writes `dev->reg` only through `begin_scan` on this path — verified: `init_regs_for_scan` computes, `begin_scan` is the hook) | sets `session.buffer_size_read = 519156` so the image pipeline requests exactly the captured chunk size; reports 3762 × 5137 px, 3 × 16 bit |
 | `begin_scan()` | **hooks 5 + 6a**: P1 (with FEEDL for the frame), W3, S1 through the settle reads | after it the core runs three wait loops on GL124 registers (feed steps 0x108–0x10a, valid words 0x102–0x105) whose GL126 semantics are unknown (the vendor reads 0x102–0x105 once, values that match neither "words" nor "lines") — **gated for GL126**, our begin_scan has already waited |
-| image pipeline → `bulk_read_data(0x45, data, 519156)` per chunk | **hook 6b**: a GL126 branch of `bulk_read_data`: one descriptor (wIndex 8 for the first chunk of a scan, 0 after — a flag `begin_scan` arms), one bulk IN of the full request, one bulk-done read | the core's total is 5137 lines × 22572 B, so the last request is 180576 B, as captured |
+| image pipeline → `bulk_read_data(0x45, data, 519156)` per chunk | **hook 6b**: a GL126 branch of `bulk_read_data`: one descriptor (wIndex 8 for the first chunk of a scan, 0 after — a flag `begin_scan` arms), one bulk IN of the full request | the core's total is 5137 lines × 22572 B, so the last request is 180576 B, as captured |
 | EOF in `genesys_read_ordered_data` → `end_scan()` | **hook 7**: K1 as the semantic park program | then the core sets `parking` via `move_back_home(false)` — gated for GL126, `dev->parking = true` set directly so `sane_cancel` does not run `end_scan` a second time; `sanei_genesys_wait_for_home` at the next `sane_start` (reads GL124 home regs) gated too |
 | `wait_for_motor_stop()` before `init_regs_for_scan` | no-op for GL126 (the vendor has no such wait; hook 4's run ended on its refusal) | |
 

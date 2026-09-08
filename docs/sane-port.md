@@ -392,8 +392,9 @@ inside `coarse_gain_calibration()`. Implemented offline the same day
 tables uploaded, all transfers at full length. Hooks 5–7 (POSITION,
 SCAN, PARK): offline analysis in `docs/sane-hook5-frame.md` (2026-09-08)
 — POSITION has no verified exit on its own, so the three are one unit
-and one hardware run (a full frame 1); six decisions await an explicit
-go, the first motor movement of the port.
+and one hardware run (a full frame 1); the six decisions were taken the
+same day and the hooks are implemented offline (28/28 op tests, 179
+total). Hardware run — the first motor movement of the port — pending.
 
 Hook 2 is `offset_calibration()` and nothing else: the driver's
 CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and

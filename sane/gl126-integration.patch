@@ -73,7 +73,7 @@ index 02cfc43..8813651 100644
  
  
 diff --git a/backend/genesys/genesys.cpp b/backend/genesys/genesys.cpp
-index d7ec422..913ca4c 100644
+index d7ec422..b41be10 100644
 --- a/backend/genesys/genesys.cpp
 +++ b/backend/genesys/genesys.cpp
 @@ -38,6 +38,11 @@
@@ -113,7 +113,21 @@ index d7ec422..913ca4c 100644
      {
          scanner_move_to_ta(*dev);
      }
-@@ -3990,15 +4003,20 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -3969,7 +3982,12 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+   /* since not all scanners are set to wait for head to park
+    * we check we are not still parking before starting a new scan */
+     if (dev->parking) {
+-        sanei_genesys_wait_for_home(dev);
++        // Not for GL126: its park ends with its own completion wait and the
++        // home status registers this reads are GL124's (docs/sane-hook5-frame.md).
++        if (dev->model->asic_type != AsicType::GL126) {
++            sanei_genesys_wait_for_home(dev);
++        }
++        dev->parking = false;
+     }
+ 
+     // disable power saving
+@@ -3990,15 +4008,20 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
      }
  
    /* set top left x and y values by scanning the internals if flatbed scanners */
@@ -137,7 +151,21 @@ index d7ec422..913ca4c 100644
      {
          scanner_move_to_ta(*dev);
      }
-@@ -5457,6 +5475,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -4070,6 +4093,13 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+         dev->interface->test_checkpoint("start_scan");
+         return;
+     }
++    // GL126: begin_scan has already waited the way the vendor does (the
++    // position move's completion poll, the scan pass's settle reads); the
++    // feed-step and valid-word registers polled below are GL124's and read
++    // differently on this chip (docs/sane-hook5-frame.md, section 4).
++    if (dev->model->asic_type == AsicType::GL126) {
++        return;
++    }
+ 
+   /*do we really need this? the valid data check should be sufficient -- pierre*/
+   /* waits for head to reach scanning position */
+@@ -5457,6 +5487,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
          throw SaneException("could not find the device to open: %s", devicename);
      }
  
@@ -170,7 +198,7 @@ index d7ec422..913ca4c 100644
      if (is_testing_mode()) {
          // during testing we need to initialize dev->model before test scanner interface is created
          // as that it needs to know what type of chip it needs to mimic.
-@@ -5473,6 +5517,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5473,6 +5529,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
          dev->interface->get_usb_device().open(dev->file_name.c_str());
      } else {
@@ -193,7 +221,7 @@ index d7ec422..913ca4c 100644
          dev->interface = std::unique_ptr<ScannerInterfaceUsb>{new ScannerInterfaceUsb{dev}};
  
          dbg.vstatus("open device '%s'", dev->file_name.c_str());
-@@ -5523,6 +5583,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5523,6 +5595,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
      // some hardware capabilities are detected through sensors
      dev->cmd_set->update_hardware_sensors (s);
@@ -206,7 +234,7 @@ index d7ec422..913ca4c 100644
  }
  
  SANE_GENESYS_API_LINKAGE
-@@ -5556,6 +5622,20 @@ sane_close_impl(SANE_Handle handle)
+@@ -5556,6 +5634,20 @@ sane_close_impl(SANE_Handle handle)
  
      auto* dev = it->dev;
  
@@ -227,7 +255,7 @@ index d7ec422..913ca4c 100644
      // eject document for sheetfed scanners
      if (dev->model->is_sheetfed) {
          catch_all_exceptions(__func__, [&](){ dev->cmd_set->eject_document(dev); });
-@@ -5579,12 +5659,26 @@ sane_close_impl(SANE_Handle handle)
+@@ -5579,12 +5671,26 @@ sane_close_impl(SANE_Handle handle)
      dev->clear();
  
      // LAMP OFF : same register across all the ASICs */
@@ -291,10 +319,18 @@ index 3ffc24a..eda72e8 100644
          case AsicType::GL841:
          case AsicType::GL842:
 diff --git a/backend/genesys/scanner_interface_usb.cpp b/backend/genesys/scanner_interface_usb.cpp
-index 542d4ff..dd77f3c 100644
+index 542d4ff..b21e534 100644
 --- a/backend/genesys/scanner_interface_usb.cpp
 +++ b/backend/genesys/scanner_interface_usb.cpp
-@@ -43,7 +43,8 @@ std::uint8_t ScannerInterfaceUsb::read_register(std::uint16_t address)
+@@ -22,6 +22,7 @@
+ 
+ #include "scanner_interface_usb.h"
+ #include "low.h"
++#include "gl126.h"
+ 
+ namespace genesys {
+ 
+@@ -43,7 +44,8 @@ std::uint8_t ScannerInterfaceUsb::read_register(std::uint16_t address)
      if (dev_->model->asic_type == AsicType::GL847 ||
          dev_->model->asic_type == AsicType::GL845 ||
          dev_->model->asic_type == AsicType::GL846 ||
@@ -304,7 +340,7 @@ index 542d4ff..dd77f3c 100644
      {
          std::uint8_t value2x8[2];
          std::uint16_t address16 = 0x22 + (address << 8);
-@@ -88,7 +89,8 @@ void ScannerInterfaceUsb::write_register(std::uint16_t address, std::uint8_t val
+@@ -88,7 +90,8 @@ void ScannerInterfaceUsb::write_register(std::uint16_t address, std::uint8_t val
      if (dev_->model->asic_type == AsicType::GL847 ||
          dev_->model->asic_type == AsicType::GL845 ||
          dev_->model->asic_type == AsicType::GL846 ||
@@ -314,7 +350,22 @@ index 542d4ff..dd77f3c 100644
      {
          std::uint8_t buffer[2];
  
-@@ -438,7 +440,9 @@ void ScannerInterfaceUsb::write_fe_register(std::uint8_t address, std::uint16_t
+@@ -226,6 +229,14 @@ void ScannerInterfaceUsb::bulk_read_data(std::uint8_t addr, std::uint8_t* data,
+     // currently supported: GL646, GL841, GL843, GL845, GL846, GL847, GL124
+     DBG_HELPER(dbg);
+ 
++    // GL126 (OpticFilm 135i): the image is read as the vendor reads it -- one
++    // descriptor and one bulk IN per chunk, a bulk-done read after -- from the
++    // GL126 hook file (docs/sane-hook5-frame.md, section 4).
++    if (dev_->model->asic_type == AsicType::GL126) {
++        gl126::read_image_chunk_usb(dev_, data, size);
++        return;
++    }
++
+     unsigned is_addr_used = 1;
+     unsigned has_header_before_each_chunk = 0;
+     if (dev_->model->asic_type == AsicType::GL124 ||
+@@ -438,7 +449,9 @@ void ScannerInterfaceUsb::write_fe_register(std::uint8_t address, std::uint16_t
      Genesys_Register_Set reg(Genesys_Register_Set::SEQUENTIAL);
  
      reg.init_reg(0x51, address);
@@ -326,10 +377,10 @@ index 542d4ff..dd77f3c 100644
          reg.init_reg(0x5e, value & 0xff);
      } else {
 diff --git a/backend/genesys/tables_model.cpp b/backend/genesys/tables_model.cpp
-index 321d179..f90f88d 100644
+index 321d179..544b68c 100644
 --- a/backend/genesys/tables_model.cpp
 +++ b/backend/genesys/tables_model.cpp
-@@ -2311,6 +2311,96 @@ void genesys_init_usb_device_tables()
+@@ -2311,6 +2311,99 @@ void genesys_init_usb_device_tables()
  
  
  
@@ -366,8 +417,11 @@ index 321d179..f90f88d 100644
 +
 +    model.x_offset = 0.0;
 +    model.y_offset = 0.0;
-+    model.x_size = 36.0;
-+    model.y_size = 24.0;
++    /* The captured frame: 3762 px across the sensor window and 5137 lines
++       along the transport at 3600 dpi (26.54 x 36.24 mm). The scan hook
++       pins the session to these regardless of the requested window. */
++    model.x_size = 26.5447;
++    model.y_size = 36.2447;
 +
 +    model.y_offset_calib_white = 0.0;
 +    model.y_size_calib_mm = 0.0;

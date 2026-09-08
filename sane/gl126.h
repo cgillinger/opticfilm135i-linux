@@ -118,6 +118,14 @@ public:
     void asic_boot(Genesys_Device* dev, bool cold) const override;
 };
 
+/* The image path (docs/sane-hook5-frame.md, section 4): the core's image
+   pipeline asks ScannerInterfaceUsb::bulk_read_data for one chunk at a
+   time (sized by the session to the captured 519156 B); for GL126 that
+   call is forwarded here, which emits the vendor's per-chunk sequence
+   (descriptor with wIndex 8 for the first chunk of a scan, 0 after; ack;
+   bulk IN; bulk-done read). */
+void read_image_chunk_usb(Genesys_Device* dev, std::uint8_t* data, std::size_t size);
+
 } // namespace gl126
 } // namespace genesys
 

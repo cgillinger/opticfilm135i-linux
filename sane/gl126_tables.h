@@ -63,6 +63,14 @@ enum class OpKind : std::uint8_t {
     BulkIn,         /* bulk IN of `len` bytes from EP 0x81 */
     BulkOut,        /* bulk OUT of `len` bytes to EP 0x02 */
     BulkDone,       /* control read after a bulk transfer, logged only */
+    PollMasked,     /* poll until (reply[0] & mask) == want (docs/sane-
+                       hook5-frame.md section 4): POSITION's W3 (class
+                       F), PARK's Wait A (reg 0x35 bit 0x40) and Wait B
+                       (the PARK_COMPLETE status word) */
+    ReadModifyWrite,/* read register (index>>8) via 0x008e/index, write
+                       back (v & mask) | want as a 2-byte register batch,
+                       no ack read (docs/sane-hook5-frame.md section 4:
+                       PARK's three RMW registers, 4 sites) */
 };
 
 /** One op-program transfer. `data` is the write payload (Write, and a
@@ -82,6 +90,13 @@ struct Op {
     const std::uint8_t* data;
     std::uint16_t len;       /* Write/reads: byte length; BulkIn/BulkOut: bulk length */
     std::uint16_t dur_ms;    /* captured poll duration, ms (0 otherwise) */
+    std::uint8_t mask;       /* PollMasked: poll mask; ReadModifyWrite: and_mask;
+                                0 for every other kind (docs/sane-hook5-frame.md
+                                section 4) */
+    std::uint8_t want;       /* PollMasked: target value; ReadModifyWrite: or_mask;
+                                0 for every other kind. ReadModifyWrite's target
+                                register is (index >> 8), the same encoding as
+                                its own read setup (index = (reg << 8) | 0x22) */
 };
 
 /** A value the op-program runner must compute and patch into a

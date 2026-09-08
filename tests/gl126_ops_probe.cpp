@@ -87,6 +87,22 @@
      probe upload_len <width>
          Runs gl126::shading_upload_len() and prints "LEN=<n>".
 
+     probe image_chunks <n_full> <full_len> <last_len>
+         Calls gl126::read_image_chunk() over a no-fault fake Wire:
+         `n_full` chunks of `full_len` bytes (first=true only for the
+         very first one), then one final chunk of `last_len` bytes
+         (docs/sane-hook5-frame.md section 2/4, hook 6b). Transfer log in
+         the same W/R/B format `run` uses; "DONE" or "FAIL <failure>
+         op=<i>" (op_index is 0 for a BadAck, 1 for a ShortBulk -- this
+         mode is not table-driven).
+
+     probe feedl <frame>
+         Runs gl126::feedl_for_frame()/feedl_bytes() and prints
+         "FEEDL=<n> hi=<hex2> mid=<hex2> lo=<hex2>".
+
+     probe position_timeout <feedl>
+         Runs gl126::position_timeout_ms() and prints "MS=<n>".
+
    Script format (tests/gl126_ops_probe.cpp's `run` mode; a missing or
    empty file means "use every op program's own captured values", which
    is what makes the wire-equality test's script trivial): one directive
@@ -124,11 +140,24 @@
                                          reply
      read_at <occurrence> <hex-bytes> -- override the Nth plain Read's
                                          reply (0-indexed occurrence)
+     masked_poll_at <occ> <hex4>[,<hex4>...] -- override the Nth
+                                         PollMasked site's reply sequence
+                                         (0-indexed occurrence among
+                                         PollMasked ops in this run --
+                                         "park" has two: Wait A, Wait B).
+                                         Unscripted: settles on the first
+                                         read, at the op's own `want`.
+     rmw_read_at <occurrence> <hex-byte> -- the register value the Nth
+                                         ReadModifyWrite op's read
+                                         returns (0-indexed occurrence).
+                                         Unscripted: 0x00.
 
    Every op program in scope here has at most one PollDataReady/PollClass/
    BulkDone, so `poll`/`class_poll`/`bulkdone` need no occurrence index;
    cal_white alone has three BulkIn ops (`bulk_len_at` addresses those
-   individually). */
+   individually); "park" (docs/sane-hook5-frame.md) has two PollMasked
+   sites and four ReadModifyWrite sites, addressed by `masked_poll_at`/
+   `rmw_read_at`'s own occurrence index. */
 
 #include "../sane/gl126_ops.h"
 
@@ -332,6 +361,13 @@ struct Script {
     bool has_bulkdone = false;
     std::uint8_t bulkdone = 0;
     std::map<std::size_t, std::vector<std::uint8_t>> read_overrides;
+    // hooks 5-7 (docs/sane-hook5-frame.md): PARK carries TWO distinct
+    // PollMasked sites (Wait A, Wait B) and FOUR ReadModifyWrite sites,
+    // so -- unlike poll/class_poll/bulkdone above, which address the
+    // single occurrence a hook2-4 program ever has -- these are indexed
+    // by occurrence (0-based, in the order the program executes them).
+    std::map<std::size_t, std::vector<std::array<std::uint8_t, 2>>> masked_poll_at;
+    std::map<std::size_t, std::uint8_t> rmw_read_at;
 };
 
 // Shared by "poll" and "class_poll": parse a comma-separated list of
@@ -415,6 +451,19 @@ Script parse_script(const std::string& path)
             std::string hex;
             iss >> n >> hex;
             s.read_overrides[n] = parse_hex(hex);
+        } else if (cmd == "masked_poll_at") {
+            std::size_t occurrence = 0;
+            std::string rest;
+            iss >> occurrence >> rest;
+            s.masked_poll_at[occurrence] = parse_poll_list(rest);
+        } else if (cmd == "rmw_read_at") {
+            std::size_t occurrence = 0;
+            std::string hex;
+            iss >> occurrence >> hex;
+            auto bytes = parse_hex(hex);
+            if (!bytes.empty()) {
+                s.rmw_read_at[occurrence] = bytes[0];
+            }
         } else {
             throw std::runtime_error("gl126_ops_probe: unknown script directive: " + cmd);
         }
@@ -438,6 +487,16 @@ public:
     void control_write(std::uint8_t request, std::uint16_t value, std::uint16_t index,
                        const std::uint8_t* data, std::size_t len) override
     {
+        // A ReadModifyWrite op is serviced by TWO wire calls on the SAME
+        // op (control_read for the read half, then control_write for the
+        // write half) -- the cursor only advances once the write lands.
+        if (cursor_ < prog_.count && current().kind == OpKind::ReadModifyWrite) {
+            std::cout << "W req=" << hex2(request) << " val=" << hex4(value)
+                      << " idx=" << hex4(index) << " data=" << hex_bytes(data, len) << "\n";
+            ++rmw_occurrence_;
+            advance();
+            return;
+        }
         expect(OpKind::Write);
         std::cout << "W req=" << hex2(request) << " val=" << hex4(value)
                   << " idx=" << hex4(index) << " data=" << hex_bytes(data, len) << "\n";
@@ -532,6 +591,45 @@ public:
             advance();
             break;
         }
+        case OpKind::PollMasked: {
+            std::size_t occ = masked_poll_occurrence_;
+            PollState& st = masked_poll_state_[occ];
+            if (st.list.empty()) {
+                auto it = script_.masked_poll_at.find(occ);
+                if (it != script_.masked_poll_at.end() && !it->second.empty()) {
+                    st.list = it->second;
+                } else {
+                    // Default: settle on the very first read, at the op's
+                    // own `want` value (matching mask trivially).
+                    st.list.push_back({{op.want, 0x55}});
+                }
+            }
+            std::size_t idx = st.idx < st.list.size() ? st.idx : st.list.size() - 1;
+            if (st.idx + 1 < st.list.size()) ++st.idx;
+            const std::array<std::uint8_t, 2>& v = st.list[idx];
+            if (len > 0) data[0] = v[0];
+            if (len > 1) data[1] = v[1];
+            log_read(request, value, index, len);
+            if ((v[0] & op.mask) == op.want) {
+                ++masked_poll_occurrence_;
+                advance();   // this was the last call at this site
+            }
+            break;
+        }
+        case OpKind::ReadModifyWrite: {
+            std::size_t occ = rmw_occurrence_;
+            std::uint8_t v = 0x00;
+            auto it = script_.rmw_read_at.find(occ);
+            if (it != script_.rmw_read_at.end()) {
+                v = it->second;
+            }
+            if (len > 0) data[0] = v;
+            if (len > 1) data[1] = 0x55;
+            log_read(request, value, index, len);
+            // No advance(): the write half of this same op (control_write,
+            // above) is what moves the cursor past a ReadModifyWrite op.
+            break;
+        }
         default:
             throw std::runtime_error("gl126_ops_probe: control_read while the program "
                                      "cursor is at a non-read op");
@@ -612,6 +710,14 @@ private:
     std::size_t bulk_calls_ = 0;
     std::size_t bulk_out_calls_ = 0;
     unsigned clock_ms_ = 0;
+
+    struct PollState {
+        std::vector<std::array<std::uint8_t, 2>> list;
+        std::size_t idx = 0;
+    };
+    std::map<std::size_t, PollState> masked_poll_state_;
+    std::size_t masked_poll_occurrence_ = 0;
+    std::size_t rmw_occurrence_ = 0;
 };
 
 const char* op_kind_name(OpKind k)
@@ -625,6 +731,8 @@ const char* op_kind_name(OpKind k)
     case OpKind::BulkIn:         return "BulkIn";
     case OpKind::BulkOut:        return "BulkOut";
     case OpKind::BulkDone:       return "BulkDone";
+    case OpKind::PollMasked:     return "PollMasked";
+    case OpKind::ReadModifyWrite:return "ReadModifyWrite";
     }
     return "Unknown";
 }
@@ -922,13 +1030,104 @@ int cmd_upload_len(int argc, char** argv)
     return 0;
 }
 
+// ------------------------------------------------- hooks 5-7: the frame
+
+/* Not table-driven (read_image_chunk() takes no OpProgram), so this
+   mode's fake always succeeds: descriptor write, ack 0x55, then a bulk
+   IN of exactly the requested length -- logged in the same W/R/B/BO
+   text format cmd_run() uses, so _parse_probe_transfers() in
+   tests/test_sane_ops.py handles both alike. */
+class ImageChunkWire : public Wire {
+public:
+    void control_write(std::uint8_t request, std::uint16_t value, std::uint16_t index,
+                       const std::uint8_t* data, std::size_t len) override
+    {
+        std::cout << "W req=" << hex2(request) << " val=" << hex4(value)
+                  << " idx=" << hex4(index) << " data=" << hex_bytes(data, len) << "\n";
+    }
+
+    void control_read(std::uint8_t request, std::uint16_t value, std::uint16_t index,
+                      std::uint8_t* data, std::size_t len) override
+    {
+        if (len > 0) data[0] = 0x55;
+        if (len > 1) data[1] = 0x55;
+        std::cout << "R req=" << hex2(request) << " val=" << hex4(value)
+                  << " idx=" << hex4(index) << " len=" << len << "\n";
+    }
+
+    std::size_t bulk_read(std::uint8_t* data, std::size_t len) override
+    {
+        for (std::size_t i = 0; i < len; ++i) data[i] = 0;
+        std::cout << "B len=" << len << "\n";
+        return len;
+    }
+
+    std::size_t bulk_write(const std::uint8_t*, std::size_t len) override { return len; }
+    void sleep_ms(unsigned ms) override { clock_ms_ += ms; }
+    unsigned now_ms() override { return clock_ms_; }
+
+private:
+    unsigned clock_ms_ = 0;
+};
+
+int cmd_image_chunks(int argc, char** argv)
+{
+    if (argc != 5) {
+        std::cerr << "usage: probe image_chunks <n_full> <full_len> <last_len>\n";
+        return 2;
+    }
+    unsigned n_full = static_cast<unsigned>(std::stoul(argv[2]));
+    std::size_t full_len = static_cast<std::size_t>(std::stoul(argv[3]));
+    std::size_t last_len = static_cast<std::size_t>(std::stoul(argv[4]));
+
+    ImageChunkWire wire;
+    std::vector<std::uint8_t> buf(std::max(full_len, last_len));
+    try {
+        for (unsigned i = 0; i < n_full; ++i) {
+            read_image_chunk(wire, buf.data(), full_len, i == 0);
+        }
+        read_image_chunk(wire, buf.data(), last_len, n_full == 0);
+    } catch (const OpsError& e) {
+        std::cout << "FAIL " << to_string(e.failure) << " op=" << e.op_index << "\n";
+        return 1;
+    }
+    std::cout << "DONE\n";
+    return 0;
+}
+
+int cmd_feedl(int argc, char** argv)
+{
+    if (argc != 3) {
+        std::cerr << "usage: probe feedl <frame>\n";
+        return 2;
+    }
+    unsigned frame = static_cast<unsigned>(std::stoul(argv[2]));
+    unsigned feedl = feedl_for_frame(frame);
+    FeedlBytes b = feedl_bytes(feedl);
+    std::cout << "FEEDL=" << feedl << " hi=" << hex2(b.hi) << " mid=" << hex2(b.mid)
+              << " lo=" << hex2(b.lo) << "\n";
+    return 0;
+}
+
+int cmd_position_timeout(int argc, char** argv)
+{
+    if (argc != 3) {
+        std::cerr << "usage: probe position_timeout <feedl>\n";
+        return 2;
+    }
+    unsigned feedl = static_cast<unsigned>(std::stoul(argv[2]));
+    std::cout << "MS=" << position_timeout_ms(feedl) << "\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
     static const char* usage_line =
         "run|program_info|offset|residual|gain|percentile|warmup|"
-        "shading_table|shading_table2|upload_len ...\n";
+        "shading_table|shading_table2|upload_len|"
+        "image_chunks|feedl|position_timeout ...\n";
     if (argc < 2) {
         std::cerr << "usage: " << argv[0] << " " << usage_line;
         return 2;
@@ -945,6 +1144,9 @@ int main(int argc, char** argv)
         if (mode == "shading_table") return cmd_shading_table(argc, argv);
         if (mode == "shading_table2") return cmd_shading_table2(argc, argv);
         if (mode == "upload_len") return cmd_upload_len(argc, argv);
+        if (mode == "image_chunks") return cmd_image_chunks(argc, argv);
+        if (mode == "feedl") return cmd_feedl(argc, argv);
+        if (mode == "position_timeout") return cmd_position_timeout(argc, argv);
     } catch (const std::exception& e) {
         std::cerr << "ERROR " << e.what() << "\n";
         return 2;

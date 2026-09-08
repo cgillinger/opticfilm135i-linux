@@ -114,7 +114,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dc_replace
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -296,12 +296,18 @@ class OpEntry:
     the runner (gl126_ops.cpp) understands."""
     kind: str            # "Write" | "AckRead" | "Read" | "PollDataReady"
                           # | "PollClass" | "BulkIn" | "BulkOut" | "BulkDone"
+                          # | "PollMasked" | "ReadModifyWrite" (docs/sane-
+                          # hook5-frame.md section 4/6, hooks 5-7: POSITION's
+                          # completion poll, PARK's two waits and its three
+                          # read-modify-write sites)
     request: int          # bRequest; 0 for BulkIn/BulkOut
     value: int             # wValue
     index: int              # wIndex
     data: bytes            # Write/BulkOut: payload; else: captured reply (b"" for BulkIn)
     length: int             # Write/reads: byte length; BulkIn/BulkOut: bulk length
     dur_ms: int             # captured poll duration in ms (0 otherwise)
+    mask: int = 0           # PollMasked: poll mask; ReadModifyWrite: and_mask
+    want: int = 0           # PollMasked: target value; ReadModifyWrite: or_mask
 
 
 def decode_ops(phase) -> list[OpEntry]:
@@ -335,6 +341,18 @@ def decode_ops(phase) -> list[OpEntry]:
             elif op.wv == WV_EXT_STATUS and op.wi == WI_REG100:
                 entries.append(OpEntry("PollClass", op.br, op.wv, op.wi,
                                        op.resp, op.length, dur_ms))
+            elif phase.name == "position" and op.wv == WV_EXT_STATUS and op.wi == WI_DATAENB:
+                # POSITION's own completion poll (docs/sane-hook5-frame.md
+                # section 3, W3 / decision 2): class F only, on reg 0x101 --
+                # Test 31 rules out the bit-0x01 (DATAENB) variant, so this
+                # is deliberately NOT PollDataReady even though it shares
+                # that op's wValue/wIndex. mask/want are a FIXED 0xf0/0xf0,
+                # not derived from this capture's own settled reply (unlike
+                # PollClass/hook4's W2, which accepts whatever the capture
+                # settled on) -- every POSITION move waits for class F.
+                entries.append(OpEntry("PollMasked", op.br, op.wv, op.wi,
+                                       op.resp, op.length, dur_ms,
+                                       mask=0xF0, want=0xF0))
             else:
                 entries.append(OpEntry("Read", op.br, op.wv, op.wi,
                                        op.resp, op.length, dur_ms))
@@ -349,7 +367,7 @@ def decode_ops(phase) -> list[OpEntry]:
 
 _KNOWN_OP_KINDS = frozenset((
     "Write", "AckRead", "Read", "PollDataReady", "PollClass",
-    "BulkIn", "BulkOut", "BulkDone",
+    "BulkIn", "BulkOut", "BulkDone", "PollMasked", "ReadModifyWrite",
 ))
 
 
@@ -430,6 +448,49 @@ def validate_op_program(phase_name: str, entries: list[OpEntry]) -> None:
             if n != 0:
                 raise ValueError(
                     f"{phase_name}: expected no {kind} op, got {n}")
+    elif phase_name == "position":
+        # docs/sane-hook5-frame.md section 2/4: exactly 1 PollMasked (W3,
+        # the completion poll) and 2 BulkOut (the slope-table upload,
+        # written to two addresses).
+        n_poll = count("PollMasked")
+        if n_poll != 1:
+            raise ValueError(
+                f"{phase_name}: expected exactly one PollMasked op, got {n_poll}")
+        n_bo = count("BulkOut")
+        if n_bo != 2:
+            raise ValueError(
+                f"{phase_name}: expected exactly two BulkOut ops, got {n_bo}")
+    elif phase_name == "scan_setup":
+        # docs/sane-hook5-frame.md section 2/4: no polls at all (S1 lets
+        # the first bulk IN block instead), 3 BulkOut (the scan-table
+        # upload, written to three addresses).
+        for kind in ("PollDataReady", "PollClass", "PollMasked"):
+            n = count(kind)
+            if n != 0:
+                raise ValueError(
+                    f"{phase_name}: expected no {kind} op, got {n}")
+        n_bo = count("BulkOut")
+        if n_bo != 3:
+            raise ValueError(
+                f"{phase_name}: expected exactly three BulkOut ops, got {n_bo}")
+    elif phase_name == "park":
+        # docs/sane-hook5-frame.md section 2/4: 2 PollMasked (Wait A on
+        # reg 0x35 bit 0x40, Wait B on the PARK_COMPLETE status word).
+        # DEVIATION from the plan's own prose ("3 ReadModifyWrite"): the
+        # actual of135i/device.py::_park_semantic_steps() performs FOUR
+        # real read-then-write-back actions, not three -- reg 0x15 once,
+        # reg 0x32 TWICE (once before Wait A, once again in the closing
+        # idle round after Wait B) and reg 0x35 once (after Wait A). See
+        # build_park_program()'s own docstring for the evidence; this
+        # validator follows the source, not the plan's recap.
+        n_poll = count("PollMasked")
+        if n_poll != 2:
+            raise ValueError(
+                f"{phase_name}: expected exactly two PollMasked ops, got {n_poll}")
+        n_rmw = count("ReadModifyWrite")
+        if n_rmw != 4:
+            raise ValueError(
+                f"{phase_name}: expected exactly four ReadModifyWrite ops, got {n_rmw}")
 
 
 def op_injections_for(phase, entries: list[OpEntry],
@@ -528,6 +589,113 @@ def strip_bulk_injected_data(entries: list[OpEntry],
             entries[i].data = b""
 
 
+def build_park_program(phase) -> list[OpEntry]:
+    """Build the semantic PARK op program (docs/sane-hook5-frame.md
+    section 2/4, hook 7) directly from `phase`'s (t.PARK's) own captured
+    constants -- NOT `phase.ops` replayed verbatim -- mirroring of135i/
+    device.py's Scanner._park_semantic_steps() step for step. The
+    captured phase supplies only the two 0x8b control-write payloads
+    (wIndex 0x0b/0x0f) and whether a 0x19=0x00 write follows the
+    pre-Wait-A 0x32 read-modify-write; everything else (the teardown
+    writes, the RMW sites, the two waits, the closing idle round) is
+    identical across every profile, matching park_semantic()'s own
+    table-independence claim ("everything else in PARK is identical
+    across all six tables").
+
+    Deviations from the plan's own prose, resolved by reading
+    of135i/device.py::_park_semantic_steps() directly (its docstring
+    calls the offline test "the arbiter" for exactly this reason):
+
+      * NO AckRead ops anywhere. park_semantic() writes registers via
+        Scanner.io.write_regs() or a raw dev.ctrl_transfer() call,
+        neither of which performs a follow-up ack read (of135i/usbio.py's
+        write_regs(): one control transfer per batch, checks the byte
+        count the OS call itself returned, nothing more). This is
+        confirmed against tests/test_park.py's _FakeDev, whose `events`
+        list never grows beyond the 3 raw control writes (0x8d, 0x8b x2)
+        plus the RMW/status reads it separately tracks -- there is no
+        ack-read event anywhere in that fake's model of park_semantic().
+        This differs from "position"/"scan_setup", which DO carry
+        AckRead ops, because those two replay the literal captured wire
+        trace op for op.
+      * FOUR ReadModifyWrite ops, not the three the plan's prose lists:
+        reg 0x15 once, reg 0x32 TWICE (once before Wait A, once again in
+        the closing idle round after Wait B) and reg 0x35 once (after
+        Wait A). The closing idle round's 0x32 write-back is a genuine
+        read-modify-write in the source (`v32b = self.io.read_reg(0x32);
+        self.io.write_regs([(0x32, v32b)])`), so it is emitted as one
+        too; validate_op_program() checks for 4, not 3, with the same
+        reasoning inline.
+      * The closing idle round performs NO reg-0x35 read. The plan's
+        prose describes it as "the batch 36/3a/36/33, RMW 0x32
+        write-back, read 0x35 as Read"; the actual source is exactly
+        `write_regs(idle batch); read_reg(0x32); write_regs([(0x32,
+        v32b)])` -- no third transfer, no reg-0x35 read at all.
+    """
+    ctrl_8b = [(op.wi, op.data) for op in phase.ops
+              if op.kind == "cw" and op.wv == 0x008B]
+    if len(ctrl_8b) != 2:
+        raise ValueError(
+            f"{phase.name}: expected 2 control writes with wValue 0x8b, "
+            f"found {len(ctrl_8b)}")
+    has_0x19 = any(
+        op.kind == "cw" and op.wv == 0x0083
+        and any(op.data[i] == 0x19 for i in range(0, len(op.data), 2))
+        for op in phase.ops
+    )
+
+    entries: list[OpEntry] = []
+
+    def W(value: int, index: int, data: bytes, request: int = 0x04) -> None:
+        entries.append(OpEntry(kind="Write", request=request, value=value,
+                               index=index, data=bytes(data), length=len(data),
+                               dur_ms=0))
+
+    def RMW(reg: int, and_mask: int, or_mask: int) -> None:
+        entries.append(OpEntry(kind="ReadModifyWrite", request=0x04, value=0x008E,
+                               index=(reg << 8) | 0x22, data=b"", length=2,
+                               dur_ms=0, mask=and_mask, want=or_mask))
+
+    def POLL(value: int, index: int, mask: int, want: int, request: int = 0x04) -> None:
+        entries.append(OpEntry(kind="PollMasked", request=request, value=value,
+                               index=index, data=b"", length=2, dur_ms=0,
+                               mask=mask, want=want))
+
+    idle = bytes([0x36, 0xFC, 0x3A, 0x00, 0x36, 0xFC, 0x33, 0x0E])
+
+    # ---- real park/teardown sequence (captured ops 0-55, replayed as
+    # the driver's own write_regs()/ctrl_transfer() calls) -------------
+    W(0x008D, 0x0000, b"\x00", request=0x0C)
+    W(0x0083, 0x0000, bytes([0x03, 0x30]))
+    W(0x0083, 0x0000, bytes([0x03, 0x20]))
+    W(0x0083, 0x0000, bytes([0x01, 0x22]))
+    W(0x0083, 0x0000, bytes([0x3A, 0x00]))
+    RMW(0x15, 0xEF, 0x00)                      # v15 & ~0x10
+    W(0x0083, 0x0000, bytes([0x02, 0x30]))
+    W(0x0083, 0x0000, idle)
+    W(0x0083, 0x0000, bytes([0x03, 0x10]))
+    W(0x0083, 0x0000, bytes([0x03, 0x00]))
+    for wi, payload in ctrl_8b:
+        W(0x008B, wi, payload)
+    RMW(0x32, 0xFF, 0x00)                      # write back unchanged
+    if has_0x19:
+        W(0x0083, 0x0000, bytes([0x19, 0x00]))
+
+    # ---- Wait A: reg 0x35 bit 0x40 set, then RMW-clear it -------------
+    POLL(0x008E, 0x3522, 0x40, 0x40)
+    RMW(0x35, 0xBF, 0x00)                      # v35 & ~0x40
+
+    # ---- Wait B: PARK_COMPLETE status word after the carriage return -
+    POLL(0x018E, 0x0122, 0xE3, 0xE0)
+
+    # ---- one idle-loop round (heartbeat only, no captured 2 s pause,
+    # no reg-0x35 read -- see the deviations above) ---------------------
+    W(0x0083, 0x0000, idle)
+    RMW(0x32, 0xFF, 0x00)
+
+    return entries
+
+
 def emit_op_program(key: str, phase_name: str, entries: list[OpEntry],
                     injections: list[tuple[str, int, int]],
                     bulk_injections: list[tuple[str, int, int]],
@@ -560,7 +728,7 @@ def emit_op_program(key: str, phase_name: str, entries: list[OpEntry],
         data_expr = f"{data_name} + {off}" if e.data else "nullptr"
         c.append(f"    {{OpKind::{e.kind}, 0x{e.request:02x}, "
                  f"0x{e.value:04x}, 0x{e.index:04x}, {data_expr}, "
-                 f"{e.length}, {e.dur_ms}}},")
+                 f"{e.length}, {e.dur_ms}, 0x{e.mask:02x}, 0x{e.want:02x}}},")
     c.append("};\n")
 
     if injections:
@@ -683,6 +851,14 @@ def emit() -> tuple[str, str]:
     h.append("    BulkIn,         /* bulk IN of `len` bytes from EP 0x81 */")
     h.append("    BulkOut,        /* bulk OUT of `len` bytes to EP 0x02 */")
     h.append("    BulkDone,       /* control read after a bulk transfer, logged only */")
+    h.append("    PollMasked,     /* poll until (reply[0] & mask) == want (docs/sane-")
+    h.append("                       hook5-frame.md section 4): POSITION's W3 (class")
+    h.append("                       F), PARK's Wait A (reg 0x35 bit 0x40) and Wait B")
+    h.append("                       (the PARK_COMPLETE status word) */")
+    h.append("    ReadModifyWrite,/* read register (index>>8) via 0x008e/index, write")
+    h.append("                       back (v & mask) | want as a 2-byte register batch,")
+    h.append("                       no ack read (docs/sane-hook5-frame.md section 4:")
+    h.append("                       PARK's three RMW registers, 4 sites) */")
     h.append("};\n")
     h.append("/** One op-program transfer. `data` is the write payload (Write, and a")
     h.append(" *  BulkOut NOT covered by a bulk injection) or the captured reply")
@@ -701,6 +877,13 @@ def emit() -> tuple[str, str]:
     h.append("    const std::uint8_t* data;")
     h.append("    std::uint16_t len;       /* Write/reads: byte length; BulkIn/BulkOut: bulk length */")
     h.append("    std::uint16_t dur_ms;    /* captured poll duration, ms (0 otherwise) */")
+    h.append("    std::uint8_t mask;       /* PollMasked: poll mask; ReadModifyWrite: and_mask;")
+    h.append("                                0 for every other kind (docs/sane-hook5-frame.md")
+    h.append("                                section 4) */")
+    h.append("    std::uint8_t want;       /* PollMasked: target value; ReadModifyWrite: or_mask;")
+    h.append("                                0 for every other kind. ReadModifyWrite's target")
+    h.append("                                register is (index >> 8), the same encoding as")
+    h.append("                                its own read setup (index = (reg << 8) | 0x22) */")
     h.append("};\n")
     h.append("/** A value the op-program runner must compute and patch into a")
     h.append(" *  Write op's payload before sending it (docs/sane-hook3-gain.md")
@@ -918,6 +1101,67 @@ def emit() -> tuple[str, str]:
                     program_entries.append(
                         f'    {{"{prog_name}", {ops_name}, {len(entries)}, '
                         f'{inj_name}, {inj_count}, {bulk_name}, {bulk_count}}},')
+            elif phase.name == "position":
+                # SANE hooks 5-7 (docs/sane-hook5-frame.md section 2/4):
+                # the whole captured POSITION phase, one-to-one, with the
+                # FEEDL injection and its completion poll reclassified to
+                # PollMasked (class F) by decode_ops() above.
+                entries = decode_ops(phase)
+                validate_op_program("position", entries)
+                injections = op_injections_for(phase, entries)
+                bulk_injections = op_bulk_injections_for(phase, entries)
+                strip_bulk_injected_data(entries, bulk_injections)
+                ops_name, inj_name, inj_count, bulk_name, bulk_count = emit_op_program(
+                    key, "position", entries, injections, bulk_injections, c)
+                program_entries.append(
+                    f'    {{"position", {ops_name}, {len(entries)}, '
+                    f'{inj_name}, {inj_count}, {bulk_name}, {bulk_count}}},')
+            elif phase.name == "scan":
+                # "scan_setup" (docs/sane-hook5-frame.md section 2/4, S1):
+                # everything up to (not including) the first image-data
+                # buffer descriptor -- located by matching this profile's
+                # own IMAGE_DESC_DATA, not a hardcoded op index (it varies
+                # per profile: 321 for plain3600/ir3600/dpi2400/dpi7200,
+                # 331 for dpi600, 325 for dpi1200). The image chunks
+                # themselves (S2) are NOT an OpProgram -- see
+                # gl126_ops.cpp's read_image_chunk(), driven at run time
+                # from Profile's own chunk_len/lines_per_chunk fields.
+                desc = getattr(mod, "IMAGE_DESC_DATA", None)
+                first_desc = None
+                for i, op in enumerate(phase.ops):
+                    if (op.kind == "cw" and op.wv == WV_BUF_DESC
+                            and desc is not None and op.data == desc):
+                        first_desc = i
+                        break
+                if first_desc is None:
+                    raise ValueError(
+                        f"{key}: could not locate the first image-data buffer "
+                        f"descriptor in the 'scan' phase (IMAGE_DESC_DATA)")
+                head_phase = dc_replace(phase, name="scan_setup",
+                                        ops=phase.ops[:first_desc])
+                head_entries = decode_ops(head_phase)
+                validate_op_program("scan_setup", head_entries)
+                injections = op_injections_for(phase, head_entries)
+                bulk_injections = op_bulk_injections_for(phase, head_entries)
+                strip_bulk_injected_data(head_entries, bulk_injections)
+                ops_name, inj_name, inj_count, bulk_name, bulk_count = emit_op_program(
+                    key, "scan_setup", head_entries, injections, bulk_injections, c)
+                program_entries.append(
+                    f'    {{"scan_setup", {ops_name}, {len(head_entries)}, '
+                    f'{inj_name}, {inj_count}, {bulk_name}, {bulk_count}}},')
+            elif phase.name == "park":
+                # The semantic PARK program (docs/sane-hook5-frame.md
+                # section 2/4, decision 3), built from this profile's own
+                # captured constants -- see build_park_program(). No byte
+                # or bulk injections: the two 0x8b payloads and the
+                # optional 0x19 write are baked into the ops directly.
+                entries = build_park_program(phase)
+                validate_op_program("park", entries)
+                ops_name, inj_name, inj_count, bulk_name, bulk_count = emit_op_program(
+                    key, "park", entries, [], [], c)
+                program_entries.append(
+                    f'    {{"park", {ops_name}, {len(entries)}, '
+                    f'{inj_name}, {inj_count}, {bulk_name}, {bulk_count}}},')
 
         progs_name = f"{key.upper()}_PROGRAMS"
         c.append(f"static const OpProgram {progs_name}[{len(program_entries)}] = {{")

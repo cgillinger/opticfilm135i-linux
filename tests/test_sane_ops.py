@@ -1109,6 +1109,371 @@ def test_shading_table_reference_vectors():
     print(f"test_shading_table_reference_vectors OK (within +/-8: {within_tol:.4%})")
 
 
+# ------------------------------------------ 23-27. hooks 5-7: the frame
+#
+# docs/sane-hook5-frame.md: POSITION (hook 5), SCAN's setup (hook 6a) and
+# image chunks (hook 6b), and the semantic PARK program (hook 7). The
+# "position"/"scan_setup" op programs are generated the same way hook
+# 2-4's are (tools/gen_sane_tables.py's decode_ops()); "park" is built
+# straight from tables.PARK's own captured constants (build_park_program()
+# in the generator), not replayed verbatim -- see that function's
+# docstring for the two deviations from the plan's own prose (no
+# AckRead ops, four ReadModifyWrite sites not three) and their evidence.
+
+
+def test_position_and_scan_setup_match_python_replayer():
+    """Wire equality for POSITION (whole phase) and SCAN's setup (ops
+    0-320, the part before the first image-data descriptor): the Python
+    driver's actual transfers, from a live scanner.scan(frame=1) over
+    the existing FakeUsbDevice, against the C++ "position"/"scan_setup"
+    OpProgram's own transfer log, both fed frame 1's FEEDL and the
+    default line count."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_position_and_scan_setup_match_python_replayer SKIPPED (no g++)")
+        return "skipped"
+
+    fake = FakeUsbDevice(reg01=0x22, cal_buffers=_build_cal_buffers())
+    scanner = Scanner(UsbIo(fake))
+
+    slices: dict[str, list[tuple[int, int]]] = {}
+    orig_run_phase = scanner._run_phase
+
+    def wrapped(phase, *a, **kw):
+        start = len(fake.wire_log)
+        result = orig_run_phase(phase, *a, **kw)
+        end = len(fake.wire_log)
+        slices.setdefault(phase.name, []).append((start, end))
+        return result
+
+    scanner._run_phase = wrapped  # type: ignore[method-assign]
+
+    with fast_time():
+        scanner.initialize()
+        scanner.scan(frame=1)   # POSITION, then SCAN (image + verbatim PARK)
+
+    # ---- position ------------------------------------------------------
+    assert "position" in slices, sorted(slices)
+    pos_start, pos_end = slices["position"][0]
+    py_position = _python_transfers(fake.wire_log[pos_start:pos_end])
+
+    feedl = tables.feedl_for_frame(1)
+    assert feedl == 6743, feedl
+    injects = {
+        "feedl_hi": (feedl >> 16) & 0xFF,
+        "feedl_mid": (feedl >> 8) & 0xFF,
+        "feedl_lo": feedl & 0xFF,
+    }
+    rc, out, err = _run_probe_program(probe, "plain3600", "position", None, injects=injects)
+    assert rc == 0, (out, err)
+    assert _lines(out)[-1].startswith("DONE"), out
+    cpp_position = _parse_probe_transfers(out)
+    assert py_position == cpp_position, (
+        f"position: python and C++ transfer logs differ\n"
+        f"python ({len(py_position)}): {py_position}\n"
+        f"cpp    ({len(cpp_position)}): {cpp_position}")
+
+    # ---- scan_setup (SCAN ops 0-320) ------------------------------------
+    assert "scan" in slices, sorted(slices)
+    scan_start, _scan_end = slices["scan"][0]
+    desc = tables.IMAGE_DESC_DATA
+    first_desc = next(i for i, op in enumerate(tables.SCAN.ops)
+                      if op.kind == "cw" and op.wv == 0x0082 and op.data == desc)
+    assert first_desc == 321, first_desc
+    py_scan_setup = _python_transfers(fake.wire_log[scan_start:scan_start + first_desc])
+
+    lines_n = tables.DEFAULT_LINES
+    assert lines_n == 5137, lines_n
+    injects2 = {"lines_hi": (lines_n >> 8) & 0xFF, "lines_lo": lines_n & 0xFF}
+    rc, out, err = _run_probe_program(probe, "plain3600", "scan_setup", None, injects=injects2)
+    assert rc == 0, (out, err)
+    assert _lines(out)[-1].startswith("DONE"), out
+    cpp_scan_setup = _parse_probe_transfers(out)
+    assert py_scan_setup == cpp_scan_setup, (
+        f"scan_setup: python and C++ transfer logs differ\n"
+        f"python ({len(py_scan_setup)}): {py_scan_setup}\n"
+        f"cpp    ({len(cpp_scan_setup)}): {cpp_scan_setup}")
+
+    print(f"test_position_and_scan_setup_match_python_replayer OK "
+          f"(position {len(py_position)} transfers, scan_setup {len(py_scan_setup)} "
+          f"transfers, feedl={feedl}, lines={lines_n})")
+
+
+def test_image_chunks_match_python_replayer():
+    """docs/sane-hook5-frame.md section 2/6, hook 6b: read_image_chunk()
+    over the plain3600 profile's own frame-1 shape (223 full 519156 B
+    chunks + one 180576 B tail, tables.IMAGE_CHUNK_COUNT/IMAGE_CHUNK_LEN/
+    IMAGE_TRAILING_DRAIN_LEN) against a Python-side expected transfer
+    list built from those same constants -- NOT a literal replay of
+    tables.SCAN.ops[321:]'s ~33-fragment-per-chunk raw USB capture (see
+    read_image_chunk()'s doc comment in sane/gl126_ops.h for why: that
+    fragmentation is a USB-packet-level artifact of the reference
+    capture, not protocol behaviour, the same "provenance, not
+    behaviour" principle already applied to captured pacing)."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_image_chunks_match_python_replayer SKIPPED (no g++)")
+        return "skipped"
+
+    n_full = tables.IMAGE_CHUNK_COUNT
+    full_len = tables.IMAGE_CHUNK_LEN
+    last_len = tables.IMAGE_TRAILING_DRAIN_LEN
+    assert (n_full, full_len, last_len) == (223, 519156, 180576), (n_full, full_len, last_len)
+
+    def expected_transfers():
+        out: list[tuple] = []
+        for i in range(n_full):
+            wi = 0x0008 if i == 0 else 0x0000
+            desc = bytes([0x00, 0x00, 0x00, 0x10]) + full_len.to_bytes(4, "little")
+            out.append(("W", 0x04, 0x0082, wi, desc))
+            out.append(("R", 0x0C, 0x008E, 0x0020, 1))
+            out.append(("B", full_len))
+        desc = bytes([0x00, 0x00, 0x00, 0x10]) + last_len.to_bytes(4, "little")
+        out.append(("W", 0x04, 0x0082, 0x0000, desc))
+        out.append(("R", 0x0C, 0x008E, 0x0020, 1))
+        out.append(("B", last_len))
+        return out
+
+    py_transfers = expected_transfers()
+    assert py_transfers[0] == ("W", 0x04, 0x0082, 0x0008,
+                               bytes.fromhex("00000010f4eb0700")), py_transfers[0]
+    assert py_transfers[-3] == ("W", 0x04, 0x0082, 0x0000,
+                                bytes.fromhex("0000001060c10200")), py_transfers[-3]
+
+    r = subprocess.run([str(probe), "image_chunks", str(n_full), str(full_len), str(last_len)],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert _lines(r.stdout)[-1] == "DONE", r.stdout
+    cpp_transfers = _parse_probe_transfers(r.stdout)
+
+    assert py_transfers == cpp_transfers, (
+        f"image_chunks: python and C++ transfer logs differ in "
+        f"{sum(1 for a, b in zip(py_transfers, cpp_transfers) if a != b)} places "
+        f"(python {len(py_transfers)}, cpp {len(cpp_transfers)})")
+    print(f"test_image_chunks_match_python_replayer OK "
+          f"({len(py_transfers)} transfers, {n_full + 1} chunks)")
+
+
+class _ParkWireDev:
+    """Records EVERY control transfer (both directions) into one ordered
+    `transfers` list, in the same tuple shape _parse_probe_transfers()/
+    _python_transfers() use -- unlike tests/test_park.py's own _FakeDev/
+    _FakeIo, which deliberately do NOT log read_reg()'s wire reads (that
+    file's assertions never needed them). This is a separate, purpose-
+    built fake for byte-for-byte wire equality against the C++ "park"
+    OpProgram (docs/sane-hook5-frame.md section 6, Part C test 3)."""
+
+    def __init__(self, reg15, reg32_seq, reg35, status_seq):
+        self.transfers: list[tuple] = []
+        self._reg15 = reg15
+        self._reg32_seq = list(reg32_seq)
+        self._reg32_calls = 0
+        self._reg35 = reg35
+        self._status_seq = list(status_seq)
+        self._status_calls = 0
+
+    def ctrl_transfer(self, bm, br, wv=0, wi=0, data_or_wlength=None, timeout=None):
+        if bm & 0x80:   # IN
+            length = int(data_or_wlength)
+            self.transfers.append(("R", br, wv, wi, length))
+            if wv == 0x018E and wi == 0x0122:
+                idx = min(self._status_calls, len(self._status_seq) - 1)
+                self._status_calls += 1
+                return bytes(self._status_seq[idx])
+            if wv == 0x008E:
+                reg = wi >> 8
+                if reg == 0x01:
+                    v = 0x22   # start-state guard (of135i.safety): idle-homed
+                elif reg == 0x15:
+                    v = self._reg15
+                elif reg == 0x35:
+                    v = self._reg35
+                elif reg == 0x32:
+                    idx = min(self._reg32_calls, len(self._reg32_seq) - 1)
+                    self._reg32_calls += 1
+                    v = self._reg32_seq[idx]
+                else:
+                    v = 0
+                return bytes([v, 0x55])
+            return bytes(length)
+        data = bytes(data_or_wlength) if data_or_wlength is not None else b""
+        self.transfers.append(("W", br, wv, wi, data))
+        return len(data)
+
+
+class _ParkWireIo:
+    """Duck type for UsbIo, routing every call through _ParkWireDev so
+    park_semantic()'s writes AND reads both land on the wire log."""
+
+    def __init__(self, dev):
+        self.dev = dev
+
+    def write_regs(self, pairs):
+        data = bytes(b for pair in pairs for b in pair)
+        self.dev.ctrl_transfer(0x40, 0x04, 0x0083, 0, data)
+
+    def read_reg(self, reg: int, strict: bool = False) -> int:
+        resp = bytes(self.dev.ctrl_transfer(0xC0, 0x04, 0x008E, (reg << 8) | 0x22, 2))
+        return resp[0]
+
+    def read_ext_reg(self, reg: int) -> int:
+        return 0
+
+    def close(self) -> None:
+        pass
+
+
+def test_park_program_matches_park_semantic():
+    """docs/sane-hook5-frame.md section 6, Part C test 3: the C++
+    "park" OpProgram's transfers over the probe fake == park_semantic()'s
+    own transfers over a Python fake scripted with the SAME register
+    values (so the RMW sites' computed write payloads agree byte for
+    byte on both sides), tested as tests/test_park.py drives it --
+    scanner.park_semantic(ir=False), no prior load/scan needed."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_park_program_matches_park_semantic SKIPPED (no g++)")
+        return "skipped"
+
+    reg15, reg35 = 0x90, 0xFB
+    reg32_seq = (0x81, 0x95)
+    status_seq = [b"\xe8\x55"]   # idle immediately -- Wait B settles on the first read
+
+    dev = _ParkWireDev(reg15=reg15, reg32_seq=reg32_seq, reg35=reg35, status_seq=status_seq)
+    io = _ParkWireIo(dev)
+    scanner = Scanner(io)
+    with fast_time():
+        scanner.park_semantic(ir=False)
+    # Scanner._operation("park")'s own start-state guard reads reg 0x01
+    # once before park_semantic()'s own first transfer -- session-guard
+    # machinery around the operation, not part of PARK's op sequence
+    # itself (the C++ "park" OpProgram has no such read either).
+    py_transfers = dev.transfers
+    assert py_transfers[0] == ("R", 0x04, 0x008E, 0x0122, 2), py_transfers[0]
+    py_transfers = py_transfers[1:]
+
+    script = [
+        f"rmw_read_at 0 {reg15:02x}",     # reg 0x15
+        f"rmw_read_at 1 {reg32_seq[0]:02x}",   # reg 0x32, pre-Wait-A
+        f"rmw_read_at 2 {reg35:02x}",     # reg 0x35, post-Wait-A
+        f"rmw_read_at 3 {reg32_seq[1]:02x}",   # reg 0x32, closing idle round
+        f"masked_poll_at 0 {reg35:02x}55",     # Wait A: settle at once
+        f"masked_poll_at 1 {status_seq[0].hex()}",   # Wait B: settle at once
+    ]
+    rc, out, err = _run_probe_program(probe, "plain3600", "park", script)
+    assert rc == 0, (out, err)
+    assert _lines(out)[-1].startswith("DONE"), out
+    cpp_transfers = _parse_probe_transfers(out)
+
+    assert py_transfers == cpp_transfers, (
+        f"park: python and C++ transfer logs differ\n"
+        f"python ({len(py_transfers)}): {py_transfers}\n"
+        f"cpp    ({len(cpp_transfers)}): {cpp_transfers}")
+    # Sanity: no AckRead-shaped extra reads snuck in on the Python side
+    # either (see build_park_program()'s docstring -- write_regs() never
+    # issues one), and the two 0x8b payloads landed with their captured
+    # values.
+    ctrl_8b = [t for t in py_transfers if t[0] == "W" and t[2] == 0x008B]
+    assert len(ctrl_8b) == 2, ctrl_8b
+    print(f"test_park_program_matches_park_semantic OK ({len(py_transfers)} transfers)")
+
+
+def test_poll_masked_waits_then_continues():
+    """docs/sane-hook5-frame.md section 3: POSITION's W3 poll (class F on
+    reg 0x101) waits through non-matching classes then continues once the
+    reply's upper nibble reaches 0xf0."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_poll_masked_waits_then_continues SKIPPED (no g++)")
+        return "skipped"
+
+    injects = {"feedl_hi": 0x00, "feedl_mid": 0x1A, "feedl_lo": 0x57}
+    rc, out, err = _run_probe_program(
+        probe, "plain3600", "position", ["masked_poll_at 0 9c55,d555,f455"], injects=injects)
+    assert rc == 0, (out, err)
+    lines = _lines(out)
+    assert lines[-1] == "DONE ops=48", lines[-1]
+    # POSITION's own op 34 is a plain (non-polling) Read at this same
+    # wValue/wIndex, captured before the mode batch write -- one more
+    # match here regardless of scripting; the PollMasked site (op 47)
+    # itself is read 3 times per the script.
+    site = [ln for ln in lines if ln.startswith("R req=04 val=018e idx=0122")]
+    assert len(site) == 4, site
+    print("test_poll_masked_waits_then_continues OK")
+
+
+def test_poll_masked_timeout_fails_closed():
+    """A class that never reaches F (POSITION's W3) and a status word
+    that never reads PARK_COMPLETE (PARK's Wait B) both time out
+    PollMasked, fail-closed, no transfer sent after."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_poll_masked_timeout_fails_closed SKIPPED (no g++)")
+        return "skipped"
+
+    injects = {"feedl_hi": 0x00, "feedl_mid": 0x1A, "feedl_lo": 0x57}
+    rc, out, err = _run_probe_program(
+        probe, "plain3600", "position", ["masked_poll_at 0 d555"], injects=injects)
+    assert rc == 1, (out, err)
+    lines = _lines(out)
+    assert lines[-1].startswith("FAIL PollTimeout op=47 "), lines[-1]
+    assert lines[-2] == "R req=04 val=018e idx=0122 len=2", lines[-2]
+
+    # PARK's Wait B (occurrence 1): Wait A (occurrence 0) settles
+    # unscripted at its own `want`, Wait B never does.
+    rc2, out2, err2 = _run_probe_program(
+        probe, "plain3600", "park", ["masked_poll_at 1 9c55"])
+    assert rc2 == 1, (out2, err2)
+    lines2 = _lines(out2)
+    assert lines2[-1].startswith("FAIL PollTimeout op="), lines2[-1]
+    assert lines2[-2] == "R req=04 val=018e idx=0122 len=2", lines2[-2]
+    print(f"test_poll_masked_timeout_fails_closed OK "
+          f"(position: {lines[-1]}; park: {lines2[-1]})")
+
+
+def test_feedl_and_position_budget():
+    """docs/sane-hook5-frame.md section 4/6: feedl_for_frame() against
+    of135i/tables.py's own table for frames 1-4, and position_timeout_ms()
+    against 3 * 1.6141 * position_timeout_scale()."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_feedl_and_position_budget SKIPPED (no g++)")
+        return "skipped"
+
+    from of135i.device import position_timeout_scale
+
+    feedls = {}
+    for frame in (1, 2, 3, 4):
+        want = tables.feedl_for_frame(frame)
+        r = subprocess.run([str(probe), "feedl", str(frame)], capture_output=True, text=True)
+        assert r.returncode == 0, r
+        kv = dict(p.split("=", 1) for p in r.stdout.split())
+        got = int(kv["FEEDL"])
+        assert got == want, (frame, got, want)
+        assert int(kv["hi"], 16) == (want >> 16) & 0xFF
+        assert int(kv["mid"], 16) == (want >> 8) & 0xFF
+        assert int(kv["lo"], 16) == want & 0xFF
+        feedls[frame] = want
+
+    assert feedls[1] == 6743, feedls
+
+    r1 = subprocess.run([str(probe), "position_timeout", "6743"], capture_output=True, text=True)
+    assert r1.returncode == 0, r1
+    ms1 = int(r1.stdout.strip().split("=")[1])
+    assert abs(ms1 - 4842) <= 1, ms1
+
+    feedl4 = feedls[4]
+    r4 = subprocess.run([str(probe), "position_timeout", str(feedl4)],
+                        capture_output=True, text=True)
+    assert r4.returncode == 0, r4
+    ms4 = int(r4.stdout.strip().split("=")[1])
+    scale4 = position_timeout_scale(tables, feedl4)
+    want_s4 = 3 * 1.6141 * scale4
+    assert abs(ms4 / 1000.0 - want_s4) < 0.05, (ms4, want_s4, scale4)
+    print(f"test_feedl_and_position_budget OK (feedl frames 1-4={feedls}, "
+          f"position_timeout_ms(6743)={ms1}, ({feedl4})={ms4} ~= {want_s4:.1f}s)")
+
+
 def main() -> int:
     tests = [
         test_programs_match_python_replayer,
@@ -1133,6 +1498,12 @@ def main() -> int:
         test_missing_bulk_injection_fails_before_any_transfer,
         test_bulk_injection_too_long_is_refused,
         test_shading_table_reference_vectors,
+        test_position_and_scan_setup_match_python_replayer,
+        test_image_chunks_match_python_replayer,
+        test_park_program_matches_park_semantic,
+        test_poll_masked_waits_then_continues,
+        test_poll_masked_timeout_fails_closed,
+        test_feedl_and_position_budget,
     ]
     passed = 0
     skipped = 0

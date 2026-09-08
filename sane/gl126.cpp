@@ -242,13 +242,14 @@ const OpProgram& find_program(const Profile& profile, const char* name)
 void run_phase_program(Genesys_Device* dev, const Profile& profile, const char* name,
                        RunResult& out,
                        const std::map<std::string, std::uint8_t>* values = nullptr,
-                       const std::map<std::string, std::vector<std::uint8_t>>* bulk_values = nullptr)
+                       const std::map<std::string, std::vector<std::uint8_t>>* bulk_values = nullptr,
+                       const RunPolicy* policy = nullptr)
 {
     DBG_HELPER_ARGS(dbg, "phase %s", name);
     const OpProgram& prog = find_program(profile, name);
     UsbWire wire(dev->interface->get_usb_device());
     try {
-        run_program(wire, prog, out, RunPolicy(), values, bulk_values);
+        run_program(wire, prog, out, policy ? *policy : RunPolicy(), values, bulk_values);
     } catch (const OpsError& e) {
         SANE_Status status = SANE_STATUS_IO_ERROR;
         const char* what = "I/O failure";
@@ -275,8 +276,8 @@ void run_phase_program(Genesys_Device* dev, const Profile& profile, const char* 
                             what, name, e.op_index, e.what());
     }
     for (const PollRecord& p : out.polls) {
-        DBG(DBG_info, "gl126: %s op %zu data-ready poll: first 0x%02x last 0x%02x, %u polls, "
-            "%u ms\n", name, p.op_index, p.first, p.last, p.polls, p.elapsed_ms);
+        DBG(DBG_info, "gl126: %s op %zu poll: first 0x%02x last 0x%02x, %u polls, %u ms\n",
+            name, p.op_index, p.first, p.last, p.polls, p.elapsed_ms);
     }
     for (const ReadRecord& r : out.reads) {
         if (r.reply_len >= 1 && r.reply[0] != r.captured[0]) {
@@ -293,7 +294,23 @@ void run_phase_program(Genesys_Device* dev, const Profile& profile, const char* 
     0x01 against 0x22; it checks that hook 2 ran in this sane_start instead,
     and consumes the mark so a later sane_start cannot reuse it
     (docs/sane-hook3-gain.md, section 5). */
-enum class CalStage { None, OffsetDone };
+enum class CalStage { None, OffsetDone, ShadingDone };
+
+/** Per-device "the next image chunk is the first of a scan" flag: the
+    vendor's first image descriptor carries wIndex 8, the later ones 0
+    (tables.py, SCAN op 321 vs 356). Armed by begin_scan(), consumed by
+    read_image_chunk_usb(). */
+std::map<const Genesys_Device*, bool>& first_chunk_pending()
+{
+    static std::map<const Genesys_Device*, bool> flags;
+    return flags;
+}
+
+/* The one profile brought up for the frame hooks, and its captured line
+   count (tables.py DEFAULT_LINES: reg 0x25-0x27 of the frame-1 capture).
+   Other profiles refuse in begin_scan() until their own run. */
+constexpr unsigned kFrameLinesPlain3600 = 5137;
+constexpr unsigned kFrameNumber = 1;   // docs/sane-hook5-frame.md, decision 5
 std::map<const Genesys_Device*, CalStage>& cal_stage()
 {
     static std::map<const Genesys_Device*, CalStage> stages;
@@ -420,6 +437,7 @@ void run_shading_calibration(Genesys_Device* dev, const Profile& profile)
     run_phase_program(dev, profile, "cal_shading_verify_upload", upload2, nullptr, &bulk);
     log_dark_means("shading dark measurement", dark_buf);
     log_dark_means("shading white measurement", white_buf);
+    cal_stage()[dev] = CalStage::ShadingDone;
 }
 
 /** A hook that has not been brought up against the hardware yet.
@@ -508,6 +526,23 @@ ScanSession CommandSetGl126::calculate_scan_session(const Genesys_Device* dev,
     session.params.scan_method = settings.scan_method;
     session.params.scan_mode = settings.scan_mode;
     session.params.color_filter = settings.color_filter;
+
+    /* The frame is scanned as captured, whatever the frontend's window:
+       the vendor's scan pass delivers the full 3762 x 5137 px, RGB16LE,
+       pixel-interleaved, with no colour line shift or stagger to undo on
+       the host (the driver writes the raw stream as the image;
+       docs/sane-hook5-frame.md section 4). Pinning the geometry here
+       also makes sane_get_parameters report it. */
+    bool ir = settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
+    const Profile* profile = find_profile(settings.xres, ir);
+    bool pinned = profile != nullptr && std::string(profile->name) == "plain3600";
+    if (pinned) {
+        session.params.pixels = profile->image_width;
+        session.params.requested_pixels = profile->image_width;
+        session.params.lines = kFrameLinesPlain3600;
+        session.params.startx = 0;
+        session.params.starty = 0;
+    }
     /* As gl124: these come from the device's current settings, which the
        core keeps valid from sane_open on, whereas the incoming settings
        object carries the frontend's exposure field unset at option-init
@@ -515,20 +550,37 @@ ScanSession CommandSetGl126::calculate_scan_session(const Genesys_Device* dev,
     session.params.contrast_adjustment = dev->settings.contrast;
     session.params.brightness_adjustment = dev->settings.brightness;
     session.params.exposure_lperiod = dev->settings.exposure_lperiod;
-    session.params.flags = ScanFlag::NONE;
+    session.params.flags = ScanFlag::IGNORE_COLOR_OFFSET | ScanFlag::IGNORE_STAGGER_OFFSET;
 
     compute_session(dev, session, sensor);
+    if (pinned) {
+        // one image request = one captured chunk (23 lines); the last one is
+        // the remainder (8 lines), exactly as the vendor streams the frame
+        session.buffer_size_read = profile->chunk_len;
+    }
 
     return session;
 }
 
-void CommandSetGl126::init_regs_for_scan_session(Genesys_Device* /*dev*/,
+/* No register set is built here: the scan registers are the captured
+   phases begin_scan() runs. What the core needs from this hook is the
+   session bookkeeping gl124 does at the end of its version -- the image
+   pipeline and the byte count sane_read delivers. Nothing reaches the wire. */
+void CommandSetGl126::init_regs_for_scan_session(Genesys_Device* dev,
                                                  const Genesys_Sensor& /*sensor*/,
                                                  Genesys_Register_Set* /*reg*/,
-                                                 const ScanSession& /*session*/) const
+                                                 const ScanSession& session) const
 {
     DBG_HELPER(dbg);
-    not_brought_up("init_regs_for_scan_session");
+    dev->session = session;
+    setup_image_pipeline(*dev, session);
+    dev->read_active = true;
+    dev->total_bytes_read = 0;
+    dev->total_bytes_to_read = static_cast<std::size_t>(session.output_line_bytes_requested) *
+                               static_cast<std::size_t>(session.params.lines);
+    DBG(DBG_info, "gl126: scan session %u x %u px, %u B per chunk, %zu B to the frontend\n",
+        session.params.pixels, session.params.lines, static_cast<unsigned>(session.buffer_size_read),
+        dev->total_bytes_to_read);
 }
 
 void CommandSetGl126::init_regs_for_warmup(Genesys_Device* /*dev*/,
@@ -736,18 +788,91 @@ SensorExposure CommandSetGl126::led_calibration(Genesys_Device* /*dev*/,
     return SensorExposure{};
 }
 
-void CommandSetGl126::begin_scan(Genesys_Device* /*dev*/, const Genesys_Sensor& /*sensor*/,
+/* Hooks 5 + 6a (docs/sane-hook5-frame.md): the absolute POSITION move to
+   the frame with its FEEDL-scaled completion wait, then the scan pass's
+   setup through the execute pulse and the vendor's settle reads. The
+   image itself is pulled chunk by chunk through read_image_chunk_usb()
+   as the core's pipeline asks for it. Requires the calibration of the
+   same sane_start (the mark hook 4 leaves), consumed here. */
+void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*sensor*/,
                                  Genesys_Register_Set* /*regs*/, bool /*start_motor*/) const
 {
     DBG_HELPER(dbg);
-    not_brought_up("begin_scan");
+
+    auto stage = cal_stage().find(dev);
+    if (stage == cal_stage().end() || stage->second != CalStage::ShadingDone) {
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: the scan pass needs the calibration of the same sane_start "
+                            "before it (the vendor calibrates every frame). Nothing was written.");
+    }
+    cal_stage().erase(stage);
+
+    bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
+    const Profile* profile = find_profile(dev->settings.xres, ir);
+    if (profile == nullptr || std::string(profile->name) != "plain3600") {
+        throw SaneException(SANE_STATUS_UNSUPPORTED,
+                            "gl126: the frame hooks are brought up for the plain 3600 dpi "
+                            "profile only. Nothing was written for %s.",
+                            profile ? profile->name : "this resolution");
+    }
+    if (dev->session.params.channels != 3 || dev->session.params.depth != 16) {
+        throw SaneException(SANE_STATUS_UNSUPPORTED,
+                            "gl126: the scan pass delivers 16-bit colour only (%u channels, "
+                            "%u bit requested). Nothing was written.",
+                            dev->session.params.channels, dev->session.params.depth);
+    }
+
+    // Hook 5: POSITION to the frame.
+    unsigned feedl = feedl_for_frame(kFrameNumber);
+    std::map<std::string, std::uint8_t> values;
+    values["feedl_hi"] = static_cast<std::uint8_t>((feedl >> 16) & 0xff);
+    values["feedl_mid"] = static_cast<std::uint8_t>((feedl >> 8) & 0xff);
+    values["feedl_lo"] = static_cast<std::uint8_t>(feedl & 0xff);
+    RunPolicy position_policy;
+    position_policy.masked_timeout_ms = position_timeout_ms(feedl);
+    DBG(DBG_info, "gl126: positioning to frame %u (FEEDL %u), completion budget %u ms\n",
+        kFrameNumber, feedl, position_policy.masked_timeout_ms);
+    RunResult position;
+    run_phase_program(dev, *profile, "position", position, &values, nullptr, &position_policy);
+
+    // Hook 6a: the scan pass's setup, with the frame's line count.
+    unsigned lines = dev->session.params.lines;
+    values.clear();
+    values["lines_hi"] = static_cast<std::uint8_t>((lines >> 8) & 0xff);
+    values["lines_lo"] = static_cast<std::uint8_t>(lines & 0xff);
+    RunResult setup;
+    run_phase_program(dev, *profile, "scan_setup", setup, &values);
+    first_chunk_pending()[dev] = true;
+    dev->parking = false;
+    DBG(DBG_info, "gl126: scan pass started, %u lines; the image follows chunk by chunk\n", lines);
 }
 
-void CommandSetGl126::end_scan(Genesys_Device* /*dev*/, Genesys_Register_Set* /*regs*/,
+/* Hook 7: PARK, as the driver's park_semantic(): the vendor's teardown
+   writes in order, real read-modify-writes, Wait A (reg 0x35 bit 0x40 after
+   the carriage-return write), one idle round, Wait B (the status word in
+   the park-complete class). Marks the device as parked so the core's
+   cancel path does not run it a second time. */
+void CommandSetGl126::end_scan(Genesys_Device* dev, Genesys_Register_Set* /*regs*/,
                                bool /*check_stop*/) const
 {
     DBG_HELPER(dbg);
-    not_brought_up("end_scan (PARK)");
+    if (dev->parking) {
+        DBG(DBG_info, "gl126: end_scan: already parked, nothing to do\n");
+        return;
+    }
+    bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
+    const Profile* profile = find_profile(dev->settings.xres, ir);
+    if (profile == nullptr) {
+        throw SaneException(SANE_STATUS_INVAL, "gl126: no captured profile for %u dpi",
+                            dev->settings.xres);
+    }
+    RunPolicy park_policy;
+    park_policy.masked_timeout_ms = 15000;   // the driver's _PARK_WAIT_TIMEOUT
+    RunResult park;
+    run_phase_program(dev, *profile, "park", park, nullptr, nullptr, &park_policy);
+    dev->parking = true;
+    first_chunk_pending().erase(dev);
+    DBG(DBG_info, "gl126: parked (%zu waits recorded)\n", park.polls.size());
 }
 
 void CommandSetGl126::move_back_home(Genesys_Device* /*dev*/, bool /*wait_until_home*/) const
@@ -762,7 +887,9 @@ void CommandSetGl126::move_back_home(Genesys_Device* /*dev*/, bool /*wait_until_
 void CommandSetGl126::wait_for_motor_stop(Genesys_Device* /*dev*/) const
 {
     DBG_HELPER(dbg);
-    not_brought_up("wait_for_motor_stop");
+    /* The vendor has no such wait: every motor move in its flow ends with
+       its own completion poll (POSITION's W3, PARK's Wait A/B), which the
+       hooks run explicitly. Nothing to do here. */
 }
 
 void CommandSetGl126::load_document(Genesys_Device* /*dev*/) const
@@ -833,6 +960,25 @@ void CommandSetGl126::save_power(Genesys_Device* /*dev*/, bool /*enable*/) const
     /* The unit leaves the USB bus a few minutes after a session releases
        it and only a power cycle brings it back, so there is nothing safe
        to do here. */
+}
+
+void read_image_chunk_usb(Genesys_Device* dev, std::uint8_t* data, std::size_t size)
+{
+    DBG_HELPER_ARGS(dbg, "%zu bytes", size);
+    auto it = first_chunk_pending().find(dev);
+    bool first = (it != first_chunk_pending().end() && it->second);
+    if (it != first_chunk_pending().end()) {
+        it->second = false;
+    }
+    UsbWire wire(dev->interface->get_usb_device());
+    try {
+        read_image_chunk(wire, data, size, first);
+    } catch (const OpsError& e) {
+        throw SaneException(SANE_STATUS_IO_ERROR,
+                            "gl126: image chunk of %zu bytes failed (%s). Nothing further was "
+                            "written; power-cycle the scanner, no recovery is attempted.",
+                            size, e.what());
+    }
 }
 
 } // namespace gl126

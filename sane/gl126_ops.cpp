@@ -352,6 +352,91 @@ void do_poll_class(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
     }
 }
 
+void do_poll_masked(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
+                   const RunPolicy& policy)
+{
+    unsigned start = wire.now_ms();
+    std::uint8_t first = 0;
+    std::uint8_t last = 0;
+    unsigned polls = 0;
+
+    for (;;) {
+        std::uint8_t reply[2] = {0, 0};
+        wire.control_read(op.request, op.value, op.index, reply, 2);
+        ++polls;
+        if (polls == 1) {
+            first = reply[0];
+        }
+        last = reply[0];
+
+        if ((reply[0] & op.mask) == op.want) {
+            PollRecord rec{idx, first, last, polls, wire.now_ms() - start};
+            out.polls.push_back(rec);
+            return;
+        }
+
+        unsigned elapsed = wire.now_ms() - start;
+        if (elapsed > policy.masked_timeout_ms) {
+            std::ostringstream oss;
+            oss << "gl126_ops: PollMasked at op " << idx << " (mask 0x" << std::hex
+                << static_cast<int>(op.mask) << " want 0x" << static_cast<int>(op.want)
+                << ") timed out after " << std::dec << elapsed << "ms: first 0x" << std::hex
+                << static_cast<int>(first) << ", last 0x" << static_cast<int>(last)
+                << std::dec << " -- nothing further sent";
+            throw OpsError(OpsFailure::PollTimeout, idx, oss.str());
+        }
+        wire.sleep_ms(policy.poll_interval_ms);
+    }
+}
+
+// docs/sane-hook5-frame.md section 4: no ack read -- park_semantic()'s
+// own read-modify-write sites go through Scanner.io.write_regs(), which
+// performs one control write and nothing else (see gl126_tables.h's Op
+// doc comment and build_park_program()'s docstring in
+// tools/gen_sane_tables.py for the evidence).
+//
+// DEVIATION found by tests/test_sane_ops.py's wire-equality test (its
+// own docstring calls that test "the arbiter"): PARK's reg-0x35 RMW
+// (clearing bit 0x40 after Wait A) does NOT re-read the register on the
+// real driver -- of135i/device.py's _park_semantic_steps() reuses
+// Wait A's own poll loop's last read (`v35`) directly:
+//     v35 = self.io.read_reg(0x35)
+//     while not (v35 & 0x40):
+//         ...
+//         v35 = self.io.read_reg(0x35)
+//     self.io.write_regs([(0x35, v35 & ~0x40 & 0xFF)])   # no fresh read
+// So here: a ReadModifyWrite op immediately preceded (in the program) by
+// a PollMasked op with the SAME (request, value, index) -- exactly
+// Wait A followed by the reg-0x35 clear -- reuses that PollMasked op's
+// last polled value instead of issuing its own control_read(); every
+// other RMW site in PARK (0x15, 0x32 x2) has no such immediately
+// preceding same-register poll and reads fresh, as originally designed.
+void do_read_modify_write(Wire& wire, const OpProgram& prog, const Op& op,
+                          std::size_t idx, RunResult& out)
+{
+    std::uint8_t reg = static_cast<std::uint8_t>((op.index >> 8) & 0xFF);
+    std::uint8_t v = 0;
+    bool reused = false;
+    if (idx > 0 && !out.polls.empty()) {
+        const Op& prev = prog.ops[idx - 1];
+        const PollRecord& last_poll = out.polls.back();
+        if (prev.kind == OpKind::PollMasked && last_poll.op_index == idx - 1 &&
+            prev.request == op.request && prev.value == op.value && prev.index == op.index) {
+            v = last_poll.last;
+            reused = true;
+        }
+    }
+    if (!reused) {
+        std::uint8_t reply[2] = {0, 0};
+        wire.control_read(op.request, op.value, op.index, reply, 2);
+        record_read(out, op, idx, reply, 2);
+        v = reply[0];
+    }
+    std::uint8_t patched = static_cast<std::uint8_t>((v & op.mask) | op.want);
+    std::uint8_t payload[2] = {reg, patched};
+    wire.control_write(0x04, 0x0083, 0x0000, payload, 2);
+}
+
 } // namespace
 
 void run_program(Wire& wire, const OpProgram& prog, RunResult& out,
@@ -392,6 +477,12 @@ void run_program(Wire& wire, const OpProgram& prog, RunResult& out,
             break;
         case OpKind::BulkDone:
             do_bulk_done(wire, op, i, out);
+            break;
+        case OpKind::PollMasked:
+            do_poll_masked(wire, op, i, out, policy);
+            break;
+        case OpKind::ReadModifyWrite:
+            do_read_modify_write(wire, prog, op, i, out);
             break;
         }
         // Reached only if op i did not throw: it is done.
@@ -832,6 +923,72 @@ std::vector<std::uint8_t> shading_table2(const std::uint8_t* white, std::size_t 
                                          unsigned lines, unsigned width)
 {
     return shading_table2(white, white_len, dark, dark_len, lines, width, kShading2Targets);
+}
+
+// ------------------------------------------------- hooks 5-7: the frame
+
+unsigned feedl_for_frame(unsigned frame)
+{
+    return kFeedlFrame1 + (frame - 1) * kFeedlPitch;
+}
+
+FeedlBytes feedl_bytes(unsigned feedl)
+{
+    FeedlBytes b;
+    b.hi = static_cast<std::uint8_t>((feedl >> 16) & 0xFF);
+    b.mid = static_cast<std::uint8_t>((feedl >> 8) & 0xFF);
+    b.lo = static_cast<std::uint8_t>(feedl & 0xFF);
+    return b;
+}
+
+unsigned position_timeout_ms(unsigned feedl)
+{
+    // docs/sane-hook5-frame.md section 3/6: "3 * 1.6141 * position_
+    // timeout_scale" -- POSITION's captured completion duration for
+    // frame 1 (1.6141 s, tables.POSITION's own op 47/W3) times 3, scaled
+    // linearly by FEEDL relative to frame 1's (never below 1x, matching
+    // of135i/device.py's position_timeout_scale()).
+    constexpr double kCapturedMs = 1614.1;
+    double scale = std::max(1.0, static_cast<double>(feedl) / static_cast<double>(kFeedlFrame1));
+    double ms = 3.0 * kCapturedMs * scale;
+    return static_cast<unsigned>(ms + 0.5);
+}
+
+void read_image_chunk(Wire& wire, std::uint8_t* data, std::size_t len, bool first)
+{
+    // docs/sane-hook5-frame.md section 2/4, hook 6b: descriptor address
+    // fixed at 0x10000000 (IMAGE_READ_ADDR, of135i/tables.py), length is
+    // this chunk's own `len`, LE32; wIndex 8 arms the FIRST chunk of a
+    // scan, 0 every chunk after (a flag begin_scan sets, per the plan).
+    std::uint8_t desc[8] = {
+        0x00, 0x00, 0x00, 0x10,
+        static_cast<std::uint8_t>(len & 0xFF),
+        static_cast<std::uint8_t>((len >> 8) & 0xFF),
+        static_cast<std::uint8_t>((len >> 16) & 0xFF),
+        static_cast<std::uint8_t>((len >> 24) & 0xFF),
+    };
+    wire.control_write(0x04, 0x0082, first ? 0x0008 : 0x0000, desc, sizeof(desc));
+
+    std::uint8_t ack = 0;
+    wire.control_read(0x0C, 0x008E, 0x0020, &ack, 1);
+    if (ack != 0x55) {
+        std::ostringstream oss;
+        oss << "gl126_ops: read_image_chunk descriptor ack got 0x" << std::hex
+            << static_cast<int>(ack) << ", want 0x55 -- nothing further sent";
+        throw OpsError(OpsFailure::BadAck, 0, oss.str());
+    }
+
+    // ONE logical bulk IN of the whole chunk -- see read_image_chunk()'s
+    // doc comment (gl126_ops.h) for why the captured ~33-fragment/chunk
+    // USB-packet breakdown is not reproduced here, and why there is no
+    // trailing bulk-done read.
+    std::size_t got = wire.bulk_read(data, len);
+    if (got != len) {
+        std::ostringstream oss;
+        oss << "gl126_ops: read_image_chunk bulk IN got " << got << " B, want "
+            << len << " B -- nothing further sent";
+        throw OpsError(OpsFailure::ShortBulk, 1, oss.str());
+    }
 }
 
 } // namespace gl126
