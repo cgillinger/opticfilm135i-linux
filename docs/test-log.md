@@ -3042,3 +3042,17 @@ power cycle → `of135i load` → `of135i eject`; no eject from this state.
 
 Logs kept privately: `plustek-135i-analys/hook2-20260908/`
 (scanimage debug log, the Python reference run's log and TIFF).
+
+**Exit (same session):** power cycle → `of135i load`. First attempt:
+cold_init with the known latched-magazine poll deviations (0x4855
+timeout, 0x32 = 0x1d ×3), jog released the magazine (event 4), then the
+load FEED's completion poll ended **0xfc55** (want f455, sensor bit still
+set): the transport ran without taking the cassette, the strict poll
+stopped before the traverse, nothing further sent. Same signature as
+the reinsert-step cases of Test 22 / the B5 run (the reinsert has no
+machine verification: 0x32 1f/1f, no events, in both the failed and the
+good run). Second attempt after another power cycle, magazine taken
+fully out and reinserted to the stop: f455 / dc55 exact, then driver
+`eject`: "ejected". So the post-hook-2 state was left the verified way
+and the unit is back where a session normally leaves it. The
+post-dark_b state itself was never tested as an eject origin, by design.
