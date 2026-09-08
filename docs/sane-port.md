@@ -364,6 +364,13 @@ buffers. From `tables_dpi*.py`:
 
 ### Next: hook 2, offset calibration (scoped 2026-09-07)
 
+Offline analysis (plan steps 1–2) written 2026-09-08:
+`docs/sane-hook2-offset.md` — the full wire sequence with its one real
+wait point, the failure rules, the genesys core blockers around the
+hook (warmup move, home, move-to-TA) and the op-program structure with
+an offline wire-equality test against the Python replayer. Five
+decisions are listed at its end; code follows them.
+
 Hook 2 is `offset_calibration()` and nothing else: the driver's
 CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and
 0xff) feeding `calibrate.offset_codes()` → AFE regs 5/6/7 via
