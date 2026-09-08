@@ -538,6 +538,64 @@ unsigned position_timeout_ms(unsigned feedl);
     the full reasoning. */
 void read_image_chunk(Wire& wire, std::uint8_t* data, std::size_t len, bool first);
 
+/** Scan-pass bookkeeping for hooks 6-7 (docs/sane-hook5-frame.md), kept
+    genesys-free so the transitions are unit-tested offline. The one thing
+    it decides is whether the verified PARK may run: PARK is defined from
+    the END of a complete scan pass and from nowhere else (Test 52 attempt
+    1 ran it from post-shading and its Wait B never completed; a pass
+    aborted half-way -- a failed chunk read, a frontend cancel -- is a
+    state PARK has never been run from). Anything but Complete refuses,
+    writes nothing, and closes the session (Failed) so that no later call
+    -- a second cancel, the close path -- tries again; the operator
+    power-cycles, as with the driver.
+
+        Idle --arm()--> Armed --chunk_begin()--> Streaming --chunk_done()
+        (bytes >= expected)--> Complete --parked()--> Parked --arm()--> Armed
+        any state --fail()--> Failed (terminal; a new sane_open resets it,
+        gated by the hardware check that reg 0x01 reads idle) */
+enum class ScanPassState : std::uint8_t { Idle, Armed, Streaming, Complete, Parked, Failed };
+const char* scan_pass_state_name(ScanPassState s);
+
+enum class ParkDecision : std::uint8_t {
+    Run,            // Complete: every expected byte was read; PARK may run
+    NoPass,         // Idle: nothing was started, nothing to write
+    AlreadyParked,  // Parked: the core's second end_scan call, nothing to do
+    AbortedPass,    // Armed/Streaming: cancelled mid-pass; refused, now Failed
+    Failed          // an earlier failure already closed the pass; nothing written
+};
+const char* park_decision_name(ParkDecision d);
+
+class ScanPass {
+public:
+    ScanPassState state() const { return state_; }
+    std::size_t bytes_expected() const { return expected_; }
+    std::size_t bytes_read() const { return read_; }
+
+    /** begin_scan succeeded: Idle/Parked -> Armed with the raw byte total the
+        pass must deliver. Returns false (state unchanged) from any other
+        state -- the caller refuses the scan. */
+    bool arm(std::size_t bytes_expected);
+    /** A chunk read is about to start. Armed -> Streaming and *first = true
+        (the wIndex-8 descriptor); Streaming stays with *first = false.
+        Returns false from any other state -- the caller refuses the read. */
+    bool chunk_begin(bool* first);
+    /** A chunk of `bytes` arrived in full. Streaming -> Complete once the
+        expected total is reached. */
+    void chunk_done(std::size_t bytes);
+    /** Anything failed (a chunk read, PARK itself): -> Failed, terminal. */
+    void fail();
+    /** end_scan asks whether PARK may run. AbortedPass has the side effect
+        of closing the pass (-> Failed) so no later call retries. */
+    ParkDecision park_decision();
+    /** PARK ran to its completion wait: Complete -> Parked. */
+    void parked();
+
+private:
+    ScanPassState state_ = ScanPassState::Idle;
+    std::size_t expected_ = 0;
+    std::size_t read_ = 0;
+};
+
 } // namespace gl126
 } // namespace genesys
 

@@ -3370,3 +3370,22 @@ runaway takes only that job, and multi-hundred-MB debug logs off tmpfs
 `plustek-135i-analys/hook5-20260908/` (the full 756 MB debug log
 zstd-compressed, the gl126 lines extracted, ref5–7, the PNM), the
 quarter-scale PNGs in `~/Bilder/opticfilm-sane-test52/`.
+
+## 2026-09-08 — Offline: the scan-pass state machine (review finding on 785e507)
+
+An external review of the Test 52 commit found that PARK could still be
+reached from an aborted pass: the first-chunk flag survived a failed
+chunk read, `end_scan` only tested the flag's presence, and a PARK that
+threw left it for a retry. Verified in the code — three paths
+(`sane_cancel` after a read failure, a frontend cancel after N chunks, a
+second `end_scan` after a PARK timeout), none exercised on hardware.
+
+Fix, offline: `ScanPass` in `gl126_ops` (Idle / Armed / Streaming /
+Complete / Parked / Failed), PARK only from Complete (all raw bytes
+read), every other state refuses and writes nothing, Failed is terminal
+until a new `sane_open` passes the hardware check
+(docs/sane-hook5-frame.md §9). Three new op tests drive the probe
+through the verified path, the four abort shapes and the PARK failure;
+31/31 op tests, backend build clean. No hardware run: the change only
+removes writes, the verified frame-1 path is unchanged on the wire
+(the same programs, the same chunks, the same park).

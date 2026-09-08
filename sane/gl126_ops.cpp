@@ -991,5 +991,95 @@ void read_image_chunk(Wire& wire, std::uint8_t* data, std::size_t len, bool firs
     }
 }
 
+// ------------------------------------------------------------ scan pass
+
+const char* scan_pass_state_name(ScanPassState s)
+{
+    switch (s) {
+        case ScanPassState::Idle: return "Idle";
+        case ScanPassState::Armed: return "Armed";
+        case ScanPassState::Streaming: return "Streaming";
+        case ScanPassState::Complete: return "Complete";
+        case ScanPassState::Parked: return "Parked";
+        case ScanPassState::Failed: return "Failed";
+    }
+    return "?";
+}
+
+const char* park_decision_name(ParkDecision d)
+{
+    switch (d) {
+        case ParkDecision::Run: return "Run";
+        case ParkDecision::NoPass: return "NoPass";
+        case ParkDecision::AlreadyParked: return "AlreadyParked";
+        case ParkDecision::AbortedPass: return "AbortedPass";
+        case ParkDecision::Failed: return "Failed";
+    }
+    return "?";
+}
+
+bool ScanPass::arm(std::size_t bytes_expected)
+{
+    if (state_ != ScanPassState::Idle && state_ != ScanPassState::Parked) {
+        return false;
+    }
+    state_ = ScanPassState::Armed;
+    expected_ = bytes_expected;
+    read_ = 0;
+    return true;
+}
+
+bool ScanPass::chunk_begin(bool* first)
+{
+    if (state_ == ScanPassState::Armed) {
+        state_ = ScanPassState::Streaming;
+        *first = true;
+        return true;
+    }
+    if (state_ == ScanPassState::Streaming) {
+        *first = false;
+        return true;
+    }
+    return false;
+}
+
+void ScanPass::chunk_done(std::size_t bytes)
+{
+    if (state_ != ScanPassState::Streaming) {
+        return;
+    }
+    read_ += bytes;
+    if (read_ >= expected_) {
+        state_ = ScanPassState::Complete;
+    }
+}
+
+void ScanPass::fail()
+{
+    state_ = ScanPassState::Failed;
+}
+
+ParkDecision ScanPass::park_decision()
+{
+    switch (state_) {
+        case ScanPassState::Complete: return ParkDecision::Run;
+        case ScanPassState::Idle: return ParkDecision::NoPass;
+        case ScanPassState::Parked: return ParkDecision::AlreadyParked;
+        case ScanPassState::Failed: return ParkDecision::Failed;
+        case ScanPassState::Armed:
+        case ScanPassState::Streaming:
+            state_ = ScanPassState::Failed;
+            return ParkDecision::AbortedPass;
+    }
+    return ParkDecision::Failed;
+}
+
+void ScanPass::parked()
+{
+    if (state_ == ScanPassState::Complete) {
+        state_ = ScanPassState::Parked;
+    }
+}
+
 } // namespace gl126
 } // namespace genesys

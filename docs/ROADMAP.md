@@ -15,6 +15,13 @@ the matrices below has one status. A milestone is delivered when its
 mandatory criteria are met — the next action is then the *delivery*, not
 more general testing.
 
+**Images are accepted by human eyes.** Any criterion whose evidence is a
+scanned image is met only when the image itself has been looked at and
+approved by the project's owner — statistics, dimensions and byte counts
+support the judgement, they never replace it (a pass that delivers the
+right number of bytes of the wrong picture has happened; see the test
+log on the shading-table swap).
+
 **Stop / reopen rules.**
 - A finished item reopens **only** on a concrete regression, new relevant
   failure evidence, or a change that affects its earlier verification. A
@@ -133,7 +140,11 @@ A `genesys`-family backend (gl124 template) that:
 - performs the agreed workflow via `scanimage` and a SANE frontend
   (digiKam): load, scan a frame, deliver the image;
 - **preserves the driver's safety model** — no writes from an unknown
-  start state, no automatic recovery after a fault.
+  start state, no automatic recovery after a fault, and the park
+  sequence only after a complete scan pass (never from an aborted or
+  cancelled one);
+- delivers images that the owner has looked at and approved, per
+  resolution and mode claimed (the human-eyes rule above).
 
 Scope for B1 mirrors A's in-scope list (single unit, the DPI set, 1–4
 frames, IR). Frontend niceties beyond "scan a frame correctly" are

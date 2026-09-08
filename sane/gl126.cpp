@@ -296,14 +296,15 @@ void run_phase_program(Genesys_Device* dev, const Profile& profile, const char* 
     (docs/sane-hook3-gain.md, section 5). */
 enum class CalStage { None, OffsetDone, ShadingDone };
 
-/** Per-device "the next image chunk is the first of a scan" flag: the
-    vendor's first image descriptor carries wIndex 8, the later ones 0
-    (tables.py, SCAN op 321 vs 356). Armed by begin_scan(), consumed by
-    read_image_chunk_usb(). */
-std::map<const Genesys_Device*, bool>& first_chunk_pending()
+/** Per-device scan-pass state (gl126_ops.h, ScanPass): armed by
+    begin_scan(), advanced by read_image_chunk_usb(), consulted by
+    end_scan() for the one question that matters -- may PARK run. It also
+    carries the "first chunk" fact (the vendor's first image descriptor has
+    wIndex 8, the later ones 0 -- tables.py, SCAN op 321 vs 356). */
+std::map<const Genesys_Device*, ScanPass>& scan_pass()
 {
-    static std::map<const Genesys_Device*, bool> flags;
-    return flags;
+    static std::map<const Genesys_Device*, ScanPass> passes;
+    return passes;
 }
 
 /* The one profile brought up for the frame hooks, and its captured line
@@ -490,6 +491,11 @@ void CommandSetGl126::init(Genesys_Device* dev) const
     std::uint8_t state = check_start_state(dev);
     DBG(DBG_info, "init: reg 0x01 = 0x%02x (%s), nothing written\n", state,
         state == 0x00 ? "cold, never homed" : "idle-homed");
+    /* A failed or parked pass belongs to the previous open. The hardware
+       check above is the gate for starting over (after a power cycle the
+       unit reads 0x22 or 0x00 again); the bookkeeping follows it. */
+    scan_pass().erase(dev);
+    cal_stage().erase(dev);
 }
 
 /* Pure computation: the ScanSession the core sizes its image pipeline
@@ -822,6 +828,14 @@ void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*se
     }
     cal_stage().erase(stage);
 
+    ScanPass& pass = scan_pass()[dev];
+    if (pass.state() != ScanPassState::Idle && pass.state() != ScanPassState::Parked) {
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: a scan pass is %s; no new pass from that state. Nothing "
+                            "was written; power-cycle the scanner and reopen it.",
+                            scan_pass_state_name(pass.state()));
+    }
+
     bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
     const Profile* profile = find_profile(dev->settings.xres, ir);
     if (profile == nullptr || std::string(profile->name) != "plain3600") {
@@ -857,9 +871,16 @@ void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*se
     values["lines_lo"] = static_cast<std::uint8_t>(lines & 0xff);
     RunResult setup;
     run_phase_program(dev, *profile, "scan_setup", setup, &values);
-    first_chunk_pending()[dev] = true;
+    std::size_t expected = dev->session.output_total_bytes_raw;
+    if (!pass.arm(expected)) {
+        // Unreachable after the check above; kept so the state machine, not
+        // this function, is the authority.
+        throw SaneException(SANE_STATUS_INVAL, "gl126: scan pass could not be armed (%s)",
+                            scan_pass_state_name(pass.state()));
+    }
     dev->parking = false;
-    DBG(DBG_info, "gl126: scan pass started, %u lines; the image follows chunk by chunk\n", lines);
+    DBG(DBG_info, "gl126: scan pass started, %u lines, %zu raw bytes expected; the image "
+        "follows chunk by chunk\n", lines, expected);
 }
 
 /* Hook 7: PARK, as the driver's park_semantic(): the vendor's teardown
@@ -871,18 +892,35 @@ void CommandSetGl126::end_scan(Genesys_Device* dev, Genesys_Register_Set* /*regs
                                bool /*check_stop*/) const
 {
     DBG_HELPER(dbg);
-    if (dev->parking) {
-        DBG(DBG_info, "gl126: end_scan: already parked, nothing to do\n");
-        return;
-    }
-    if (first_chunk_pending().count(dev) == 0) {
-        /* The core calls end_scan from sane_cancel after ANY failed
-           sane_start, including one that never reached begin_scan. PARK is
-           defined from the end of a scan pass and nowhere else (Test 52,
-           attempt 1: run from the post-shading state, its Wait B never
-           completed). No scan pass, no park. */
-        DBG(DBG_info, "gl126: end_scan: no scan pass was started, nothing written\n");
-        return;
+    /* The core calls end_scan from sane_cancel after ANY failed sane_start
+       (including one that never reached begin_scan), after a failed or
+       cancelled read, and again on close. PARK is defined from the end of a
+       COMPLETE scan pass and nowhere else (Test 52 attempt 1: run from the
+       post-shading state, its Wait B never completed; a half-read pass has
+       never been parked from). The state machine decides; every refusal
+       writes nothing. */
+    auto it = scan_pass().find(dev);
+    ParkDecision decision = (it == scan_pass().end()) ? ParkDecision::NoPass
+                                                      : it->second.park_decision();
+    switch (decision) {
+        case ParkDecision::Run:
+            break;
+        case ParkDecision::NoPass:
+            DBG(DBG_info, "gl126: end_scan: no scan pass was started, nothing written\n");
+            return;
+        case ParkDecision::AlreadyParked:
+            DBG(DBG_info, "gl126: end_scan: already parked, nothing to do\n");
+            return;
+        case ParkDecision::Failed:
+            DBG(DBG_info, "gl126: end_scan: the scan pass failed earlier; nothing written, "
+                "the scanner needs a power cycle\n");
+            return;
+        case ParkDecision::AbortedPass:
+            throw SaneException(SANE_STATUS_IO_ERROR,
+                                "gl126: scan pass aborted after %zu of %zu raw bytes; PARK is "
+                                "only defined after a complete pass, so nothing was written. "
+                                "Power-cycle the scanner; no recovery is attempted.",
+                                it->second.bytes_read(), it->second.bytes_expected());
     }
     bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
     const Profile* profile = find_profile(dev->settings.xres, ir);
@@ -893,9 +931,16 @@ void CommandSetGl126::end_scan(Genesys_Device* dev, Genesys_Register_Set* /*regs
     RunPolicy park_policy;
     park_policy.masked_timeout_ms = 15000;   // the driver's _PARK_WAIT_TIMEOUT
     RunResult park;
-    run_phase_program(dev, *profile, "park", park, nullptr, nullptr, &park_policy);
+    try {
+        run_phase_program(dev, *profile, "park", park, nullptr, nullptr, &park_policy);
+    } catch (...) {
+        /* A PARK that did not reach its completion wait leaves the transport
+           where it is; a second attempt has never been run and is not made. */
+        it->second.fail();
+        throw;
+    }
+    it->second.parked();
     dev->parking = true;
-    first_chunk_pending().erase(dev);
     DBG(DBG_info, "gl126: parked (%zu waits recorded)\n", park.polls.size());
 }
 
@@ -989,19 +1034,31 @@ void CommandSetGl126::save_power(Genesys_Device* /*dev*/, bool /*enable*/) const
 void read_image_chunk_usb(Genesys_Device* dev, std::uint8_t* data, std::size_t size)
 {
     DBG_HELPER_ARGS(dbg, "%zu bytes", size);
-    auto it = first_chunk_pending().find(dev);
-    bool first = (it != first_chunk_pending().end() && it->second);
-    if (it != first_chunk_pending().end()) {
-        it->second = false;
+    auto it = scan_pass().find(dev);
+    bool first = false;
+    if (it == scan_pass().end() || !it->second.chunk_begin(&first)) {
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: image chunk requested with no scan pass streaming (%s). "
+                            "Nothing was written.",
+                            it == scan_pass().end() ? "Idle"
+                                                    : scan_pass_state_name(it->second.state()));
     }
     UsbWire wire(dev->interface->get_usb_device());
     try {
         read_image_chunk(wire, data, size, first);
     } catch (const OpsError& e) {
+        it->second.fail();
         throw SaneException(SANE_STATUS_IO_ERROR,
-                            "gl126: image chunk of %zu bytes failed (%s). Nothing further was "
-                            "written; power-cycle the scanner, no recovery is attempted.",
-                            size, e.what());
+                            "gl126: image chunk of %zu bytes failed (%s) after %zu of %zu raw "
+                            "bytes. Nothing further was written; power-cycle the scanner, no "
+                            "recovery is attempted.",
+                            size, e.what(), it->second.bytes_read(),
+                            it->second.bytes_expected());
+    }
+    it->second.chunk_done(size);
+    if (it->second.state() == ScanPassState::Complete) {
+        DBG(DBG_info, "gl126: scan pass complete, %zu raw bytes read\n",
+            it->second.bytes_read());
     }
 }
 

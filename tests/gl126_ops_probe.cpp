@@ -1109,6 +1109,58 @@ int cmd_feedl(int argc, char** argv)
     return 0;
 }
 
+/* scanpass <expected_bytes> <event>... -- drive a ScanPass through a
+   sequence of events and print the state after each one. Events:
+   arm | chunk <bytes> | chunkfail | park | parkfail | close. `park`
+   prints the decision; on Run it marks the pass parked (the verified
+   PARK completed). `parkfail` = PARK started and failed. `close` = a new
+   sane_open (the hardware gate passed) resets the bookkeeping. */
+int cmd_scanpass(int argc, char** argv)
+{
+    if (argc < 4) {
+        std::cerr << "usage: probe scanpass <expected_bytes> <event>...\n";
+        return 2;
+    }
+    std::size_t expected = static_cast<std::size_t>(std::stoull(argv[2]));
+    ScanPass pass;
+    for (int i = 3; i < argc; ++i) {
+        std::string ev = argv[i];
+        if (ev == "arm") {
+            bool ok = pass.arm(expected);
+            std::cout << "arm ok=" << (ok ? 1 : 0);
+        } else if (ev == "chunk") {
+            if (i + 1 >= argc) { std::cerr << "chunk needs <bytes>\n"; return 2; }
+            std::size_t n = static_cast<std::size_t>(std::stoull(argv[++i]));
+            bool first = false;
+            bool ok = pass.chunk_begin(&first);
+            if (ok) pass.chunk_done(n);
+            std::cout << "chunk ok=" << (ok ? 1 : 0) << " first=" << (first ? 1 : 0);
+        } else if (ev == "chunkfail") {
+            bool first = false;
+            bool ok = pass.chunk_begin(&first);
+            if (ok) pass.fail();
+            std::cout << "chunkfail ok=" << (ok ? 1 : 0);
+        } else if (ev == "park") {
+            ParkDecision d = pass.park_decision();
+            if (d == ParkDecision::Run) pass.parked();
+            std::cout << "park decision=" << park_decision_name(d);
+        } else if (ev == "parkfail") {
+            ParkDecision d = pass.park_decision();
+            if (d == ParkDecision::Run) pass.fail();
+            std::cout << "parkfail decision=" << park_decision_name(d);
+        } else if (ev == "close") {
+            pass = ScanPass();
+            std::cout << "close";
+        } else {
+            std::cerr << "unknown event " << ev << "\n";
+            return 2;
+        }
+        std::cout << " state=" << scan_pass_state_name(pass.state())
+                  << " read=" << pass.bytes_read() << "\n";
+    }
+    return 0;
+}
+
 int cmd_position_timeout(int argc, char** argv)
 {
     if (argc != 3) {
@@ -1127,7 +1179,7 @@ int main(int argc, char** argv)
     static const char* usage_line =
         "run|program_info|offset|residual|gain|percentile|warmup|"
         "shading_table|shading_table2|upload_len|"
-        "image_chunks|feedl|position_timeout ...\n";
+        "image_chunks|feedl|position_timeout|scanpass ...\n";
     if (argc < 2) {
         std::cerr << "usage: " << argv[0] << " " << usage_line;
         return 2;
@@ -1147,6 +1199,7 @@ int main(int argc, char** argv)
         if (mode == "image_chunks") return cmd_image_chunks(argc, argv);
         if (mode == "feedl") return cmd_feedl(argc, argv);
         if (mode == "position_timeout") return cmd_position_timeout(argc, argv);
+        if (mode == "scanpass") return cmd_scanpass(argc, argv);
     } catch (const std::exception& e) {
         std::cerr << "ERROR " << e.what() << "\n";
         return 2;

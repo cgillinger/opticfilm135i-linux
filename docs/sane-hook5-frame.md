@@ -215,3 +215,42 @@ If the run stops before PARK completes: power cycle → `load
    with batch support later.
 6. **Exit by `eject` from the post-PARK state** if the run completes;
    power cycle + `load --double-jog` otherwise.
+
+## 9. After the hardware run — the scan-pass state machine (2026-09-08)
+
+Test 52 attempt 3 verified the happy path. An external review of that
+commit pointed out that the bookkeeping did not distinguish it from the
+unhappy ones: the "first chunk pending" flag stayed set after a failed
+chunk read, `end_scan` only checked that the flag existed, and a PARK
+that threw left the flag in place for a second attempt. So `sane_cancel`
+after a failed read, a frontend cancel after N chunks, or a second
+`end_scan` after a PARK timeout could all run the park sequence from a
+state it has never been run from. No such event has happened on the
+unit; the fix is offline and closes the code paths.
+
+`gl126_ops.h` now carries `ScanPass`, genesys-free like the runner:
+
+    Idle -arm-> Armed -chunk_begin-> Streaming -chunk_done (bytes >=
+    output_total_bytes_raw)-> Complete -parked-> Parked -arm-> Armed
+    any -fail-> Failed (terminal until the next sane_open)
+
+- `begin_scan` arms it (after the setup program, with the session's raw
+  byte total) and refuses a new pass from Armed/Streaming/Complete/Failed
+  before writing anything.
+- `read_image_chunk_usb` takes the "first chunk" fact from it, marks
+  Failed on a short read or bad ack, and counts full chunks.
+- `end_scan` asks `park_decision()`: **Run** only from Complete;
+  **NoPass** (Idle) and **AlreadyParked** are silent no-ops; **Failed**
+  is a no-op with a log line; **AbortedPass** (Armed/Streaming) refuses,
+  closes the pass and reports `SANE_STATUS_IO_ERROR` naming the bytes
+  read, so the frontend shows the operator that a power cycle is due.
+  A PARK that throws marks Failed before rethrowing.
+- `init()` (a new `sane_open`, gated by the hardware check that reg 0x01
+  reads idle) resets the bookkeeping. A power cycle is what puts the
+  unit back there; the code never tries.
+
+Offline tests (`tests/test_sane_ops.py`, probe command `scanpass`): the
+verified 224-chunk path parks once and is re-armable; a failed chunk, a
+cancel after 12 chunks, a cancel before the first chunk and a failed
+`sane_start` never reach PARK and never retry; a PARK failure is
+terminal. 31/31 op tests, backend build clean.

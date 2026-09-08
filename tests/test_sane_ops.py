@@ -1474,6 +1474,98 @@ def test_feedl_and_position_budget():
           f"position_timeout_ms(6743)={ms1}, ({feedl4})={ms4} ~= {want_s4:.1f}s)")
 
 
+# ---------------------------------------------------- 8. scan-pass state
+CHUNK = 519156
+RAW_TOTAL = 3762 * 3 * 2 * 5137   # frame 1 at 3600 dpi: 115 952 364 raw bytes
+N_CHUNKS = -(-RAW_TOTAL // CHUNK)  # 224
+
+
+def _run_scanpass(probe: str, *events: str) -> list[str]:
+    r = subprocess.run([probe, "scanpass", str(RAW_TOTAL), *events],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    return _lines(r.stdout)
+
+
+def test_scan_pass_complete_then_park():
+    """The verified path (Test 52 attempt 3): arm, 224 full chunks (the
+    first with the wIndex-8 descriptor), Complete, PARK runs once, the
+    core's second end_scan is a no-op, and the next sane_start may arm
+    again from Parked."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_scan_pass_complete_then_park SKIPPED (no g++)")
+        return "skipped"
+    events = ["arm"] + ["chunk", str(CHUNK)] * N_CHUNKS + ["park", "park", "arm"]
+    out = _run_scanpass(probe, *events)
+    assert out[0] == "arm ok=1 state=Armed read=0", out[0]
+    assert out[1] == f"chunk ok=1 first=1 state=Streaming read={CHUNK}", out[1]
+    assert out[2].startswith("chunk ok=1 first=0 state=Streaming"), out[2]
+    # Streaming right up to the chunk that crosses the raw total.
+    assert out[N_CHUNKS - 1].endswith(f"state=Streaming read={CHUNK * (N_CHUNKS - 1)}"), \
+        out[N_CHUNKS - 1]
+    assert out[N_CHUNKS] == f"chunk ok=1 first=0 state=Complete read={CHUNK * N_CHUNKS}", \
+        out[N_CHUNKS]
+    assert out[N_CHUNKS + 1].startswith("park decision=Run state=Parked"), out[N_CHUNKS + 1]
+    assert out[N_CHUNKS + 2].startswith("park decision=AlreadyParked state=Parked"), \
+        out[N_CHUNKS + 2]
+    assert out[N_CHUNKS + 3] == "arm ok=1 state=Armed read=0", out[N_CHUNKS + 3]
+    print(f"test_scan_pass_complete_then_park OK ({N_CHUNKS} chunks -> Complete -> "
+          f"Parked, second end_scan a no-op, re-armable)")
+
+
+def test_scan_pass_aborted_never_parks():
+    """The three ways a pass ends early: a failed chunk read, a frontend
+    cancel after N chunks, a cancel before the first chunk. None may reach
+    PARK; each closes the pass (Failed) so a later end_scan -- the core
+    calls it again on close -- writes nothing either, and no new pass may
+    be armed until a new sane_open (the hardware gate) resets it."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_scan_pass_aborted_never_parks SKIPPED (no g++)")
+        return "skipped"
+    # (a) chunk read fails mid-pass.
+    out = _run_scanpass(probe, "arm", "chunk", str(CHUNK), "chunkfail", "park", "park",
+                        "chunk", str(CHUNK), "arm", "close", "arm")
+    assert out[2] == "chunkfail ok=1 state=Failed read=519156", out[2]
+    assert out[3] == "park decision=Failed state=Failed read=519156", out[3]
+    assert out[4] == "park decision=Failed state=Failed read=519156", out[4]
+    assert out[5].startswith("chunk ok=0"), out[5]          # no read from Failed
+    assert out[6] == "arm ok=0 state=Failed read=519156", out[6]
+    assert out[8] == "arm ok=1 state=Armed read=0", out[8]  # after close (new open)
+    # (b) cancel after 12 of 224 chunks.
+    out = _run_scanpass(probe, "arm", *(["chunk", str(CHUNK)] * 12), "park", "park", "arm")
+    assert out[13] == f"park decision=AbortedPass state=Failed read={12 * CHUNK}", out[13]
+    assert out[14] == f"park decision=Failed state=Failed read={12 * CHUNK}", out[14]
+    assert out[15] == f"arm ok=0 state=Failed read={12 * CHUNK}", out[15]
+    # (c) cancel before any chunk (begin_scan done, nothing read).
+    out = _run_scanpass(probe, "arm", "park", "park")
+    assert out[1] == "park decision=AbortedPass state=Failed read=0", out[1]
+    assert out[2] == "park decision=Failed state=Failed read=0", out[2]
+    # (d) nothing armed at all (a failed sane_start before begin_scan).
+    out = _run_scanpass(probe, "park")
+    assert out[0] == "park decision=NoPass state=Idle read=0", out[0]
+    print("test_scan_pass_aborted_never_parks OK (chunk failure, cancel mid-pass, "
+          "cancel before the first chunk, no pass: none reaches PARK, none retries)")
+
+
+def test_scan_pass_park_failure_is_terminal():
+    """PARK started from Complete and did not reach its completion wait
+    (Test 52 attempt 1's shape): the pass is Failed, the core's next
+    end_scan writes nothing, no new pass may be armed."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_scan_pass_park_failure_is_terminal SKIPPED (no g++)")
+        return "skipped"
+    events = ["arm"] + ["chunk", str(CHUNK)] * N_CHUNKS + ["parkfail", "park", "arm"]
+    out = _run_scanpass(probe, *events)
+    assert out[N_CHUNKS + 1] == f"parkfail decision=Run state=Failed read={CHUNK * N_CHUNKS}", \
+        out[N_CHUNKS + 1]
+    assert out[N_CHUNKS + 2].startswith("park decision=Failed state=Failed"), out[N_CHUNKS + 2]
+    assert out[N_CHUNKS + 3].startswith("arm ok=0 state=Failed"), out[N_CHUNKS + 3]
+    print("test_scan_pass_park_failure_is_terminal OK")
+
+
 def main() -> int:
     tests = [
         test_programs_match_python_replayer,
@@ -1504,6 +1596,9 @@ def main() -> int:
         test_poll_masked_waits_then_continues,
         test_poll_masked_timeout_fails_closed,
         test_feedl_and_position_budget,
+        test_scan_pass_complete_then_park,
+        test_scan_pass_aborted_never_parks,
+        test_scan_pass_park_failure_is_terminal,
     ]
     passed = 0
     skipped = 0
