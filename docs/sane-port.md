@@ -377,7 +377,10 @@ running the session preamble and the dark bracket, core gating in
 `genesys_start_scan` (no home / move-to-TA for GL126, `WARMUP` flag
 dropped). Hardware run done (Test 48): hook 2 complete on the unit,
 offset codes within one step of the driver's, W1 = DATAENB confirmed.
-Next: hook 3, coarse gain (`CAL_WHITE` + warmup retry + gain checks).
+Hook 3, coarse gain: offline analysis in `docs/sane-hook3-gain.md`
+(2026-09-08) — same machinery, plus injections in op programs,
+multi-chunk bulk reads, the warmup retry, and two more core gates
+(default shading upload, second move-to-TA).
 
 Hook 2 is `offset_calibration()` and nothing else: the driver's
 CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and
