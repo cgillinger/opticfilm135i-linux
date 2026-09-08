@@ -406,10 +406,10 @@ index 542d4ff..b21e534 100644
          reg.init_reg(0x5e, value & 0xff);
      } else {
 diff --git a/backend/genesys/tables_model.cpp b/backend/genesys/tables_model.cpp
-index 321d179..544b68c 100644
+index 321d179..9bd1db1 100644
 --- a/backend/genesys/tables_model.cpp
 +++ b/backend/genesys/tables_model.cpp
-@@ -2311,6 +2311,99 @@ void genesys_init_usb_device_tables()
+@@ -2311,6 +2311,104 @@ void genesys_init_usb_device_tables()
  
  
  
@@ -499,8 +499,13 @@ index 321d179..544b68c 100644
 +       uploaded by the backend's own calibration hook, in the vendor's
 +       format; the core's shading pass, repark and coefficient upload are
 +       never used (docs/sane-hook4-shading.md, section 5). */
++    /* HOST_SIDE_GRAY: the vendor's scan pass is always 3-channel; a gray
++       request is scanned in colour and merged on the host by the core's
++       pipeline, so the hooks see one and the same session (Test 52,
++       attempt 2: a gray default request was refused by the frame check). */
 +    model.flags = ModelFlag::UNTESTED |
-+                  ModelFlag::DISABLE_SHADING_CALIBRATION;
++                  ModelFlag::DISABLE_SHADING_CALIBRATION |
++                  ModelFlag::HOST_SIDE_GRAY;
 +
 +    model.search_lines = 200;
 +    s_usb_devices->emplace_back(0x07b3, 0x1436, model);

@@ -3270,3 +3270,17 @@ Sound during the 15 s Wait B timeout: nothing in particular noticed
 not a usable instruction; from the next run on the operator gets the
 expected timeline (calibration ≈ 5 s quiet, position ≈ 1.5 s, scan pass
 ≈ 40 s, park ≈ 5 s) up front.
+
+**Test 52, attempt 2 (same evening, after power cycle + `load
+--double-jog` — which loaded first time again, n = 2):** hooks 2–4 ran;
+then `init_regs_for_scan_session` refused the session — "3762 x 5137
+px, **1 ch**, 16 bit is not the captured frame": `scanimage`'s default
+mode is Gray and the run was started without `--mode Color`. The guard
+did exactly what it is for: nothing written after the calibration,
+`end_scan` a no-op (no scan pass started), `move_back_home` refused in
+the cancel path, no motor command. State after: 0x22 / 0x101 = 0xdc
+(post-shading). Fix: `ModelFlag::HOST_SIDE_GRAY` on the model — a gray
+request is scanned in colour and merged by the core's pipeline, so the
+hooks always see the 3-channel frame. Exit per rule (the unit is
+post-shading, not post-PARK): power cycle → `load --double-jog` →
+attempt 3 with the flag.
