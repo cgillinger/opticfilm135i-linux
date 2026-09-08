@@ -342,6 +342,38 @@ def percentile_stretch(img_u16: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> n
     return out
 
 
+def positive_params(sample_u16: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per-channel parameters of the driver's preview inversion
+    (of135i.image.to_positive), computed once on a small full-frame
+    sample so that crops and the full frame invert identically: film base
+    from the 99.8th percentile, density black/white points at 0.5/99.5 %."""
+    px = sample_u16.astype(np.float64)
+    base = np.array([np.percentile(px[..., c], 99.8) for c in range(3)])
+    dens = np.log10(np.clip(base, 1, None) / np.clip(px, 1.0, None))
+    lo = np.array([np.percentile(dens[..., c], 0.5) for c in range(3)])
+    hi = np.array([np.percentile(dens[..., c], 99.5) for c in range(3)])
+    return base, lo, hi
+
+
+def apply_positive(img_u16: np.ndarray, params, gamma: float = 2.2) -> np.ndarray:
+    """to_positive's math with fixed parameters -> 8-bit RGB for review.
+    Small inputs only (crops, 1/8 frames): float64 per call."""
+    base, lo, hi = params
+    px = img_u16.astype(np.float64)
+    out = np.empty(px.shape, dtype=np.uint8)
+    for c in range(3):
+        dens = np.log10(max(base[c], 1.0) / np.clip(px[..., c], 1.0, None))
+        v = np.clip((dens - lo[c]) / max(hi[c] - lo[c], 1e-9), 0, 1)
+        out[..., c] = (v ** (1.0 / gamma) * 255.0).astype(np.uint8)
+    return out
+
+
+def vendor_orientation(img: np.ndarray) -> np.ndarray:
+    """The vendor apps' orientation (of135i/cli.py: mirrored sensor image,
+    rotated): rot90 x3 then horizontal mirror."""
+    return np.ascontiguousarray(np.rot90(img, 3)[:, ::-1])
+
+
 def save_side_by_side(panels: list[np.ndarray], path: Path, gap: int = 8) -> None:
     h = panels[0].shape[0]
     gap_col = np.full((h, gap, 3), 255, dtype=np.uint8)
@@ -550,7 +582,17 @@ def process_frame(frame_no: int, analysis_dir: Path, out_dir: Path,
     crop_path = out_dir / f"stagger-f{frame_no}-ref-vs-raw-vs-corrected.png"
     save_side_by_side([panel_ref, panel_raw, panel_corrected], crop_path)
     report.append(f"Wrote {crop_path}")
-    del ref_crop, raw_crop, corrected_crop, panel_ref, panel_raw, panel_corrected
+    del panel_ref, panel_raw, panel_corrected
+
+    # Positive versions for the human eye (the driver's preview inversion,
+    # parameters from the 1/8 reference frame so all panels invert alike).
+    ref_eighth_sample = np.array(ref[::8, ::8, :])
+    pos = positive_params(ref_eighth_sample)
+    pos_crop_path = out_dir / f"stagger-f{frame_no}-ref-vs-raw-vs-corrected-POSITIVE.png"
+    save_side_by_side([apply_positive(ref_crop, pos), apply_positive(raw_crop, pos),
+                       apply_positive(corrected_crop, pos)], pos_crop_path)
+    report.append(f"Wrote {pos_crop_path}")
+    del ref_crop, raw_crop, corrected_crop, ref_eighth_sample
 
     # Full-frame 1/8 downscale (simple stride subsample -- cheap, keeps
     # memory tiny), reference vs corrected only.
@@ -568,6 +610,12 @@ def process_frame(frame_no: int, analysis_dir: Path, out_dir: Path,
         percentile_stretch(np.array(corr_eighth), lo_f, hi_f),
     ], full_path)
     report.append(f"Wrote {full_path}")
+    pos_full_path = out_dir / f"stagger-f{frame_no}-full-ref-vs-corrected-eighth-POSITIVE.png"
+    save_side_by_side([
+        vendor_orientation(apply_positive(np.array(ref_eighth), pos)),
+        vendor_orientation(apply_positive(np.array(corr_eighth), pos)),
+    ], pos_full_path)
+    report.append(f"Wrote {pos_full_path}")
 
     report.append(f"Frame {frame_no} processed in {time.time() - t0:.1f} s")
 
