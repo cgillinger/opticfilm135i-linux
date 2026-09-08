@@ -20,8 +20,11 @@ wire equality with the Python replayer for cal_white / cal_gain_check_a
 sides), injection and multi-chunk failure rules, gain codes on the
 reference vectors (equal to the driver's on the vendor white line),
 percentile against numpy, the warmup policy on the harness sequences.
-163 tests green, build clean. **The hardware run of §7 has not happened
-yet.**
+163 tests green, build clean. **Hardware run done the same day, Test
+49:** hooks 2 and 3 complete on the unit, gain codes identical to the
+driver's (0x2e / 0x21 / 0x27), one white measurement, all seven bulk
+reads full length, W1 at 0xcd on the first poll in all five phases,
+stopped at the shading refusal as predicted.
 
 ## 1. Scope
 

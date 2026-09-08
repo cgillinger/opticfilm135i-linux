@@ -3056,3 +3056,48 @@ fully out and reinserted to the stop: f455 / dc55 exact, then driver
 `eject`: "ejected". So the post-hook-2 state was left the verified way
 and the unit is back where a session normally leaves it. The
 post-dark_b state itself was never tested as an eject origin, by design.
+
+## 2026-09-08 — Test 49: SANE hook 3 (coarse gain) on hardware — complete, gain codes identical to the driver's
+
+Setup as Test 48: power cycle, `of135i load` with the reference strip,
+the driver's `scan --frame 1` as reference, then the uninstalled
+backend at e350311, `scanimage -d genesys:libusb:001:010
+--force-calibration --resolution 3600 --format pnm -o /dev/null` with
+the debug log.
+
+Result: hooks 2 and 3 ran to completion — offset (prep, afe_base, dark
+A/B), then cal_white, the computation, cal_gain_check_a with the
+computed gain bytes patched in, cal_gain_check_b. 313 control
+transfers, seven bulk reads all full length (3072, 3072, 16384 + 14336
++ 384, 3072, 3072). Then `init_regs_for_shading` refused as designed,
+`sane_start` failed, `sane_cancel`'s `end_scan` refused (logged),
+`sane_close` wrote nothing. No unusual sound reported.
+
+| | Python (same strip, same load) | C++ hooks 2 + 3 |
+|---|---|---|
+| gain codes R/G/B | 0x2e / 0x21 / 0x27 | **0x2e / 0x21 / 0x27** |
+| white peaks (99.9th pct) | (not logged by the CLI) | 21898 / 31166 / 25994 |
+| warmup measurements | 1 | 1 (the verified single-measurement path) |
+| offset codes R/G/B | 0x010a / 0x010a / 0x010a | 0x010a / 0x010a / 0x010a |
+| offset slopes | 18.63 / 18.76 / 18.81 | 18.66 / 18.80 / 19.09 |
+| gain-check dark means, offset 0x80 / 0xff (logged only) | — | 54229 / 49887 / 52079 and 60297 / 54215 / 57181 |
+| W1 data-ready poll, all five phases | (lenient replay) | first 0xcd, last 0xcd, 1 poll, 4 ms |
+| poll timeouts | 0 | 0 |
+
+Gain and offset codes are identical to the driver's on the same strip
+and load. The gain-check means sit where the reference capture's
+"dark A2 / B2" rows sit (cal-analysis.md §1: 53336/48828/53609 and
+59511/53184/58965), which is the first hardware evidence that the
+gain-check bracket behaves as captured.
+
+Read deviations logged: the same `prep` set as Test 48 (0x35 = 0xfb,
+0x32 = 0x1f / 0x9d, 0x101 = 0xd8 / 0xdc), plus `cal_white` op 60: the
+0x104 counter read 0x00 where the capture had 0x0a — informational, the
+white line arrived complete.
+
+State after: reg 0x01 = 0x02, 0x101 = 0xdc, 0x32 = 0x9d, 0x35 = 0xfb —
+the post-gain_check_b state, same shape as Test 48's post-dark_b.
+Exit per plan: power cycle → `of135i load` (magazine fully out and back
+to the stop at the prompt) → `of135i eject`.
+
+Logs kept privately: `plustek-135i-analys/hook3-20260908/`.
