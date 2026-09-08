@@ -3128,3 +3128,11 @@ at the feed, releases the magazine) → power cycle → `load` → `eject`.
 Cheapest evidence: a vendor capture of "power on with the magazine
 latched → app open → load" (the Test 46 capture was warm, not a power
 cycle), to see whether the vendor's feed engages first time there.
+Second attempt after another power cycle (magazine loose after the
+first attempt's jog): cold_init, jog, reinsert, load f455 / dc55 exact,
+driver `eject`: "ejected". 2/2 for the pattern "first attempt fails at
+the feed, second engages". Options recorded for the next session: a
+`--release` mode of the load tool (cold_init + jog, clean end) for a
+two-cycle exit without a failed session; a double-jog A/B in one
+session (jog, reinsert, jog again from the loose state, reinsert, load);
+the vendor capture of a power-on with a latched magazine.
