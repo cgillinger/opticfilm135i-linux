@@ -3221,3 +3221,5 @@ a latched magazine, marked as such until it has repeated. `--release`
 stays as the fallback. The plain first-attempt failure (fc55) remains
 the documented property of `power cycle with a latched magazine →
 load`.
+Driver `eject` afterwards: "ejected", magazine loose, LED off on
+removal. Unit back at 0x22 with the magazine out.
