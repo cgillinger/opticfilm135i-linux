@@ -163,8 +163,11 @@ request flow at submission time). Delivered = submitted, review-ready.
 - **B1 — SANE, in progress** (since 2026-09-06): register tables
   generated, backend builds against sane-backends, model enumerates,
   `sane_open` initialises the unit exactly as the driver does (Test 43).
-  Scanning not implemented yet; bring-up continues hook by hook
-  (docs/sane-port.md). **B2** not started.
+  Calibration, positioning, scan pass and park verified on hardware
+  (Tests 48–52): `scanimage` delivers frame 1 at 3600 dpi in colour,
+  equal to the driver's output within its run-to-run band. Still to
+  do for B1: frame selection, the other resolutions, IR, install/
+  packaging (docs/sane-port.md). **B2** not started.
 - **A6 note** (Test 44/46): the driver's eject stalled from a state only
   the backend's first `init()` produced; that `init()` now writes nothing.
   No CLI workflow was ever affected. The stall mechanism itself is an

@@ -26,7 +26,7 @@ functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md]
 - **M3 — Robustness and honest limits** ✅ (every acceptance-matrix row met;
   the residual-dark_b fix is hardware-verified — A10/Test 36 — positioning
   verified, cross-unit a documented limitation)
-- **M4 — SANE backend** — in progress: builds and links against sane-backends, the unit is listed and opened read-only from `scanimage` (hardware-checked); no calibration or scan hook is enabled yet
+- **M4 — SANE backend** — in progress: builds and links against sane-backends; calibration, positioning, the scan pass and park all run on the unit, and `scanimage` delivers a full 3600 dpi colour frame equal to the driver's within its run-to-run band (hardware-checked 2026-09-08). Frame 1 only so far; frame selection, other resolutions, IR and packaging remain
 
 See **[docs/ROADMAP.md](docs/ROADMAP.md)** for the acceptance matrix,
 frozen scope, and exactly what remains before the driver is "complete".
@@ -84,8 +84,9 @@ step for wider distribution.
 
 **Status: v0.1.1 released. The standalone CLI driver is complete —
 magazine loading, single-frame and whole-strip batch scanning, all five
-resolutions, IR and dust removal, and eject. The SANE backend builds and
-opens the scanner but cannot scan yet.** Scan, calibration, IR and dust removal are stable and
+resolutions, IR and dust removal, and eject. The SANE backend builds,
+opens the scanner and scans frame 1 at 3600 dpi in colour; frame
+selection, other resolutions, IR and packaging are still to come.** Scan, calibration, IR and dust removal are stable and
 hardware-verified, per frame and across a 4-frame strip in one
 invocation, frame for frame against the vendor application's output of
 the same strip (2026-09-05). Complete does not mean polished: this is

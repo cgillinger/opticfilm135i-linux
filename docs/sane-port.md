@@ -394,7 +394,16 @@ SCAN, PARK): offline analysis in `docs/sane-hook5-frame.md` (2026-09-08)
 — POSITION has no verified exit on its own, so the three are one unit
 and one hardware run (a full frame 1); the six decisions were taken the
 same day and the hooks are implemented offline (28/28 op tests, 179
-total). Hardware run — the first motor movement of the port — pending.
+total). Hardware run done (Test 52, attempt 3, 2026-09-08): the whole
+of frame 1 through `scanimage --mode Color --resolution 3600` — W3
+completed in 1.5 s, 224 full chunks, the semantic PARK's Wait A and
+Wait B both satisfied on the first poll, the image within the driver's
+own run-to-run band against its reference, and the driver's `eject`
+worked straight from the post-PARK state. Attempts 1 and 2 the same
+day found and fixed a third ungated move-to-TA, a PARK reached from the
+wrong state via `sane_cancel`, and the gray default mode
+(`HOST_SIDE_GRAY`). Not yet in the port: frame selection (frame 1 is
+pinned), other resolutions, IR, and install/packaging.
 
 Hook 2 is `offset_calibration()` and nothing else: the driver's
 CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and

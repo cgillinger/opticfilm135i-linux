@@ -3284,3 +3284,90 @@ request is scanned in colour and merged by the core's pipeline, so the
 hooks always see the 3-channel frame. Exit per rule (the unit is
 post-shading, not post-PARK): power cycle → `load --double-jog` →
 attempt 3 with the flag.
+
+## 2026-09-08 — Test 52, attempt 3: the whole of frame 1 through `scanimage` — hooks 5–7 complete on hardware, image equal to the driver's within its own run-to-run band, driver `eject` from post-PARK
+
+Setup: attempt 2's exit (power cycle → `load --double-jog`, loaded first
+time again, n = 3), driver `scan --frame 1` as the reference (ref7:
+gain 0x2e/0x20/0x27, offset 0x010a ×3, post-PARK 0x22 / 0x101 = 0xf8),
+then the uninstalled backend at 399f0a9:
+
+```
+scanimage -d genesys:libusb:001:017 --force-calibration --mode Color \
+          --resolution 3600 --format pnm -o frame1-sane.pnm
+```
+
+with `SANE_DEBUG_GENESYS=5 SANE_DEBUG_SANEI_USB=255`.
+
+**Result: exit 0 after 53.0 s, a complete P6 image 3762 × 5137 × 16 bit
+(115 952 364 payload bytes, 224 chunks of 519 156).** 1469 control
+transfers, 997 bulk IN (773 calibration + 224 image), 13 bulk OUT, no
+short transfer; 1 `sane_start`, 224 `sane_read`, 1 `sane_cancel`, 1
+`sane_close`.
+
+Per hook:
+
+- Hooks 2–4 as Test 50: offset 0x010a / 0x0109 / 0x010a (driver 0x010a
+  ×3, the ±1 band), gain 0x2e / 0x20 / 0x27 = the driver's exactly (G is
+  0x20 in both today, 0x21 in Test 49/50 — the run-to-run band), shading
+  table 1 offsets 154..400 gain 0x4000, table 2 gains 0x5535..0x705f.
+  W1 = 0xcd first poll in all five phases, W2 = 0xf0 first poll.
+- Hook 5, POSITION to frame 1: FEEDL 6743, completion budget 4842 ms,
+  **W3 (op 47, masked poll) first 0xdd, last 0xf5, 185 polls, 1473 ms**
+  — the class-F completion the analysis predicted, inside the budget.
+- Hook 6, the scan pass: started 16:41:11, the last chunk delivered
+  16:41:56 (≈ 46 s for 5137 lines, the driver's rate). Every chunk full.
+  The core's pipeline delivered all 5137 lines; the driver trims to 5105
+  (the frontend image carries 16 dark rows at the top and 16 bright ones
+  at the bottom that the driver's crop removes).
+- Hook 7, the semantic PARK from the end of the scan pass: **Wait A
+  (op 13) 0xfb on the first poll, Wait B (op 15) 0xf8 on the first poll**
+  — the first hardware run of Wait B from the state it is defined for
+  (Test 52 attempt 1 had run it from post-shading and timed out at
+  0xd8). "parked (2 waits recorded)".
+
+Read deviations, informational: scan_setup op 305 (0x20) 0x04 vs
+captured 0x1c, op 309/311 (0x01) 0x85 vs 0xc5; park op 5 (0x15) 0x90 vs
+0x00, op 12/17 (0x32) 0x95 vs 0x00. The usual `prep` set.
+
+State after: reg 0x01 = 0x22, the status word 0xf8 — the driver's own
+post-PARK state. **Driver `eject` straight from it: "ejected", magazine
+loose, removed, LED off; unit at 0x22 with `magazine: not detected`.**
+That is the first exit from a SANE session without a power cycle, and
+it confirms the rule the analysis set: post-PARK is a verified eject
+origin (n = 1).
+
+Image against the driver's reference (ref7, same load), and the
+driver's own run-to-run band (ref6 vs ref7, two loads) as the yardstick:
+
+| pair | row offset | mean ratio R/G/B | corr R/G/B | abs mean diff R/G/B |
+|---|---|---|---|---|
+| SANE vs ref7 | 16 | 0.995 / 0.994 / 1.005 | 0.967 / 0.998 / 0.953 | 1621 / 266 / 835 |
+| ref6 vs ref7 (driver only) | −22 | 1.000 / 0.999 / 0.999 | 0.960 / 0.956 / 0.947 | 1704 / 912 / 866 |
+
+The SANE image differs from the driver's reference by *less* than two
+driver scans differ from each other; column offset 0 (corr 0.99998).
+Visual check (quarter-scale side by side, same linear stretch): the same
+frame, the same density and colour, no banding, no missing chunk. The
+row offset between loads (16 here, 22 between the two driver scans) is
+the known load-to-load geometry, not a SANE property.
+
+Sound: the operator's report for the three motor steps was not taken —
+the session crashed right after the run (below) — to be asked for and
+appended.
+
+**Two Claude sessions killed during the analysis, not during scanner
+traffic.** `systemd-oomd` killed the Konsole tab scope twice (16:43:54
+and 16:58:56, "memory pressure … > 60 % for > 20 s with reclaim
+activity") while the image comparison ran: full-frame float64 copies
+(58 M values × 8 B, several at once) on top of 1.6 GB of test files in
+the session scratchpad on `/tmp` (tmpfs, i.e. RAM, charged to the same
+cgroup), with swap in use. The scanner was post-PARK the first time and
+already ejected the second; nothing was in flight on the wire. Rule
+from now on: full-frame analysis in uint16 with chunked statistics,
+heavy jobs under `systemd-run --user --scope -p MemoryMax=…` so a
+runaway takes only that job, and multi-hundred-MB debug logs off tmpfs
+(compressed into the analysis directory). Logs kept privately:
+`plustek-135i-analys/hook5-20260908/` (the full 756 MB debug log
+zstd-compressed, the gl126 lines extracted, ref5–7, the PNM), the
+quarter-scale PNGs in `~/Bilder/opticfilm-sane-test52/`.
