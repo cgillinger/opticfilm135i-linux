@@ -23,11 +23,14 @@
 #include "gl126.h"
 #include "gl126_registers.h"
 #include "gl126_tables.h"
+#include "gl126_ops.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <map>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -90,7 +93,7 @@ void write_pairs(Genesys_Device* dev, const RegPair* regs, std::size_t count)
 }
 
 /** Write one generated register table, in capture order. */
-[[maybe_unused]] void write_table(Genesys_Device* dev, const RegPair* regs, std::size_t count)
+void write_table(Genesys_Device* dev, const RegPair* regs, std::size_t count)
 {
     write_pairs(dev, regs, count);
 }
@@ -102,7 +105,7 @@ void write_pairs(Genesys_Device* dev, const RegPair* regs, std::size_t count)
     of135i/device.py initialize() writes them. Writing the table with
     write_table() would instead overwrite chip regs 0x00-0x07 (0x01 among
     them) with AFE values. */
-[[maybe_unused]] void write_afe_base(Genesys_Device* dev)
+void write_afe_base(Genesys_Device* dev)
 {
     for (std::size_t i = 0; i < AFE_BASE_COUNT; i++) {
         const RegPair triple[3] = {
@@ -143,7 +146,7 @@ void write_pairs(Genesys_Device* dev, const RegPair* regs, std::size_t count)
 
 /** The profile for a scan: resolution plus whether the IR channel is
     captured. Non-3600 resolutions exist only as dual-light captures. */
-[[maybe_unused]] const Profile* find_profile(unsigned dpi, bool ir)
+const Profile* find_profile(unsigned dpi, bool ir)
 {
     const char* want = nullptr;
     if (dpi == 3600) {
@@ -166,6 +169,102 @@ void write_pairs(Genesys_Device* dev, const RegPair* regs, std::size_t count)
         }
     }
     return nullptr;
+}
+
+/** The op-program runner's view of the USB device (gl126_ops.h). Three
+    forwards and a clock; nothing is reinterpreted on the way through, so
+    the runner emits exactly the captured control/bulk transfers. */
+class UsbWire : public Wire
+{
+public:
+    explicit UsbWire(IUsbDevice& usb) : usb_(usb) {}
+
+    void control_write(std::uint8_t request, std::uint16_t value, std::uint16_t index,
+                       const std::uint8_t* data, std::size_t len) override
+    {
+        std::vector<std::uint8_t> buf(data, data + len);
+        usb_.control_msg(REQUEST_TYPE_OUT, request, value, index, static_cast<int>(len),
+                         buf.data());
+    }
+
+    void control_read(std::uint8_t request, std::uint16_t value, std::uint16_t index,
+                      std::uint8_t* data, std::size_t len) override
+    {
+        usb_.control_msg(REQUEST_TYPE_IN, request, value, index, static_cast<int>(len), data);
+    }
+
+    std::size_t bulk_read(std::uint8_t* data, std::size_t len) override
+    {
+        std::size_t n = len;
+        usb_.bulk_read(data, &n);
+        return n;
+    }
+
+    void sleep_ms(unsigned ms) override
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+    }
+
+    unsigned now_ms() override
+    {
+        auto t = std::chrono::steady_clock::now().time_since_epoch();
+        return static_cast<unsigned>(std::chrono::duration_cast<std::chrono::milliseconds>(t).count());
+    }
+
+private:
+    IUsbDevice& usb_;
+};
+
+const OpProgram& find_program(const Profile& profile, const char* name)
+{
+    for (std::size_t i = 0; i < profile.program_count; i++) {
+        if (std::string(profile.programs[i].name) == name) {
+            return profile.programs[i];
+        }
+    }
+    throw SaneException(SANE_STATUS_INVAL, "gl126: profile '%s' has no op program '%s'",
+                        profile.name, name);
+}
+
+/** Run one captured phase as its op program (docs/sane-hook2-offset.md
+    §3, §6): the captured transfers in the captured order, the one real
+    wait (data-ready) as an explicit poll with a timeout, and every
+    failure ending the hook with zero further writes and no recovery. */
+void run_phase_program(Genesys_Device* dev, const Profile& profile, const char* name,
+                       RunResult& out)
+{
+    DBG_HELPER_ARGS(dbg, "phase %s", name);
+    const OpProgram& prog = find_program(profile, name);
+    UsbWire wire(dev->interface->get_usb_device());
+    try {
+        run_program(wire, prog, out);
+    } catch (const OpsError& e) {
+        SANE_Status status = SANE_STATUS_IO_ERROR;
+        const char* what = "I/O failure";
+        switch (e.failure) {
+            case OpsFailure::BadAck: what = "register write not acknowledged"; break;
+            case OpsFailure::PollTimeout:
+                status = SANE_STATUS_DEVICE_BUSY;
+                what = "data-ready never set";
+                break;
+            case OpsFailure::ShortBulk: what = "short bulk read"; break;
+        }
+        throw SaneException(status,
+                            "gl126: %s in phase %s at op %zu (%s). Nothing further was "
+                            "written; power-cycle the scanner, no recovery is attempted.",
+                            what, name, e.op_index, e.what());
+    }
+    for (const PollRecord& p : out.polls) {
+        DBG(DBG_info, "gl126: %s op %zu data-ready poll: first 0x%02x last 0x%02x, %u polls, "
+            "%u ms\n", name, p.op_index, p.first, p.last, p.polls, p.elapsed_ms);
+    }
+    for (const ReadRecord& r : out.reads) {
+        if (r.reply_len >= 1 && r.reply[0] != r.captured[0]) {
+            DBG(DBG_info, "gl126: %s op %zu read wValue 0x%04x wIndex 0x%04x: 0x%02x "
+                "(captured 0x%02x)\n", name, r.op_index, r.value, r.index, r.reply[0],
+                r.captured[0]);
+        }
+    }
 }
 
 /** A hook that has not been brought up against the hardware yet.
@@ -293,12 +392,80 @@ void CommandSetGl126::init_regs_for_shading(Genesys_Device* /*dev*/,
     not_brought_up("init_regs_for_shading");
 }
 
-void CommandSetGl126::offset_calibration(Genesys_Device* /*dev*/,
+/* Hook 2: the driver's initialize() + CAL_DARK_A/CAL_DARK_B, then
+   calibrate.offset_codes() (docs/sane-hook2-offset.md). This is the first
+   hook in a sane_start that writes, so it also carries the session
+   preamble: the base table and AFE base values (Test 43's byte-exact
+   write), then the PREP and AFE_BASE phases as op programs. The computed
+   AFE offsets land in dev->frontend under their AFE addresses 5/6/7,
+   where the shading hook picks them up. `regs` is the core's GL124-style
+   register set and is not consulted: the values come from the captured
+   tables. */
+void CommandSetGl126::offset_calibration(Genesys_Device* dev,
                                          const Genesys_Sensor& /*sensor*/,
                                          Genesys_Register_Set& /*regs*/) const
 {
     DBG_HELPER(dbg);
-    not_brought_up("offset_calibration");
+
+    // S0: only the idle-homed state is accepted. A cold unit (0x00) is
+    // brought up by the magazine load flow, which is not a hook.
+    std::uint8_t state = check_start_state(dev);
+    if (state != 0x22) {
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: offset calibration needs the idle-homed state "
+                            "(reg 0x01 = 0x22), read 0x%02x. A cold unit is brought up by "
+                            "the magazine load flow (of135i load), not by the backend. "
+                            "Nothing was written.", state);
+    }
+
+    bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
+    const Profile* profile = find_profile(dev->settings.xres, ir);
+    if (profile == nullptr) {
+        throw SaneException(SANE_STATUS_INVAL, "gl126: no captured profile for %u dpi%s",
+                            dev->settings.xres, ir ? " with IR" : "");
+    }
+    DBG(DBG_info, "gl126: offset calibration, profile %s\n", profile->name);
+
+    // S1: base table + AFE base values, as the driver's initialize() writes
+    // them (verified byte-exact on hardware, Test 43).
+    write_table(dev, BASE_INIT, BASE_INIT_COUNT);
+    write_afe_base(dev);
+
+    // S2, S3: the pre-scan phases.
+    RunResult prep, afe_base;
+    run_phase_program(dev, *profile, "prep", prep);
+    run_phase_program(dev, *profile, "afe_base", afe_base);
+
+    // S4, S5: the dark bracket, one buffer each.
+    RunResult dark_a, dark_b;
+    run_phase_program(dev, *profile, "cal_dark_a", dark_a);
+    run_phase_program(dev, *profile, "cal_dark_b", dark_b);
+    if (dark_a.buffers.size() != 1 || dark_b.buffers.size() != 1) {
+        throw SaneException(SANE_STATUS_IO_ERROR,
+                            "gl126: expected one dark buffer per phase, got %zu and %zu",
+                            dark_a.buffers.size(), dark_b.buffers.size());
+    }
+    const std::vector<std::uint8_t>& a = dark_a.buffers[0];
+    const std::vector<std::uint8_t>& b = dark_b.buffers[0];
+    if (dark_is_residual(b.data(), b.size())) {
+        // Test 32's pattern: the unit returned a repeated block instead of a
+        // measurement. The driver substitutes an earlier healthy dark_b in a
+        // batch; a single sane_start has none, so this fails closed.
+        throw SaneException(SANE_STATUS_IO_ERROR,
+                            "gl126: dark_b is residual data, not a measurement (Test 32 "
+                            "pattern); no healthy dark_b to substitute. Nothing further "
+                            "was written.");
+    }
+
+    // S6: the two-point bracket -> AFE offset codes.
+    OffsetResult r = offset_codes(a.data(), a.size(), b.data(), b.size());
+    static const char* const ch_names[3] = { "R", "G", "B" };
+    for (unsigned ch = 0; ch < 3; ch++) {
+        DBG(DBG_info, "gl126: offset %s: dark_a mean %.1f, dark_b mean %.1f, slope %.2f, "
+            "code 0x%04x%s\n", ch_names[ch], r.mean_a[ch], r.mean_b[ch], r.slope[ch],
+            r.code[ch], r.fallback[ch] ? " (FALLBACK: slope below 1 count/code)" : "");
+        dev->frontend.regs.set_value(static_cast<std::uint16_t>(0x05 + ch), r.code[ch]);
+    }
 }
 
 void CommandSetGl126::coarse_gain_calibration(Genesys_Device* /*dev*/,

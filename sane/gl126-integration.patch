@@ -1,13 +1,14 @@
 diff --git a/backend/Makefile.am b/backend/Makefile.am
-index 64c6cb1..5ea4358 100644
+index 64c6cb1..40ecbbc 100644
 --- a/backend/Makefile.am
 +++ b/backend/Makefile.am
-@@ -765,6 +765,9 @@ libgenesys_la_SOURCES = genesys/genesys.cpp genesys/genesys.h \
+@@ -765,6 +765,10 @@ libgenesys_la_SOURCES = genesys/genesys.cpp genesys/genesys.h \
      genesys/fwd.h \
      genesys/gl646.cpp genesys/gl646.h genesys/gl646_registers.h \
      genesys/gl124.cpp genesys/gl124.h genesys/gl124_registers.h \
 +    genesys/gl126.cpp genesys/gl126.h genesys/gl126_registers.h \
 +    genesys/gl126_tables.cpp genesys/gl126_tables.h \
++    genesys/gl126_ops.cpp genesys/gl126_ops.h \
 +    genesys/gl126_lock.cpp genesys/gl126_lock.h \
      genesys/gl841.cpp genesys/gl841.h genesys/gl841_registers.h \
      genesys/gl842.cpp genesys/gl842.h genesys/gl842_registers.h \
@@ -72,7 +73,7 @@ index 02cfc43..8813651 100644
  
  
 diff --git a/backend/genesys/genesys.cpp b/backend/genesys/genesys.cpp
-index d7ec422..2de60bc 100644
+index d7ec422..b1e0509 100644
 --- a/backend/genesys/genesys.cpp
 +++ b/backend/genesys/genesys.cpp
 @@ -38,6 +38,11 @@
@@ -87,7 +88,31 @@ index d7ec422..2de60bc 100644
  #include "gl124_registers.h"
  #include "gl841_registers.h"
  #include "gl842_registers.h"
-@@ -5457,6 +5462,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -3990,15 +3995,20 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+     }
+ 
+   /* set top left x and y values by scanning the internals if flatbed scanners */
+-    if (!dev->model->is_sheetfed) {
++    // Not for GL126 (OpticFilm 135i): the vendor never homes before a scan
++    // and has no calibration area to move to -- frame positioning is one
++    // absolute feed inside the scan sequence, and calibration happens at
++    // the current position (docs/sane-hook2-offset.md, section 4).
++    if (!dev->model->is_sheetfed && dev->model->asic_type != AsicType::GL126) {
+         // TODO: check we can drop this since we cannot have the scanner's head wandering here
+         dev->parking = false;
+         dev->cmd_set->move_back_home(dev, true);
+     }
+ 
+   /* move to calibration area for transparency adapter */
+-    if (dev->settings.scan_method == ScanMethod::TRANSPARENCY ||
+-        dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED)
++    if ((dev->settings.scan_method == ScanMethod::TRANSPARENCY ||
++         dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED) &&
++        dev->model->asic_type != AsicType::GL126)
+     {
+         scanner_move_to_ta(*dev);
+     }
+@@ -5457,6 +5467,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
          throw SaneException("could not find the device to open: %s", devicename);
      }
  
@@ -120,7 +145,7 @@ index d7ec422..2de60bc 100644
      if (is_testing_mode()) {
          // during testing we need to initialize dev->model before test scanner interface is created
          // as that it needs to know what type of chip it needs to mimic.
-@@ -5473,6 +5504,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5473,6 +5509,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
          dev->interface->get_usb_device().open(dev->file_name.c_str());
      } else {
@@ -143,7 +168,7 @@ index d7ec422..2de60bc 100644
          dev->interface = std::unique_ptr<ScannerInterfaceUsb>{new ScannerInterfaceUsb{dev}};
  
          dbg.vstatus("open device '%s'", dev->file_name.c_str());
-@@ -5523,6 +5570,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5523,6 +5575,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
      // some hardware capabilities are detected through sensors
      dev->cmd_set->update_hardware_sensors (s);
@@ -156,7 +181,7 @@ index d7ec422..2de60bc 100644
  }
  
  SANE_GENESYS_API_LINKAGE
-@@ -5556,6 +5609,20 @@ sane_close_impl(SANE_Handle handle)
+@@ -5556,6 +5614,20 @@ sane_close_impl(SANE_Handle handle)
  
      auto* dev = it->dev;
  
@@ -177,7 +202,7 @@ index d7ec422..2de60bc 100644
      // eject document for sheetfed scanners
      if (dev->model->is_sheetfed) {
          catch_all_exceptions(__func__, [&](){ dev->cmd_set->eject_document(dev); });
-@@ -5579,12 +5646,26 @@ sane_close_impl(SANE_Handle handle)
+@@ -5579,12 +5651,26 @@ sane_close_impl(SANE_Handle handle)
      dev->clear();
  
      // LAMP OFF : same register across all the ASICs */
@@ -276,10 +301,10 @@ index 542d4ff..dd77f3c 100644
          reg.init_reg(0x5e, value & 0xff);
      } else {
 diff --git a/backend/genesys/tables_model.cpp b/backend/genesys/tables_model.cpp
-index 321d179..2e0710f 100644
+index 321d179..47308a6 100644
 --- a/backend/genesys/tables_model.cpp
 +++ b/backend/genesys/tables_model.cpp
-@@ -2311,6 +2311,87 @@ void genesys_init_usb_device_tables()
+@@ -2311,6 +2311,91 @@ void genesys_init_usb_device_tables()
  
  
  
@@ -357,8 +382,12 @@ index 321d179..2e0710f 100644
 +    model.gpio_id = GpioId::PLUSTEK_OPTICFILM_7200;
 +    model.motor_id = MotorId::PLUSTEK_OPTICFILM_7200;
 +
-+    model.flags = ModelFlag::UNTESTED |
-+                  ModelFlag::WARMUP;
++    /* No ModelFlag::WARMUP: the core's warm-up moves the head to the
++       calibration area and runs a lamp warm-up before every scan, neither
++       of which the vendor does on this unit. The lamp warm-up that exists
++       is the retry inside the gain calibration (docs/sane-hook2-offset.md,
++       section 4). */
++    model.flags = ModelFlag::UNTESTED;
 +
 +    model.search_lines = 200;
 +    s_usb_devices->emplace_back(0x07b3, 0x1436, model);

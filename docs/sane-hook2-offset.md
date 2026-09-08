@@ -8,6 +8,22 @@ tested offline before the single hardware run. Nothing here has been
 run on hardware; every "verified" below refers to the Python driver's
 hardware record (`test-log.md`), which replays this exact stream.
 
+## Status (2026-09-08, same day)
+
+All five decisions of §8 were taken by Christian and the code is
+written offline: `gen_sane_tables.py` emits the ordered op programs
+(`OpProgram` per phase, `Profile::programs`), `sane/gl126_ops.{h,cpp}`
+is the genesys-free runner with the §3 policy plus `offset_codes()` /
+`dark_is_residual()`, `offset_calibration()` in `gl126.cpp` runs
+S0–S6 through a `Wire` over `UsbDevice`, and `genesys.cpp` /
+`tables_model.cpp` carry the §4 gating (no WARMUP, no home, no
+move-to-TA for GL126). Offline tests (`tests/test_sane_ops.py`, 8/8):
+the C++ programs and the Python replayer emit identical transfer lists
+for prep/afe_base/cal_dark_a/cal_dark_b (39/71/29/29 transfers), the
+wait policy and every failure rule behave as specified, the offset
+computation reproduces the reference vectors. Build clean. **The
+hardware run of §7 has not happened yet.**
+
 ## 1. What the hook has to reproduce
 
 In the Python driver a scan of frame 1 at 3600 dpi starts with

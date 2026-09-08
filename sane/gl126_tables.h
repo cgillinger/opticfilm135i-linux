@@ -49,6 +49,41 @@ struct Phase {
     std::size_t buffer_count;
 };
 
+/** An op-program transfer kind (docs/sane-hook2-offset.md
+ *  section 6); gl126_ops.cpp is the runner that executes these. */
+enum class OpKind : std::uint8_t {
+    Write,          /* control write: register batch, 0x82 buffer
+                       descriptor, or 0x8c write */
+    AckRead,        /* control read, 1 B, must be 0x55 */
+    Read,           /* control read, logged only (provenance) */
+    PollDataReady,  /* poll reg 0x101 until bit 0x01 (DATAENB) sets */
+    BulkIn,         /* bulk IN of `len` bytes from EP 0x81 */
+    BulkDone,       /* control read after a bulk transfer, logged only */
+};
+
+/** One op-program transfer. `data` is the write payload (Write) or
+ *  the captured reply (AckRead/Read/PollDataReady/BulkDone,
+ *  provenance only -- the runner does not require a live reply to
+ *  match it, except AckRead's fixed 0x55 and PollDataReady's bit
+ *  0x01); nullptr for BulkIn. */
+struct Op {
+    OpKind kind;
+    std::uint8_t request;    /* bRequest; 0 for BulkIn */
+    std::uint16_t value;     /* wValue */
+    std::uint16_t index;     /* wIndex */
+    const std::uint8_t* data;
+    std::uint16_t len;       /* Write/reads: byte length; BulkIn: bulk length */
+    std::uint16_t dur_ms;    /* captured poll duration, ms (0 otherwise) */
+};
+
+/** An ordered op program for one phase -- prep/afe_base/cal_dark_a/
+ *  cal_dark_b only, the whole scope of SANE hook 2. */
+struct OpProgram {
+    const char* name;
+    const Op* ops;
+    std::size_t count;
+};
+
 /** One scan profile: a resolution and its phase sequence. */
 struct Profile {
     const char* name;
@@ -64,6 +99,8 @@ struct Profile {
     std::size_t slope_scan_len;
     const Phase* phases;
     std::size_t phase_count;
+    const OpProgram* programs;  /* prep/afe_base/cal_dark_a/cal_dark_b */
+    std::size_t program_count;
 };
 
 /** Power-on base register table, written once per session. */

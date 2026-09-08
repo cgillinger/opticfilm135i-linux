@@ -369,7 +369,13 @@ Offline analysis (plan steps 1–2) written 2026-09-08:
 wait point, the failure rules, the genesys core blockers around the
 hook (warmup move, home, move-to-TA) and the op-program structure with
 an offline wire-equality test against the Python replayer. Five
-decisions are listed at its end; code follows them.
+decisions are listed at its end; they were taken the same day and the
+hook is implemented offline (see the Status section of that document):
+op-program generator, genesys-free runner `gl126_ops.{h,cpp}` with the
+wire-equality test against the Python replayer, `offset_calibration()`
+running the session preamble and the dark bracket, core gating in
+`genesys_start_scan` (no home / move-to-TA for GL126, `WARMUP` flag
+dropped). Hardware run pending.
 
 Hook 2 is `offset_calibration()` and nothing else: the driver's
 CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and

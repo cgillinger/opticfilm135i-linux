@@ -170,6 +170,17 @@ class FakeUsbDevice:
         self.short_log: list[dict] = []
         self.blocked_calls: list[str] = []
         self.events: list[str] = []
+        # The host->device side of every completed transfer, in order:
+        # {"t": "cw", "br":.., "wv":.., "wi":.., "data": bytes} for a
+        # control write; {"t": "cr", "br":.., "wv":.., "wi":.., "length":
+        # n} for a control read (never the reply -- only the setup packet
+        # is host->device); {"t": "bo", "data": bytes} for a bulk write;
+        # {"t": "bi", "length": n} for a bulk read (EP 0x81 only, not the
+        # button endpoint 0x83). Used by tests/test_sane_ops.py to compare
+        # against the C++ op-program runner's own transfer log -- see
+        # gl126_ops.h/.cpp and docs/sane-hook2-offset.md section 6.
+        # Faulted/short transfers are not recorded (not needed there).
+        self.wire_log: list[dict] = []
         self.kernel_driver_active = False
         # High byte of the status word (reg 0x101): an int, or a callable
         # (fake) -> int. None = done-class idle values 0xF8/0xF0 by
@@ -224,6 +235,7 @@ class FakeUsbDevice:
                 return short
             self.out_count += 1
             self.out_log.append(ev)
+            self.wire_log.append({"t": "cw", "br": br, "wv": wv, "wi": wi, "data": data})
             self.events.append("ctrl_out")
             if wv == 0x0083:
                 for i in range(0, len(data) - 1, 2):
@@ -253,6 +265,7 @@ class FakeUsbDevice:
               "pulses_so_far": self.pulses}
         self._maybe_fail(ev)
         self.in_count += 1
+        self.wire_log.append({"t": "cr", "br": br, "wv": wv, "wi": wi, "length": length})
         if br == 0x04 and wv == 0x008E and (wi >> 8) == 0x01:
             self.events.append("ctrl_in reg01")
         else:
@@ -296,6 +309,7 @@ class FakeUsbDevice:
               "bulk_index": self.bulk_in_count + 1, "pulses_so_far": self.pulses}
         self._maybe_fail(ev)
         self.bulk_in_count += 1
+        self.wire_log.append({"t": "bi", "length": length})
         if self._pending is not None:
             buf, off = self._pending
             chunk = buf[off:off + length]
@@ -321,6 +335,7 @@ class FakeUsbDevice:
             return short
         self.out_count += 1
         self.out_log.append(ev)
+        self.wire_log.append({"t": "bo", "data": data})
         self.events.append("bulk_out")
         return len(data)
 
