@@ -104,14 +104,17 @@ rough edges you should know about:
   transport states (e.g. after the older `--full` load flow) stalled
   the mechanism with the magazine stuck part-way; recovery was a power
   cycle plus an initialization with the vendor software.
-- **Film strip holder, frames 1–4, only.** The driver knows one
-  geometry: frames at a fixed 38.0 mm pitch, each 36.2 mm long (5137
-  lines at 3600 dpi), positions 1–4, verified frame for frame against
-  the vendor's output of the same strip. Plustek states the strip
-  holder takes a six-frame strip; positions 5 and 6 have not been
-  captured or tested. **Mounted slides:** the scanner ships with a
-  four-slide holder; the driver and the backend have not been tested
-  with it (its frame pitch and load flow are uncaptured) — planned.
+- **Film strip holder: frames 1–4 verified, 5–6 measured but not yet
+  run.** The driver knows one geometry: frames at a fixed pitch, each
+  36.2 mm long (5137 lines at 3600 dpi). Positions 1–4 are verified
+  frame for frame against the vendor's output of the same strip.
+  The holder's six apertures have now been measured — length,
+  crossbars and pitch, from the vendor's own whole-holder pass, where
+  positions 5 and 6 were empty ([`docs/holder-geometry.md`](docs/holder-geometry.md)) —
+  and the driver accepts frames 1–6, but 5 and 6 have not yet been
+  scanned on hardware by this driver. **Mounted slides:** the scanner
+  ships with a four-slide holder; the driver and the backend have not
+  been tested with it (its frame pitch and load flow are uncaptured) — planned.
   **Panorama:** Plustek's optional panoramic holder (frames up to
   226 mm) carries the same identification tab encoding as the strip
   holder (35mmc's review), so "panorama" is a software mode — one
@@ -247,9 +250,11 @@ docs/replay-analysis.md); it is off by default and not hardware-verified.
 
 ### Bulk digitisation (a box of film, strip by strip)
 
-`of135i digitize` runs one strip end to end — load, scan frames 1–4,
-eject — into a resumable staging tree, and records each strip in an
-append-only manifest. Run it once per strip; the roll number advances
+`of135i digitize` runs one strip end to end — load, scan the strip's
+frames, eject — into a resumable staging tree, and records each strip in
+an append-only manifest. `--frames` says how long the strip is; it
+defaults to `1-4`, so a four-frame strip is never scanned as six. Use
+`--frames 1-6` for a full-length strip. Run it once per strip; the roll number advances
 from the manifest **and** the roll directories already on disk (per
 `--prefix`), so you can stop and pick up where you left off.
 

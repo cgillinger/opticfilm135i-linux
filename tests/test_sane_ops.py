@@ -1434,8 +1434,9 @@ def test_poll_masked_timeout_fails_closed():
 
 def test_feedl_and_position_budget():
     """docs/sane-hook5-frame.md section 4/6: feedl_for_frame() against
-    of135i/tables.py's own table for frames 1-4, and position_timeout_ms()
-    against 3 * 1.6141 * position_timeout_scale()."""
+    of135i/tables.py's own table for frames 1-6 (the six-aperture strip
+    holder, of135i/holder.py), and position_timeout_ms() against
+    3 * 1.6141 * position_timeout_scale()."""
     probe = _build_probe()
     if probe is None:
         print("test_feedl_and_position_budget SKIPPED (no g++)")
@@ -1444,7 +1445,7 @@ def test_feedl_and_position_budget():
     from of135i.device import position_timeout_scale
 
     feedls = {}
-    for frame in (1, 2, 3, 4):
+    for frame in (1, 2, 3, 4, 5, 6):
         want = tables.feedl_for_frame(frame)
         r = subprocess.run([str(probe), "feedl", str(frame)], capture_output=True, text=True)
         assert r.returncode == 0, r
@@ -1457,6 +1458,7 @@ def test_feedl_and_position_budget():
         feedls[frame] = want
 
     assert feedls[1] == 6743, feedls
+    assert feedls[5] == 49783 and feedls[6] == 60543, feedls
 
     r1 = subprocess.run([str(probe), "position_timeout", "6743"], capture_output=True, text=True)
     assert r1.returncode == 0, r1
@@ -1471,24 +1473,25 @@ def test_feedl_and_position_budget():
     scale4 = position_timeout_scale(tables, feedl4)
     want_s4 = 3 * 1.6141 * scale4
     assert abs(ms4 / 1000.0 - want_s4) < 0.05, (ms4, want_s4, scale4)
-    print(f"test_feedl_and_position_budget OK (feedl frames 1-4={feedls}, "
+    print(f"test_feedl_and_position_budget OK (feedl frames 1-6={feedls}, "
           f"position_timeout_ms(6743)={ms1}, ({feedl4})={ms4} ~= {want_s4:.1f}s)")
 
 
-def test_position_frames_2_to_4_match_python_replayer():
+def test_position_frames_2_to_6_match_python_replayer():
     """Frame selection (docs/sane-hook5-frame.md section 10): for frames
-    2-4 the driver's POSITION differs from frame 1's only in the three
-    FEEDL bytes; the C++ "position" program fed the same frame's
-    feedl_for_frame() must produce the same transfers, and the
-    FEEDL-scaled budget must match position_timeout_scale()."""
+    2-6 (the six-aperture strip holder, of135i/holder.py) the driver's
+    POSITION differs from frame 1's only in the three FEEDL bytes; the
+    C++ "position" program fed the same frame's feedl_for_frame() must
+    produce the same transfers, and the FEEDL-scaled budget must match
+    position_timeout_scale()."""
     probe = _build_probe()
     if probe is None:
-        print("test_position_frames_2_to_4_match_python_replayer SKIPPED (no g++)")
+        print("test_position_frames_2_to_6_match_python_replayer SKIPPED (no g++)")
         return "skipped"
     from of135i.device import position_timeout_scale  # noqa: E402
 
     results = []
-    for frame in (2, 3, 4):
+    for frame in (2, 3, 4, 5, 6):
         fake = FakeUsbDevice(reg01=0x22, cal_buffers=_build_cal_buffers())
         scanner = Scanner(UsbIo(fake))
         slices: dict[str, list[tuple[int, int]]] = {}
@@ -1527,8 +1530,32 @@ def test_position_frames_2_to_4_match_python_replayer():
         expected_ms = 3 * 1.6141 * position_timeout_scale(tables, feedl) * 1000
         assert abs(ms - expected_ms) <= 2, (frame, ms, expected_ms)
         results.append((frame, feedl, len(py_position), ms))
-    print(f"test_position_frames_2_to_4_match_python_replayer OK "
+    print(f"test_position_frames_2_to_6_match_python_replayer OK "
           f"({', '.join(f'f{f}: feedl {fl}, {n} transfers, budget {ms} ms' for f, fl, n, ms in results)})")
+
+
+def test_feedl_for_frame_refuses_frame_7_and_frame_0():
+    """gl126_ops::feedl_for_frame(frame) (gl126_ops.h/cpp) is the C++
+    mirror of of135i/holder.py::check_frame(): a frame outside
+    1-kFeedlFrameMax (6, the strip holder's aperture count) is refused
+    with std::invalid_argument before any FEEDL is computed. The probe's
+    "feedl" command does not catch it itself -- main()'s top-level
+    catch(std::exception&) does, printing "ERROR ..." and returning 2 --
+    so this is also a check that nothing downstream of feedl_for_frame()
+    ever sees an out-of-range value."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_feedl_for_frame_refuses_frame_7_and_frame_0 SKIPPED (no g++)")
+        return "skipped"
+    for frame in (7, 0):
+        r = subprocess.run([str(probe), "feedl", str(frame)], capture_output=True, text=True)
+        assert r.returncode == 2, (frame, r.stdout, r.stderr)
+        assert "ERROR" in r.stderr and "outside 1-6" in r.stderr, (frame, r.stderr)
+    # 1 and 6 (the holder's own bounds) are accepted.
+    for frame in (1, 6):
+        r = subprocess.run([str(probe), "feedl", str(frame)], capture_output=True, text=True)
+        assert r.returncode == 0, (frame, r.stdout, r.stderr)
+    print("test_feedl_for_frame_refuses_frame_7_and_frame_0 OK")
 
 
 # ---------------------------------------------------- 8. scan-pass state
@@ -1915,11 +1942,18 @@ def test_frame_geometry_all_profiles():
             "feedl_frame1": t.FEEDL_FRAME1, "feedl_pitch": t.FEEDL_PITCH,
         }
         assert got == want, (profile_name, got, want)
-        for frame in (1, 4):
+        for frame in (1, 4, 5, 6):
             r = subprocess.run([str(probe), "feedl", str(frame), profile_name],
                                capture_output=True, text=True)
             assert r.returncode == 0, r.stderr
             assert int(_lines(r.stdout)[-1].split()[0].split("=")[1]) == t.feedl_for_frame(frame)
+        # Frames 5/6 = FEEDL_FRAME1 + (n-1)*FEEDL_PITCH, spelled out (not
+        # just cross-checked against the Python side): 49783/60543 for the
+        # plain profile's 6743 base, 49786/60546 for every dual profile's
+        # 6746 base (of135i/holder.py's evidence section).
+        want5, want6 = ((49783, 60543) if profile_name == "plain3600" else (49786, 60546))
+        assert t.feedl_for_frame(5) == want5 and t.feedl_for_frame(6) == want6, (
+            profile_name, t.feedl_for_frame(5), t.feedl_for_frame(6))
         rows.append(f"{profile_name} {want['wire_lines']}->{want['read_lines']}->"
                     f"{want['delivered_lines']}")
     assert got["read_lines"] == 21248  # 7200 dpi, the last profile
@@ -1955,7 +1989,8 @@ def main() -> int:
         test_poll_masked_waits_then_continues,
         test_poll_masked_timeout_fails_closed,
         test_feedl_and_position_budget,
-        test_position_frames_2_to_4_match_python_replayer,
+        test_position_frames_2_to_6_match_python_replayer,
+        test_feedl_for_frame_refuses_frame_7_and_frame_0,
         test_scan_pass_complete_then_park,
         test_scan_pass_aborted_never_parks,
         test_scan_pass_park_failure_is_terminal,

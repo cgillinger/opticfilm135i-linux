@@ -1491,6 +1491,74 @@ def test_position_wait_is_strict_for_every_dpi_profile():
     print(f"test_position_wait_is_strict_for_every_dpi_profile OK ({len(profiles)} profiles)")
 
 
+def test_feedl_for_frame_bounds_all_profiles():
+    """of135i/holder.py::check_frame() is wired into every table module's
+    feedl_for_frame() (tables.py, tables_ir.py, tables_dpi600/1200/2400/
+    7200.py): 0, -1, 7 and 99 (outside the six-aperture strip holder) and
+    a non-int are refused with FrameOutOfRangeError before any FEEDL is
+    computed; 1-6 are accepted."""
+    from of135i import tables_ir, tables_dpi600, tables_dpi1200, tables_dpi2400, tables_dpi7200
+    modules = (tables, tables_ir, tables_dpi600, tables_dpi1200, tables_dpi2400, tables_dpi7200)
+    for m in modules:
+        for bad in (0, -1, 7, 99, "1"):
+            e = expect(safety.FrameOutOfRangeError, m.feedl_for_frame, bad)
+            assert e.frame == bad and e.frames == 6, (m.__name__, bad, e.frame, e.frames)
+        for frame in range(1, 7):
+            m.feedl_for_frame(frame)   # must not raise
+    print(f"test_feedl_for_frame_bounds_all_profiles OK ({len(modules)} modules)")
+
+
+def test_check_feedl_bounds():
+    """of135i/holder.py::check_feedl() -- the second, independent guard
+    behind check_frame(): 0 and FEEDL_CEILING+1 (71491) are refused with
+    FeedlOutOfRangeError; 1 and FEEDL_CEILING (71490, the load flow's
+    proven traverse) are accepted."""
+    from of135i import holder
+    expect(safety.FeedlOutOfRangeError, holder.check_feedl, 0)
+    e = expect(safety.FeedlOutOfRangeError, holder.check_feedl, 71491)
+    assert e.feedl == 71491 and e.ceiling == 71490, (e.feedl, e.ceiling)
+    assert holder.check_feedl(1) == 1
+    assert holder.check_feedl(71490) == 71490
+    print("test_check_feedl_bounds OK")
+
+
+def test_feedl_frame5_and_frame6_all_profiles():
+    """Frames 5 and 6 (added to the strip holder 2026-09-09,
+    of135i/holder.py's evidence section) are FEEDL_FRAME1 +
+    (n-1)*FEEDL_PITCH like every other frame: 49783/60543 for the plain
+    profile's 6743 base, 49786/60546 for every dual profile's 6746 base."""
+    from of135i import tables_ir, tables_dpi600, tables_dpi1200, tables_dpi2400, tables_dpi7200
+    cases = [(tables, 49783, 60543)] + [
+        (m, 49786, 60546) for m in
+        (tables_ir, tables_dpi600, tables_dpi1200, tables_dpi2400, tables_dpi7200)
+    ]
+    for m, want5, want6 in cases:
+        assert m.feedl_for_frame(5) == want5 == m.FEEDL_FRAME1 + 4 * m.FEEDL_PITCH, (m.__name__, want5)
+        assert m.feedl_for_frame(6) == want6 == m.FEEDL_FRAME1 + 5 * m.FEEDL_PITCH, (m.__name__, want6)
+    print(f"test_feedl_frame5_and_frame6_all_profiles OK ({len(cases)} profiles)")
+
+
+def test_cli_frame_bounds_refuse_before_any_device_access():
+    """--frame/--frames validate against the holder (of135i/holder.py)
+    inside _cmd_scan, before Scanner.open() is ever reached: an
+    out-of-range spec exits 2. No FakeUsbDevice is installed for this
+    test at all -- if any of these code paths tried to reach a device,
+    it would fail loudly (no real scanner here) rather than quietly
+    returning 2, so a clean exit 2 is itself proof nothing was opened."""
+    with tempfile.TemporaryDirectory() as td:
+        out = str(Path(td) / "x.tiff")
+        cases = [
+            ["scan", "--frame", "0", "-o", out, "--no-diag"],
+            ["scan", "--frame", "7", "-o", out, "--no-diag"],
+            ["scan", "--frames", "1-7", "-o", out, "--no-diag"],
+            ["scan", "--frames", "0-2", "-o", out, "--no-diag"],
+        ]
+        for argv in cases:
+            code, so, se = _cli(argv)
+            assert code == 2, (argv, code, se)
+    print(f"test_cli_frame_bounds_refuse_before_any_device_access OK ({len(cases)} cases)")
+
+
 def test_cold_session_must_load_before_it_scans():
     """Test 22: a scan straight after cold_init reads a dark white line
     (the transport is not at the load's reference position). In a
@@ -2432,6 +2500,10 @@ def main() -> int:
         test_initialize_prep_false_is_the_vendor_device_open_state,
         test_position_wait_is_strict_and_scaled_with_feedl,
         test_position_wait_is_strict_for_every_dpi_profile,
+        test_feedl_for_frame_bounds_all_profiles,
+        test_check_feedl_bounds,
+        test_feedl_frame5_and_frame6_all_profiles,
+        test_cli_frame_bounds_refuse_before_any_device_access,
         test_cold_session_must_load_before_it_scans,
         test_load_status_matches_is_class_and_sensor_bit,
         test_load_completion_is_verified_not_assumed,

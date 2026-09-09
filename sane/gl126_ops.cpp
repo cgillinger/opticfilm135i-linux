@@ -989,14 +989,51 @@ FrameGeometry frame_geometry(const Profile& profile)
 
 // ------------------------------------------------- hooks 5-7: the frame
 
+namespace {
+
+// Both feedl_for_frame() overloads share these two checks: the frame
+// must be inside the holder before any FEEDL is computed from it, and
+// the FEEDL that comes out must not exceed the proven travel ceiling,
+// whatever produced it (kFeedlFrameMax / kFeedlCeiling, gl126_ops.h).
+// Neither write happens on the wire until both have passed.
+void check_frame_in_holder(unsigned frame)
+{
+    if (frame < 1 || frame > kFeedlFrameMax) {
+        std::ostringstream oss;
+        oss << "gl126_ops::feedl_for_frame: frame " << frame << " is outside 1-"
+            << kFeedlFrameMax << " (the holder's aperture count, of135i/holder.py); "
+               "no FEEDL was computed";
+        throw std::invalid_argument(oss.str());
+    }
+}
+
+void check_feedl_ceiling(unsigned feedl)
+{
+    if (feedl > kFeedlCeiling) {
+        std::ostringstream oss;
+        oss << "gl126_ops::feedl_for_frame: computed FEEDL " << feedl << " exceeds the "
+               "proven travel ceiling " << kFeedlCeiling
+            << " (of135i/holder.py::FEEDL_CEILING)";
+        throw std::invalid_argument(oss.str());
+    }
+}
+
+} // namespace
+
 unsigned feedl_for_frame(unsigned frame)
 {
-    return kFeedlFrame1 + (frame - 1) * kFeedlPitch;
+    check_frame_in_holder(frame);
+    unsigned feedl = kFeedlFrame1 + (frame - 1) * kFeedlPitch;
+    check_feedl_ceiling(feedl);
+    return feedl;
 }
 
 unsigned feedl_for_frame(unsigned frame, const Profile& profile)
 {
-    return profile.feedl_frame1 + (frame - 1) * profile.feedl_pitch;
+    check_frame_in_holder(frame);
+    unsigned feedl = profile.feedl_frame1 + (frame - 1) * profile.feedl_pitch;
+    check_feedl_ceiling(feedl);
+    return feedl;
 }
 
 FeedlBytes feedl_bytes(unsigned feedl)

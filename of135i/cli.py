@@ -33,7 +33,7 @@ from typing import Callable
 
 import usb.core
 
-from . import diag, image, safety
+from . import diag, holder, image, safety
 from .device import SUPPORTED_DPIS, Scanner
 from .usbio import InterruptOverflowError, Of135iError, UsbIo
 
@@ -161,8 +161,18 @@ def _parse_frames(spec: str) -> list[int]:
             frames.extend(range(lo, hi + 1))
         else:
             frames.append(int(part))
-    if not frames or any(f < 1 for f in frames):
+    if not frames:
         raise ValueError(f"invalid frame spec {spec!r}")
+    # The holder's aperture count is the bound (of135i/holder.py). The
+    # driver refuses an out-of-range frame again at feedl_for_frame(),
+    # before any write; checking here as well turns it into a usage
+    # error that never opens the device.
+    bad = [f for f in frames if f < 1 or f > holder.DEFAULT.frames]
+    if bad:
+        raise ValueError(
+            f"frame(s) {', '.join(str(f) for f in bad)} outside the "
+            f"{holder.DEFAULT.name}: it holds {holder.DEFAULT.frames} "
+            f"frames (1-{holder.DEFAULT.frames})")
     return frames
 
 
@@ -192,7 +202,11 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             print(f"error: {e}", file=sys.stderr)
             return 2
     else:
-        frames = [args.frame]
+        try:
+            frames = _parse_frames(str(args.frame))
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
     multi = args.frames is not None
 
     # One device session for the whole batch, initialize() per frame:
@@ -458,6 +472,16 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
     from datetime import datetime, timezone
     from . import digitize, loadflow
 
+    # --frames decides the strip length. The default stays 1-4: most
+    # strips in hand are four frames, and a longer default would scan
+    # empty apertures for everyone with a shorter strip. Validated here,
+    # before the load prompt and before any hardware.
+    try:
+        dig_frames = _parse_frames(getattr(args, "frames", None) or "1-4")
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
     roll = args.roll if args.roll is not None else digitize.next_roll(args.out, args.prefix)
     rdir = digitize.roll_dir(args.out, args.prefix, roll)
 
@@ -482,13 +506,13 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
             print(f"--force: removed {len(removed)} existing file(s) in {rdir} "
                   f"before re-scanning")
 
-    args.frames = "1-4"   # for _write_diag_sidecar's cli metadata
     args.eject = True
 
     started = datetime.now(timezone.utc).isoformat()
     record: dict = {"roll": roll, "prefix": args.prefix, "dir": str(rdir),
                     "started_utc": started, "dpi": args.dpi,
                     "positive": args.positive, "ir": args.ir,
+                    "frames": dig_frames,
                     "no_clean": args.no_clean, "rotate": args.rotate}
 
     def record_failed(stage: str, **extra) -> None:
@@ -513,7 +537,8 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
                   f"Power-cycle before retrying.", file=sys.stderr)
             return rc
 
-    # 2) Scan frames 1-4 to the roll dir (a fresh writing session). Same
+    # 2) Scan the requested frames to the roll dir (a fresh writing
+    #    session). Same
     #    plain/dual dispatch as `scan`: non-3600 dpi is always a dual-light
     #    pass, and --ir on 3600 selects the dual flow; --no-ir on 3600 uses
     #    the plain flow.
@@ -529,7 +554,7 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
         if not scanner.is_magazine_present():
             print("error: no magazine detected after load", file=sys.stderr)
             return 1
-        for frame in digitize.FRAMES:
+        for frame in dig_frames:
             scanner.initialize(ir=dual, dpi=args.dpi)
             out = str(digitize.frame_path(args.out, args.prefix, roll, frame))
             log.info("scanning frame %d @ %d dpi%s", frame, args.dpi,
@@ -674,7 +699,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--rotate", type=int, default=0,
         choices=(0, 90, 180, 270),
         help="rotate output counter-clockwise (degrees)")
-    p_scan.add_argument("--frame", type=int, help="frame number (1-based)")
+    p_scan.add_argument("--frame", type=int,
+                        help=f"frame number, 1-{holder.DEFAULT.frames} "
+                             f"({holder.DEFAULT.name})")
     p_scan.add_argument("--frames",
         help="batch scan: comma/range spec of frames, e.g. '1-4' or '1,3'; "
              "output files get a -f<N> suffix per frame")
@@ -750,6 +777,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="scan even if this roll already has files on disk or is "
              "recorded done; clears the roll's previous f*.tiff/.diag.json "
              "first so the dir is not a mix of two runs")
+    p_dig.add_argument("--frames", default="1-4", metavar="SPEC",
+        help=f"which frames of the strip to scan, e.g. 1-4 (default), "
+             f"1-6 for a full-length strip, or 1,3-4. The holder holds "
+             f"{holder.DEFAULT.frames}; the default stays 1-4 so a "
+             f"shorter strip does not scan empty apertures.")
     p_dig.add_argument("--assume-loaded", action="store_true",
         help="skip the load flow (the magazine is already latched)")
     p_dig.add_argument("--dpi", type=int, default=3600, choices=SUPPORTED_DPIS,

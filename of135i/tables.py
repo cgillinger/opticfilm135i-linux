@@ -21,6 +21,7 @@ Phase.injections/patched() and calibrate.py.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from . import holder
 
 
 @dataclass(frozen=True)
@@ -2092,6 +2093,13 @@ FEEDL_PITCH = 10760
 
 
 def feedl_for_frame(frame: int) -> int:
-    """Absolute FEEDL target for `frame` (1-based), from home."""
+    """Absolute FEEDL target for `frame` (1-based), from home.
+
+    Refuses a frame the holder does not have (of135i/holder.py). The
+    bound lives here, at the one place a frame number becomes a motor
+    target, so that no caller can position to a frame that has no
+    aperture. Nothing has been written when it refuses.
+    """
+    holder.check_frame(frame)
     return FEEDL_FRAME1 + (frame - 1) * FEEDL_PITCH
 

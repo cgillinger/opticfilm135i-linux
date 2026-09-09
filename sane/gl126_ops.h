@@ -550,11 +550,36 @@ constexpr unsigned kFeedlFrame1 = 6743;
     pitch). */
 constexpr unsigned kFeedlPitch = 10760;
 
+/** The film holder's aperture count -- the largest frame number
+    feedl_for_frame() will turn into a FEEDL target. Six, not four: the
+    vendor's whole-holder 600 dpi pass images the empty holder end to
+    end and shows six apertures on a constant pitch (measured,
+    docs/holder-geometry.md), and the vendor's own WIA batch capture
+    positioned to frames 5 and 6 directly (FEEDL 49796 and 60174).
+    Mirrors gl126.h's kFrameMax (genesys::gl126::kFrameMax) under a
+    different name, not the same symbol: this header is deliberately
+    free of genesys headers (see the file comment above) and cannot
+    include gl126.h to share it. Keep the two numbers equal by hand --
+    the way both already mirror of135i/holder.py::STRIP.frames, the
+    driver's one Python-side authority on the same holder. */
+constexpr unsigned kFeedlFrameMax = 6;
+/** The largest FEEDL target this runner will ever hand to POSITION,
+    independent of which frame number produced it -- a second guard
+    behind kFeedlFrameMax, so a bad FEEDL is caught however it was
+    computed, including one built from a valid frame number against a
+    wrong table. The load flow's traverse, the longest move this unit
+    is known to make, run on every load
+    (of135i/holder.py::FEEDL_CEILING). */
+constexpr unsigned kFeedlCeiling = 71490;
+
 /** Absolute FEEDL target for `frame` (1-based), from home -- ported from
     of135i/tables.py's feedl_for_frame() (docs/sane-hook5-frame.md
-    section 4, "Injections"). */
+    section 4, "Injections"). Throws std::invalid_argument, before any
+    transfer, for a frame outside 1-kFeedlFrameMax or a resulting FEEDL
+    above kFeedlCeiling. */
 unsigned feedl_for_frame(unsigned frame);
-/** The same from `profile`'s own captured FEEDL_FRAME1 / FEEDL_PITCH. */
+/** The same from `profile`'s own captured FEEDL_FRAME1 / FEEDL_PITCH,
+    with the same two bounds. */
 unsigned feedl_for_frame(unsigned frame, const Profile& profile);
 
 /** feedl split into its three POSITION injection bytes (hi/mid/lo --

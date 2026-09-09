@@ -3674,3 +3674,96 @@ one infrared run, order 2400 → 600 → 1200 → IR 3600 → 7200, low debug
 level, `eject` from post-PARK after each, images to the review folder,
 eye check each. Read-only first: `scanimage -A` on the idle unit to see
 the new source option (Test 47's route, one register read).
+
+---
+
+## 2026-09-09 — Offline: the holder's six apertures measured, the frame pitch settled from the vendor's own grid, and the missing frame-number bound closed
+
+No hardware. Everything here comes from captures already on disk.
+
+**The holder can be measured without loading one.** The per-resolution
+vendor captures (`20260902-vendor-*dpi.pcap`) are whole-strip sweeps, not
+single-frame scans: QuickScan runs the scan pass from the loaded position
+over the entire ~254 mm of magazine travel, so the holder's own plastic
+is imaged end to end. The strip in those captures held four frames, which
+means **apertures 5 and 6 were empty in the light path** — the
+empty-holder measurement, already recorded on 2026-09-02.
+
+**New tool: `tools/holder_geometry.py`.** Reduces a scan to its
+along-strip profile on the infrared pass (film base is transparent to
+infrared; only the holder blocks light), places each edge by
+interpolating the half-level crossing, and reports apertures, crossbars,
+pitch and residuals as JSON, with an optional control image. Two modes:
+`strip` for a whole-holder sweep, `frame` for one frame's own scan, where
+it reports the signed offset between the aperture's centre and the scan
+window's centre. Memory-safe by construction (memory-mapped, reduced in
+row blocks, no full-size float copy) after the 2026-09-08 oomd kills.
+
+Checked against a known answer: an 882-line window cut out of the sweep
+around aperture 5 and displaced by +10 lines read back as −9.42 lines,
+aperture length 35.808 mm against the sweep's own 35.799 mm. Resolution
+about 0.6 lines at 600 dpi = 0.025 mm.
+
+**Six apertures, measured** (600 dpi, infrared pass): lengths 36.119 /
+36.047 / 35.957 / 35.797 / 35.799 / 35.860 mm; crossbars 1.900 / 1.924 /
+1.974 / 1.968 / 1.996 mm; pitch 38.005 / 37.927 / 37.851 / 37.765 /
+37.825 mm. Largest residual against a constant pitch: 3.1 lines =
+0.13 mm. The identification tab's hole is visible ahead of aperture 1
+(lines 170–309, 5.93 mm).
+
+**The pitch is 10752, not 10760.** Extracting every mode-0x18 FEEDL write
+(registers 0x3d/0x3e/0x3f) from every capture separates two things the
+older analysis had merged. The vendor's *nominal* grid — the preview or
+identify pass, before film-edge detection — is a constant step, the same
+in three independent captures with two different applications:
+`20260829-session3-vackning`, `segments/02-preview-magasin` and
+`20260905-vuescan-3600-ir` all give 6414, 17166, 27918, 38670. Seven
+observed steps, every one exactly **10752**. The scan-pass values scatter
+by up to 30 steps around that grid because those apps re-detect the film
+edge per frame, which is also why the base offset differs per capture
+(6414, 6548, 6716, 6743, 6746, 6776 have all been seen). `FEEDL_PITCH =
+10760` came from reading one of those detected values (SilverFast's
+frame 4, 24 steps off grid) as a nominal one.
+
+The difference is 8 steps per frame: 0.085 mm at frame 4, 0.141 mm at
+frame 6. **Not changed** — frames 1–4 are hardware-verified with 10760,
+and the empty-holder run settles it directly (a wrong pitch shows up as a
+registration error growing linearly along the strip).
+
+**Frames 5 and 6 have been driven on this unit — by the vendor.** The WIA
+batch capture `segments/05-batch-komplett.pcap` positioned to frame 5
+(FEEDL 49796) and frame 6 (60174) and scanned both. 60174 is
+`6414 + 5 × 10752` exactly: with no film in position 6 to detect, the app
+fell back to the untouched nominal grid. Frame 6 at 60546 is also 10944
+steps (38.6 mm) short of the load traverse (71490), the longest move the
+transport makes on every load.
+
+**Safety gap found and closed.** The Python driver had **no upper bound
+on a frame number at all**: `--frame 99` parsed, computed FEEDL 1054023
+and would have commanded it. (The SANE backend did bound it, at 4, in
+`begin_scan`.) Now:
+
+- `of135i/holder.py` — the holder model: frame count, measured geometry,
+  and two independent guards. Carries the evidence in its docstring.
+- every `feedl_for_frame()` (six table modules, and the generator that
+  emits them) calls `holder.check_frame()` before returning a target, so
+  no code path can turn an out-of-range frame into a motor command;
+- `holder.check_feedl()` runs before both POSITION phases and refuses any
+  target above 71490 — a second guard that catches a bad FEEDL however it
+  was produced, including a valid frame read against a wrong table;
+- the CLI validates `--frame` / `--frames` before opening the device;
+- `digitize` takes `--frames`, default `1-4`, so a four-frame strip is
+  never scanned as six.
+
+The strip holder's frame count is 6, so 5 and 6 are now reachable. They
+are **not** hardware-verified.
+
+Analysis and the hardware plan: `docs/holder-geometry.md`. Milestone C in
+the roadmap; A's frozen 1–4 scope is untouched.
+
+**Next (hardware, Christian's go):** the empty strip holder, one scan per
+position 1–6 at 600 dpi (widest window, smallest files), three separate
+loads, `holder_geometry.py frame` on each. It reads the registration
+error per frame directly, which decides the 10752/10760 question and
+measures the load-to-load variation at the same time. Then the
+six-frame colour negative, then the six-frame black-and-white one.

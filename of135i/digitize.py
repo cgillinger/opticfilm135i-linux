@@ -32,11 +32,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from . import holder
+
 MANIFEST_NAME = "manifest.jsonl"
 
-# The frames one strip holds; digitize scans all four per run. Kept here
-# so the cleaner below and the scan loop in cli.py cannot drift apart.
-FRAMES = (1, 2, 3, 4)
+# Every frame position the holder has (of135i/holder.py). This is the
+# cleaner's sweep, not the scan list: `digitize --frames` decides what a
+# run scans, and the cleaner has to remove whatever an *earlier* run
+# left behind, which may be a longer strip than this one.
+FRAMES = tuple(holder.frames())
 
 
 def manifest_path(out_dir: str) -> Path:

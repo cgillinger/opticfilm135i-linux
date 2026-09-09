@@ -357,7 +357,6 @@ private:
     std::size_t height_;
     std::vector<std::uint8_t> skip_;
 };
-constexpr unsigned kFrameMax = 4;      // the magazine's strip; the option's range
 std::map<const Genesys_Device*, CalStage>& cal_stage()
 {
     static std::map<const Genesys_Device*, CalStage> stages;
@@ -1039,8 +1038,9 @@ void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*se
 
     // Hook 5: POSITION to the frame -- the driver's scan(frame=N): the same
     // program with the frame's absolute FEEDL and the FEEDL-scaled budget
-    // (docs/sane-hook5-frame.md section 10). The option's range is 1-4; the
-    // check here is the backend's own, in case the value arrives otherwise.
+    // (docs/sane-hook5-frame.md section 10). The option's range is 1-6, the
+    // six-aperture strip holder (kFrameMax, gl126.h); the check here is the
+    // backend's own, in case the value arrives otherwise.
     unsigned frame = dev->settings.frame;
     if (frame < 1 || frame > kFrameMax) {
         throw SaneException(SANE_STATUS_INVAL,

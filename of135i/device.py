@@ -44,7 +44,7 @@ from datetime import datetime, timezone
 
 import numpy as np
 
-from . import calibrate, diag, safety, tables, tables_base, tables_ir
+from . import calibrate, diag, holder, safety, tables, tables_base, tables_ir
 from .safety import (
     OperationNotAllowedError, UnejectableStateError, SessionState, StartState, UnsafeStartStateError,
 )
@@ -160,6 +160,13 @@ _PARK_WAIT_TIMEOUT = 15.0
 # return is the frame-4 park, 15.6 s in the verbatim phase incl. captured
 # pacing; 30 s is a generous, explicit hard stop (park-completion-analysis.md).
 _PARK_WAIT_B_TIMEOUT = 30.0
+# Both budgets above were set from parks after frames 1-4. A park returns
+# the carriage from wherever the frame was, so the return grows with the
+# frame's distance from home: frame 6 is 1.55x frame 4. The two waits are
+# therefore scaled by the same linear factor POSITION uses
+# (position_timeout_scale of the frame last positioned to), which can only
+# lengthen them -- the factor is never below 1, so a park after frame 1 is
+# bounded exactly as before. Fail-closed is unchanged; only the patience is.
 _PARK_POLL_INTERVAL = 0.02
 
 
@@ -343,6 +350,12 @@ class Scanner:
         # Set by initialize(prep=False): the vendor's device-open
         # sequence (tables_load.OPEN) has been replayed this session.
         self._vendor_open = False
+        # How far from home the last POSITION move went, as the same
+        # linear factor POSITION scales its own completion budget by.
+        # The park that follows returns the carriage from there, so its
+        # two waits are scaled by it too. 1.0 until a frame is
+        # positioned to, which is also the value for frame 1.
+        self._park_scale = 1.0
 
         # Hardware-safety session (safety.py). A real UsbIo brings its
         # own; a duck-typed transport (tests) gets one attached here,
@@ -817,6 +830,12 @@ class Scanner:
     def _park_semantic_steps(self, ctrl_8b, has_0x19, waits: dict) -> None:
         t0 = time.monotonic()
         dev = self.io.dev
+        # The carriage returns from wherever the frame was, so both waits
+        # get the same linear stretch POSITION's own budget got (>= 1.0;
+        # exactly 1.0 for frame 1 and for a park with no preceding
+        # position, so nothing that was verified gets a shorter bound).
+        park_scale = max(1.0, float(getattr(self, "_park_scale", 1.0)))
+        waits["scale"] = park_scale
 
         # ---- real park/teardown sequence (captured ops 0-55) -----------
         dev.ctrl_transfer(0x40, 0x0C, 0x8D, 0, b"\x00")
@@ -843,7 +862,7 @@ class Scanner:
 
         # ---- Wait A: reg 0x35 bit 0x40 set, then clear it (RMW) ---------
         _t = time.monotonic()
-        deadline = _t + _PARK_WAIT_TIMEOUT
+        deadline = _t + _PARK_WAIT_TIMEOUT * park_scale
         v35 = self.io.read_reg(0x35)
         while not (v35 & 0x40):
             if time.monotonic() > deadline:
@@ -852,7 +871,7 @@ class Scanner:
                 self._diag_park_waits = waits
                 raise safety.StrictPollTimeoutError(
                     f"park_semantic: wait A (reg 0x35 bit 0x40, carriage home after 0x02=0x30) "
-                    f"did not complete within {_PARK_WAIT_TIMEOUT:.0f}s: last 0x{v35:02x}. The "
+                    f"did not complete within {_PARK_WAIT_TIMEOUT * park_scale:.0f}s: last 0x{v35:02x}. The "
                     f"transport state is unknown; the park stops here. "
                     f"{safety.NO_RECOVERY_ATTEMPTED} {safety.POWER_CYCLE_INSTRUCTION}",
                     last=bytes([v35]), want=bytes([0x40]), observed=self.session.start_reg01,
@@ -875,7 +894,7 @@ class Scanner:
         # timeout, a malformed reply that never clears, a USB error or
         # Ctrl-C ends the operation here -- nothing is written after.
         _t = time.monotonic()
-        deadline = _t + _PARK_WAIT_B_TIMEOUT
+        deadline = _t + _PARK_WAIT_B_TIMEOUT * park_scale
         reply = bytes(dev.ctrl_transfer(0xC0, 0x04, 0x018E, 0x0122, 2))
         while not park_complete_status_matches(reply):
             if time.monotonic() > deadline:
@@ -886,7 +905,7 @@ class Scanner:
                 raise safety.StrictPollTimeoutError(
                     f"park_semantic: wait B (status word PARK_COMPLETE after the carriage return: "
                     f"(byte & {PARK_COMPLETE_REQUIRED_MASK:#04x}) == {PARK_COMPLETE_REQUIRED_VALUE:#04x}, "
-                    f"ack {PARK_COMPLETE_ACK:#04x}) did not complete within {_PARK_WAIT_B_TIMEOUT:.0f}s: "
+                    f"ack {PARK_COMPLETE_ACK:#04x}) did not complete within {_PARK_WAIT_B_TIMEOUT * park_scale:.0f}s: "
                     f"last {reply.hex() or '(empty)'}. The park stops here. "
                     f"{safety.NO_RECOVERY_ATTEMPTED} {safety.POWER_CYCLE_INSTRUCTION}",
                     last=reply, want=bytes([PARK_COMPLETE_REQUIRED_VALUE, PARK_COMPLETE_ACK]),
@@ -1740,7 +1759,8 @@ class Scanner:
         )
 
         # ---- position: relative feed from current carriage position ------
-        feedl = tables.feedl_for_frame(frame)
+        feedl = holder.check_feedl(tables.feedl_for_frame(frame))
+        self._park_scale = position_timeout_scale(tables, feedl)
         log.info("positioning to frame %d (FEEDL=%d)", frame, feedl)
         # Strict completion (class F, budget scaled with FEEDL): never
         # start SCAN on a moving transport (Test 18, frame 4).
@@ -1955,7 +1975,8 @@ class Scanner:
         # dpi between 2400 and 3600); re-loading the magazine resets
         # the carriage to the load-position reference. A proper homing
         # command would fix this, but requires hardware testing.
-        feedl = t.feedl_for_frame(frame)
+        feedl = holder.check_feedl(t.feedl_for_frame(frame))
+        self._park_scale = position_timeout_scale(t, feedl)
         log.info("positioning to frame %d (FEEDL=%d, %d dpi dual)", frame, feedl, dpi)
         # Strict completion (class F, budget scaled with FEEDL): never
         # start SCAN on a moving transport (Test 18, frame 4).

@@ -51,6 +51,7 @@ requirements never need hardware.
 | **A — Own driver complete** | A versioned release with a frozen support scope, all mandatory acceptance criteria met, install + user instructions, and accepted limitations listed. |
 | **B1 — Local SANE backend complete** | An installable backend that performs the agreed scanning workflow and preserves the driver's safety model. |
 | **B2 — SANE contribution delivered** | Code, documentation and verification evidence **submitted** per the SANE project's current contribution process. |
+| **C — Full-length holder and slide holder** | Frames 1–6 of the strip holder are geometrically measured and hardware-verified in the driver and the backend; the mounted-slide holder's mechanics are characterised as far as an empty original holder allows. |
 
 B1 and B2 are explicit project goals, not optional future ideas. B2 is
 scoped to **delivery**: we control *prepared → submitted*, not the
@@ -130,12 +131,13 @@ Each is outside the promised function or has a verified safe handling:
   is the application's job. (Out of scope by design.)
 - **Speed:** correct but not tuned. (Out of scope for A; a functional scan
   is not blocked.)
-- **Holders and frame positions:** the strip holder's positions 1–4 are
-  the only captured geometry (Plustek: the holder takes six frames —
-  5 and 6 untested); the mounted-slide holder is untested (planned, once
-  it is at hand); panorama is a vendor software mode (one continuous
-  scan, the holder encodes as the strip holder) that needs its own
-  capture. (Out of scope for A; open for later.)
+- **Holders and frame positions:** A promises positions 1–4, the only
+  ones verified frame for frame when A was frozen. The holder's six
+  apertures have since been measured (`docs/holder-geometry.md`) and the
+  driver accepts 1–6, but 5 and 6 are not hardware-verified; the
+  mounted-slide holder is uncharacterised; panorama is a vendor software
+  mode (one continuous scan, the holder encodes as the strip holder)
+  that needs its own capture. (Out of scope for A; milestone C.)
 
 ---
 
@@ -166,6 +168,46 @@ request flow at submission time). Delivered = submitted, review-ready.
 - Post-submission: address review feedback on the submitted work as a
   bounded follow-up. Not an open-ended maintenance pledge (SANE's own
   "unmaintained" status exists for backends whose author steps back).
+
+---
+
+## C — Full-length holder and slide holder (definition of done)
+
+A does not cover this: A's scope was frozen at frames 1–4, and it stays
+frozen. C extends the holder support without reopening it.
+
+**C1 — the strip holder, frames 1–6.** Done when:
+1. The six apertures' positions and dimensions are measured, not assumed.
+   ✅ done offline (`docs/holder-geometry.md`): six apertures, 35.80–36.12
+   mm long, crossbars 1.90–2.00 mm, constant pitch, measured from the
+   vendor's whole-holder pass with positions 5 and 6 empty.
+2. The pitch is settled by evidence rather than by the older nominal
+   reading. Seven observed vendor grid steps say 10752; the driver still
+   carries 10760, a 0.14 mm difference at frame 6. **Open decision.**
+3. Each of the six scan windows contains its whole aperture with positive
+   measured margin on both sides, on hardware, with the empty holder.
+4. Load-to-load variation is measured over three separate loads and is
+   smaller than that margin.
+5. Frames 5 and 6 are hardware-verified: POSITION completes on class F
+   inside budget, the scan delivers, PARK completes.
+6. A full-length six-frame **colour** negative scans 1–6 with the right
+   image in each position.
+7. A full-length six-frame **black-and-white** negative does the same, as
+   an independent physical control. (Silver black-and-white film is
+   opaque to infrared and is not an infrared or dust-removal reference.)
+8. The CLI and the SANE backend both accept 1–6 and both refuse frame 0
+   and frame 7+ before any write. ✅ done offline.
+9. Frames 1–4 show no regression.
+10. README, this roadmap and the test log describe what was actually
+    verified, separately from what was measured offline.
+
+**C2 — the mounted-slide holder.** An empty original holder can establish
+identification, load and transport, frame count, pitch, the four aperture
+positions, scan geometry, repeatability and park/eject. It cannot
+establish focus at the film plane inside a mount, sharpness, positive-film
+colour or tonal rendering, infrared behaviour on a real slide, or dust
+removal. Done when the first list is verified on hardware and the second
+is documented as separately unverified, pending a physical slide.
 
 ---
 

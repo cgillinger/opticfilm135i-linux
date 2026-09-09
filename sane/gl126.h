@@ -43,6 +43,20 @@
 namespace genesys {
 namespace gl126 {
 
+/** The film holder's aperture count -- the largest frame number the
+    "frame" SANE option and the driver's own frame checks (begin_scan(),
+    gl126_ops::feedl_for_frame()) will accept. Six, not four: the
+    vendor's whole-holder 600 dpi pass images the empty holder end to
+    end and shows six apertures on a constant pitch (measured,
+    docs/holder-geometry.md), and the vendor's own WIA batch capture
+    positioned to frames 5 and 6 directly (FEEDL 49796 and 60174).
+    Declared here, not file-local to gl126.cpp, so the "frame" option's
+    constraint range (genesys.cpp, patched in by gl126-integration.patch)
+    is derived from it rather than carrying its own copy of the number.
+    Mirrors of135i/holder.py::STRIP.frames, the driver's own authority on
+    the same holder. */
+constexpr unsigned kFrameMax = 6;
+
 class CommandSetGl126 : public CommandSetCommon
 {
 public:

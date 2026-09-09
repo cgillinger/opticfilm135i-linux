@@ -160,6 +160,35 @@ class ScannerBusyError(SafetyError):
     """Another process holds the scanner lock."""
 
 
+class FrameOutOfRangeError(SafetyError):
+    """A frame number outside the holder was requested. The holder has a
+    fixed number of apertures; a number outside them has no position to
+    stand for, and turning it into a FEEDL would drive the carriage to
+    an arbitrary place. Raised by of135i.holder.check_frame() from
+    inside every feedl_for_frame(), before any write. ``frame`` is what
+    was asked for, ``frames`` what the holder actually holds."""
+
+    def __init__(self, message: str, *, frame, holder: str, frames: int, **kw):
+        super().__init__(message, **kw)
+        self.frame = frame
+        self.holder = holder
+        self.frames = frames
+
+
+class FeedlOutOfRangeError(SafetyError):
+    """A positioning target outside the transport's proven travel. The
+    second, independent guard behind FrameOutOfRangeError: it catches a
+    bad FEEDL whatever produced it, including a valid frame number read
+    against a wrong table. Raised before the POSITION phase writes
+    anything. ``feedl`` is the target, ``ceiling`` the longest move this
+    unit is known to make (the load traverse)."""
+
+    def __init__(self, message: str, *, feedl: int, ceiling: int, **kw):
+        super().__init__(message, **kw)
+        self.feedl = feedl
+        self.ceiling = ceiling
+
+
 class CalibrationError(SafetyError):
     """A calibration buffer is invalid and cannot be trusted or repaired.
     Raised fail-closed (the scan operation is FAILED, no motor command

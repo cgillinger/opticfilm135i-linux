@@ -529,6 +529,43 @@ def test_digitize_prefix_sequences_are_independent():
     print("test_digitize_prefix_sequences_are_independent OK")
 
 
+def test_digitize_frames_defaults_to_1_4_and_validates_before_hardware():
+    """--frames on digitize defaults to "1-4" (verified via a spy on
+    cli._parse_frames -- _run_writing_session is stubbed so the default
+    can be observed without a Scanner ever being constructed) and an
+    out-of-range spec exits 2 before the roll directory, the load flow
+    or _run_writing_session are ever reached."""
+    import argparse
+    from of135i import cli
+
+    calls = []
+    orig_parse = cli._parse_frames
+    orig_run = cli._run_writing_session
+    cli._parse_frames = lambda spec: (calls.append(spec), orig_parse(spec))[1]
+    cli._run_writing_session = lambda body: 0
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            args = argparse.Namespace(
+                out=d, prefix="", roll=1, force=True, assume_loaded=True,
+                dpi=3600, positive=False, rotate=0, ir=True, no_clean=False,
+                no_diag=True, park="verbatim", warmup_budget=None, frames=None)
+            cli._cmd_digitize(args)
+    finally:
+        cli._parse_frames = orig_parse
+        cli._run_writing_session = orig_run
+    assert calls == ["1-4"], calls
+
+    with tempfile.TemporaryDirectory() as d:
+        for spec in ("1-7", "0-2"):
+            args = argparse.Namespace(
+                out=d, prefix="", roll=1, force=True, assume_loaded=True,
+                dpi=3600, positive=False, rotate=0, ir=True, no_clean=False,
+                no_diag=True, park="verbatim", warmup_budget=None, frames=spec)
+            rc = cli._cmd_digitize(args)
+            assert rc == 2, (spec, rc)
+    print("test_digitize_frames_defaults_to_1_4_and_validates_before_hardware OK")
+
+
 def test_clear_roll_outputs_only_frame_files():
     """--force clears the roll's own frame outputs and NOTHING else. The
     names are matched exactly, so an operator's own file in the same
@@ -685,6 +722,7 @@ def main() -> int:
         test_digitize_preview_does_not_alter_main,
         test_digitize_force_clears_stale_outputs,
         test_digitize_prefix_sequences_are_independent,
+        test_digitize_frames_defaults_to_1_4_and_validates_before_hardware,
         test_clear_roll_outputs_only_frame_files,
         test_digitize_records_partial_frame_progress,
         test_sane_tables_generated_and_current,
