@@ -121,25 +121,48 @@ the analysis predicts.
 --release`, power cycle, `load`, `eject`. Send me the JSON reports and
 the control images; do not repeat the run before we have read them.
 
-### N2. Repeatability: N1 again, twice more, over separate loads
+### N2. The holder with nothing in it, three separate loads
 
-**What it proves.** How much of the registration error is the transport
-re-finding its reference, rather than the model. Frames 1 and 6 matter
-most: they span the whole travel.
+**What it proves.** Two things at once. First, the geometry with the
+film taken out of the question entirely -- N1 was run with a negative in
+the holder (Test 55), and although four separate checks say its fiducial
+was the plastic and not the film, an empty holder settles that by
+construction instead of by argument. Second, how much of the
+registration error is the transport re-finding its reference rather than
+the model, which is what three loads answer.
+
+**Why the empty holder specifically.** With no film, the aperture is
+open from edge to edge, so both edges of the opening are unambiguous
+wherever the window falls, every transition in the profile is plastic,
+and the aperture's own length is measured rather than assumed. It also
+removes the one contamination N1 actually showed: picture content
+producing strong mid-window transitions of its own.
 
 **Why it is needed.** The margin in the definition of done has to be
-larger than this variation, or "it fits" is luck. Three loads is enough
-if they agree; more only if they do not.
+larger than the load-to-load variation, or "it fits" is luck. Three
+loads is enough if they agree; more only if they do not. Frames 1 and 6
+matter most: they span the whole travel.
 
-**What it builds on.** N1. The ±4-line (0.028 mm) figure already
-observed across ten repeats at 3600 dpi gives the expected order.
+**What it builds on.** N1 (Test 55): all six positions reached,
+calibration stable across the holder, POSITION linear in the target,
+frame 6 in 12.5 s against a 43.5 s budget. The ±4-line (0.028 mm) figure
+from ten repeats at 3600 dpi gives the expected order for the spread.
 
-**Steps.** N1 verbatim, twice more, each from its own power cycle and
-its own load, with the holder taken out and put back between them.
-Output prefixes `empty-b`, `empty-c`.
+**Steps.** N1's command, with the holder **completely empty -- no film
+at all**, three times, each from its own power cycle and its own load,
+with the holder taken out and put back in between. Output prefixes
+`empty-a`, `empty-b`, `empty-c` (N1's files are `film-a`, renamed).
 
-**Expected.** Per-frame centre offsets agreeing across the three loads
-to within a few hundredths of a millimetre.
+**Expected, and what would be new.** With no film the aperture should
+read at or near saturation across its whole length, both its edges
+should be findable when the window covers them, and the summary should
+report the aperture's measured length rather than an assumed one. If N1's
+pitch steps -- 10696, 10724, 10730, 10752, 10777 -- reappear, they are
+geometry. If they do not, they were the film.
+
+**Repeatability.** Per-frame offsets agreeing across the three loads
+to within a few hundredths of a millimetre would say the transport is
+not the limiting factor and the model is.
 
 **Stop conditions and deviation handling.** As N1.
 
