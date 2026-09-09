@@ -154,29 +154,124 @@ def split_light(profile, dual):
     return profile[0::2] if dual else profile
 
 
-def edges(profile, threshold=None):
-    """Sub-sample edge positions where the profile crosses the threshold.
+def _rolling_median(prof, span, offset):
+    """Median of `span` samples starting `offset` away from each index.
 
-    The threshold defaults to halfway between the profile's dark floor
-    (2nd percentile = opaque plastic) and its lit level (90th percentile
-    = open aperture). Each crossing is placed by linear interpolation
-    between the two samples that straddle it, so an edge is located to a
-    fraction of a line rather than to the nearest line.
-
-    Returns (threshold, [(position, rising), ...]).
+    Used to read the light level just to one side of a candidate edge
+    without letting the edge itself into the window.
     """
-    if threshold is None:
-        dark = float(np.percentile(profile, 2))
-        lit = float(np.percentile(profile, 90))
-        threshold = (dark + lit) / 2.0
-    above = profile > threshold
-    out = []
-    for i in range(1, len(profile)):
-        if above[i] != above[i - 1]:
-            y0, y1 = float(profile[i - 1]), float(profile[i])
-            frac = (threshold - y0) / (y1 - y0) if y1 != y0 else 0.5
-            out.append((i - 1 + frac, bool(above[i])))
-    return threshold, out
+    n = len(prof)
+    out = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        if offset < 0:
+            lo, hi = max(0, i + offset - span + 1), max(1, i + offset + 1)
+        else:
+            lo, hi = min(n - 1, i + offset), min(n, i + offset + span)
+        out[i] = np.median(prof[lo:hi]) if hi > lo else prof[i]
+    return out
+
+
+#: How far either side of a transition the local light levels are taken
+#: from, in lines, and how many lines next to the transition itself are
+#: skipped (the ramp is one or two lines wide).
+LOCAL_SPAN = 20
+LOCAL_SKIP = 2
+#: A candidate edge must move at least this fraction of the local
+#: lit-to-plastic range in a single line. The real ramp is two or three
+#: lines wide on the vendor's own scans, so a single line carries about
+#: a third of the drop; anything below a quarter is illumination.
+EDGE_GRADIENT = 0.25
+#: ... and the levels either side of the refined transition must really
+#: be a lit plateau and the plastic, not two parts of the same plateau.
+EDGE_CONTRAST = 0.5
+
+
+def edges(profile, threshold=None):
+    """Sub-sample positions of the aperture edges, on local light levels.
+
+    A global threshold does not survive real data. Illumination varies
+    along a scan -- on an empty holder the driver's own per-frame gain
+    calibration sees a blank field and lands somewhere different every
+    time, and within one frame the lit level can fall by a third from
+    one end to the other. A threshold taken from the whole profile then
+    sits close to the dim end's plateau and reports an edge tens of
+    lines away from the real one, or invents one in the middle of an
+    open aperture. (Observed on the first empty-holder run: frame 6's
+    trailing edge came out 21 lines early that way.)
+
+    So each transition is found by its gradient and then placed against
+    the light levels immediately on either side of it: threshold =
+    halfway between the plateau before and the plateau after, crossing
+    interpolated between the two samples that straddle it. Whether the
+    aperture is lit to 8000 counts or 27000 makes no difference.
+
+    Passing `threshold` forces the old global behaviour, for a caller
+    that wants one fixed level.
+
+    Returns (representative threshold, [(position, rising), ...]).
+    """
+    prof = np.asarray(profile, dtype=np.float64)
+    n = len(prof)
+    if n < 3:
+        return 0.0, []
+    if threshold is not None:
+        above = prof > threshold
+        out = []
+        for i in range(1, n):
+            if above[i] != above[i - 1]:
+                y0, y1 = float(prof[i - 1]), float(prof[i])
+                frac = (threshold - y0) / (y1 - y0) if y1 != y0 else 0.5
+                out.append((i - 1 + frac, bool(above[i])))
+        return threshold, out
+
+    d = np.diff(prof)
+    if float(prof.max() - prof.min()) <= 0:
+        return 0.0, []
+    # A real aperture edge moves most of the way from the lit level to
+    # the plastic in one or two lines. "Most of the way" has to be
+    # measured against the LOCAL lit level, not the profile's overall
+    # range: on the vendor's whole-holder sweep an empty aperture reads
+    # 39800 and a film-filled one 34500, and a global rule tuned to the
+    # brightest part misses the edges of the dimmer ones entirely.
+    floor = float(np.percentile(prof, 5))
+    lit = np.maximum(
+        _rolling_median(prof, LOCAL_SPAN, -LOCAL_SKIP),
+        _rolling_median(prof, LOCAL_SPAN, +LOCAL_SKIP))[:len(d)]
+    cand = np.flatnonzero(np.abs(d) > EDGE_GRADIENT * np.maximum(lit - floor, 1.0))
+    groups = []
+    for i in cand:
+        if groups and i - groups[-1][-1] <= 2:
+            groups[-1].append(int(i))
+        else:
+            groups.append([int(i)])
+
+    out, levels = [], []
+    for g in groups:
+        i0, i1 = g[0], g[-1]
+        rising = bool(prof[min(i1 + 1, n - 1)] > prof[i0])
+        left = prof[max(0, i0 - LOCAL_SKIP - LOCAL_SPAN):max(1, i0 - LOCAL_SKIP + 1)]
+        right = prof[min(n - 1, i1 + 1 + LOCAL_SKIP):
+                     min(n, i1 + 1 + LOCAL_SKIP + LOCAL_SPAN)]
+        if left.size == 0 or right.size == 0:
+            continue
+        lo_lvl, hi_lvl = float(np.median(left)), float(np.median(right))
+        if abs(hi_lvl - lo_lvl) < EDGE_CONTRAST * max(
+                float(np.max(lit[max(0, i0 - 1):i1 + 2])) - floor, 1.0):
+            continue
+        th = (lo_lvl + hi_lvl) / 2.0
+        levels.append(th)
+        # Walk out from the transition to the pair of samples the
+        # threshold falls between; the ramp is one or two lines wide.
+        pos = None
+        for i in range(max(1, i0 - 2), min(n, i1 + 4)):
+            y0, y1 = float(prof[i - 1]), float(prof[i])
+            if (y0 - th) * (y1 - th) <= 0 and y0 != y1:
+                pos = i - 1 + (th - y0) / (y1 - y0)
+                break
+        if pos is not None:
+            out.append((pos, rising))
+    out.sort()
+    return (float(np.median(levels)) if levels else 0.0), out
 
 
 def apertures(profile, lines_per_mm, min_mm=MIN_APERTURE_MM, threshold=None):
@@ -272,26 +367,60 @@ def report_frame(prof, dpi, args):
     window_lines = len(prof)
     window_centre = (window_lines - 1) / 2.0
     if not aps:
-        # No full aperture inside the window: report what edges there are
-        # so the operator can see whether the window missed entirely or
-        # the aperture simply runs past both ends.
-        _, ed = edges(prof, threshold)
-        return {
+        # No aperture bounded on both sides. That is the normal case
+        # when the window is displaced: the opening runs past one end of
+        # the scan and only the other edge is inside. One edge is still
+        # a perfectly good fiducial -- it is a fixed feature of the
+        # plastic -- so report it rather than throwing the frame away.
+        _, ed = edges(prof)
+        falling = [q for q, rising in ed if not rising]
+        rising = [q for q, rising in ed if rising]
+        out = {
             "mode": "frame",
             "dpi": dpi,
             "dual": bool(args.dual),
             "threshold": round(threshold, 1),
             "window_lines": window_lines,
             "window_mm": round(window_lines / lines_per_mm, 3),
+            "window_centre_line": window_centre,
             "aperture_found": False,
-            "edges_in_window": [round(float(p), 2) for p, _ in ed],
-            "note": "no run long enough to be an aperture; the window may "
-                    "be inside the aperture (no edge) or off it entirely",
-        }, aps, threshold
+            "edges_in_window": [round(float(q), 2) for q, _ in ed],
+        }
+        if falling:
+            e = max(falling)
+            out["trailing_edge_line"] = round(float(e), 2)
+            out["trailing_edge_offset_lines"] = round(float(e - window_centre), 2)
+            out["trailing_edge_offset_hwdpi"] = round(
+                float((e - window_centre) * 7200 / dpi), 1)
+            out["clipped"] = "leading"
+            out["note"] = ("the aperture's leading edge is outside the "
+                           "window: the window sits late on the opening, "
+                           "and the front of it is not scanned")
+        elif rising:
+            e = min(rising)
+            out["leading_edge_line"] = round(float(e), 2)
+            out["leading_edge_offset_lines"] = round(float(e - window_centre), 2)
+            out["leading_edge_offset_hwdpi"] = round(
+                float((e - window_centre) * 7200 / dpi), 1)
+            out["clipped"] = "trailing"
+            out["note"] = ("the aperture's trailing edge is outside the "
+                           "window: the window sits early on the opening")
+        else:
+            out["clipped"] = "both-or-neither"
+            out["note"] = ("no aperture edge in the window at all: either "
+                           "the window is entirely inside the opening or "
+                           "entirely on the plastic")
+        return out, aps, threshold
     a, b = max(aps, key=lambda r: r[1] - r[0])
     centre = (a + b) / 2
     offset = centre - window_centre
     return {
+        "trailing_edge_line": round(float(b), 2),
+        "trailing_edge_offset_lines": round(float(b - window_centre), 2),
+        "trailing_edge_offset_hwdpi": round(
+            float((b - window_centre) * 7200 / dpi), 1),
+        "leading_edge_line": round(float(a), 2),
+        "clipped": None,
         "mode": "frame",
         "dpi": dpi,
         "dual": bool(args.dual),
@@ -340,7 +469,7 @@ def _fit_fixed_pitch(frames, centres, pitch):
     return base, resid
 
 
-def summarise(reports, frames, commanded_feedl):
+def summarise(reports, frames, commanded_feedl, aperture_mm=None):
     """Turn per-frame reports into the six numbers the holder question needs.
 
     ``reports`` are the JSON objects `frame` mode produced, ``frames``
@@ -350,25 +479,40 @@ def summarise(reports, frames, commanded_feedl):
     window's centre, so the whole comparison happens in the motor's own
     units and no external reference is needed.
     """
+    # Which feature every frame is measured against. The aperture's
+    # centre is the best one, but it needs both edges inside the window;
+    # when the window is displaced enough to push one edge out, the
+    # trailing edge alone is still a fixed feature of the plastic and
+    # does the same job. All frames must use the same one -- mixing them
+    # would fold the aperture's length into the pitch.
+    key = ("centre_offset_hwdpi"
+           if all(r.get("aperture_found") for r in reports)
+           else "trailing_edge_offset_hwdpi")
+    missing = [n for r, n in zip(reports, frames) if key not in r]
+    if missing:
+        raise SystemExit(
+            f"frames {missing} have no {key}: no usable aperture edge in "
+            "the window at all, so nothing can be measured from them")
+    fiducial = "aperture centre" if key.startswith("centre") else "aperture trailing edge"
+
     rows, centres = [], []
     for rep, n, feedl in zip(reports, frames, commanded_feedl):
-        if not rep.get("aperture_found"):
-            raise SystemExit(f"frame {n}: no aperture in the report; "
-                             "the window did not contain the opening")
-        off = float(rep["centre_offset_hwdpi"])
+        off = float(rep[key])
         centres.append(feedl + off)
         rows.append({
             "frame": n,
             "commanded_feedl": feedl,
-            "centre_offset_mm": rep["centre_offset_mm"],
-            "aperture_centre_hwdpi": round(feedl + off, 1),
-            "aperture_length_mm": rep["aperture_length_mm"],
+            "offset_from_window_centre_hwdpi": round(off, 1),
+            "offset_from_window_centre_mm": round(off / 7200 * MM_PER_INCH, 4),
+            "fiducial_hwdpi": round(feedl + off, 1),
+            "aperture_length_mm": rep.get("aperture_length_mm"),
+            "clipped": rep.get("clipped"),
         })
 
     # Pitch actually measured between consecutive apertures.
     for a, b in zip(rows, rows[1:]):
         if b["frame"] == a["frame"] + 1:
-            d = b["aperture_centre_hwdpi"] - a["aperture_centre_hwdpi"]
+            d = b["fiducial_hwdpi"] - a["fiducial_hwdpi"]
             a["pitch_to_next_hwdpi"] = round(d, 1)
             a["pitch_to_next_mm"] = round(d / 7200 * MM_PER_INCH, 4)
 
@@ -403,11 +547,24 @@ def summarise(reports, frames, commanded_feedl):
     # delivered window, at the offset measured here. Both must stay
     # positive or the opening is clipped however good the positioning is.
     half_w = PLAIN3600_WINDOW_MM / 2
+    lengths = [r["aperture_length_mm"] for r in rows if r["aperture_length_mm"]]
+    typical = float(np.mean(lengths)) if lengths else aperture_mm
+    length_measured = bool(lengths)
     for r in rows:
-        half_a = r["aperture_length_mm"] / 2
-        c = r["centre_offset_mm"]
-        r["plain3600_margin_before_mm"] = round(half_w - half_a + c, 4)
-        r["plain3600_margin_after_mm"] = round(half_w - half_a - c, 4)
+        a_len = r["aperture_length_mm"] or typical
+        if a_len is None:
+            continue
+        # Where the aperture would sit in plain 3600's window. With the
+        # trailing edge as the fiducial the centre is that edge minus
+        # half an aperture; the aperture length then comes from whatever
+        # frame could be measured whole, which is why it is reported.
+        c = (r["offset_from_window_centre_mm"] if key.startswith("centre")
+             else r["offset_from_window_centre_mm"] - a_len / 2)
+        r["plain3600_aperture_length_used_mm"] = round(a_len, 3)
+        r["plain3600_aperture_length_measured"] = (
+            length_measured and r["aperture_length_mm"] is not None)
+        r["plain3600_margin_before_mm"] = round(half_w - a_len / 2 + c, 4)
+        r["plain3600_margin_after_mm"] = round(half_w - a_len / 2 - c, 4)
 
     # Which model to use, and what changes if it does.
     best = min(CANDIDATE_PITCHES,
@@ -415,28 +572,58 @@ def summarise(reports, frames, commanded_feedl):
     worst = [p for p in CANDIDATE_PITCHES if p != best][0]
     margin = (models[str(worst)]["max_abs_residual_mm"]
               - models[str(best)]["max_abs_residual_mm"])
+    best_resid = models[str(best)]["max_abs_residual_mm"]
+    rec = {
+        "better_candidate": best,
+        "beats_other_candidate_by_mm": round(margin, 4),
+        "frames_whose_feedl_changes": (
+            [n for n in frames if n > 1] if best != 10760 else []),
+    }
+    # A candidate is only worth adopting if it actually describes the
+    # stopping points. When a pitch fitted to the data does materially
+    # better than the better candidate, the answer is neither of them.
+    if free and free["max_abs_residual_mm"] < best_resid - 0.02:
+        rec["verdict"] = "neither-candidate"
+        rec["measured_pitch"] = free["pitch_hwdpi"]
+        rec["note"] = (
+            f"a pitch fitted to the measurement ({free['pitch_hwdpi']}) "
+            f"leaves {free['max_abs_residual_mm']} mm where the better "
+            f"candidate ({best}) leaves {best_resid} mm. Neither candidate "
+            "describes these stopping points; do not adopt one of them "
+            "just because it is the nearer.")
+    elif margin <= 0.02:
+        rec["verdict"] = "indistinguishable"
+        rec["note"] = ("the two candidates are within the measurement's "
+                       "own resolution; one run does not separate them")
+    else:
+        rec["verdict"] = "candidate"
+        rec["note"] = "the difference exceeds the measurement resolution"
+
+    # A constant pitch, whichever one, may still leave a systematic
+    # shape. A residual that changes sign at both ends is a bow, not
+    # noise, and no single pitch removes it.
+    if free:
+        r = [c - (free["base"] + free["pitch_hwdpi"] * (n - 1))
+             for n, c in zip(frames, centres)]
+        signs = [1 if x > 0 else -1 for x in r]
+        rec["residual_after_best_fit_is_systematic"] = bool(
+            len(r) >= 4 and signs[0] == signs[-1] != signs[len(r) // 2])
+
     return {
         "frames": frames,
+        "fiducial": fiducial,
         "per_frame": rows,
         "fixed_pitch_models": models,
         "free_pitch_fit": free,
         "plain3600_window_mm": round(PLAIN3600_WINDOW_MM, 4),
-        "recommendation": {
-            "pitch": best,
-            "beats_alternative_by_mm": round(margin, 4),
-            "decisive": bool(margin > 0.02),
-            "frames_whose_feedl_changes": (
-                [n for n in frames if n > 1] if best != 10760 else []),
-            "note": ("the two models are within the measurement's own "
-                     "resolution; do not change the constant on this run "
-                     "alone" if margin <= 0.02 else
-                     "the difference exceeds the measurement resolution"),
-        },
+        "recommendation": rec,
     }
 
 
 def report_summary(a):
     import json as _json
+    if a.aperture_mm is None:
+        a.aperture_mm = _driver_holder().DEFAULT.aperture_mm
     frames = _parse_frame_spec(a.frames)
     if len(frames) != len(a.path_list):
         raise SystemExit(f"--frames names {len(frames)} frames but "
@@ -444,7 +631,7 @@ def report_summary(a):
     reports = [_json.load(open(p)) for p in a.path_list]
     mod = _driver_tables(a.profile)
     feedl = [mod.feedl_for_frame(n) for n in frames]
-    return summarise(reports, frames, feedl)
+    return summarise(reports, frames, feedl, aperture_mm=a.aperture_mm)
 
 
 def _parse_frame_spec(spec):
@@ -457,6 +644,16 @@ def _parse_frame_spec(spec):
         else:
             out.append(int(part))
     return out
+
+
+def _driver_holder():
+    """The driver's own holder model, so the assumed aperture length is
+    the measured one rather than a number retyped here."""
+    import importlib
+    import os
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return importlib.import_module("of135i.holder")
 
 
 def _driver_tables(profile):
@@ -542,6 +739,11 @@ def main(argv=None):
                     help="summary mode: which profile the scans used, "
                          "so the commanded FEEDL comes from the driver's "
                          "own table (default dpi600)")
+    ap.add_argument("--aperture-mm", type=float, default=None,
+                    help="summary mode: aperture length to assume when no "
+                         "frame in the run captured both edges, for the "
+                         "plain 3600 dpi margins (default: the holder "
+                         "model's measured mean)")
     ap.add_argument("--json", help="write the full report here")
     ap.add_argument("--control", help="write a control image here")
     a = ap.parse_args(argv)

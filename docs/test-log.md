@@ -3767,3 +3767,101 @@ loads, `holder_geometry.py frame` on each. It reads the registration
 error per frame directly, which decides the 10752/10760 question and
 measures the load-to-load variation at the same time. Then the
 six-frame colour negative, then the six-frame black-and-white one.
+
+---
+
+## 2026-09-09 — Test 55 (N1): the empty strip holder, frames 1-6 at 600 dpi — all six positioned and delivered; the window sits ~0.5 mm late and the pitch is neither 10752 nor 10760
+
+First hardware run of frames 5 and 6 by this driver. Empty standard
+holder, no film, one load, `scan --frames 1-6 --dpi 600`, eject from
+post-PARK. Operator reported the run completed and ejected normally.
+Raw scans and reports: private analysis area, `holder-20260909/`.
+
+**Everything mechanical worked.** Six frames positioned, calibrated,
+scanned and delivered. No fail-closed stop, no residual dark_b, no
+short transfer. Calibration was strikingly stable across the whole
+holder: gain codes 44/33/39 on five frames and 45/33/39 on frame 6,
+offset codes 266/265/266 throughout, white mean 27437-27635. POSITION
+duration is linear in the target -- 1.80, 3.82, 5.97, 8.14, 10.29,
+12.45 s for FEEDL 6746 to 60546 -- so frame 6 finished in 12.5 s
+against its 43.5 s budget. Frames 5 and 6 are no different in kind
+from 1-4.
+
+**The measurement needed the tool fixed twice.** Both faults were found
+by real data, and both are now covered by offline tests:
+
+1. A global threshold does not survive an empty holder. With no film,
+   the per-frame gain calibration sees a blank field and lands
+   differently every frame -- the lit level ranged from 7900 to 27800
+   counts across the six -- and within frame 6 it fell by a third from
+   one end of the window to the other. A threshold taken from the whole
+   profile then sat just under that frame's dim plateau and reported
+   its trailing edge 21 lines (0.9 mm) early. `edges()` now finds each
+   transition by its gradient relative to the local lit-to-plastic
+   range, and places it against the levels immediately either side.
+2. The tool refused any frame whose window did not contain a whole
+   aperture, which was five frames out of six. One edge is a perfectly
+   good fiducial -- it is a fixed feature of the plastic -- so the
+   report now gives the trailing edge, which end is clipped, and the
+   summary uses it.
+
+**The window sits late on the aperture.** In every frame the aperture's
+leading edge is outside the scan and its trailing edge is inside, with
+27 to 38 lines of crossbar after it. Frame 1's opening only just fits:
+it starts at line 0.4 of 878. So the driver's base offset puts the
+window roughly 0.5 mm past the opening, and the front of every frame is
+not scanned. Projected onto plain 3600 dpi, whose delivered window is
+36.077 mm against a 35.92 mm aperture, the leading margin is negative
+in all six frames (-0.41 to -0.90 mm) and the trailing margin is +0.57
+to +1.05 mm.
+
+That prediction was then checked against data already on disk:
+`a3-retest-1.tiff` (dual 3600, 2026-09-03) has a dark band of about 80
+to 120 lines -- 0.6 to 0.85 mm -- at the trailing end of the frame and
+a partial one at the leading end. The displacement has been in every
+scan this driver has made; it was never noticed because what it eats is
+the gap between frames, not the picture.
+
+**Neither candidate pitch describes the stopping points.** Measured
+between consecutive trailing edges, in 1/7200 in:
+
+| step | 1->2 | 2->3 | 3->4 | 4->5 | 5->6 |
+|---|---|---|---|---|---|
+| measured | 10696.0 | 10724.0 | 10730.2 | 10752.0 | 10777.1 |
+
+Mean 10735.9. Residuals after fitting each model's base offset out:
+10752 leaves at most 0.254 mm, 10760 leaves 0.325 mm, and a pitch
+fitted to the data (10735.6) leaves 0.114 mm. So the answer to the
+question this run was for is **neither**: the better of the two
+candidates is 10752, but a free fit beats it by more than twice the
+measurement's own resolution.
+
+Two independent measurements now agree on ~10736: this run's stopping
+points (10735.6) and the optical aperture spacing in the vendor's
+whole-holder sweep (10736.1). The vendor's *commanded* grid is 10752,
+which is itself 16 steps per frame away from where its own apertures
+are.
+
+**A constant pitch is not the whole story either.** The residual after
+the best-fit constant pitch is +0.11, -0.03, -0.07, -0.09, -0.03,
++0.11 mm: a symmetric bow, about 0.2 mm peak to peak, not noise. The
+edges are one-line transitions and place to about ±0.3 line (0.014 mm),
+so it is real. Whether it is the holder, the transport, or how this
+holder seated on this load cannot be told from one run.
+
+**Nothing changed in the driver.** n = 1. A single load cannot separate
+a repeatable systematic from one seating of one holder, and both the
+base offset and the pitch are implicated. N2 -- the same run twice more
+from separate loads -- is what decides it, and it was already the next
+step in the plan.
+
+**Also observed, not blocking:** the park phase carries the documented
+benign poll mismatches (`9c55` where `ad55` is expected, `8d55` where
+`8155` is), and their count falls from 55 on frame 1 to 2 on frame 6,
+with the park phase's wall clock falling from 67 s to 18 s alongside.
+Session totals ran 84.6 s down to 41.4 s. No effect on the result; it
+is wall-clock cost in a known-benign path, and it belongs with the
+speed-trimming item rather than here.
+
+**Next:** N2, three separate loads, same command. Then decide base and
+pitch together on the three runs.
