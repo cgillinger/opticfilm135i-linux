@@ -83,6 +83,23 @@ The pitch figures drift slightly downwards along the strip (38.005 ->
 in the scan pass's line spacing cannot be separated from a single sweep,
 and at 0.24 mm end to end it does not change any decision below.
 
+**What these numbers are, and are not.** They are a real optical
+measurement of a real holder, from real image data, positions 5 and 6
+included. But they live in the *scan pass's own line coordinate*, and
+converting them into the motor's FEEDL units needs a scale factor that
+this sweep does not carry. Fitting that scale against the vendor's own
+FEEDL for frames 1, 3 and 4 gives 12.01 steps per line, against a
+nominal 12.00, and leaves residuals of ±31 steps (±0.11 mm). So this
+measurement establishes, on its own: that there are six apertures, how
+long each is, how wide the crossbars are, and that the spacing is
+constant. It does **not** establish the pitch to the 8-step precision
+the decision in section 5 turns on -- its own scale uncertainty is of
+that same order. The pitch conclusion in section 3 rests on the FEEDL
+grid, which is measured in the motor's units directly. And neither
+establishes where *this driver's* window lands on any aperture: that is
+never measured anywhere in this document, for any frame, and it is what
+section 8 is for.
+
 Ahead of aperture 1 the profile shows a short lit window (lines
 170-309, 5.93 mm) between two opaque runs. That is the identification
 tab -- the hole that, per Plustek's own material, tells the scanner

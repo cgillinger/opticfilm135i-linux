@@ -36,6 +36,14 @@ folder the operator's own eye checks are collected in.
 of the six apertures. Six signed numbers, one per frame: the distance
 between the aperture's measured centre and the scan window's centre.
 
+This has never been measured, for **any** frame, including the four that
+are hardware-verified. What is verified about 1-4 is that they return
+the right picture, not by how much the window is off-centre in the
+opening. And unlike the offline measurement, this one needs no
+coordinate conversion and no fitted scale: the aperture edges appear
+inside the frame's own delivered image, so the offset is read in the
+same units the scan was programmed in.
+
 **Why it is needed.** It is the only measurement that separates the
 transport (A) from the holder (B) with film (C) removed from the
 question entirely. It settles the open pitch decision -- 10752 against
@@ -77,9 +85,21 @@ Then, offline:
     for f in 1 2 3 4 5 6; do
       .venv/bin/python tools/holder_geometry.py frame \
         <analysis>/holder-<date>/empty-a-f$f.pnm \
-        --dpi 600 --json .../empty-a-f$f.json \
+        --dpi 600 --json <analysis>/holder-<date>/empty-a-f$f.json \
         --control <review-images>/holder-a-f$f.png
     done
+    .venv/bin/python tools/holder_geometry.py summary \
+        <analysis>/holder-<date>/empty-a-f{1,2,3,4,5,6}.json \
+        --frames 1-6 --profile dpi600 --dpi 600 \
+        --json <analysis>/holder-<date>/empty-a-summary.json
+
+The summary is what answers the question. It reports, in one place: the
+measured aperture centre per frame in the motor's own units, the pitch
+actually measured between each consecutive pair, the residuals against
+both 10752 and 10760 with each model's base offset fitted out, a
+free-pitch fit that is not told either candidate, the plain 3600 dpi
+margins each frame would have, and -- if the model should change -- which
+already-verified frames' commanded FEEDL changes with it.
 
 **Expected.** POSITION completes on class F for each frame, inside its
 budget (4.8 s at frame 1, 28 s at frame 4, 35.8 s at frame 5, 43.5 s at

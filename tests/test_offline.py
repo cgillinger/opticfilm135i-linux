@@ -700,6 +700,83 @@ def test_sane_tables_injections_land_on_value_bytes():
     print("test_sane_tables_injections_land_on_value_bytes OK")
 
 
+def test_holder_geometry_measures_a_synthetic_holder():
+    """tools/holder_geometry.py reads a holder's aperture back out of a
+    scan: a square-wave profile with known aperture edges must come back
+    with those edges, and a single-frame window with a known
+    displacement must report that displacement."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "holder_geometry",
+        Path(__file__).resolve().parents[1] / "tools" / "holder_geometry.py")
+    hg = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hg)
+
+    # A six-aperture holder at 600 dpi: 850 lit lines, 46 dark, repeated.
+    dpi, lit, dark = 600, 850, 46
+    prof = np.full(400, 800.0)
+    for _ in range(6):
+        prof = np.concatenate([prof, np.full(lit, 39800.0),
+                               np.full(dark, 800.0)])
+    prof = np.concatenate([prof, np.full(300, 800.0)])
+    lines_per_mm = dpi / hg.MM_PER_INCH
+    _, aps = hg.apertures(prof, lines_per_mm)
+    assert len(aps) == 6, len(aps)
+    pitches = [((b + a) / 2) for a, b in aps]
+    steps = [round(y - x, 1) for x, y in zip(pitches, pitches[1:])]
+    assert all(abs(s - (lit + dark)) < 0.01 for s in steps), steps
+    for a, b in aps:
+        assert abs((b - a) - lit) < 1.5, (a, b)
+
+    # One frame's window, aperture displaced 10 lines from the centre.
+    win = 882
+    frame = np.full(win, 800.0)
+    start = (win - lit) // 2 + 10
+    frame[start:start + lit] = 39800.0
+    args = type("A", (), {"min_aperture_mm": hg.MIN_APERTURE_MM, "dual": False})()
+    rep, _, _ = hg.report_frame(frame, dpi, args)
+    assert rep["aperture_found"] is True
+    assert abs(rep["centre_offset_lines"] - 10) < 1.0, rep["centre_offset_lines"]
+
+
+def test_holder_geometry_summary_recovers_the_true_pitch():
+    """The summary must tell 10752 from 10760 out of six per-frame
+    reports. Built both ways: with the holder truly on each pitch while
+    the driver commands 10760, the recommendation has to name the pitch
+    the holder was built with, and list exactly the frames whose
+    commanded FEEDL would change if the constant moved."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "holder_geometry",
+        Path(__file__).resolve().parents[1] / "tools" / "holder_geometry.py")
+    hg = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hg)
+
+    frames = list(range(1, 7))
+    commanded = [6746 + (n - 1) * 10760 for n in frames]
+    for truth in (10752, 10760):
+        reports = []
+        for n in frames:
+            abs_centre = 6746 + (n - 1) * truth
+            off = abs_centre - commanded[n - 1]
+            reports.append({
+                "aperture_found": True,
+                "centre_offset_hwdpi": off,
+                "centre_offset_mm": off / 7200 * hg.MM_PER_INCH,
+                "aperture_length_mm": 35.92,
+            })
+        out = hg.summarise(reports, frames, commanded)
+        rec = out["recommendation"]
+        assert rec["pitch"] == truth, (truth, rec)
+        assert rec["decisive"] is True, (truth, rec)
+        assert abs(out["free_pitch_fit"]["pitch_hwdpi"] - truth) < 1.0, out
+        expect = [2, 3, 4, 5, 6] if truth != 10760 else []
+        assert rec["frames_whose_feedl_changes"] == expect, rec
+        # The model that is wrong must be visibly worse, not marginally.
+        wrong = str(10760 if truth == 10752 else 10752)
+        assert out["fixed_pitch_models"][wrong]["max_abs_residual_mm"] > 0.05
+
+
 def main() -> int:
     tests = [
         test_assemble_shape_and_endianness,
@@ -727,6 +804,8 @@ def main() -> int:
         test_digitize_records_partial_frame_progress,
         test_sane_tables_generated_and_current,
         test_sane_tables_injections_land_on_value_bytes,
+        test_holder_geometry_measures_a_synthetic_holder,
+        test_holder_geometry_summary_recovers_the_true_pitch,
     ]
     for t in tests:
         t()

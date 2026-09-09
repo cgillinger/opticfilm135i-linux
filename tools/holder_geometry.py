@@ -9,17 +9,25 @@ profile into numbers: aperture start/end/centre/length, crossbar width,
 pitch between apertures, and -- for a single-frame scan -- where the
 aperture sits inside the scan window.
 
-Two modes:
+Three modes:
 
-  strip  A whole-holder pass (the vendor's traverse, or any scan long
-         enough to cover every aperture). Reports one row per aperture
-         plus the pitch table and its residuals against a constant-pitch
-         model.
+  strip    A whole-holder pass (the vendor's traverse, or any scan long
+           enough to cover every aperture). Reports one row per aperture
+           plus the pitch table and its residuals against a
+           constant-pitch model.
 
-  frame  One frame's own scan. Reports the aperture edges inside the
-         window and the offset between the aperture centre and the
-         window centre -- the registration error for that frame, in the
-         scan's own units and in mm.
+  frame    One frame's own scan. Reports the aperture edges inside the
+           window and the offset between the aperture centre and the
+           window centre -- the registration error for that frame, in
+           the scan's own units and in mm.
+
+  summary  The per-frame reports of a whole holder, together. Turns them
+           into the absolute aperture centres (commanded FEEDL plus the
+           measured offset, so everything stays in the motor's own
+           units), the pitch actually measured between each pair, the
+           residuals against each candidate pitch with its base offset
+           fitted out, a free-pitch fit, the plain 3600 dpi margins, and
+           which frames' FEEDL would change if the model changed.
 
 Input is raw scanner data: 16-bit little-endian, pixel-interleaved RGB,
 `--width` pixels per line. Dual-light data (every profile except plain
@@ -33,8 +41,10 @@ systemd-oomd in docs/test-log.md).
 
 Usage:
   holder_geometry.py strip RAW --width 876 --dpi 600 --dual [--json OUT]
-  holder_geometry.py frame RAW --width 876 --dpi 600 --dual [--json OUT]
-  holder_geometry.py profile PROFILE.npy --dpi 600 --dual ...
+  holder_geometry.py frame SCAN.pnm --dpi 600 [--json OUT] [--control PNG]
+  holder_geometry.py profile PROFILE.npy --dpi 600 --dual --sub-mode strip
+  holder_geometry.py summary f1.json ... f6.json --frames 1-6 \
+      --profile dpi600 --dpi 600
 
 `--control PNG` writes a control image with the measured edges, aperture
 centre and window centre drawn on it, for human inspection when the
@@ -303,6 +313,167 @@ def report_frame(prof, dpi, args):
     }, aps, threshold
 
 
+# ------------------------------------------------------------- the summary
+
+#: Delivered height of a plain 3600 dpi frame, in lines and mm. The
+#: colour-line correction crops the wrap artefact off both ends, so this
+#: is 5137 - 24. It is the tightest window of every profile, which is
+#: why the summary reports its margins specifically.
+PLAIN3600_DELIVERED_LINES = 5113
+PLAIN3600_WINDOW_MM = PLAIN3600_DELIVERED_LINES / 3600 * MM_PER_INCH
+
+#: The two candidate pitches, in 1/7200 inch. 10760 is what the table
+#: modules command today; 10752 is the vendor's own nominal grid step.
+#: docs/holder-geometry.md sections 3 and 5.
+CANDIDATE_PITCHES = (10752, 10760)
+
+
+def _fit_fixed_pitch(frames, centres, pitch):
+    """Best base offset for a fixed pitch, and the residuals it leaves.
+
+    The base is free because it is a scan-window convention, not a
+    holder property: every vendor application uses a different one. Only
+    the residuals after removing it say anything about the pitch.
+    """
+    base = float(np.mean([c - (n - 1) * pitch for n, c in zip(frames, centres)]))
+    resid = [c - (base + (n - 1) * pitch) for n, c in zip(frames, centres)]
+    return base, resid
+
+
+def summarise(reports, frames, commanded_feedl):
+    """Turn per-frame reports into the six numbers the holder question needs.
+
+    ``reports`` are the JSON objects `frame` mode produced, ``frames``
+    their frame numbers, ``commanded_feedl`` the FEEDL the driver was
+    told to go to for each. The aperture's absolute position is the
+    commanded target plus the measured offset of the aperture from the
+    window's centre, so the whole comparison happens in the motor's own
+    units and no external reference is needed.
+    """
+    rows, centres = [], []
+    for rep, n, feedl in zip(reports, frames, commanded_feedl):
+        if not rep.get("aperture_found"):
+            raise SystemExit(f"frame {n}: no aperture in the report; "
+                             "the window did not contain the opening")
+        off = float(rep["centre_offset_hwdpi"])
+        centres.append(feedl + off)
+        rows.append({
+            "frame": n,
+            "commanded_feedl": feedl,
+            "centre_offset_mm": rep["centre_offset_mm"],
+            "aperture_centre_hwdpi": round(feedl + off, 1),
+            "aperture_length_mm": rep["aperture_length_mm"],
+        })
+
+    # Pitch actually measured between consecutive apertures.
+    for a, b in zip(rows, rows[1:]):
+        if b["frame"] == a["frame"] + 1:
+            d = b["aperture_centre_hwdpi"] - a["aperture_centre_hwdpi"]
+            a["pitch_to_next_hwdpi"] = round(d, 1)
+            a["pitch_to_next_mm"] = round(d / 7200 * MM_PER_INCH, 4)
+
+    models = {}
+    for pitch in CANDIDATE_PITCHES:
+        base, resid = _fit_fixed_pitch(frames, centres, pitch)
+        models[str(pitch)] = {
+            "fitted_base": round(base, 1),
+            "residual_hwdpi": [round(r, 1) for r in resid],
+            "residual_mm": [round(r / 7200 * MM_PER_INCH, 4) for r in resid],
+            "max_abs_residual_mm": round(
+                max(abs(r) for r in resid) / 7200 * MM_PER_INCH, 4),
+            "rms_residual_mm": round(
+                float(np.sqrt(np.mean(np.square(resid)))) / 7200 * MM_PER_INCH, 4),
+        }
+
+    free = None
+    if len(frames) > 1:
+        slope, intercept = np.polyfit(np.array(frames, dtype=float) - 1,
+                                      np.array(centres), 1)
+        fresid = [c - (intercept + slope * (n - 1))
+                  for n, c in zip(frames, centres)]
+        free = {
+            "pitch_hwdpi": round(float(slope), 1),
+            "pitch_mm": round(float(slope) / 7200 * MM_PER_INCH, 4),
+            "base": round(float(intercept), 1),
+            "max_abs_residual_mm": round(
+                max(abs(r) for r in fresid) / 7200 * MM_PER_INCH, 4),
+        }
+
+    # Plain 3600 dpi margins: the aperture placed inside that profile's
+    # delivered window, at the offset measured here. Both must stay
+    # positive or the opening is clipped however good the positioning is.
+    half_w = PLAIN3600_WINDOW_MM / 2
+    for r in rows:
+        half_a = r["aperture_length_mm"] / 2
+        c = r["centre_offset_mm"]
+        r["plain3600_margin_before_mm"] = round(half_w - half_a + c, 4)
+        r["plain3600_margin_after_mm"] = round(half_w - half_a - c, 4)
+
+    # Which model to use, and what changes if it does.
+    best = min(CANDIDATE_PITCHES,
+               key=lambda p: models[str(p)]["max_abs_residual_mm"])
+    worst = [p for p in CANDIDATE_PITCHES if p != best][0]
+    margin = (models[str(worst)]["max_abs_residual_mm"]
+              - models[str(best)]["max_abs_residual_mm"])
+    return {
+        "frames": frames,
+        "per_frame": rows,
+        "fixed_pitch_models": models,
+        "free_pitch_fit": free,
+        "plain3600_window_mm": round(PLAIN3600_WINDOW_MM, 4),
+        "recommendation": {
+            "pitch": best,
+            "beats_alternative_by_mm": round(margin, 4),
+            "decisive": bool(margin > 0.02),
+            "frames_whose_feedl_changes": (
+                [n for n in frames if n > 1] if best != 10760 else []),
+            "note": ("the two models are within the measurement's own "
+                     "resolution; do not change the constant on this run "
+                     "alone" if margin <= 0.02 else
+                     "the difference exceeds the measurement resolution"),
+        },
+    }
+
+
+def report_summary(a):
+    import json as _json
+    frames = _parse_frame_spec(a.frames)
+    if len(frames) != len(a.path_list):
+        raise SystemExit(f"--frames names {len(frames)} frames but "
+                         f"{len(a.path_list)} reports were given")
+    reports = [_json.load(open(p)) for p in a.path_list]
+    mod = _driver_tables(a.profile)
+    feedl = [mod.feedl_for_frame(n) for n in frames]
+    return summarise(reports, frames, feedl)
+
+
+def _parse_frame_spec(spec):
+    out = []
+    for part in spec.split(","):
+        part = part.strip()
+        if "-" in part:
+            lo, hi = part.split("-", 1)
+            out.extend(range(int(lo), int(hi) + 1))
+        else:
+            out.append(int(part))
+    return out
+
+
+def _driver_tables(profile):
+    """The driver's own table module for the profile the scan used, so
+    the commanded FEEDL comes from the same source the scan did rather
+    than being retyped here."""
+    import importlib
+    import os
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    name = {"plain3600": "of135i.tables", "ir3600": "of135i.tables_ir",
+            "dpi600": "of135i.tables_dpi600", "dpi1200": "of135i.tables_dpi1200",
+            "dpi2400": "of135i.tables_dpi2400",
+            "dpi7200": "of135i.tables_dpi7200"}[profile]
+    return importlib.import_module(name)
+
+
 def write_control(path, prof, aps, threshold, mode):
     """A profile plot with the measured edges drawn on it."""
     try:
@@ -340,9 +511,11 @@ def write_control(path, prof, aps, threshold, mode):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("mode", choices=("strip", "frame", "profile"))
-    ap.add_argument("path", help="raw 16-bit RGB scan, or .npy profile "
-                                 "in `profile` mode")
+    ap.add_argument("mode", choices=("strip", "frame", "profile", "summary"))
+    ap.add_argument("path", nargs="+",
+                    help="raw 16-bit RGB scan or 16-bit PNM; a .npy "
+                         "profile in `profile` mode; the per-frame JSON "
+                         "reports in `summary` mode")
     ap.add_argument("--width", type=int, default=876,
                     help="pixels per line of the raw data (default 876 = "
                          "the vendor's 600 dpi strip width)")
@@ -360,9 +533,31 @@ def main(argv=None):
                          f"(default {MIN_APERTURE_MM} mm)")
     ap.add_argument("--sub-mode", choices=("strip", "frame"), default="strip",
                     help="in `profile` mode, which report to produce")
+    ap.add_argument("--frames", default="1-6", metavar="SPEC",
+                    help="summary mode: which frames the reports are, "
+                         "in the order given (default 1-6)")
+    ap.add_argument("--profile", default="dpi600",
+                    choices=("plain3600", "ir3600", "dpi600",
+                             "dpi1200", "dpi2400", "dpi7200"),
+                    help="summary mode: which profile the scans used, "
+                         "so the commanded FEEDL comes from the driver's "
+                         "own table (default dpi600)")
     ap.add_argument("--json", help="write the full report here")
     ap.add_argument("--control", help="write a control image here")
     a = ap.parse_args(argv)
+
+    a.path_list = a.path
+    a.path = a.path_list[0]
+    if a.mode == "summary":
+        summary = report_summary(a)
+        print(json.dumps(summary, indent=2))
+        if a.json:
+            with open(a.json, "w") as fh:
+                json.dump(summary, fh, indent=2)
+            print(f"report -> {a.json}", file=sys.stderr)
+        return 0
+    if len(a.path_list) != 1:
+        raise SystemExit(f"{a.mode} mode takes one file, got {len(a.path_list)}")
 
     if a.mode == "profile":
         prof = np.load(a.path).astype(np.float64)
