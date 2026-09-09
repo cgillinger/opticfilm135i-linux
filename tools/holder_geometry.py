@@ -184,6 +184,16 @@ EDGE_GRADIENT = 0.25
 #: ... and the levels either side of the refined transition must really
 #: be a lit plateau and the plastic, not two parts of the same plateau.
 EDGE_CONTRAST = 0.5
+#: One side of a holder edge is the opaque plastic, which reads at the
+#: scan's black level. Film in the aperture produces its own strong
+#: transitions -- a dark subject against a bright one -- and on the
+#: first hardware run two frames had several of those mid-window. They
+#: are not holder edges: neither of their sides is anywhere near black.
+#: A transition counts only if one side is within this fraction of the
+#: lit-to-black range of the floor.
+PLASTIC_LEVEL = 0.15
+#: Percentile taken as the black level. See the note in edges().
+FLOOR_PERCENTILE = 1.0
 
 
 def edges(profile, threshold=None):
@@ -233,7 +243,12 @@ def edges(profile, threshold=None):
     # range: on the vendor's whole-holder sweep an empty aperture reads
     # 39800 and a film-filled one 34500, and a global rule tuned to the
     # brightest part misses the edges of the dimmer ones entirely.
-    floor = float(np.percentile(prof, 5))
+    # The scan's black level, read off the plastic. It has to come from
+    # a percentile low enough to be inside the crossbar: in a
+    # single-frame window the plastic is only three or four per cent of
+    # the lines, so a fifth percentile lands in the picture instead and
+    # every rule below is then measured against the wrong floor.
+    floor = float(np.percentile(prof, FLOOR_PERCENTILE))
     lit = np.maximum(
         _rolling_median(prof, LOCAL_SPAN, -LOCAL_SKIP),
         _rolling_median(prof, LOCAL_SPAN, +LOCAL_SKIP))[:len(d)]
@@ -255,8 +270,12 @@ def edges(profile, threshold=None):
         if left.size == 0 or right.size == 0:
             continue
         lo_lvl, hi_lvl = float(np.median(left)), float(np.median(right))
-        if abs(hi_lvl - lo_lvl) < EDGE_CONTRAST * max(
-                float(np.max(lit[max(0, i0 - 1):i1 + 2])) - floor, 1.0):
+        local_lit = float(np.max(lit[max(0, i0 - 1):i1 + 2]))
+        if abs(hi_lvl - lo_lvl) < EDGE_CONTRAST * max(local_lit - floor, 1.0):
+            continue
+        # One side must be the plastic itself, not merely darker.
+        if min(lo_lvl, hi_lvl) > floor + PLASTIC_LEVEL * max(
+                local_lit - floor, 1.0):
             continue
         th = (lo_lvl + hi_lvl) / 2.0
         levels.append(th)

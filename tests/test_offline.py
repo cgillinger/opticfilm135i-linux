@@ -739,6 +739,31 @@ def test_holder_geometry_measures_a_synthetic_holder():
     assert abs(rep["centre_offset_lines"] - 10) < 1.0, rep["centre_offset_lines"]
 
 
+def test_holder_geometry_ignores_edges_that_are_not_the_plastic():
+    """Film in the aperture makes its own strong transitions -- a dark
+    subject against a bright one -- and the first hardware run had
+    several of them mid-window. A holder edge has the opaque plastic on
+    one side; a picture edge has neither side anywhere near black."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "holder_geometry",
+        Path(__file__).resolve().parents[1] / "tools" / "holder_geometry.py")
+    hg = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hg)
+
+    n, plastic, edge = 878, 1600.0, 840
+    prof = np.full(n, 20000.0)
+    prof[300:420] = 6000.0            # a dark subject: a real step, not plastic
+    prof[299] = 13000.0
+    prof[420] = 13000.0
+    prof[edge:] = plastic             # the crossbar, 38 lines: 4 % of the window
+    prof[edge - 1] = (20000.0 + plastic) / 2
+    _, ed = hg.edges(prof)
+    falls = [q for q, rising in ed if not rising]
+    assert len(ed) == 1, ed
+    assert abs(falls[0] - (edge - 1.5)) < 1.5, ed
+
+
 def test_holder_geometry_summary_recovers_the_true_pitch():
     """The summary must tell 10752 from 10760 out of six per-frame
     reports. Built both ways: with the holder truly on each pitch while
@@ -842,6 +867,7 @@ def main() -> int:
         test_holder_geometry_measures_a_synthetic_holder,
         test_holder_geometry_summary_recovers_the_true_pitch,
         test_holder_geometry_edges_survive_uneven_illumination,
+        test_holder_geometry_ignores_edges_that_are_not_the_plastic,
     ]
     for t in tests:
         t()

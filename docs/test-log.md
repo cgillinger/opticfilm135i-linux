@@ -3770,12 +3770,21 @@ six-frame colour negative, then the six-frame black-and-white one.
 
 ---
 
-## 2026-09-09 — Test 55 (N1): the empty strip holder, frames 1-6 at 600 dpi — all six positioned and delivered; the window sits ~0.5 mm late and the pitch is neither 10752 nor 10760
+## 2026-09-09 — Test 55 (N1): the strip holder, frames 1-6 at 600 dpi — all six positioned and delivered; the window sits ~0.5 mm late and the pitch is neither 10752 nor 10760
 
-First hardware run of frames 5 and 6 by this driver. Empty standard
-holder, no film, one load, `scan --frames 1-6 --dpi 600`, eject from
-post-PARK. Operator reported the run completed and ejected normally.
-Raw scans and reports: private analysis area, `holder-20260909/`.
+First hardware run of frames 5 and 6 by this driver. Standard holder,
+one load, `scan --frames 1-6 --dpi 600`, eject from post-PARK. Raw
+scans and reports: private analysis area, `holder-20260909/`.
+
+**Correction, and it matters: the holder was NOT empty.** This entry
+first said it was. The operator confirmed afterwards that a negative
+was in it, which the data had already been saying -- the lit level runs
+from 7300 to 23300 counts between frames, which is film density, not an
+open aperture. So N1 as run is not the empty-holder measurement the plan
+called for, and a fully empty run is still owed.
+
+What the film does and does not affect is checked below, because the
+whole point of the empty holder is not to have to argue about it.
 
 **Everything mechanical worked.** Six frames positioned, calibrated,
 scanned and delivered. No fail-closed stop, no residual dark_b, no
@@ -3787,7 +3796,40 @@ duration is linear in the target -- 1.80, 3.82, 5.97, 8.14, 10.29,
 against its 43.5 s budget. Frames 5 and 6 are no different in kind
 from 1-4.
 
-**The measurement needed the tool fixed twice.** Both faults were found
+**Is the fiducial the plastic, or the film?** The plastic, on four
+independent checks:
+
+- Each frame has exactly one dark run, always at the window's end, 26 to
+  37 lines long, reaching 1578-1640 counts -- the same black level in
+  all six despite lit levels differing threefold. Film density would not
+  land on the same floor across six different gain calibrations.
+- On a colour negative the gap between frames is *unexposed*, so it is
+  the clearest part of the strip and reads brightest in a raw scan. A
+  periodic dark band at the frame pitch cannot be a film frame boundary.
+- The transitions are one to two lines wide. Film density gradients are
+  not.
+- Re-measuring each edge under four quite different threshold rules --
+  half the local swing, black + 300 counts, black + 1500, and 80 % of
+  the swing -- moves any single edge by at most 3.3 lines and leaves the
+  per-frame steps in the same pattern under every rule (step 1->2 is
+  -5.3, -5.1, -5.3, -5.1 lines respectively). The result is not a
+  thresholding artefact of the film's brightness.
+
+The film did contaminate the *detector*, though: two frames had several
+strong mid-window transitions from picture content. They did not reach
+the result, which takes the last falling edge, but they would have on a
+denser negative. `edges()` now requires one side of a transition to be
+at the scan's black level, which is what a crossbar has and a subject
+edge does not.
+
+**Measurement resolution, honestly.** The four-rule spread above is the
+real figure: about ±1 line, ±0.04 mm, per edge, and ±0.06 mm on a pitch,
+not the ±0.014 mm this entry first claimed from assuming a perfect
+one-line ramp. The 0.29 mm spread in the measured pitches is well
+outside that. The 0.2 mm bow described below is only about three times
+it, so it is suggestive rather than established.
+
+**The measurement needed the tool fixed three times.** Both faults were found
 by real data, and both are now covered by offline tests:
 
 1. A global threshold does not survive an empty holder. With no film,
@@ -3804,6 +3846,11 @@ by real data, and both are now covered by offline tests:
    good fiducial -- it is a fixed feature of the plastic -- so the
    report now gives the trailing edge, which end is clipped, and the
    summary uses it.
+3. The black level was taken as the profile's fifth percentile. In a
+   single-frame window the crossbar is only three to four per cent of
+   the lines, so that percentile lands in the picture and every rule
+   built on it is measured against the wrong floor. It is the first
+   percentile now.
 
 **The window sits late on the aperture.** In every frame the aperture's
 leading edge is outside the scan and its trailing edge is inside, with
@@ -3863,5 +3910,8 @@ Session totals ran 84.6 s down to 41.4 s. No effect on the result; it
 is wall-clock cost in a known-benign path, and it belongs with the
 speed-trimming item rather than here.
 
-**Next:** N2, three separate loads, same command. Then decide base and
-pitch together on the three runs.
+**Next:** N2, and its first run is the empty holder this one was
+supposed to be -- no film at all, so the geometry is isolated by
+construction rather than by argument. Then the same from two further
+separate loads for the repeatability. Base and pitch are decided
+together on those.
