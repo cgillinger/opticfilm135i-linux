@@ -1600,9 +1600,16 @@ class Scanner:
         dpi=3600, ir=False (default): the plain visible-only flow;
         returns (raw_bytes, width) -- raw_bytes is the pixel-interleaved
         RGB16LE image buffer (image.assemble() turns it into an ndarray),
-        width is tables.IMAGE_WIDTH. This path is byte-identical to
-        before ir/dpi were added (tests/test_calibrate.py's sequence
-        test).
+        width is tables.IMAGE_WIDTH. Positioning and window size come
+        from the corrected mean mapping (holder.STRIP_FIDUCIAL) with
+        ``overscan_mm`` of slack per side (default holder.OVERSCAN_MM)
+        -- the A+C production geometry accepted in Test 58. The
+        delivered buffer therefore spans the whole aperture plus the
+        margins; aperture_crop registers the product on the edges
+        found in THIS scan. The historical fixed window (FEEDL grid
+        6743/10760, 223 chunks) is no longer a runtime path; it
+        remains in the captures, the test log and the SANE tables
+        (which migrate separately).
 
         ir=True, or any other dpi: the dual-light (alternating IR/
         visible line) flow of that resolution's table module
@@ -1647,24 +1654,32 @@ class Scanner:
             n_lines_check = lines if lines is not None else t.DEFAULT_LINES
             if n_lines_check > 0xFFFFFF:
                 raise Of135iError(f"line count {n_lines_check} does not fit the 24-bit register")
-        if overscan_mm is not None:
-            if t is not None:
-                raise NotImplementedError(
-                    "overscan is implemented for the plain 3600 dpi path only "
-                    "(the profile whose window is otherwise shorter than the "
-                    "aperture). The dual profiles already carry 0.5-0.75 mm of "
-                    "margin per side; their overscan needs the alternating-line "
-                    "delivered-count accounting and is a separate step. "
-                    f"{safety.NO_COMMANDS_SENT}")
+        if overscan_mm is not None and t is not None:
+            raise NotImplementedError(
+                "overscan is implemented for the plain 3600 dpi path only "
+                "(the profile whose window is otherwise shorter than the "
+                "aperture). The dual profiles already carry 0.5-0.75 mm of "
+                "margin per side; their overscan needs the alternating-line "
+                "delivered-count accounting and is a separate step. "
+                f"{safety.NO_COMMANDS_SENT}")
+        if t is None:
+            # Plain 3600: the A+C overscan geometry IS the production
+            # path (single runtime truth; docs/holder-position-design.md
+            # section 9 step 2, adopted after Test 58's acceptance).
             if lines is not None:
-                raise ValueError("pass either lines= or overscan_mm=, not both")
+                raise ValueError(
+                    "explicit lines= belonged to the retired fixed-window "
+                    "plain path; the plain window is sized by overscan_mm "
+                    f"around the measured aperture. {safety.NO_COMMANDS_SENT}")
+            if overscan_mm is None:
+                overscan_mm = holder.OVERSCAN_MM
         with self._operation("scan"):
             self._prepared_for_scan = False
             if self._cal_capture is not None:
                 self._cal_capture.set_frame(frame)
             if t is not None:
                 return self._scan_dual(t, frame=frame, lines=lines)
-            return self._scan_plain(frame=frame, lines=lines, overscan_mm=overscan_mm)
+            return self._scan_plain(frame=frame, overscan_mm=overscan_mm)
 
     def _healthy_dark_b(self, dark_b):
         """Return a trustworthy dark_b and whether it was substituted.
@@ -1691,8 +1706,8 @@ class Scanner:
                 session=self.session.snapshot())
         return self._last_good_dark_b, True
 
-    def _scan_plain(self, frame: int, lines: int | None,
-                    overscan_mm: float | None = None) -> tuple[bytes, int]:
+    def _scan_plain(self, frame: int,
+                    overscan_mm: float = holder.OVERSCAN_MM) -> tuple[bytes, int]:
         # No homing move here. The vendor flow has none (protocol-notes.md
         # pass 14): positioning below is an absolute mode-0x18 feed that
         # works from wherever the previous frame left the carriage. The
@@ -1771,33 +1786,26 @@ class Scanner:
         )
 
         # ---- geometry: overscan sizes FEEDL and the line/chunk count -----
-        # Default path (overscan_mm is None): the verified constants --
-        # FEEDL from the table grid, the captured 223-chunk window --
-        # byte-identical to before. Overscan path: the corrected mean
-        # mapping (option A) plus a leading/trailing margin (option C),
-        # docs/holder-position-design.md sections 4-5. The furthest motor
-        # position is range-checked inside overscan_geometry(); the stop
-        # FEEDL is checked here as on the default path.
-        if overscan_mm is None:
-            feedl = holder.check_feedl(tables.feedl_for_frame(frame))
-            scan_phase = tables.SCAN
-            n_chunks = tables.IMAGE_CHUNK_COUNT
-            n_lines = lines if lines is not None else tables.DEFAULT_LINES
-        else:
-            geom = holder.overscan_geometry(
-                frame,
-                res_units_per_line=7200 // 3600,
-                chunk_lines=tables.IMAGE_CHUNK_LINES,
-                colour_crop_lines=image_mod.align_shift(3600),
-                overscan_mm=overscan_mm,
-            )
-            feedl = holder.check_feedl(geom.feedl)
-            scan_phase = tables.scan_phase(geom.chunks)
-            n_chunks = geom.chunks
-            n_lines = tables.scan_lines_for_chunks(geom.chunks)
-            log.info("overscan frame %d: FEEDL=%d chunks=%d lines=%d "
-                     "margins lead=%.3f trail=%.3f mm", frame, feedl, n_chunks,
-                     n_lines, geom.leading_margin_mm, geom.trailing_margin_mm)
+        # The corrected mean mapping (option A, holder.STRIP_FIDUCIAL)
+        # plus a leading/trailing margin (option C), docs/holder-
+        # position-design.md sections 4-5 -- the single runtime geometry
+        # for the plain path since Test 58's acceptance (section 9 step
+        # 2). The furthest motor position is range-checked inside
+        # overscan_geometry(); the stop FEEDL is checked here as well.
+        geom = holder.overscan_geometry(
+            frame,
+            res_units_per_line=7200 // 3600,
+            chunk_lines=tables.IMAGE_CHUNK_LINES,
+            colour_crop_lines=image_mod.align_shift(3600),
+            overscan_mm=overscan_mm,
+        )
+        feedl = holder.check_feedl(geom.feedl)
+        scan_phase = tables.scan_phase(geom.chunks)
+        n_chunks = geom.chunks
+        n_lines = tables.scan_lines_for_chunks(geom.chunks)
+        log.info("overscan frame %d: FEEDL=%d chunks=%d lines=%d "
+                 "margins lead=%.3f trail=%.3f mm", frame, feedl, n_chunks,
+                 n_lines, geom.leading_margin_mm, geom.trailing_margin_mm)
 
         # ---- position: relative feed from current carriage position ------
         self._park_scale = position_timeout_scale(tables, feedl)

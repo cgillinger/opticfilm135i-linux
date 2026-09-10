@@ -1158,8 +1158,18 @@ def test_position_and_scan_setup_match_python_replayer():
     pos_start, pos_end = slices["position"][0]
     py_position = _python_transfers(fake.wire_log[pos_start:pos_end])
 
-    feedl = tables.feedl_for_frame(1)
-    assert feedl == 6743, feedl
+    # The live driver commands the A+C geometry since the Test 58
+    # migration; feed the C++ program the SAME values so the equality
+    # under test stays what it always was -- the transfer STRUCTURE.
+    # (The backend's own runtime grid is still the legacy tables until
+    # SANE migrates; test_feedl_and_position_budget pins that.)
+    from of135i import holder as _holder
+    from of135i import image as _ofimage
+    geom = _holder.overscan_geometry(
+        1, res_units_per_line=7200 // 3600,
+        chunk_lines=tables.IMAGE_CHUNK_LINES,
+        colour_crop_lines=_ofimage.align_shift(3600))
+    feedl = geom.feedl
     injects = {
         "feedl_hi": (feedl >> 16) & 0xFF,
         "feedl_mid": (feedl >> 8) & 0xFF,
@@ -1183,8 +1193,7 @@ def test_position_and_scan_setup_match_python_replayer():
     assert first_desc == 321, first_desc
     py_scan_setup = _python_transfers(fake.wire_log[scan_start:scan_start + first_desc])
 
-    lines_n = tables.DEFAULT_LINES
-    assert lines_n == 5137, lines_n
+    lines_n = tables.scan_lines_for_chunks(geom.chunks)
     injects2 = {"lines_hi": (lines_n >> 8) & 0xFF, "lines_lo": lines_n & 0xFF}
     rc, out, err = _run_probe_program(probe, "plain3600", "scan_setup", None, injects=injects2)
     assert rc == 0, (out, err)
@@ -1510,7 +1519,15 @@ def test_position_frames_2_to_6_match_python_replayer():
         pos_start, pos_end = slices["position"][0]
         py_position = _python_transfers(fake.wire_log[pos_start:pos_end])
 
-        feedl = tables.feedl_for_frame(frame)
+        # The live driver commands the A+C geometry (Test 58 migration);
+        # inject the same frame's geometry FEEDL into the C++ program so
+        # the equality under test stays the transfer structure.
+        from of135i import holder as _holder
+        from of135i import image as _ofimage
+        feedl = _holder.overscan_geometry(
+            frame, res_units_per_line=7200 // 3600,
+            chunk_lines=tables.IMAGE_CHUNK_LINES,
+            colour_crop_lines=_ofimage.align_shift(3600)).feedl
         injects = {"feedl_hi": (feedl >> 16) & 0xFF, "feedl_mid": (feedl >> 8) & 0xFF,
                    "feedl_lo": feedl & 0xFF}
         rc, out, err = _run_probe_program(probe, "plain3600", "position", None,

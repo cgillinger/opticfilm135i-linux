@@ -271,7 +271,10 @@ class _RecordingScanner:
 def _run_plain(overscan_mm):
     rec = _RecordingScanner()
     rec.s.scan  # touch to ensure method exists
-    rec.s._scan_plain(frame=1, lines=None, overscan_mm=overscan_mm)
+    if overscan_mm is None:
+        rec.s._scan_plain(frame=1)  # the production default
+    else:
+        rec.s._scan_plain(frame=1, overscan_mm=overscan_mm)
     pos = next(inj for ph, inj in rec.runs if ph.name == "position")
     scan_ph, scan_inj = next((ph, inj) for ph, inj in rec.runs if ph.name == "scan")
     feedl = (pos["feedl_hi"][0] << 16) | (pos["feedl_mid"][0] << 8) | pos["feedl_lo"][0]
@@ -280,14 +283,21 @@ def _run_plain(overscan_mm):
     return feedl, n_lines, n_desc, rec.s.last_diag
 
 
-def test_wiring_default_path_uses_grid_feedl_and_captured_window():
+def test_wiring_default_path_is_the_overscan_geometry():
+    """The A+C migration (Test 58): a plain scan with no explicit
+    overscan_mm commands the SAME wire as --overscan 0.75 -- corrected
+    FEEDL, geometry chunk count -- and NOT the retired vendor grid."""
+    g = _geom(1)
     feedl, n_lines, n_desc, diag = _run_plain(None)
-    assert feedl == tables.feedl_for_frame(1), feedl
-    assert n_lines == tables.DEFAULT_LINES, n_lines
-    assert n_desc == tables.IMAGE_CHUNK_COUNT, n_desc
-    assert diag["chunk_count"] == tables.IMAGE_CHUNK_COUNT
-    assert diag["overscan_mm"] is None
-    assert diag["raw_bytes"] == tables.IMAGE_CHUNK_COUNT * tables.IMAGE_CHUNK_LEN
+    assert feedl == g.feedl, (feedl, g.feedl)
+    assert n_lines == tables.scan_lines_for_chunks(g.chunks), n_lines
+    assert n_desc == g.chunks, (n_desc, g.chunks)
+    assert diag["chunk_count"] == g.chunks
+    assert diag["overscan_mm"] == holder.OVERSCAN_MM
+    assert diag["raw_bytes"] == g.chunks * tables.IMAGE_CHUNK_LEN
+    # The retired grid must not be what reaches the wire.
+    assert feedl != tables.feedl_for_frame(1)
+    assert n_desc != tables.IMAGE_CHUNK_COUNT
 
 
 def test_wiring_overscan_path_uses_geometry():
@@ -383,7 +393,7 @@ def main():
         test_coverage_finds_a_blurred_3600dpi_edge,
         test_coverage_600dpi_path_unbinned,
         test_coverage_verifies_and_crops_across_load_shifts,
-        test_wiring_default_path_uses_grid_feedl_and_captured_window,
+        test_wiring_default_path_is_the_overscan_geometry,
         test_wiring_overscan_path_uses_geometry,
         test_cli_overscan_verified_writes_crop_and_raw,
         test_cli_overscan_failure_writes_no_product,

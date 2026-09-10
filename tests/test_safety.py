@@ -1399,10 +1399,20 @@ def test_position_wait_is_strict_and_scaled_with_feedl():
     (0xd555) and SCAN started anyway. Now the budget scales with FEEDL
     and the poll is strict on the state class: a transport that has
     not settled fails the operation before SCAN sends anything."""
+    from of135i import holder as _holder
+    from of135i import image as _image
     from of135i import tables
+
+    def _geom_feedl(frame):
+        # What the live driver commands since the A+C migration (Test 58).
+        return _holder.overscan_geometry(
+            frame, res_units_per_line=7200 // 3600,
+            chunk_lines=tables.IMAGE_CHUNK_LINES,
+            colour_crop_lines=_image.align_shift(3600)).feedl
+
     assert device.POSITION_STATUS_MASK == 0xF0
     assert device.position_timeout_scale(tables, tables.feedl_for_frame(1)) == 1.0
-    s4 = device.position_timeout_scale(tables, tables.feedl_for_frame(4))
+    s4 = device.position_timeout_scale(tables, _geom_feedl(4))
     assert 5.5 < s4 < 6.0, s4
     poll = [op for op in tables.POSITION.ops if op.kind == "poll" and op.wv == 0x018E]
     assert len(poll) == 1 and poll[0].resp == bytes.fromhex("f455")
@@ -1411,7 +1421,7 @@ def test_position_wait_is_strict_and_scaled_with_feedl():
     assert m(bytes.fromhex("f455"), poll[0].resp, 0xF0) and m(bytes.fromhex("f055"), poll[0].resp, 0xF0)
     assert not m(bytes.fromhex("d555"), poll[0].resp, 0xF0) and not m(bytes.fromhex("dd55"), poll[0].resp, 0xF0)
 
-    feedl = tables.feedl_for_frame(4)
+    feedl = _geom_feedl(4)
     patched = tables.POSITION.patched(feedl_hi=bytes([(feedl >> 16) & 0xFF]),
                                       feedl_mid=bytes([(feedl >> 8) & 0xFF]),
                                       feedl_lo=bytes([feedl & 0xFF]))
@@ -1459,7 +1469,17 @@ def test_position_wait_is_strict_for_every_dpi_profile():
     for name, t, ir in profiles:
         polls = [op for op in t.POSITION.ops if op.kind == "poll" and op.wv == 0x018E]
         assert len(polls) == 1 and (polls[0].resp[0] & 0xF0) == 0xF0, (name, polls)
-        f1, f4 = t.feedl_for_frame(1), t.feedl_for_frame(4)
+        f1 = t.feedl_for_frame(1)
+        if ir:
+            f4 = t.feedl_for_frame(4)
+        else:
+            # Plain 3600 commands the A+C geometry since Test 58.
+            from of135i import holder as _holder
+            from of135i import image as _image
+            f4 = _holder.overscan_geometry(
+                4, res_units_per_line=7200 // 3600,
+                chunk_lines=t.IMAGE_CHUNK_LINES,
+                colour_crop_lines=_image.align_shift(3600)).feedl
         assert device.position_timeout_scale(t, f1) == 1.0
         assert abs(device.position_timeout_scale(t, f4) - f4 / f1) < 1e-9 and f4 / f1 > 5, (name, f4 / f1)
         patched = t.POSITION.patched(feedl_hi=bytes([(f4 >> 16) & 0xFF]), feedl_mid=bytes([(f4 >> 8) & 0xFF]),

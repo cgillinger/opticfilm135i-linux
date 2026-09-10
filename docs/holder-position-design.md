@@ -604,12 +604,27 @@ land" is a maintenance trap. The migration to a single authority:
    for plain 3600, or the plain default FEEDL derived from
    `STRIP_FIDUCIAL`. This is the point at which the plain path stops
    using 6746/10760 at runtime.
+   **✅ Done 2026-09-10 (offline), after Test 58's acceptance: the form
+   chosen is overscan-by-default — A and C together, the exact path N3
+   ran, not a bare pitch change (the old fixed window is shorter than
+   aperture 1, so A without C cannot deliver whole-aperture coverage).
+   `_scan_plain` has no fixed-window branch left; `scan` and `digitize`
+   both run the coverage + registered-crop + fail-closed contract.
+   224 offline tests green; the test log's migration entry has the
+   details.**
 3. **Re-verification triggered by step 2** (Astra point 8): the change
    reopens frames 2–4 *for the positioning requirement only* — right
    frame, POSITION completes on class F, aperture coverage, PARK, whole
    image area. It does **not** reopen calibration, USB, safety or image
    processing, which the geometry change does not touch. One empty-
    holder load re-verifies all six (the variation is characterised).
+   **Pending hardware** (the only open item of this migration): power
+   cycle → `load` → `scan --frames 1-6 --eject` on the EMPTY holder,
+   default flags — the default now runs the full contract, so the
+   per-frame `.diag.json` coverage verdicts are the acceptance record.
+   Expect verified 6/6 with both margins positive, POSITION within its
+   FEEDL-scaled budget, full transfer per frame, PARK and eject normal.
+   Stop conditions as N2's.
 4. **Single authority:** once adopted, runtime derives every plain FEEDL
    from `STRIP_FIDUCIAL` + overscan geometry; `FEEDL_FRAME1`/`FEEDL_PITCH`
    remain in the docs as history, not as a second runtime source.

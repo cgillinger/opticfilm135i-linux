@@ -200,9 +200,13 @@ frozen. C extends the holder support without reopening it.
    plus N1); the decision taken is **A+C — a corrected mean mapping
    plus overscan with a host-side aperture-registered crop**
    (`docs/holder-position-design.md`), hardware-demonstrated on the
-   plain 3600 dpi profile (Test 57). Adopting the corrected constants
-   as the default is the remaining step (it reopens frames 2–4's
-   verification).
+   plain 3600 dpi profile (Test 57) and production-accepted on a real
+   six-frame colour negative (Test 58/N3). The corrected model is now
+   the plain-3600 **production default** — the single runtime
+   geometry; the vendor grid remains as capture evidence and as the
+   SANE tables' interim source. The default flip reopened frames 1–6
+   for the positioning requirement; one empty-holder regression load
+   re-verifies them (pending hardware).
 3. Each of the six scan windows contains its whole aperture with positive
    measured margin on both sides, on hardware, with the empty holder.
 4. Load-to-load variation is measured over three separate loads and is
@@ -210,13 +214,18 @@ frozen. C extends the holder support without reopening it.
 5. Frames 5 and 6 are hardware-verified: POSITION completes on class F
    inside budget, the scan delivers, PARK completes.
 6. A full-length six-frame **colour** negative scans 1–6 with the right
-   image in each position.
+   image in each position. ✅ done on hardware and accepted by eye
+   (Test 58/N3: six frames delivered via overscan + crop, coverage
+   verified 6/6 with 0.60–0.98 mm margins, human-eye acceptance PASS;
+   the run is archived as the A+C reference).
 7. A full-length six-frame **black-and-white** negative does the same, as
    an independent physical control. (Silver black-and-white film is
    opaque to infrared and is not an infrared or dust-removal reference.)
 8. The CLI and the SANE backend both accept 1–6 and both refuse frame 0
    and frame 7+ before any write. ✅ done offline.
-9. Frames 1–4 show no regression.
+9. Frames 1–4 show no regression. (Reopened for the positioning
+   requirement only by the A+C default flip; covered by the one-load
+   1–6 empty-holder regression, pending hardware.)
 10. README, this roadmap and the test log describe what was actually
     verified, separately from what was measured offline.
 
@@ -265,17 +274,21 @@ is documented as separately unverified, pending a physical slide.
   transport varies somewhat load to load; the decision taken is a
   corrected mean mapping plus overscan with a host-side
   aperture-registered crop (A+C, `docs/holder-position-design.md`),
-  hardware-demonstrated on the plain 3600 dpi profile (Test 57). Not
-  yet done: adopting the corrected constants as the default (reopens
-  frames 2–4's verification), the dual-profile overscan variant, and
-  the full six-frame production-image workflow on real film (N3).
+  hardware-demonstrated on the plain 3600 dpi profile (Test 57) and
+  production-accepted on a real six-frame colour negative (Test 58/N3:
+  coverage verified 6/6, human-eye acceptance PASS). A+C is now the
+  plain-3600 production default and the single runtime geometry; the
+  default flip's own 1–6 empty-holder regression load is the remaining
+  hardware check. Still to come: the dual-profile overscan variant and
+  the black-and-white six-frame control strip.
 
   Status, conservatively:
   - Strip holder geometry 1–6: HARDWARE VERIFIED
   - Frames 5–6 transport / scan / PARK: HARDWARE VERIFIED
-  - Plain 3600 corrected positioning + overscan: HARDWARE DEMONSTRATED (Test 57)
-  - Plain 3600 aperture coverage (frames 1 and 6): HARDWARE VERIFIED
-  - Full 1–6 production-image workflow with real full-length film: NOT YET ACCEPTED — N3 pending
+  - Plain 3600 corrected positioning + overscan: HARDWARE VERIFIED (Tests 57–58)
+  - Plain 3600 aperture coverage: HARDWARE VERIFIED (Test 58: 6/6 on real film)
+  - Full 1–6 production-image workflow with real full-length film: ACCEPTED (Test 58/N3)
+  - A+C as the plain-3600 default: ADOPTED (offline, 224 tests) — 1–6 regression load PENDING HARDWARE
   - Dual robust A+C: NOT YET COMPLETE
   - Slide holder: PENDING
 - **A6 note** (Test 44/46): the driver's eject stalled from a state only

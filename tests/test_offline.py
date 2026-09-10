@@ -362,7 +362,7 @@ def test_digitize_success_tolerates_manifest_error():
         orig_app = digitize.append_manifest
         cli._run_writing_session = lambda body: body(_MockScanner())
         cli._finish_digitize_frame = (
-            lambda a, raw, w, out, dual, progress=None: (out, None, None, False))
+            lambda a, raw, w, out, dual, progress=None: (out, None, None, False, None))
         digitize.append_manifest = lambda out, rec: (_ for _ in ()).throw(
             OSError("manifest unwritable"))
         try:
@@ -406,7 +406,7 @@ def test_digitize_dispatch_plain_on_no_ir():
         orig_fin = cli._finish_digitize_frame
         cli._run_writing_session = lambda body: body(_MockScanner())
         cli._finish_digitize_frame = (
-            lambda a, raw, w, out, dual, progress=None: (out, None, None, False))
+            lambda a, raw, w, out, dual, progress=None: (out, None, None, False, None))
         try:
             rc = cli._cmd_digitize(args)
         finally:
@@ -425,10 +425,15 @@ def test_digitize_preview_does_not_alter_main():
     positive preview is written; the preview does not change the main
     pixels. (Fix #5.) Captures the arrays via _write_image."""
     import argparse
-    from of135i import cli, image
-    # H large enough to survive align_channels' stagger crop (~12 rows at 3600)
-    W, H = 8, 60
-    arr = (np.arange(H * W * 3, dtype="<u2") % 60000).reshape(H, W, 3)
+    from of135i import aperture_crop, cli, image
+    # A synthetic plain-3600 overscan frame (the production contract since
+    # Test 58): a bright aperture with dark plastic outside both edges, so
+    # coverage verifies and the main negative is the aperture crop.
+    W, lines = 8, 190 * 23
+    col = np.full(lines, 800, dtype="<u2")
+    col[300:4100] = 40000
+    arr = np.repeat(np.repeat(col[:, None], W, axis=1)[:, :, None],
+                    3, axis=2).astype("<u2")
     raw = np.ascontiguousarray(arr).tobytes()
     args = argparse.Namespace(dpi=3600, ir=False, no_clean=False, rotate=0,
                               positive=True)
@@ -437,20 +442,29 @@ def test_digitize_preview_does_not_alter_main():
     cli._write_image = lambda a, out, positive=False, dpi=None: written.__setitem__(
         out, (a.copy(), positive))
     try:
-        main, irf, prev, cleaned = cli._finish_digitize_frame(args, raw, W, "f1.tiff", dual=False)
+        main, irf, prev, cleaned, cov = cli._finish_digitize_frame(
+            args, raw, W, "f1.tiff", dual=False)
     finally:
         cli._write_image = orig
     assert irf is None and prev is not None and cleaned is False
+    assert cov is not None and cov.verified, cov.reason if cov else None
     main_arr, main_pos = written[main]
     prev_arr, prev_pos = written[prev]
-    expected = image.align_channels(image.assemble(raw, W), dpi=3600)
+    full = image.align_channels(image.assemble(raw, W), dpi=3600)
+    expected = aperture_crop.crop_to_aperture(
+        full, aperture_crop.measure_coverage(full, dpi=3600), dpi=3600)
+    # The full overscan frame is preserved beside the main negative.
+    over_arr, over_pos = written[cli._overscan_raw_path("f1.tiff")]
+    assert over_pos is False and np.array_equal(over_arr, full)
     # The preview carries the vendor orientation (mirror + rot90(·,3)) applied
     # BEFORE to_positive, matching `scan --positive`; rotate=0 here so no extra
-    # rotation follows. The main image is the raw negative, unrotated/mirrored.
+    # rotation follows. The main image is the cropped raw negative,
+    # unrotated/mirrored.
     expected_prev = image.to_positive(
         np.ascontiguousarray(np.rot90(expected, 3)[:, ::-1]))
     assert main_pos is False, "main must not be written as positive"
-    assert np.array_equal(main_arr, expected), "main must be the raw negative, unchanged"
+    assert np.array_equal(main_arr, expected), (
+        "main must be the aperture-cropped raw negative, unchanged")
     assert np.array_equal(prev_arr, expected_prev), "preview is the oriented positive"
     assert not np.array_equal(main_arr, prev_arr), "preview must differ from main"
     print("test_digitize_preview_does_not_alter_main OK")
@@ -611,7 +625,7 @@ def test_digitize_records_partial_frame_progress():
     def _fake_finish(a, raw, w, out, dual, progress=None):
         if progress is not None:      # the main image landed, the rest did not
             progress["main"] = out
-        return out, None, None, False
+        return out, None, None, False, None
 
     with tempfile.TemporaryDirectory() as d:
         args = argparse.Namespace(
@@ -622,7 +636,7 @@ def test_digitize_records_partial_frame_progress():
                 cli._write_diag_sidecar)
         cli._run_writing_session = lambda body: body(_MockScanner())
         cli._finish_digitize_frame = _fake_finish
-        cli._write_diag_sidecar = lambda a, s, out, frame: (
+        cli._write_diag_sidecar = lambda a, s, out, frame, coverage=None: (
             _ for _ in ()).throw(_Boom("sidecar unwritable"))
         try:
             raised = None

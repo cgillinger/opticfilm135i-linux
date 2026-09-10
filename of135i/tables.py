@@ -2117,20 +2117,31 @@ PARK = Phase(
 PHASES.append(PARK)
 
 
-# --------------------------------------------------------------------- FEEDL
+# ---------------------------------------------------------- FEEDL (historical)
 # FEEDL = target absolute position, counted in 1/7200 inch (HWDPI),
 # from home. Verified in protocol-notes.md pass 3 against SilverFast:
 # frame 1 = 6548 (base offset) there; this driver's own capture (this
 # trace) used FEEDL=6743 for frame 1 -- a slightly different base
 # offset/scan-window convention, kept as this trace's own ground
-# truth. Pitch between frames (10760 steps = 38.0 mm film pitch) is
-# shared across both observations.
+# truth. Pitch between frames (10760 steps, the vendor's nominal
+# 38.0 mm film-pitch grid) is shared across both observations.
+#
+# HISTORICAL since the A+C migration (Test 58; docs/holder-position-
+# design.md section 9): the production plain path positions from the
+# MEASURED mapping, holder.STRIP_FIDUCIAL (Test 56: the vendor grid is
+# 0.5-1.0 mm late on the aperture and neither 10752 nor 10760 matches
+# any measured load). This grid remains as capture ground truth -- it
+# is what the vendor trace commanded and what the SANE tables still
+# replay until the backend migrates -- not as a runtime source for the
+# driver's own positioning.
 FEEDL_FRAME1 = 6743
 FEEDL_PITCH = 10760
 
 
 def feedl_for_frame(frame: int) -> int:
-    """Absolute FEEDL target for `frame` (1-based), from home.
+    """Absolute FEEDL target for `frame` (1-based) on the HISTORICAL
+    vendor grid above -- capture/SANE-generator evidence, no longer the
+    driver's production positioning (holder.overscan_geometry is).
 
     Refuses a frame the holder does not have (of135i/holder.py). The
     bound lives here, at the one place a frame number becomes a motor

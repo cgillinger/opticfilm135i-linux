@@ -232,12 +232,15 @@ class FiducialModel:
 
 #: The corrected mean mapping for the strip holder, fitted to the three
 #: empty-holder loads of Test 56 (docs/holder-position-design.md
-#: section 2.2: base 11678.3, pitch 10732.7, residual <= 0.022 mm). This
-#: is NOT yet the driver's commanded grid -- the table modules still use
-#: FEEDL_FRAME1/FEEDL_PITCH (6746 / 10760) as their verified default.
-#: This model is consumed only on the overscan path, and adopting it as
-#: the plain default is the hardware-verification step that reopens
-#: frames 2-4.
+#: section 2.2: base 11678.3, pitch 10732.7, residual <= 0.022 mm).
+#: Since the A+C migration (after Test 58's production acceptance) this
+#: is THE plain-3600 positioning authority: every plain scan derives
+#: its FEEDL and window from this model via overscan_geometry(). The
+#: old grid (tables.FEEDL_FRAME1/FEEDL_PITCH, 6743/10760) is capture
+#: ground truth and the SANE tables' interim source, not a runtime
+#: alternative. Adopting this model reopened frames 2-4 for the
+#: positioning requirement; the one-load 1-6 empty-holder regression
+#: covers that (design doc section 9 step 3).
 STRIP_FIDUCIAL = FiducialModel(
     base_hwdpi=11678.3,
     pitch_hwdpi=10732.7,

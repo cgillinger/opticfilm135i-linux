@@ -5,11 +5,14 @@ captures already on disk; nothing in it required the scanner. The parts
 that still need hardware are marked as such, and the hardware plan is in
 section 8.
 
-The driver has always positioned to frames 1-4 with a linear model,
+The driver originally positioned to frames 1-4 with a linear model,
 `FEEDL = 6743 + (n-1) x 10760`. The strip holder actually takes six
 frames. This document establishes, from evidence, where those six
 positions are, how far apart they really are, and what the remaining
-uncertainty is.
+uncertainty is. (Since 2026-09-10 the production plain path positions
+from the measured mapping instead — holder.STRIP_FIDUCIAL via the A+C
+overscan geometry, docs/holder-position-design.md sections 4 and 9;
+the old grid here is capture evidence.)
 
 ## 1. Why the holder can be measured without loading one
 

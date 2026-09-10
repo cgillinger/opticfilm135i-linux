@@ -15,8 +15,13 @@ Covers:
     wire) equals tables.py's phase data (itself extracted verbatim
     from traces/03-singel-3600-IRav.trace.json.gz) for every phase
     Scanner.scan() touches, with the injectable values (gain codes,
-    offset codes, FEEDL, line count, shading-table upload/re-upload)
-    pinned to the trace's own captured defaults.
+    offset codes, shading-table upload/re-upload) pinned to the
+    trace's own captured defaults. Since the A+C migration (Test 58)
+    the scan/position values -- FEEDL, chunk count, line count -- are
+    pinned to holder.overscan_geometry(frame 1) at the default
+    margin: the production geometry, not the trace's retired fixed
+    window (that historical stream lives in git history and the
+    captures).
 """
 
 from __future__ import annotations
@@ -33,9 +38,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 
-from of135i import calibrate, diag, tables
+from of135i import calibrate, diag, holder, tables
 from of135i import device as _device
+from of135i import image as _image
 from of135i.device import Scanner
+
+# The production plain-3600 geometry for frame 1 (the A+C default,
+# holder.STRIP_FIDUCIAL + OVERSCAN_MM): what Scanner.scan(frame=1) now
+# positions to and how many chunks it reads.
+GEOM_F1 = holder.overscan_geometry(
+    1, res_units_per_line=7200 // 3600,
+    chunk_lines=tables.IMAGE_CHUNK_LINES,
+    colour_crop_lines=_image.align_shift(3600))
 
 REPO = Path(__file__).resolve().parents[1]
 CAPTURE = REPO / "cal-data" / "capture"
@@ -48,7 +62,7 @@ PHASE_ORDER = [
     tables.CAL_DARK_A, tables.CAL_DARK_B, tables.CAL_WHITE,
     tables.CAL_GAIN_CHECK_A, tables.CAL_GAIN_CHECK_B,
     tables.CAL_SHADING_MEASURE, tables.CAL_SHADING_UPLOAD, tables.CAL_SHADING_VERIFY,
-    tables.POSITION, tables.SCAN, tables.PARK,
+    tables.POSITION, tables.scan_phase(GEOM_F1.chunks), tables.PARK,
 ]
 
 
@@ -445,8 +459,8 @@ def _expected_stream():
     trace_gain_codes = (0x2E, 0x21, 0x29)
     gain_r, gain_g, gain_b = trace_gain_codes
     off_r, off_g, off_b = (0x010B, 0x010A, 0x010B)
-    feedl = tables.feedl_for_frame(1)
-    n_lines = tables.DEFAULT_LINES
+    feedl = GEOM_F1.feedl
+    n_lines = tables.scan_lines_for_chunks(GEOM_F1.chunks)
 
     measure_offsets = _captured_shading_offsets(tables.CAL_SHADING_UPLOAD, "shading_table")
     bcast = np.broadcast_to(
@@ -673,7 +687,7 @@ def test_scan_sequence_matches_trace():
     raw, width = scanner.scan(frame=1)
 
     assert width == tables.IMAGE_WIDTH == 3762
-    assert len(raw) == tables.IMAGE_CHUNK_COUNT * tables.IMAGE_CHUNK_LEN
+    assert len(raw) == GEOM_F1.chunks * tables.IMAGE_CHUNK_LEN
 
     expected = _expected_stream()
     actual = b"".join(mock.writes)

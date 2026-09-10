@@ -105,23 +105,24 @@ rough edges you should know about:
   the mechanism with the magazine stuck part-way; recovery was a power
   cycle plus an initialization with the vendor software.
 - **Film strip holder: all six frames hardware-verified for transport,
-  scan and PARK; frames 1–4 also verified frame for frame against the
-  vendor's output.** The driver knows one geometry: frames at a fixed
-  pitch, each 36.2 mm long (5137 lines at 3600 dpi) by default.
-  Positions 1–4 are verified frame for frame against the vendor's
-  output of the same strip. The holder's six apertures have been
+  scan and PARK; the full six-frame colour production workflow is
+  accepted (Test 58/N3).** The holder's six apertures have been
   measured — length, crossbars and pitch, from the vendor's own
   whole-holder pass ([`docs/holder-geometry.md`](docs/holder-geometry.md))
   — and the driver reaches and scans all six positions on hardware,
-  across three separate loads (`docs/test-log.md` Test 55–57):
-  positioning, calibration, the scan pass and PARK all complete on
-  frames 5 and 6 no differently from 1–4. That testing also found the
-  default scan window sits slightly late on the aperture and the
-  transport varies somewhat between loads; a corrected-positioning-plus-
-  overscan fix is hardware-demonstrated on the plain 3600 dpi profile
-  (Test 57) but is not yet the default, and the full six-frame
-  production-image workflow on real film is not yet accepted (see
-  [`docs/ROADMAP.md`](docs/ROADMAP.md) milestone C). **Mounted slides:** the scanner
+  across three separate loads plus real film (`docs/test-log.md`
+  Test 55–58). That testing found the old fixed scan window sat
+  slightly late on the aperture and the transport varies somewhat
+  between loads, so plain 3600 dpi now scans with the **measured
+  corrected positioning plus a 0.75 mm overscan margin, detects both
+  aperture edges in every scan, and crops the product to them** —
+  refusing to write a finished-looking image when coverage cannot be
+  verified. A real six-frame colour negative ran the whole path with
+  coverage verified 6/6 and passed the human-eye acceptance (Test 58).
+  The default-flip's own regression — one empty-holder load across
+  frames 1–6 — is the remaining hardware check, and the dual-light
+  profiles keep their captured windows until their own overscan step
+  (see [`docs/ROADMAP.md`](docs/ROADMAP.md) milestone C). **Mounted slides:** the scanner
   ships with a four-slide holder; the driver and the backend have not
   been tested with it (its frame pitch and load flow are uncaptured) — planned.
   **Panorama:** Plustek's optional panoramic holder (frames up to
@@ -253,6 +254,18 @@ the vendor application does it.
 .venv/bin/python -m of135i eject
 ```
 
+A **plain 3600 dpi** scan (no `--ir`, `--dpi 3600`) runs the
+aperture-registered production contract: the scanner reads a window
+covering the whole aperture plus a 0.75 mm margin per side
+(`--overscan MM` tunes it), both plastic edges are detected in the
+delivered image, and the product written to `-o` is cropped to them.
+The full uncropped window is always preserved beside it as
+`<o>.overscan.<ext>`, and the `.diag.json` sidecar records the
+coverage verdict and margins. If coverage cannot be verified, **no
+product is written** for that frame — only the overscan raw and the
+sidecar — and the command exits non-zero. Dual-light scans (`--ir`,
+other resolutions) keep their captured fixed windows for now.
+
 `--park semantic` on `scan` selects an experimental park phase (see
 docs/replay-analysis.md); it is off by default and not hardware-verified.
 `--warmup-budget SECONDS` bounds how long a scan waits for the lamp.
@@ -278,7 +291,11 @@ from the manifest **and** the roll directories already on disk (per
 The main `fN.tiff` is always the **raw negative** (calibrated,
 channel-aligned, and — with IR, unless `--no-clean` — dust-cleaned; not an
 untouched sensor dump). Do colour (inversion, white balance, tone) later
-in your editor. `--positive` writes a **separate** `fN-preview.tiff` and
+in your editor. On the plain 3600 path each frame carries the same
+aperture-registered contract as `scan`: `fN.overscan.tiff` preserves the
+full window, `fN.tiff` is the verified crop, and a frame whose coverage
+does not verify gets **no** `fN.tiff` — the roll is recorded failed with
+the reason in the manifest, and is re-run whole. `--positive` writes a **separate** `fN-preview.tiff` and
 leaves the negative untouched; `--roll N` targets a specific roll,
 `--no-ir` drops the IR output (non-3600 profiles still capture dual-light).
 Resume is **between strips**: the roll number advances past the highest

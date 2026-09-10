@@ -233,6 +233,12 @@ def _cmd_scan(args: argparse.Namespace) -> int:
               "load variation has not yet been implemented or verified for "
               "them under the new positioning model", file=sys.stderr)
         return 2
+    if not dual and getattr(args, "overscan", None) is None:
+        # Plain 3600 production default: the A+C contract (corrected
+        # mapping + overscan + per-scan coverage + registered crop),
+        # accepted in Test 58. There is no fixed-window plain path any
+        # more; --overscan only tunes the margin.
+        args.overscan = holder.OVERSCAN_MM
     if (args.frame is None) == (args.frames is None):
         print("error: give exactly one of --frame or --frames", file=sys.stderr)
         return 2
@@ -527,7 +533,16 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
     Note: with IR (and unless --no-clean) the main negative is
     dust-cleaned; it is calibrated, channel-aligned linear data, not an
     untouched sensor dump. Returns (main, ir_file, preview_file,
-    dust_cleaned).
+    dust_cleaned, coverage) -- coverage is the plain path's
+    ApertureCoverage (None on dual).
+
+    Plain 3600 carries the same A+C production contract as `scan`
+    (Test 58): the device delivers the overscan window; the full frame
+    is always preserved as `<out stem>.overscan.<ext>`, and the MAIN
+    negative is written only when aperture coverage verifies, cropped
+    to the edges detected in THIS scan. On a coverage failure main is
+    None -- nothing that looks like a finished frame exists for an
+    unverified frame.
 
     `progress`, if given, is filled in as each file lands ("main", "ir",
     "preview"), so a failure part-way through a frame leaves a record of
@@ -540,6 +555,7 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
 
     ir_file = None
     preview_file = None
+    coverage = None
     if dual:
         visible, ir = image.split_ir(raw, width=width)
         _shift = round(24 * args.dpi / 7200)
@@ -547,7 +563,31 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
         if _shift:
             ir = ir[_shift:-_shift]
     else:
-        visible = image.align_channels(image.assemble(raw, width), dpi=args.dpi)
+        from . import aperture_crop
+        full = image.align_channels(image.assemble(raw, width), dpi=args.dpi)
+        coverage = aperture_crop.measure_coverage(full, dpi=args.dpi)
+        # Preserve the full overscan frame regardless of the verdict
+        # (raw-data principle) -- rotated like the main negative, never
+        # mirrored.
+        over = full
+        if args.rotate:
+            over = _np.ascontiguousarray(_np.rot90(full, k=args.rotate // 90))
+        raw_out = _overscan_raw_path(out)
+        _write_image(over, raw_out, positive=False, dpi=args.dpi)
+        _note("overscan", raw_out)
+        print(f"wrote {raw_out} ({over.shape[1]}x{over.shape[0]}, full "
+              f"overscan frame)")
+        del over
+        if not coverage.verified:
+            print(f"aperture coverage: NOT verified — {coverage.reason}. "
+                  f"Kept the full overscan at {raw_out}; no main negative "
+                  f"written for this frame.", file=sys.stderr)
+            return None, None, None, False, coverage
+        print(f"aperture coverage: VERIFIED — margins lead "
+              f"{coverage.leading_margin_mm:.3f} mm, trail "
+              f"{coverage.trailing_margin_mm:.3f} mm")
+        visible = aperture_crop.crop_to_aperture(full, coverage, dpi=args.dpi)
+        del full
         ir = None
 
     dust_cleaned = bool(dual and args.ir and not args.no_clean)
@@ -594,7 +634,7 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
         print(f"wrote {preview_file} ({prev.shape[1]}x{prev.shape[0]}, "
               f"16-bit RGB, positive preview)")
 
-    return out, ir_file, preview_file, dust_cleaned
+    return out, ir_file, preview_file, dust_cleaned, coverage
 
 
 def _cmd_digitize(args: argparse.Namespace) -> int:
@@ -692,6 +732,7 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
         if not scanner.is_magazine_present():
             print("error: no magazine detected after load", file=sys.stderr)
             return 1
+        incomplete: list[int] = []
         for frame in dig_frames:
             scanner.initialize(ir=dual, dpi=args.dpi)
             out = str(digitize.frame_path(args.out, args.prefix, roll, frame))
@@ -710,12 +751,17 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
             else:
                 raw, width = scanner.scan(frame=frame)
             entry["stage"] = "write"
-            main, irf, prev, cleaned = _finish_digitize_frame(
+            main, irf, prev, cleaned, cov = _finish_digitize_frame(
                 args, raw, width, out, dual, progress=entry)
             entry.update(main=main, ir=irf, preview=prev, dust_cleaned=cleaned)
+            if cov is not None:
+                entry["coverage_verified"] = bool(cov.verified)
+                entry["coverage_reason"] = cov.reason
+                if not cov.verified:
+                    incomplete.append(frame)
             del raw
             entry["stage"] = "diag"
-            _write_diag_sidecar(args, scanner, out, frame)
+            _write_diag_sidecar(args, scanner, out, frame, coverage=cov)
             d = scanner.last_diag or {}
             entry.update(stage=None,
                          gain_codes=d.get("gain_codes"),
@@ -723,6 +769,16 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
                          dark_b_substituted=d.get("dark_b_substituted"))
         scanner.eject()
         print("ejected")
+        if incomplete:
+            # Fail closed on image integrity, exactly as `scan` does: a
+            # coverage failure is not a complete frame. The roll is
+            # recorded failed (per_frame says which frames and why) and
+            # re-run whole, digitize's existing resume unit.
+            print(f"error: aperture coverage NOT verified for frame(s) "
+                  f"{', '.join(map(str, incomplete))} — see the .diag.json "
+                  f"and .overscan file(s); no main negative was written for "
+                  f"them", file=sys.stderr)
+            return 4
         return 0
 
     # Even if the scan/write flow raises (e.g. an OSError writing an image),
@@ -755,6 +811,12 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
         print(f"roll {roll} done: {len(per_frame)} frames -> {rdir}{note}. "
               f"Next: insert the next strip and run 'of135i digitize' again "
               f"(roll {roll + 1}).")
+    elif rc == 4:
+        # Coverage failure: the pass and eject completed normally -- the
+        # transport needs no recovery, the roll just is not complete.
+        print(f"roll {roll} recorded FAILED: aperture coverage did not "
+              f"verify on every frame (see per_frame in the manifest). "
+              f"Re-run the roll with --force.", file=sys.stderr)
     else:
         print(f"roll {roll} FAILED at scan (rc {rc}); recorded. "
               f"Power-cycle before the next strip.", file=sys.stderr)
@@ -854,13 +916,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--no-clean", action="store_true",
         help="skip IR-based dust/scratch removal on the visible image (--ir only)")
     p_scan.add_argument("--overscan", type=float, default=None, metavar="MM",
-        help="plain 3600 dpi only: scan a longer window that covers the whole "
-             "aperture plus this margin per side (docs/holder-position-design.md), "
-             "using the corrected mean mapping. Writes the aperture-registered "
-             "image to -o and the full overscan frame to <o>.overscan.<ext>; on a "
-             "coverage failure only the overscan raw is kept and the exit status "
-             "is non-zero. Typical: 0.75. Hardware-demonstrated on frames 1 and 6 "
-             "(Test 57); not yet the production default")
+        help="plain 3600 dpi only: overscan margin per side around the whole "
+             "aperture (default 0.75, the production geometry accepted in "
+             "Test 58; docs/holder-position-design.md). The window uses the "
+             "corrected mean mapping; the aperture-registered image goes to -o "
+             "and the full overscan frame to <o>.overscan.<ext>; on a coverage "
+             "failure only the overscan raw is kept and the exit status is "
+             "non-zero")
     p_scan.add_argument("--no-diag", action="store_true",
         help="skip writing the <output>.diag.json calibration/timing sidecar")
     p_scan.add_argument("--warmup-budget", type=float, default=None, metavar="SECONDS",

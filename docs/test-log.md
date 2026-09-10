@@ -4033,7 +4033,7 @@ is the owner's call to adopt the corrected constants and run N3 (the
 six-frame colour negative) with overscan + crop, judged by eye as a
 production image. FEEDL_PITCH stays 10760 until then.
 
-## 2026-09-10 — Test 58 (N3): the six-frame colour negative with overscan + crop — all six delivered and coverage-verified; eye verdict pending
+## 2026-09-10 — Test 58 (N3): the six-frame colour negative with overscan + crop — all six delivered, coverage-verified, and ACCEPTED by eye (verdict at the end of this entry)
 
 **Setup.** Real six-frame colour negative in the strip holder. Power
 cycle, `load` in a real terminal, then one batch:
@@ -4134,3 +4134,53 @@ reference: `n3-20260910/f-f1..6` (raw products + overscan + diag) and
 the rendered review set are archived as the A+C path's reference run
 (ACCEPTED.md marker in the analysis directory). This is the first
 production-accepted image set delivered by the overscan + crop path.
+
+## 2026-09-10 — Offline: A+C becomes the plain-3600 production default; one runtime geometry (the migration section 9 step 2 of holder-position-design.md)
+
+With Test 58 accepted, the split that protected the verified frames
+while the corrected geometry was unproven is retired. Offline changes,
+no hardware touched:
+
+**Runtime.** `Scanner.scan()` / `_scan_plain` no longer has a
+fixed-window branch: every plain-3600 scan derives FEEDL and the
+line/chunk count from `holder.STRIP_FIDUCIAL` via
+`holder.overscan_geometry()` (default margin `holder.OVERSCAN_MM`,
+0.75 mm — exactly what N3 ran). `scan`'s CLI resolves `--overscan` to
+that default; the coverage + registered-crop + fail-closed contract
+now runs on every plain scan. Explicit `lines=` on the plain path is
+refused (it belonged to the retired window; no caller used it).
+`digitize` carries the same contract on its plain path: `fN.overscan`
+always preserved, `fN.tiff` written only on verified coverage, a
+failed frame recorded in the manifest (`coverage_verified`/`reason`)
+with the roll marked failed and exit 4 — a missing product can no
+longer masquerade as a complete frame there either.
+
+**Retired from production, kept as evidence.** `tables.FEEDL_FRAME1`
+(6743) / `FEEDL_PITCH` (10760), `tables.SCAN` (the captured 223-chunk
+phase) and `DEFAULT_LINES` (5137) are no longer commanded by the
+driver. They remain as capture ground truth, as the SANE tables'
+interim source (the backend migrates separately and still replays
+them — its wire-equality tests keep pinning them), and in this log.
+
+**Safety unchanged.** Frames 1–6 only (refused before any write),
+FEEDL bounds via `check_feedl`, the window END checked against the
+71490 travel ceiling inside `overscan_geometry`, line/chunk validation,
+the start-state guard, no automatic recovery, and coverage failure
+fail-closed. No new motor logic; the wire per phase is byte-identical
+to Test 57/58's `--overscan` runs (the flag path and the default are
+now the same code).
+
+**Tests.** The sequence test and the wiring/safety/SANE-comparison
+tests that pinned the old grid now pin the geometry values (the SANE
+tests inject the driver's commanded FEEDL into the C++ program, so the
+equality under test remains the transfer structure; the backend's own
+legacy grid is still pinned by its feedl tests). One new default-path
+wiring test asserts the default equals the overscan geometry and NOT
+the retired grid. digitize's offline tests cover the new contract.
+Full `release_check`: **224 tests, all green.** SANE sources untouched.
+
+**Reopened by this change (positioning requirement only):** frames 1–6
+under the new default — one empty-holder regression load re-verifies
+them (the same criteria as Test 56 plus per-frame coverage verdicts).
+Calibration, dark_b, LOAD, PARK, USB safety, IR and the colour path are
+NOT reopened; the geometry change does not touch them.
