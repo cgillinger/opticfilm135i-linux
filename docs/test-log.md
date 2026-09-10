@@ -4220,3 +4220,80 @@ A+C production default is now hardware-verified end to end on its own
 code path. Files in the private analysis area (`regr-20260910/`).
 Next per the migration order: the black-and-white six-frame control
 strip (its test plan precedes the run), then dual A+C.
+
+## 2026-09-10 — Test 60 plan: the black-and-white six-frame control strip (written before the run)
+
+**Purpose.** An independent physical control of the accepted A+C
+production path on a DIFFERENT film stock: Kodak 5052 TMX (T-Max 100),
+a six-frame strip. Checks that the path is film-independent in
+practice: right physical image in each of the six positions, full
+image area, coverage/crop, reasonable sharpness, transport and frame 6
+at full travel, no regression relative to Tests 58–59's band. This is
+a control run, not a milestone — work-image inspection applies, not
+the production-acceptance rule.
+
+**Explicitly NOT under test.** Infrared anything: T-Max is
+traditional silver-halide film and opaque to IR, so this strip is
+useless as an IR/dust-removal reference (a chromogenic XP2-type film
+would be needed for that). No `--ir`. The colour pipeline is also not
+under test (single-tone negative; the preview inversion is expected to
+be near-neutral grey).
+
+**Procedure.** Strip in the holder, power cycle with the magazine
+loose, `status` (0x00/0x22), `load`, then:
+`scan --frames 1-6 --dpi 3600 --eject -o <analysis>/bw-20260910/f.tiff`
+— default flags, the production contract as-is.
+
+**Pass criteria.** Coverage verified 6/6 with positive margins; FEEDL
+the geometry grid; full transfer 6/6; POSITION inside budget; PARK and
+eject normal; calibration in the known band (gain may differ from the
+colour strip's 46/32/39 — different film base density is expected and
+fine; what matters is stability across the six frames); six distinct
+correct images on work-image inspection. **Stop conditions** as
+always: any scraping = power off; a coverage failure stops the
+assessment at that frame's diag + overscan raw before continuing.
+
+**Run condition noted before the run (owner):** the strip has a slight
+curl. The holder's frames flatten it mechanically but the holder is
+glassless, so some residual bow at frame centres is possible. Expected
+signature if it matters: a soft band where the film bows out of the
+focal plane (typically mid-frame, sharp near the clamped edges),
+possibly a slight geometric ripple — a film-flatness artefact, not a
+driver or transport defect, and not a fail against this test's
+criteria. Coverage/crop is unaffected either way: registration is on
+the holder's plastic edges, not the film.
+
+## 2026-09-10 — Test 60: the black-and-white six-frame control strip — PASS (Kodak 5052 TMX)
+
+**Run.** As planned: strip in the holder (slight curl, noted above),
+power cycle, `load`, `scan --frames 1-6 --dpi 3600 --eject`, default
+flags, no `--ir`. All six frames delivered, eject normal, sound normal.
+The poll warnings in the console (8155 vs 9555; f8/fc vs e8/ec at
+session start) are the long-documented benign mismatches.
+
+**Measured, 6/6:** coverage verified with positive margins on every
+frame (lead 0.49–0.70 mm, trail 0.85–1.05 mm — this load seated
+slightly early, well inside the characterised band); commanded FEEDL
+exactly the geometry grid; full transfer (raw = chunks × 519156)
+6/6; POSITION 1.8 → 12.4 s, identical to Tests 58–59 to within
+0.01 s; PARK normal per frame; **calibration identical to the colour
+strip's** (gain 46/32/39, offsets in the ±1 band, no dark_b
+substitution) — expected, since calibration reads the open area ahead
+of the film, and further evidence the path is film-independent.
+
+**Work-image inspection (analyst).** Six distinct real photographs
+(portraits, an interior, outdoor scenes), each whole, right order, no
+banding, no skew. Raw data clean: 0% saturation, healthy tonal range
+(a couple of frames are dense/thin — the original exposures, not the
+scanner; the quick preview inversion exaggerates them). Sharpness: film
+grain is crisply resolved in dense areas at 100%, and no curl-induced
+soft band or geometric ripple is visible — the glassless-holder
+concern did not materialise at work-image level. Soft regions coincide
+with the original photos' focus, not with frame geometry.
+
+**Verdict.** The A+C production path behaves identically on a second
+physical film stock: geometry, coverage, calibration, transport and
+timing all in the same band as Tests 58–59. As planned, nothing
+IR-related was tested (silver-halide film). Files in the private
+analysis area (`bw-20260910/`). Next per the migration order: dual
+A+C.
