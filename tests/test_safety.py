@@ -1744,8 +1744,14 @@ def test_load_completion_is_verified_not_assumed():
                    if ev["kind"] == "ctrl_out" and ev["data"] == first_jog.data)
         assert idx == _base_open_writes(), (label, idx)
         if want_code:
-            assert "FAILED" in se and "did not reach" in se, se
-            _assert_power_cycle_message(se)
+            # The load-step failure gets the human explanation (the
+            # operator most likely skipped the reinsert), with the
+            # technical cause kept to one line; the power-cycle
+            # requirement and the failed session are unchanged.
+            assert "did not engage" in se, se
+            assert "reinserted to the mechanical stop" in se, se
+            assert "technical cause" in se and "did not reach" in se, se
+            assert "Power the scanner OFF" in se, se
             assert "completed" not in so, so
             assert fake.pulses == 4, fake.pulses
         else:
@@ -2008,7 +2014,7 @@ def test_cli_load_and_version():
         with quiet():
             code = cli.main(["load"])
         se = _STDERR.getvalue()
-    assert code == 1 and "FAILED" in se and fake.pulses == 4, (code, se)
+    assert code == 1 and "did not engage" in se and fake.pulses == 4, (code, se)
     # `--release` parses and is passed straight through to loadflow.run
     # (no USB touched -- loadflow.run itself is stubbed here).
     captured = {}
