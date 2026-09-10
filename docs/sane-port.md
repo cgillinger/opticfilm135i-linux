@@ -429,8 +429,45 @@ acceptance step. **Hook 8 (2026-09-08, offline): the dual-light
 profiles — 600/1200/2400/7200 dpi and infrared at every resolution as
 the `Transparency Adapter Infrared` source — implemented and wire-equal
 to the driver for all five profiles (docs/sane-hook8-dual.md; 37 op
-tests, 188 total); their hardware runs and eye checks are pending.** Not
-yet in the port: install/packaging.
+tests, 188 total); their hardware runs and eye checks are pending.**
+
+**Lager 1 -- A+C geometry migration (2026-09-10, offline):** the CLI
+driver's plain-scan positioning migrated off the fixed FEEDL grid onto
+a corrected mean mapping plus a host-side overscan margin
+(`docs/holder-position-design.md`, decision A+C), hardware-accepted
+there (Test 58-61). `tools/gen_sane_tables.py` now freezes that SAME
+Python geometry (`of135i/holder.py`'s `overscan_geometry()` /
+`dual_overscan_geometry()`, via `frame_geom_entries()`) into a new
+per-frame `FrameGeom frames[6]` array on every `Profile`
+(`sane/gl126_tables.h`), and the SANE backend's C++ was wired to
+consume it: `feedl_for_frame(frame, profile)` and
+`frame_geometry(profile, frame)` (`sane/gl126_ops.{h,cpp}`) now read
+`profile.frames[frame-1]`, not the legacy `feedl_frame1` /
+`feedl_pitch` / `captured_lines` fields (kept, unused at runtime, as
+capture-evidence only -- mirroring the distinction the CLI driver
+already draws between its production geometry and the vendor grid).
+`begin_scan()` and `calculate_scan_session()` (`sane/gl126.cpp`)
+source FEEDL and the line/chunk geometry from `settings.frame` through
+those two functions; a fail-closed consistency assertion in
+`frame_geometry()` checks the ledger's own invariant
+(`delivered_lines + shift_lines == image_lines`) before any write.
+**This is the INTERIM contract, not Lager 2**: the delivered window is
+the WHOLE overscan margin, unregistered against the aperture -- no
+`measure_coverage`, no crop, no dynamic height in the backend. Geometry
+parity (the frozen table against the generator, all six profiles x six
+frames, exact integer equality) and safety bounds (FEEDL/end_hwdpi <=
+the travel ceiling, dual parity, the invariant) are tested offline in
+`tests/test_sane_geometry.py`; the wire-level oracle
+(`tests/test_sane_ops.py`'s
+`test_position_and_scan_setup_match_python_replayer`,
+`test_feedl_and_position_budget`) was extended/flipped onto the same
+ledger. 235 offline tests green, `gen_sane_tables.py --check` clean, 0
+build warnings. **Offline-verified only -- hardware-verification of the
+SANE backend on this geometry is PENDING**; the CLI driver's own
+hardware acceptance (Test 58-61) verifies the CLI implementation, not
+this separate C++ one.
+
+Not yet in the port: install/packaging.
 
 Hook 2 is `offset_calibration()` and nothing else: the driver's
 CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and

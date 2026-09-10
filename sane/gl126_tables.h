@@ -149,6 +149,28 @@ struct OpProgram {
     std::size_t bulk_injection_count;
 };
 
+/** The A+C production geometry for one frame (docs/holder-position-
+ *  design.md), frozen from of135i/holder.py by gen_sane_tables.py.
+ *  This is the runtime positioning/window authority since the Test 58
+ *  migration -- feedl_for_frame()/frame_geometry() read it, NOT the
+ *  legacy feedl_frame1/feedl_pitch/captured_lines fields below (kept as
+ *  capture ground truth / wire-structure source only). */
+struct FrameGeom {
+    unsigned feedl;            /* commanded POSITION target (plain: window
+                                  centre; dual: Test-61 fixed-K re-anchor) */
+    unsigned line_register;    /* line count programmed into the scan register
+                                  (plain: incl the 8-line drain; dual: the
+                                  interleaved wire count) -- begin_scan injects it */
+    unsigned read_lines;       /* image lines actually read off the wire; the
+                                  byte budget and chunk driver size from THIS
+                                  (differs from line_register by the drain) */
+    unsigned delivered_lines;  /* lines the frontend receives (after colour
+                                  crop / parity split) */
+    unsigned chunks;           /* image chunks to read */
+    unsigned end_hwdpi;        /* furthest motor position the pass reaches;
+                                  re-checked <= FEEDL_CEILING before any write */
+};
+
 /** One scan profile: a resolution and its phase sequence. */
 struct Profile {
     const char* name;
@@ -163,8 +185,12 @@ struct Profile {
     unsigned chunk_count;      /* image chunks the vendor read (IMAGE_CHUNK_COUNT):
                                   chunk_count * lines_per_chunk lines are read,
                                   which for ir3600 is fewer than captured_lines */
-    unsigned feedl_frame1;     /* POSITION FEEDL of frame 1, this capture's own */
-    unsigned feedl_pitch;      /* FEEDL between frames */
+    unsigned feedl_frame1;     /* LEGACY capture ground truth (vendor grid),
+                                  NOT runtime since Test 58 -- use frames[] */
+    unsigned feedl_pitch;      /* LEGACY capture ground truth (vendor grid),
+                                  NOT runtime since Test 58 -- use frames[] */
+    const FrameGeom* frames;   /* A+C production geometry, frames 1-6 (index
+                                  frame-1); the runtime positioning/window authority */
     const std::uint8_t* slope_position;
     std::size_t slope_position_len;
     const std::uint8_t* slope_scan;

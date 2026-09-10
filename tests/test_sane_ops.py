@@ -1125,88 +1125,102 @@ def test_shading_table_reference_vectors():
 def test_position_and_scan_setup_match_python_replayer():
     """Wire equality for POSITION (whole phase) and SCAN's setup (ops
     0-320, the part before the first image-data descriptor): the Python
-    driver's actual transfers, from a live scanner.scan(frame=1) over
+    driver's actual transfers, from a live scanner.scan(frame=N) over
     the existing FakeUsbDevice, against the C++ "position"/"scan_setup"
-    OpProgram's own transfer log, both fed frame 1's FEEDL and the
-    default line count."""
+    OpProgram's own transfer log -- for frames 1, 3 and 6 (different
+    chunk counts, docs/holder-position-design.md's PLAIN3600_FRAMES).
+
+    Since the Test 58 migration the backend's own feedl_for_frame(frame,
+    profile)/frame_geometry(profile, frame) source FEEDL and the line
+    count from profile.frames[frame-1] (the A+C production ledger) --
+    NOT a manually-injected, independently-recomputed value. The probe
+    harness here still runs the "position"/"scan_setup" OpProgram in
+    isolation (it has no ScanSession/settings.frame of its own to drive
+    begin_scan()), so it still needs an --inject dict; the fix is WHERE
+    that number comes from: frame_geom_entries('plain3600', tables, 3600)
+    -- the exact same frozen ledger the C++ frames[] array was generated
+    from and the same one feedl_for_frame(frame, profile) reads at
+    runtime -- not a second, independent call to holder.overscan_geometry().
+    That makes the assertion "the backend uses the same ledger value",
+    not merely "the transfer structure is right" (test_sane_geometry.py's
+    test_frame_geom_matches_generator already proves frames[] itself
+    equals frame_geom_entries(); this test proves the OP PROGRAM'S wire
+    for that value equals the live driver's own wire)."""
     probe = _build_probe()
     if probe is None:
         print("test_position_and_scan_setup_match_python_replayer SKIPPED (no g++)")
         return "skipped"
+    sys.path.insert(0, str(REPO / "tools"))
+    import gen_sane_tables as gen
 
-    fake = FakeUsbDevice(reg01=0x22, cal_buffers=_build_cal_buffers())
-    scanner = Scanner(UsbIo(fake))
+    ledger = gen.frame_geom_entries("plain3600", tables, 3600)
+    results = []
+    for frame in (1, 3, 6):
+        fake = FakeUsbDevice(reg01=0x22, cal_buffers=_build_cal_buffers())
+        scanner = Scanner(UsbIo(fake))
 
-    slices: dict[str, list[tuple[int, int]]] = {}
-    orig_run_phase = scanner._run_phase
+        slices: dict[str, list[tuple[int, int]]] = {}
+        orig_run_phase = scanner._run_phase
 
-    def wrapped(phase, *a, **kw):
-        start = len(fake.wire_log)
-        result = orig_run_phase(phase, *a, **kw)
-        end = len(fake.wire_log)
-        slices.setdefault(phase.name, []).append((start, end))
-        return result
+        def wrapped(phase, *a, **kw):
+            start = len(fake.wire_log)
+            result = orig_run_phase(phase, *a, **kw)
+            end = len(fake.wire_log)
+            slices.setdefault(phase.name, []).append((start, end))
+            return result
 
-    scanner._run_phase = wrapped  # type: ignore[method-assign]
+        scanner._run_phase = wrapped  # type: ignore[method-assign]
 
-    with fast_time():
-        scanner.initialize()
-        scanner.scan(frame=1)   # POSITION, then SCAN (image + verbatim PARK)
+        with fast_time():
+            scanner.initialize()
+            scanner.scan(frame=frame)   # POSITION, then SCAN (image + verbatim PARK)
 
-    # ---- position ------------------------------------------------------
-    assert "position" in slices, sorted(slices)
-    pos_start, pos_end = slices["position"][0]
-    py_position = _python_transfers(fake.wire_log[pos_start:pos_end])
+        # ---- position ---------------------------------------------------
+        assert "position" in slices, (frame, sorted(slices))
+        pos_start, pos_end = slices["position"][0]
+        py_position = _python_transfers(fake.wire_log[pos_start:pos_end])
 
-    # The live driver commands the A+C geometry since the Test 58
-    # migration; feed the C++ program the SAME values so the equality
-    # under test stays what it always was -- the transfer STRUCTURE.
-    # (The backend's own runtime grid is still the legacy tables until
-    # SANE migrates; test_feedl_and_position_budget pins that.)
-    from of135i import holder as _holder
-    from of135i import image as _ofimage
-    geom = _holder.overscan_geometry(
-        1, res_units_per_line=7200 // 3600,
-        chunk_lines=tables.IMAGE_CHUNK_LINES,
-        colour_crop_lines=_ofimage.align_shift(3600))
-    feedl = geom.feedl
-    injects = {
-        "feedl_hi": (feedl >> 16) & 0xFF,
-        "feedl_mid": (feedl >> 8) & 0xFF,
-        "feedl_lo": feedl & 0xFF,
-    }
-    rc, out, err = _run_probe_program(probe, "plain3600", "position", None, injects=injects)
-    assert rc == 0, (out, err)
-    assert _lines(out)[-1].startswith("DONE"), out
-    cpp_position = _parse_probe_transfers(out)
-    assert py_position == cpp_position, (
-        f"position: python and C++ transfer logs differ\n"
-        f"python ({len(py_position)}): {py_position}\n"
-        f"cpp    ({len(cpp_position)}): {cpp_position}")
+        e = ledger[frame - 1]
+        feedl = e["feedl"]
+        injects = {
+            "feedl_hi": (feedl >> 16) & 0xFF,
+            "feedl_mid": (feedl >> 8) & 0xFF,
+            "feedl_lo": feedl & 0xFF,
+        }
+        rc, out, err = _run_probe_program(probe, "plain3600", "position", None, injects=injects)
+        assert rc == 0, (frame, out, err)
+        assert _lines(out)[-1].startswith("DONE"), (frame, out)
+        cpp_position = _parse_probe_transfers(out)
+        assert py_position == cpp_position, (
+            f"frame {frame} position: python and C++ transfer logs differ\n"
+            f"python ({len(py_position)}): {py_position}\n"
+            f"cpp    ({len(cpp_position)}): {cpp_position}")
 
-    # ---- scan_setup (SCAN ops 0-320) ------------------------------------
-    assert "scan" in slices, sorted(slices)
-    scan_start, _scan_end = slices["scan"][0]
-    desc = tables.IMAGE_DESC_DATA
-    first_desc = next(i for i, op in enumerate(tables.SCAN.ops)
-                      if op.kind == "cw" and op.wv == 0x0082 and op.data == desc)
-    assert first_desc == 321, first_desc
-    py_scan_setup = _python_transfers(fake.wire_log[scan_start:scan_start + first_desc])
+        # ---- scan_setup (SCAN ops 0-320) --------------------------------
+        assert "scan" in slices, (frame, sorted(slices))
+        scan_start, _scan_end = slices["scan"][0]
+        desc = tables.IMAGE_DESC_DATA
+        first_desc = next(i for i, op in enumerate(tables.SCAN.ops)
+                          if op.kind == "cw" and op.wv == 0x0082 and op.data == desc)
+        assert first_desc == 321, first_desc
+        py_scan_setup = _python_transfers(fake.wire_log[scan_start:scan_start + first_desc])
 
-    lines_n = tables.scan_lines_for_chunks(geom.chunks)
-    injects2 = {"lines_hi": (lines_n >> 8) & 0xFF, "lines_lo": lines_n & 0xFF}
-    rc, out, err = _run_probe_program(probe, "plain3600", "scan_setup", None, injects=injects2)
-    assert rc == 0, (out, err)
-    assert _lines(out)[-1].startswith("DONE"), out
-    cpp_scan_setup = _parse_probe_transfers(out)
-    assert py_scan_setup == cpp_scan_setup, (
-        f"scan_setup: python and C++ transfer logs differ\n"
-        f"python ({len(py_scan_setup)}): {py_scan_setup}\n"
-        f"cpp    ({len(cpp_scan_setup)}): {cpp_scan_setup}")
+        lines_n = e["line_register"]
+        injects2 = {"lines_hi": (lines_n >> 8) & 0xFF, "lines_lo": lines_n & 0xFF}
+        rc, out, err = _run_probe_program(probe, "plain3600", "scan_setup", None, injects=injects2)
+        assert rc == 0, (frame, out, err)
+        assert _lines(out)[-1].startswith("DONE"), (frame, out)
+        cpp_scan_setup = _parse_probe_transfers(out)
+        assert py_scan_setup == cpp_scan_setup, (
+            f"frame {frame} scan_setup: python and C++ transfer logs differ\n"
+            f"python ({len(py_scan_setup)}): {py_scan_setup}\n"
+            f"cpp    ({len(cpp_scan_setup)}): {cpp_scan_setup}")
 
-    print(f"test_position_and_scan_setup_match_python_replayer OK "
-          f"(position {len(py_position)} transfers, scan_setup {len(py_scan_setup)} "
-          f"transfers, feedl={feedl}, lines={lines_n})")
+        results.append((frame, feedl, lines_n, len(py_position), len(py_scan_setup)))
+
+    print("test_position_and_scan_setup_match_python_replayer OK ("
+          + ", ".join(f"f{f}: feedl={fe} lines={ln} position={pn} scan_setup={sn}"
+                       for f, fe, ln, pn, sn in results) + ")")
 
 
 def test_image_chunks_match_python_replayer():
@@ -1442,21 +1456,32 @@ def test_poll_masked_timeout_fails_closed():
 
 
 def test_feedl_and_position_budget():
-    """docs/sane-hook5-frame.md section 4/6: feedl_for_frame() against
-    of135i/tables.py's own table for frames 1-6 (the six-aperture strip
-    holder, of135i/holder.py), and position_timeout_ms() against
-    3 * 1.6141 * position_timeout_scale()."""
+    """docs/holder-position-design.md / sane-hook5-frame.md section 4/6:
+    feedl_for_frame(frame, profile) against the A+C PRODUCTION ledger
+    (frame_geom_entries('plain3600', tables, 3600), the same authority
+    tools/gen_sane_tables.py froze into frames[] -- the runtime grid
+    since Test 58) for frames 1-6 of the six-aperture strip holder --
+    NOT the legacy captured feedl_frame1 + n*feedl_pitch grid (that
+    would be tables.feedl_for_frame()/the single-arg C++ overload,
+    kept only for capture-evidence, gl126_ops.h's own doc comment) --
+    and position_timeout_ms() against 3 * 1.6141 * position_timeout_scale()."""
     probe = _build_probe()
     if probe is None:
         print("test_feedl_and_position_budget SKIPPED (no g++)")
         return "skipped"
 
     from of135i.device import position_timeout_scale
+    sys.path.insert(0, str(REPO / "tools"))
+    import gen_sane_tables as gen
 
+    ledger = gen.frame_geom_entries("plain3600", tables, 3600)
     feedls = {}
     for frame in (1, 2, 3, 4, 5, 6):
-        want = tables.feedl_for_frame(frame)
-        r = subprocess.run([str(probe), "feedl", str(frame)], capture_output=True, text=True)
+        want = ledger[frame - 1]["feedl"]
+        # The profile overload: feedl_for_frame(frame, PROFILES["plain3600"])
+        # now sources frames[frame-1].feedl (the ledger), not the legacy grid.
+        r = subprocess.run([str(probe), "feedl", str(frame), "plain3600"],
+                           capture_output=True, text=True)
         assert r.returncode == 0, r
         kv = dict(p.split("=", 1) for p in r.stdout.split())
         got = int(kv["FEEDL"])
@@ -1466,13 +1491,17 @@ def test_feedl_and_position_budget():
         assert int(kv["lo"], 16) == want & 0xFF
         feedls[frame] = want
 
-    assert feedls[1] == 6743, feedls
-    assert feedls[5] == 49783 and feedls[6] == 60543, feedls
+    # Spelled out (docs/holder-position-design.md's own PLAIN3600_FRAMES
+    # example), not just cross-checked against the Python side.
+    assert feedls == {1: 6562, 2: 17315, 3: 28051, 4: 38806, 5: 49538, 6: 60276}, feedls
 
-    r1 = subprocess.run([str(probe), "position_timeout", "6743"], capture_output=True, text=True)
+    r1 = subprocess.run([str(probe), "position_timeout", str(feedls[1])],
+                        capture_output=True, text=True)
     assert r1.returncode == 0, r1
     ms1 = int(r1.stdout.strip().split("=")[1])
-    assert abs(ms1 - 4842) <= 1, ms1
+    scale1 = position_timeout_scale(tables, feedls[1])
+    want_s1 = 3 * 1.6141 * scale1
+    assert abs(ms1 / 1000.0 - want_s1) < 0.05, (ms1, want_s1, scale1)
 
     feedl4 = feedls[4]
     r4 = subprocess.run([str(probe), "position_timeout", str(feedl4)],
@@ -1482,8 +1511,9 @@ def test_feedl_and_position_budget():
     scale4 = position_timeout_scale(tables, feedl4)
     want_s4 = 3 * 1.6141 * scale4
     assert abs(ms4 / 1000.0 - want_s4) < 0.05, (ms4, want_s4, scale4)
-    print(f"test_feedl_and_position_budget OK (feedl frames 1-6={feedls}, "
-          f"position_timeout_ms(6743)={ms1}, ({feedl4})={ms4} ~= {want_s4:.1f}s)")
+    print(f"test_feedl_and_position_budget OK (ledger feedl frames 1-6={feedls}, "
+          f"position_timeout_ms({feedls[1]})={ms1} ~= {want_s1:.1f}s, "
+          f"({feedl4})={ms4} ~= {want_s4:.1f}s)")
 
 
 def test_position_frames_2_to_6_match_python_replayer():
@@ -1930,50 +1960,58 @@ def test_shading_table2_dual_reference_vectors():
 
 
 def test_frame_geometry_all_profiles():
-    """frame_geometry() and the per-profile FEEDL against the Python tables:
-    the plain profile reads its whole register value (5137), a dual profile
-    reads chunk_count x lines_per_chunk (ir3600: 10544 of 10622), one line
-    in two is the image, the colour shift is 24 lines x dpi / 3600 and the
-    delivered count is the image less the shift."""
+    """frame_geometry(profile, frame) and feedl_for_frame(frame, profile)
+    -- via the live probe binary calling the COMPILED functions, not the
+    frozen table text (see test_sane_geometry.py for the frozen-table-
+    vs-generator oracle) -- against the A+C production ledger
+    (frame_geom_entries(), the same authority tools/gen_sane_tables.py
+    froze into frames[]) for frames 1, 4, 5, 6 of every profile: the
+    frame-dependent line_register/read_lines/delivered_lines/chunk_count,
+    a dual profile's parity split, the colour shift 24 x dpi / 3600, and
+    FEEDL per frame -- NOT the legacy captured_lines/feedl_frame1 +
+    n*feedl_pitch grid those fields used to come from before Test 58."""
     probe = _build_probe()
     if probe is None:
         print("test_frame_geometry_all_profiles SKIPPED (no g++)")
         return "skipped"
+    sys.path.insert(0, str(REPO / "tools"))
+    import gen_sane_tables as gen
+
     rows = []
     for profile_name, dpi in (("plain3600", 3600),) + DUAL_PROFILES:
         t = tables if profile_name == "plain3600" else _dual_module(dpi)
-        r = subprocess.run([str(probe), "geometry", profile_name], capture_output=True, text=True)
-        assert r.returncode == 0, (profile_name, r.stdout, r.stderr)
-        got = dict(kv.split("=") for kv in _lines(r.stdout)[-1].split()[1:])
-        got = {k: int(v) for k, v in got.items()}
         dual = profile_name != "plain3600"
-        read_lines = t.IMAGE_CHUNK_COUNT * t.LINES_PER_CHUNK if dual else t.DEFAULT_LINES
-        image_lines = read_lines // 2 if dual else read_lines
+        entries = gen.frame_geom_entries(profile_name, t, dpi)
         shift = 24 * dpi // 3600
         assert shift == 2 * round(24 * dpi / 7200), (profile_name, shift)  # image.align_channels
-        want = {
-            "dual": int(dual), "width": t.IMAGE_WIDTH, "wire_lines": t.DEFAULT_LINES,
-            "read_lines": read_lines, "image_lines": image_lines, "shift_lines": shift,
-            "delivered_lines": image_lines - shift, "chunk_len": t.IMAGE_CHUNK_LEN,
-            "chunk_count": -(-(read_lines * t.IMAGE_WIDTH * 6) // t.IMAGE_CHUNK_LEN),
-            "feedl_frame1": t.FEEDL_FRAME1, "feedl_pitch": t.FEEDL_PITCH,
-        }
-        assert got == want, (profile_name, got, want)
         for frame in (1, 4, 5, 6):
-            r = subprocess.run([str(probe), "feedl", str(frame), profile_name],
+            e = entries[frame - 1]
+            r = subprocess.run([str(probe), "geometry", profile_name, str(frame)],
                                capture_output=True, text=True)
-            assert r.returncode == 0, r.stderr
-            assert int(_lines(r.stdout)[-1].split()[0].split("=")[1]) == t.feedl_for_frame(frame)
-        # Frames 5/6 = FEEDL_FRAME1 + (n-1)*FEEDL_PITCH, spelled out (not
-        # just cross-checked against the Python side): 49783/60543 for the
-        # plain profile's 6743 base, 49786/60546 for every dual profile's
-        # 6746 base (of135i/holder.py's evidence section).
-        want5, want6 = ((49783, 60543) if profile_name == "plain3600" else (49786, 60546))
-        assert t.feedl_for_frame(5) == want5 and t.feedl_for_frame(6) == want6, (
-            profile_name, t.feedl_for_frame(5), t.feedl_for_frame(6))
-        rows.append(f"{profile_name} {want['wire_lines']}->{want['read_lines']}->"
-                    f"{want['delivered_lines']}")
-    assert got["read_lines"] == 21248  # 7200 dpi, the last profile
+            assert r.returncode == 0, (profile_name, frame, r.stdout, r.stderr)
+            got = dict(kv.split("=") for kv in _lines(r.stdout)[-1].split()[1:])
+            got = {k: int(v) for k, v in got.items()}
+            image_lines = e["read_lines"] // 2 if dual else e["read_lines"]
+            want = {
+                "dual": int(dual), "width": t.IMAGE_WIDTH, "wire_lines": e["line_register"],
+                "read_lines": e["read_lines"], "image_lines": image_lines, "shift_lines": shift,
+                "delivered_lines": e["delivered_lines"], "chunk_len": t.IMAGE_CHUNK_LEN,
+                "chunk_count": e["chunks"],
+                # feedl_frame1/feedl_pitch: the legacy capture-evidence
+                # fields cmd_geometry also prints (Profile's own, no
+                # longer what feedl_for_frame()/frame_geometry() source
+                # from) -- unaffected by the migration.
+                "feedl_frame1": t.FEEDL_FRAME1, "feedl_pitch": t.FEEDL_PITCH,
+            }
+            assert got == want, (profile_name, frame, got, want)
+
+            rf = subprocess.run([str(probe), "feedl", str(frame), profile_name],
+                                capture_output=True, text=True)
+            assert rf.returncode == 0, rf.stderr
+            got_feedl = int(_lines(rf.stdout)[-1].split()[0].split("=")[1])
+            assert got_feedl == e["feedl"], (profile_name, frame, got_feedl, e["feedl"])
+        rows.append(f"{profile_name} f1 {entries[0]['line_register']}->"
+                    f"{entries[0]['read_lines']}->{entries[0]['delivered_lines']}")
     print(f"test_frame_geometry_all_profiles OK ({'; '.join(rows)})")
 
 def main() -> int:

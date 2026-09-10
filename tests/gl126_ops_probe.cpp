@@ -1056,11 +1056,12 @@ int cmd_alternate_lines(int argc, char** argv)
     return 0;
 }
 
-/* geometry <profile> -- frame_geometry() of a named profile. */
+/* geometry <profile> <frame> -- frame_geometry() of a named profile's
+   frame (1-6, the A+C ledger since Test 58/61). */
 int cmd_geometry(int argc, char** argv)
 {
-    if (argc != 3) {
-        std::cerr << "usage: probe geometry <profile>\n";
+    if (argc != 4) {
+        std::cerr << "usage: probe geometry <profile> <frame>\n";
         return 2;
     }
     const Profile* p = nullptr;
@@ -1071,7 +1072,8 @@ int cmd_geometry(int argc, char** argv)
         std::cerr << "no profile " << argv[2] << "\n";
         return 2;
     }
-    FrameGeometry g = frame_geometry(*p);
+    unsigned frame = static_cast<unsigned>(std::stoul(argv[3]));
+    FrameGeometry g = frame_geometry(*p, frame);
     std::cout << "GEOMETRY dual=" << (g.dual ? 1 : 0) << " width=" << g.width
               << " wire_lines=" << g.wire_lines << " read_lines=" << g.read_lines
               << " image_lines=" << g.image_lines << " shift_lines=" << g.shift_lines

@@ -664,13 +664,20 @@ ScanSession CommandSetGl126::calculate_scan_session(const Genesys_Device* dev,
     bool ir = settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
     const Profile* profile = find_profile(settings.xres, ir);
     bool pinned = profile != nullptr;
+    /* sane_get_parameters can run before the frontend has chosen a valid
+       frame (settings.frame defaults to 1, of135i/gl126-integration.patch);
+       default to frame 1 for parameter reporting only -- begin_scan does
+       its own, non-defaulting, 1-kFrameMax check before any write. */
+    unsigned frame = (settings.frame >= 1 && settings.frame <= kFrameMax) ? settings.frame : 1;
     FrameGeometry geo;
     if (pinned) {
         /* Hook 8 generalises the pin to every captured profile: the dual-
            light ones (600/1200/2400/7200 dpi, and 3600 dpi with IR) stream
            IR and visible lines alternately at the full sensor width; the
-           host keeps one line in two (docs/sane-hook8-dual.md section 3). */
-        geo = frame_geometry(*profile);
+           host keeps one line in two (docs/sane-hook8-dual.md section 3).
+           The A+C ledger (frames[]) makes the geometry frame-dependent
+           since Test 58/61 -- frame_geometry() now takes the frame. */
+        geo = frame_geometry(*profile, frame);
         session.params.pixels = geo.width;
         session.params.requested_pixels = geo.width;
         session.params.lines = geo.delivered_lines;
@@ -742,9 +749,13 @@ void CommandSetGl126::init_regs_for_scan_session(Genesys_Device* dev,
     DBG_HELPER(dbg);
     bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
     const Profile* profile = find_profile(dev->settings.xres, ir);
+    // Same defaulting rule as calculate_scan_session() above (settings.frame
+    // may not yet be a chosen frame when this core path runs early).
+    unsigned frame = (dev->settings.frame >= 1 && dev->settings.frame <= kFrameMax)
+        ? dev->settings.frame : 1;
     FrameGeometry geo;
     if (profile != nullptr) {
-        geo = frame_geometry(*profile);
+        geo = frame_geometry(*profile, frame);
     }
     if (profile == nullptr || session.params.pixels != geo.width ||
         session.optical_line_count != geo.read_lines ||
@@ -1059,11 +1070,13 @@ void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*se
     RunResult position;
     run_phase_program(dev, *profile, "position", position, &values, nullptr, &position_policy);
 
-    // Hook 6a: the scan pass's setup, with the frame's line-count register
-    // value as captured (plain: 5137, both bytes; dual: three bytes, e.g.
-    // ir3600's 10622 of which 10544 are read). The frontend receives
-    // params.lines; the raw lines read are session.optical_line_count.
-    FrameGeometry geo = frame_geometry(*profile);
+    // Hook 6a: the scan pass's setup, with this frame's line-count register
+    // value from the A+C ledger (profile.frames[frame-1].line_register, via
+    // frame_geometry -> geo.wire_lines; plain carries the 8-line drain, dual
+    // the interleaved wire count -- docs/holder-position-design.md). The
+    // frontend receives params.lines; the raw lines read are
+    // session.optical_line_count.
+    FrameGeometry geo = frame_geometry(*profile, frame);
     unsigned lines = geo.wire_lines;
     values.clear();
     values["lines_top"] = static_cast<std::uint8_t>((lines >> 16) & 0xff);

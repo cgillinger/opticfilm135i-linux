@@ -506,26 +506,32 @@ std::vector<std::uint8_t> shading_table2_dual(const std::uint8_t* white, std::si
                                               const std::uint8_t* dark, std::size_t dark_len,
                                               unsigned lines, unsigned width, double target);
 
-/** The image geometry of one profile's frame, pure arithmetic from the
-    captured constants (docs/sane-hook8-dual.md section 3):
-      wire_lines     the line-count register value written (captured_lines);
-      read_lines     raw lines the backend reads: for the plain profile the
-                     whole register value (its last 8 lines are the chunk the
-                     vendor read as a "drain"); for a dual profile
-                     chunk_count * lines_per_chunk, what the vendor read
-                     (ir3600: 10544 of 10622, the 660th descriptor was
-                     cancelled -- docs/protocol-notes.md pass 12);
+/** The image geometry of one profile's frame, since the Test 58/61 A+C
+    migration sourced from profile.frames[frame-1] (the frozen ledger
+    gen_sane_tables.frame_geom_entries() emits from of135i/holder.py's
+    overscan_geometry()/dual_overscan_geometry()), NOT from the legacy
+    profile.captured_lines/chunk_count fields (docs/holder-position-
+    design.md; docs/sane-hook8-dual.md section 3 for the field meanings,
+    now frame-dependent):
+      wire_lines     the line-count register value written -- frames[].line_register
+                     (plain: incl the 8-line drain; dual: the interleaved
+                     wire count) -- begin_scan injects this;
+      read_lines     raw lines the backend reads off the wire --
+                     frames[].read_lines; the byte budget and chunk driver
+                     size from THIS, not wire_lines;
       image_lines    lines of one pass: read_lines for plain, read_lines/2
                      for dual (even = IR, odd = visible);
       shift_lines    the colour-line shift consumed on the host, R to B, at
                      this dpi: 24 * dpi / 3600 (the model's ld_shift at the
                      motor's base dpi, scaled as the core scales it);
-      delivered_lines image_lines - shift_lines: the visible image after
-                     ComponentShiftLines, and the IR image after the crop of
-                     shift_lines/2 rows at each end that keeps it on the
-                     visible image's row grid (image.align_channels);
-      chunk_count    bulk reads of chunk_len, the last one shorter when
-                     read_lines is not a multiple of lines_per_chunk. */
+      delivered_lines frames[].delivered_lines (the frontend receives this,
+                     NOT image_lines - shift_lines recomputed -- the ledger
+                     is authoritative; a consistency assertion checks the
+                     two agree and throws std::invalid_argument, fail-
+                     closed, if the wiring or the table generation is wrong);
+      chunk_count    frames[].chunks -- bulk reads of chunk_len, the last
+                     one shorter when read_lines is not a multiple of
+                     lines_per_chunk. */
 struct FrameGeometry {
     bool dual = false;
     unsigned width = 0;
@@ -537,17 +543,26 @@ struct FrameGeometry {
     unsigned chunk_len = 0;
     unsigned chunk_count = 0;
 };
-FrameGeometry frame_geometry(const Profile& profile);
+/** Throws std::invalid_argument (before any use) if `frame` is outside
+    1-kFeedlFrameMax, or if the ledger's own invariant (delivered_lines +
+    shift_lines == image_lines) fails -- the latter means frames[] and
+    this function's wiring have drifted apart, or the table generator's
+    output changed shape; either way, nothing has been written. */
+FrameGeometry frame_geometry(const Profile& profile, unsigned frame);
 
 // ------------------------------------------------- hooks 5-7: the frame
 
-/** FEEDL_FRAME1 (of135i/tables.py) -- the absolute POSITION target for
-    frame 1, 1/7200 inch (HWDPI) units from home. The dual-light captures
-    carry 6746 (Profile::feedl_frame1); feedl_for_frame(frame, profile)
-    uses the profile's own. */
+/** FEEDL_FRAME1 (of135i/tables.py) -- LEGACY: the vendor capture grid's
+    absolute POSITION target for frame 1, 1/7200 inch (HWDPI) units from
+    home, NOT the runtime positioning authority since Test 58 (that is
+    profile.frames[frame-1].feedl, via the two-arg feedl_for_frame()
+    below). Used only by the single-arg feedl_for_frame() overload below,
+    kept for capture-evidence/test callers. The dual-light captures carry
+    6746 (Profile::feedl_frame1, also legacy). */
 constexpr unsigned kFeedlFrame1 = 6743;
-/** FEEDL_PITCH (of135i/tables.py) -- steps between frames (38.0 mm film
-    pitch). */
+/** FEEDL_PITCH (of135i/tables.py) -- LEGACY: the vendor capture grid's
+    step between frames (38.0 mm film pitch), same status as kFeedlFrame1
+    above. */
 constexpr unsigned kFeedlPitch = 10760;
 
 /** The film holder's aperture count -- the largest frame number
@@ -572,14 +587,21 @@ constexpr unsigned kFeedlFrameMax = 6;
     (of135i/holder.py::FEEDL_CEILING). */
 constexpr unsigned kFeedlCeiling = 71490;
 
-/** Absolute FEEDL target for `frame` (1-based), from home -- ported from
+/** LEGACY: absolute FEEDL target for `frame` (1-based) on the vendor
+    capture grid (kFeedlFrame1 + (frame-1)*kFeedlPitch), ported from
     of135i/tables.py's feedl_for_frame() (docs/sane-hook5-frame.md
-    section 4, "Injections"). Throws std::invalid_argument, before any
-    transfer, for a frame outside 1-kFeedlFrameMax or a resulting FEEDL
-    above kFeedlCeiling. */
+    section 4, "Injections") -- NOT the runtime positioning authority
+    since Test 58; see the two-arg overload below. Throws
+    std::invalid_argument, before any transfer, for a frame outside
+    1-kFeedlFrameMax or a resulting FEEDL above kFeedlCeiling. */
 unsigned feedl_for_frame(unsigned frame);
-/** The same from `profile`'s own captured FEEDL_FRAME1 / FEEDL_PITCH,
-    with the same two bounds. */
+/** The A+C production authority (docs/holder-position-design.md): the
+    absolute FEEDL target for `frame` (1-based) from `profile.frames[frame-1]`
+    (the frozen ledger, NOT profile's legacy feedl_frame1/feedl_pitch).
+    Throws std::invalid_argument, before any transfer, for a frame outside
+    1-kFeedlFrameMax, or if that frame's end_hwdpi (the pass's furthest
+    motor reach) or feedl exceeds kFeedlCeiling -- the same travel ceiling
+    overscan_geometry() already checked in Python, inherited verbatim. */
 unsigned feedl_for_frame(unsigned frame, const Profile& profile);
 
 /** feedl split into its three POSITION injection bytes (hi/mid/lo --

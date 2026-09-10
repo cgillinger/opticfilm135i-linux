@@ -124,6 +124,7 @@ if str(REPO) not in sys.path:
 from of135i import (  # noqa: E402
     tables, tables_base, tables_ir, tables_load,
     tables_dpi600, tables_dpi1200, tables_dpi2400, tables_dpi7200,
+    holder, image as _image,
 )
 
 OUT_DIR = REPO / "sane"
@@ -786,6 +787,67 @@ def fmt_bytes(data: bytes, indent: str = "    ") -> str:
     return "\n".join(out)
 
 
+def frame_geom_entries(key: str, mod, dpi: int) -> list[dict]:
+    """The A+C production geometry for every frame 1-6 of one profile,
+    computed by the SAME authoritative Python functions the CLI driver
+    programs from (of135i/holder.py, of135i/device.py) -- NOT re-derived
+    here. This is the single source bridge: Python computes, the generator
+    freezes, the C++ (feedl_for_frame / frame_geometry) consumes; a table
+    change that is not regenerated is caught by ``gen_sane_tables --check``.
+
+    Six discrete values per frame, matching docs/holder-position-design.md:
+
+      * ``feedl``          -- the commanded POSITION target (plain: window
+                              centre; dual: Test-61 fixed-K re-anchor).
+      * ``line_register``  -- the line count PROGRAMMED into the 24-bit scan
+                              register: plain = scan_lines_for_chunks(chunks)
+                              (the 8-line drain is part of this value); dual
+                              = the interleaved wire count (chunks *
+                              LINES_PER_CHUNK), which carries no separate
+                              drain. This is what begin_scan injects.
+      * ``read_lines``     -- image lines actually read off the wire
+                              (chunks * image-lines-per-chunk); the pipeline
+                              byte budget and chunk driver size from THIS,
+                              not from line_register (they differ by the
+                              drain on the plain path).
+      * ``delivered_lines``-- lines the frontend receives (after the colour
+                              crop / parity split): geom.delivered_lines.
+      * ``chunks``         -- image chunks to read.
+      * ``end_hwdpi``      -- the furthest motor position the pass reaches,
+                              already range-checked against FEEDL_CEILING by
+                              overscan_geometry() before return; the C++
+                              re-checks this exact value before any write so
+                              the transport bound is inherited verbatim.
+
+    Proven invariant (tests/test_overscan.py + the geometry parity matrix):
+    ``delivered_lines + 2*align_shift(dpi) == read_lines`` on the plain
+    path and ``== read_lines/2`` on a dual path -- the relationship
+    calculate_scan_session's own consistency assertion depends on.
+    """
+    crop = _image.align_shift(dpi)
+    is_dual = hasattr(mod, "LINES_PER_CHUNK")
+    out: list[dict] = []
+    for frame in range(1, 7):
+        if is_dual:
+            geom, wire = holder.dual_overscan_geometry(
+                frame, dpi=dpi, lines_per_chunk=mod.LINES_PER_CHUNK,
+                colour_crop_lines=crop, default_wire_lines=mod.DEFAULT_LINES,
+                overscan_mm=holder.OVERSCAN_MM)
+            line_register = wire
+            read_lines = geom.chunks * mod.LINES_PER_CHUNK
+        else:
+            geom = holder.overscan_geometry(
+                frame, res_units_per_line=7200 // dpi,
+                chunk_lines=mod.IMAGE_CHUNK_LINES, colour_crop_lines=crop)
+            line_register = tables.scan_lines_for_chunks(geom.chunks)
+            read_lines = geom.chunks * mod.IMAGE_CHUNK_LINES
+        out.append(dict(
+            frame=frame, feedl=geom.feedl, line_register=line_register,
+            read_lines=read_lines, delivered_lines=geom.delivered_lines,
+            chunks=geom.chunks, end_hwdpi=round(geom.end_hwdpi)))
+    return out
+
+
 def emit() -> tuple[str, str]:
     """Return (header, source) for the generated tables."""
     h: list[str] = []
@@ -932,6 +994,27 @@ def emit() -> tuple[str, str]:
     h.append("    const OpBulkInjection* bulk_injections;  /* nullptr/0 when none */")
     h.append("    std::size_t bulk_injection_count;")
     h.append("};\n")
+    h.append("/** The A+C production geometry for one frame (docs/holder-position-")
+    h.append(" *  design.md), frozen from of135i/holder.py by gen_sane_tables.py.")
+    h.append(" *  This is the runtime positioning/window authority since the Test 58")
+    h.append(" *  migration -- feedl_for_frame()/frame_geometry() read it, NOT the")
+    h.append(" *  legacy feedl_frame1/feedl_pitch/captured_lines fields below (kept as")
+    h.append(" *  capture ground truth / wire-structure source only). */")
+    h.append("struct FrameGeom {")
+    h.append("    unsigned feedl;            /* commanded POSITION target (plain: window")
+    h.append("                                  centre; dual: Test-61 fixed-K re-anchor) */")
+    h.append("    unsigned line_register;    /* line count programmed into the scan register")
+    h.append("                                  (plain: incl the 8-line drain; dual: the")
+    h.append("                                  interleaved wire count) -- begin_scan injects it */")
+    h.append("    unsigned read_lines;       /* image lines actually read off the wire; the")
+    h.append("                                  byte budget and chunk driver size from THIS")
+    h.append("                                  (differs from line_register by the drain) */")
+    h.append("    unsigned delivered_lines;  /* lines the frontend receives (after colour")
+    h.append("                                  crop / parity split) */")
+    h.append("    unsigned chunks;           /* image chunks to read */")
+    h.append("    unsigned end_hwdpi;        /* furthest motor position the pass reaches;")
+    h.append("                                  re-checked <= FEEDL_CEILING before any write */")
+    h.append("};\n")
     h.append("/** One scan profile: a resolution and its phase sequence. */")
     h.append("struct Profile {")
     h.append("    const char* name;")
@@ -946,8 +1029,12 @@ def emit() -> tuple[str, str]:
     h.append("    unsigned chunk_count;      /* image chunks the vendor read (IMAGE_CHUNK_COUNT):")
     h.append("                                  chunk_count * lines_per_chunk lines are read,")
     h.append("                                  which for ir3600 is fewer than captured_lines */")
-    h.append("    unsigned feedl_frame1;     /* POSITION FEEDL of frame 1, this capture's own */")
-    h.append("    unsigned feedl_pitch;      /* FEEDL between frames */")
+    h.append("    unsigned feedl_frame1;     /* LEGACY capture ground truth (vendor grid),")
+    h.append("                                  NOT runtime since Test 58 -- use frames[] */")
+    h.append("    unsigned feedl_pitch;      /* LEGACY capture ground truth (vendor grid),")
+    h.append("                                  NOT runtime since Test 58 -- use frames[] */")
+    h.append("    const FrameGeom* frames;   /* A+C production geometry, frames 1-6 (index")
+    h.append("                                  frame-1); the runtime positioning/window authority */")
     h.append("    const std::uint8_t* slope_position;")
     h.append("    std::size_t slope_position_len;")
     h.append("    const std::uint8_t* slope_scan;")
@@ -1014,6 +1101,20 @@ def emit() -> tuple[str, str]:
     for key, mod, dpi, doc in PROFILES:
         pos = slope_name(mod.SLOPE_TABLE_POSITION, f"{key}_position")
         scan = slope_name(mod.SLOPE_TABLE_SCAN, f"{key}_scan")
+
+        # ---- A+C per-frame production geometry (the runtime source) ----
+        frames_name = f"{key.upper()}_FRAMES"
+        c.append(f"/* {key}: A+C production geometry, frames 1-6 (docs/holder-"
+                 f"position-design.md; from of135i/holder.py via "
+                 f"gen_sane_tables.frame_geom_entries -- Python is authoritative, "
+                 f"do not hand-edit). */")
+        c.append(f"static const FrameGeom {frames_name}[6] = {{")
+        for fe in frame_geom_entries(key, mod, dpi):
+            c.append(f"    {{{fe['feedl']}, {fe['line_register']}, "
+                     f"{fe['read_lines']}, {fe['delivered_lines']}, "
+                     f"{fe['chunks']}, {fe['end_hwdpi']}}},"
+                     f"   /* frame {fe['frame']} */")
+        c.append("};\n")
 
         phase_entries: list[str] = []
         for phase in mod.PHASES:
@@ -1183,6 +1284,7 @@ def emit() -> tuple[str, str]:
             f'{getattr(mod, "SHADING_UPLOAD_LEN", 0)}, '
             f'{mod.DEFAULT_LINES}, {mod.IMAGE_CHUNK_COUNT}, '
             f'{mod.FEEDL_FRAME1}, {mod.FEEDL_PITCH}, '
+            f'{frames_name}, '
             f'{pos}, {pos}_LEN, {scan}, {scan}_LEN, '
             f'{key.upper()}_PHASES, {len(phase_entries)}, '
             f'{progs_name}, {len(program_entries)}}},   /* {doc} */')

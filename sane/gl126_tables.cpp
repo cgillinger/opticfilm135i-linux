@@ -234,6 +234,16 @@ const std::uint8_t SLOPE_PLAIN3600_SCAN[512] = {
     0x58, 0x1b, 0x58, 0x1b, 0x58, 0x1b, 0x58, 0x1b,
 };
 
+/* plain3600: A+C production geometry, frames 1-6 (docs/holder-position-design.md; from of135i/holder.py via gen_sane_tables.frame_geom_entries -- Python is authoritative, do not hand-edit). */
+static const FrameGeom PLAIN3600_FRAMES[6] = {
+    {6562, 5367, 5359, 5335, 233, 11897},   /* frame 1 */
+    {17315, 5367, 5359, 5335, 233, 22650},   /* frame 2 */
+    {28051, 5344, 5336, 5312, 232, 33363},   /* frame 3 */
+    {38806, 5321, 5313, 5289, 231, 44095},   /* frame 4 */
+    {49538, 5321, 5313, 5289, 231, 54827},   /* frame 5 */
+    {60276, 5344, 5336, 5312, 232, 65588},   /* frame 6 */
+};
+
 /* plain3600 / prep: 8 register writes from 39 captured ops (27 reads not reproduced). */
 static const RegPair PLAIN3600_PREP_REGS[8] = {
     {0x36, 0xfc}, {0x3a, 0x00}, {0x36, 0xfc}, {0x33, 0x0e},
@@ -3008,6 +3018,16 @@ const std::uint8_t SLOPE_IR3600_SCAN[512] = {
     0xb0, 0x36, 0xb0, 0x36, 0xb0, 0x36, 0xb0, 0x36, 0xb0, 0x36, 0xb0, 0x36,
     0xb0, 0x36, 0xb0, 0x36, 0xb0, 0x36, 0xb0, 0x36, 0xb0, 0x36, 0xb0, 0x36,
     0xb0, 0x36, 0xb0, 0x36, 0xb0, 0x36, 0xb0, 0x36,
+};
+
+/* ir3600: A+C production geometry, frames 1-6 (docs/holder-position-design.md; from of135i/holder.py via gen_sane_tables.frame_geom_entries -- Python is authoritative, do not hand-edit). */
+static const FrameGeom IR3600_FRAMES[6] = {
+    {6538, 10720, 10720, 5336, 670, 11899},   /* frame 1 */
+    {17291, 10704, 10704, 5328, 669, 22636},   /* frame 2 */
+    {28050, 10672, 10672, 5312, 667, 33363},   /* frame 3 */
+    {38828, 10624, 10624, 5288, 664, 44093},   /* frame 4 */
+    {49560, 10624, 10624, 5288, 664, 54825},   /* frame 5 */
+    {60275, 10640, 10640, 5296, 665, 65556},   /* frame 6 */
 };
 
 /* ir3600 / prep: 14 register writes from 58 captured ops (40 reads not reproduced). */
@@ -6666,6 +6686,16 @@ const std::uint8_t SLOPE_DPI600_SCAN[512] = {
     0x1d, 0x09, 0x1d, 0x09, 0x1d, 0x09, 0x1d, 0x09,
 };
 
+/* dpi600: A+C production geometry, frames 1-6 (docs/holder-position-design.md; from of135i/holder.py via gen_sane_tables.frame_geom_entries -- Python is authoritative, do not hand-edit). */
+static const FrameGeom DPI600_FRAMES[6] = {
+    {6519, 1862, 1862, 927, 19, 12351},   /* frame 1 */
+    {17272, 1862, 1862, 927, 19, 23104},   /* frame 2 */
+    {28031, 1862, 1862, 927, 19, 33863},   /* frame 3 */
+    {38809, 1862, 1862, 927, 19, 44641},   /* frame 4 */
+    {49541, 1862, 1862, 927, 19, 55373},   /* frame 5 */
+    {60256, 1862, 1862, 927, 19, 66088},   /* frame 6 */
+};
+
 /* dpi600 / prep: 14 register writes from 57 captured ops (39 reads not reproduced). */
 static const RegPair DPI600_PREP_REGS[14] = {
     {0x32, 0x95}, {0x36, 0xfc}, {0x3a, 0x00}, {0x36, 0xfc},
@@ -9040,6 +9070,16 @@ const std::uint8_t SLOPE_DPI1200_SCAN[512] = {
     0x3a, 0x12, 0x3a, 0x12, 0x3a, 0x12, 0x3a, 0x12, 0x3a, 0x12, 0x3a, 0x12,
     0x3a, 0x12, 0x3a, 0x12, 0x3a, 0x12, 0x3a, 0x12, 0x3a, 0x12, 0x3a, 0x12,
     0x3a, 0x12, 0x3a, 0x12, 0x3a, 0x12, 0x3a, 0x12,
+};
+
+/* dpi1200: A+C production geometry, frames 1-6 (docs/holder-position-design.md; from of135i/holder.py via gen_sane_tables.frame_geom_entries -- Python is authoritative, do not hand-edit). */
+static const FrameGeom DPI1200_FRAMES[6] = {
+    {6555, 3600, 3600, 1792, 75, 11979},   /* frame 1 */
+    {17308, 3600, 3600, 1792, 75, 22732},   /* frame 2 */
+    {28067, 3600, 3600, 1792, 75, 33491},   /* frame 3 */
+    {38845, 3552, 3552, 1768, 74, 44125},   /* frame 4 */
+    {49577, 3552, 3552, 1768, 74, 54857},   /* frame 5 */
+    {60292, 3552, 3552, 1768, 74, 65572},   /* frame 6 */
 };
 
 /* dpi1200 / prep: 3 register writes from 17 captured ops (10 reads not reproduced). */
@@ -11930,6 +11970,16 @@ const std::uint8_t SLOPE_DPI2400_SCAN[512] = {
     0x75, 0x24, 0x75, 0x24, 0x75, 0x24, 0x75, 0x24, 0x75, 0x24, 0x75, 0x24,
     0x75, 0x24, 0x75, 0x24, 0x75, 0x24, 0x75, 0x24, 0x75, 0x24, 0x75, 0x24,
     0x75, 0x24, 0x75, 0x24, 0x75, 0x24, 0x75, 0x24,
+};
+
+/* dpi2400: A+C production geometry, frames 1-6 (docs/holder-position-design.md; from of135i/holder.py via gen_sane_tables.frame_geom_entries -- Python is authoritative, do not hand-edit). */
+static const FrameGeom DPI2400_FRAMES[6] = {
+    {6543, 7152, 7152, 3560, 447, 11907},   /* frame 1 */
+    {17296, 7136, 7136, 3552, 446, 22636},   /* frame 2 */
+    {28055, 7120, 7120, 3544, 445, 33371},   /* frame 3 */
+    {38833, 7088, 7088, 3528, 443, 44101},   /* frame 4 */
+    {49565, 7088, 7088, 3528, 443, 54833},   /* frame 5 */
+    {60280, 7104, 7104, 3536, 444, 65572},   /* frame 6 */
 };
 
 /* dpi2400 / prep: 14 register writes from 58 captured ops (40 reads not reproduced). */
@@ -15752,6 +15802,16 @@ const std::uint8_t SLOPE_DPI7200_SCAN[512] = {
     0xc0, 0xda, 0xc0, 0xda, 0xc0, 0xda, 0xc0, 0xda, 0xc0, 0xda, 0xc0, 0xda,
     0xc0, 0xda, 0xc0, 0xda, 0xc0, 0xda, 0xc0, 0xda, 0xc0, 0xda, 0xc0, 0xda,
     0xc0, 0xda, 0xc0, 0xda, 0xc0, 0xda, 0xc0, 0xda,
+};
+
+/* dpi7200: A+C production geometry, frames 1-6 (docs/holder-position-design.md; from of135i/holder.py via gen_sane_tables.frame_geom_entries -- Python is authoritative, do not hand-edit). */
+static const FrameGeom DPI7200_FRAMES[6] = {
+    {6539, 21424, 21424, 10664, 2678, 11891},   /* frame 1 */
+    {17292, 21384, 21384, 10644, 2673, 22624},   /* frame 2 */
+    {28051, 21336, 21336, 10620, 2667, 33359},   /* frame 3 */
+    {38829, 21248, 21248, 10576, 2656, 44093},   /* frame 4 */
+    {49561, 21248, 21248, 10576, 2656, 54825},   /* frame 5 */
+    {60276, 21280, 21280, 10592, 2660, 65556},   /* frame 6 */
 };
 
 /* dpi7200 / prep: 3 register writes from 17 captured ops (10 reads not reproduced). */
@@ -22943,12 +23003,12 @@ const Phase MAGAZINE_PHASES[3] = {
 };
 
 const Profile PROFILES[6] = {
-    {"plain3600", 3600, 3762, 519156, 0, 0, 0, 5137, 223, 6743, 10760, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_PLAIN3600_SCAN, SLOPE_PLAIN3600_SCAN_LEN, PLAIN3600_PHASES, 13, PLAIN3600_PROGRAMS, 14},   /* 3600 dpi, visible only (plain scan) */
-    {"ir3600", 3600, 5184, 497664, 16, 256, 63192, 10622, 659, 6746, 10760, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_IR3600_SCAN, SLOPE_IR3600_SCAN_LEN, IR3600_PHASES, 13, IR3600_PROGRAMS, 14},   /* 3600 dpi, dual-light (IR + visible) */
-    {"dpi600", 600, 876, 515088, 98, 256, 10672, 1764, 18, 6746, 10760, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI600_SCAN, SLOPE_DPI600_SCAN_LEN, DPI600_PHASES, 13, DPI600_PROGRAMS, 14},   /* 600 dpi, dual-light */
-    {"dpi1200", 1200, 1752, 504576, 48, 256, 21352, 3552, 74, 6746, 10760, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI1200_SCAN, SLOPE_DPI1200_SCAN_LEN, DPI1200_PHASES, 13, DPI1200_PROGRAMS, 14},   /* 1200 dpi, dual-light */
-    {"dpi2400", 2400, 5256, 504576, 16, 256, 64072, 7088, 443, 6746, 10760, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI2400_SCAN, SLOPE_DPI2400_SCAN_LEN, DPI2400_PHASES, 13, DPI2400_PROGRAMS, 14},   /* 2400 dpi, dual-light */
-    {"dpi7200", 7200, 10512, 504576, 8, 256, 128144, 21248, 2656, 6746, 10760, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI7200_SCAN, SLOPE_DPI7200_SCAN_LEN, DPI7200_PHASES, 13, DPI7200_PROGRAMS, 14},   /* 7200 dpi, dual-light */
+    {"plain3600", 3600, 3762, 519156, 0, 0, 0, 5137, 223, 6743, 10760, PLAIN3600_FRAMES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_PLAIN3600_SCAN, SLOPE_PLAIN3600_SCAN_LEN, PLAIN3600_PHASES, 13, PLAIN3600_PROGRAMS, 14},   /* 3600 dpi, visible only (plain scan) */
+    {"ir3600", 3600, 5184, 497664, 16, 256, 63192, 10622, 659, 6746, 10760, IR3600_FRAMES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_IR3600_SCAN, SLOPE_IR3600_SCAN_LEN, IR3600_PHASES, 13, IR3600_PROGRAMS, 14},   /* 3600 dpi, dual-light (IR + visible) */
+    {"dpi600", 600, 876, 515088, 98, 256, 10672, 1764, 18, 6746, 10760, DPI600_FRAMES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI600_SCAN, SLOPE_DPI600_SCAN_LEN, DPI600_PHASES, 13, DPI600_PROGRAMS, 14},   /* 600 dpi, dual-light */
+    {"dpi1200", 1200, 1752, 504576, 48, 256, 21352, 3552, 74, 6746, 10760, DPI1200_FRAMES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI1200_SCAN, SLOPE_DPI1200_SCAN_LEN, DPI1200_PHASES, 13, DPI1200_PROGRAMS, 14},   /* 1200 dpi, dual-light */
+    {"dpi2400", 2400, 5256, 504576, 16, 256, 64072, 7088, 443, 6746, 10760, DPI2400_FRAMES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI2400_SCAN, SLOPE_DPI2400_SCAN_LEN, DPI2400_PHASES, 13, DPI2400_PROGRAMS, 14},   /* 2400 dpi, dual-light */
+    {"dpi7200", 7200, 10512, 504576, 8, 256, 128144, 21248, 2656, 6746, 10760, DPI7200_FRAMES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI7200_SCAN, SLOPE_DPI7200_SCAN_LEN, DPI7200_PHASES, 13, DPI7200_PROGRAMS, 14},   /* 7200 dpi, dual-light */
 };
 
 } // namespace gl126

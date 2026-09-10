@@ -966,43 +966,23 @@ std::vector<std::uint8_t> shading_table2_dual(const std::uint8_t* white, std::si
     return pack_shading(f0, gains, width);
 }
 
-FrameGeometry frame_geometry(const Profile& profile)
-{
-    FrameGeometry g;
-    g.dual = profile.lines_per_chunk != 0;   // the plain profile carries no chunk plan
-    g.width = profile.image_width;
-    g.wire_lines = profile.captured_lines;
-    g.chunk_len = profile.chunk_len;
-    if (g.dual) {
-        g.read_lines = profile.chunk_count * profile.lines_per_chunk;
-        g.image_lines = g.read_lines / 2;
-    } else {
-        g.read_lines = profile.captured_lines;
-        g.image_lines = g.read_lines;
-    }
-    g.shift_lines = 24 * profile.dpi / 3600;
-    g.delivered_lines = g.image_lines - g.shift_lines;
-    std::size_t raw = std::size_t(g.read_lines) * g.width * 6;
-    g.chunk_count = static_cast<unsigned>((raw + g.chunk_len - 1) / g.chunk_len);
-    return g;
-}
-
 // ------------------------------------------------- hooks 5-7: the frame
 
 namespace {
 
-// Both feedl_for_frame() overloads share these two checks: the frame
-// must be inside the holder before any FEEDL is computed from it, and
-// the FEEDL that comes out must not exceed the proven travel ceiling,
-// whatever produced it (kFeedlFrameMax / kFeedlCeiling, gl126_ops.h).
-// Neither write happens on the wire until both have passed.
+// Shared by frame_geometry() and both feedl_for_frame() overloads: the
+// frame must be inside the holder before it indexes profile.frames[] or
+// any FEEDL is computed from it, and a FEEDL/end_hwdpi that comes out
+// must not exceed the proven travel ceiling, whatever produced it
+// (kFeedlFrameMax / kFeedlCeiling, gl126_ops.h). Neither write happens
+// on the wire until both have passed.
 void check_frame_in_holder(unsigned frame)
 {
     if (frame < 1 || frame > kFeedlFrameMax) {
         std::ostringstream oss;
-        oss << "gl126_ops::feedl_for_frame: frame " << frame << " is outside 1-"
+        oss << "gl126_ops: frame " << frame << " is outside 1-"
             << kFeedlFrameMax << " (the holder's aperture count, of135i/holder.py); "
-               "no FEEDL was computed";
+               "nothing was computed";
         throw std::invalid_argument(oss.str());
     }
 }
@@ -1020,6 +1000,47 @@ void check_feedl_ceiling(unsigned feedl)
 
 } // namespace
 
+// The A+C production geometry since the Test 58/61 migration: every
+// value is sourced from profile.frames[frame-1] (the frozen ledger
+// gen_sane_tables.frame_geom_entries() emits from of135i/holder.py), NOT
+// from profile.captured_lines/chunk_count -- those legacy fields are
+// capture-evidence only now (docs/holder-position-design.md).
+FrameGeometry frame_geometry(const Profile& profile, unsigned frame)
+{
+    check_frame_in_holder(frame);
+    const FrameGeom& fg = profile.frames[frame - 1];
+
+    FrameGeometry g;
+    g.dual = profile.lines_per_chunk != 0;   // the plain profile carries no chunk plan
+    g.width = profile.image_width;
+    g.wire_lines = fg.line_register;
+    g.read_lines = fg.read_lines;
+    g.image_lines = g.dual ? fg.read_lines / 2 : fg.read_lines;
+    g.chunk_len = profile.chunk_len;
+    g.shift_lines = 24 * profile.dpi / 3600;
+    g.delivered_lines = fg.delivered_lines;   // from the ledger, not image_lines - shift
+    g.chunk_count = fg.chunks;                // from the ledger, not recomputed from bytes
+
+    // Fail-closed consistency assertion (pure computation, before any
+    // use): the proven invariant delivered_lines + shift_lines ==
+    // image_lines must hold, or the ledger/wiring is wrong. Nothing has
+    // been written yet.
+    if (g.delivered_lines + g.shift_lines != g.image_lines) {
+        std::ostringstream oss;
+        oss << "gl126_ops::frame_geometry: profile '" << profile.name << "' frame " << frame
+            << " ledger invariant failed: delivered_lines " << g.delivered_lines
+            << " + shift_lines " << g.shift_lines << " != image_lines " << g.image_lines
+            << " (frames[] wiring or table generation is wrong). Nothing was written.";
+        throw std::invalid_argument(oss.str());
+    }
+    return g;
+}
+
+/* LEGACY: the vendor capture grid (kFeedlFrame1/kFeedlPitch), not the
+   runtime positioning authority since Test 58 -- kept for capture-
+   evidence callers (tests/diag; see gl126_ops.h's own doc comment on
+   kFeedlFrame1/kFeedlPitch). Production code calls the profile overload
+   below, which reads profile.frames[]. */
 unsigned feedl_for_frame(unsigned frame)
 {
     check_frame_in_holder(frame);
@@ -1028,12 +1049,24 @@ unsigned feedl_for_frame(unsigned frame)
     return feedl;
 }
 
+// The A+C production authority: profile.frames[frame-1].feedl (the
+// commanded POSITION target the ledger computed), re-checking both the
+// FEEDL itself and the pass's furthest reach (end_hwdpi) against the
+// same travel ceiling overscan_geometry() already checked in Python --
+// inherited verbatim, not re-derived (Astra's requirement).
 unsigned feedl_for_frame(unsigned frame, const Profile& profile)
 {
     check_frame_in_holder(frame);
-    unsigned feedl = profile.feedl_frame1 + (frame - 1) * profile.feedl_pitch;
-    check_feedl_ceiling(feedl);
-    return feedl;
+    const FrameGeom& fg = profile.frames[frame - 1];
+    if (fg.end_hwdpi > kFeedlCeiling) {
+        std::ostringstream oss;
+        oss << "gl126_ops::feedl_for_frame: profile '" << profile.name << "' frame " << frame
+            << " end_hwdpi " << fg.end_hwdpi << " exceeds the proven travel ceiling "
+            << kFeedlCeiling << " (of135i/holder.py::FEEDL_CEILING); nothing was written";
+        throw std::invalid_argument(oss.str());
+    }
+    check_feedl_ceiling(fg.feedl);   // defensive; feedl <= end_hwdpi so this is subsumed
+    return fg.feedl;
 }
 
 FeedlBytes feedl_bytes(unsigned feedl)

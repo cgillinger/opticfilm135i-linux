@@ -203,8 +203,17 @@ frozen. C extends the holder support without reopening it.
    plain 3600 dpi profile (Test 57) and production-accepted on a real
    six-frame colour negative (Test 58/N3). The corrected model is now
    the plain-3600 **production default** — the single runtime
-   geometry; the vendor grid remains as capture evidence and as the
-   SANE tables' interim source. The default flip reopened frames 1–6
+   geometry; the vendor grid remains as capture evidence only. The
+   SANE backend's C++ (`sane/gl126_ops.cpp`'s `feedl_for_frame()` /
+   `frame_geometry()`) was wired to the SAME frozen A+C ledger
+   (`Profile::frames[]`, `sane/gl126_tables.h`) 2026-09-10 ("Lager 1")
+   — offline-verified (235 tests green, generator `--check` clean, 0
+   build warnings); **hardware-verification of the SANE backend on
+   this geometry is PENDING** (the CLI driver's own hardware
+   verification above does not transfer to this separate
+   implementation). The overscan window is still delivered whole to
+   the SANE frontend (Lager 2's aperture-registered crop + coverage
+   check is not ported). The default flip reopened frames 1–6
    for the positioning requirement; the one empty-holder regression
    load re-verified them (Test 59, coverage 6/6).
 3. Each of the six scan windows contains its whole aperture with positive
