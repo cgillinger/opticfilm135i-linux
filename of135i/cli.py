@@ -70,6 +70,7 @@ def _validate_overscan(overscan: float, frames, dpi: int = 3600,
                     dpi=dpi,
                     lines_per_chunk=t.LINES_PER_CHUNK,
                     colour_crop_lines=image.align_shift(dpi),
+                    default_wire_lines=t.DEFAULT_LINES,
                     overscan_mm=overscan,
                 )
             else:

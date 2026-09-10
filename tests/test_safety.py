@@ -1477,7 +1477,8 @@ def test_position_wait_is_strict_for_every_dpi_profile():
         if ir:
             f4 = _holder.dual_overscan_geometry(
                 4, dpi=int(name), lines_per_chunk=t.LINES_PER_CHUNK,
-                colour_crop_lines=_image.align_shift(int(name)))[0].feedl
+                colour_crop_lines=_image.align_shift(int(name)),
+                default_wire_lines=t.DEFAULT_LINES)[0].feedl
         else:
             f4 = _holder.overscan_geometry(
                 4, res_units_per_line=7200 // 3600,

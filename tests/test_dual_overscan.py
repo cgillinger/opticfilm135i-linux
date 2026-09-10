@@ -40,7 +40,8 @@ def _geom(frame, dpi, overscan=holder.OVERSCAN_MM):
     t = dual_tables(dpi)
     return holder.dual_overscan_geometry(
         frame, dpi=dpi, lines_per_chunk=t.LINES_PER_CHUNK,
-        colour_crop_lines=image.align_shift(dpi), overscan_mm=overscan)
+        colour_crop_lines=image.align_shift(dpi),
+        default_wire_lines=t.DEFAULT_LINES, overscan_mm=overscan)
 
 
 # ------------------------------------------------------------------ ledger
@@ -68,14 +69,16 @@ def test_dual_ledger_every_profile_and_frame():
 def test_dual_geometry_refuses_bad_input():
     try:
         holder.dual_overscan_geometry(
-            1, dpi=600, lines_per_chunk=97, colour_crop_lines=2)
+            1, dpi=600, lines_per_chunk=97, colour_crop_lines=2,
+            default_wire_lines=1764)
     except ValueError:
         pass
     else:
         raise AssertionError("odd lines_per_chunk must be refused")
     try:
         holder.dual_overscan_geometry(
-            1, dpi=1000, lines_per_chunk=98, colour_crop_lines=2)
+            1, dpi=1000, lines_per_chunk=98, colour_crop_lines=2,
+            default_wire_lines=1764)
     except ValueError:
         pass
     else:

@@ -354,6 +354,7 @@ def dual_overscan_geometry(
     dpi: int,
     lines_per_chunk: int,
     colour_crop_lines: int,
+    default_wire_lines: int,
     fiducial: FiducialModel | None = None,
     overscan_mm: float = OVERSCAN_MM,
     holder: Holder = DEFAULT,
@@ -380,6 +381,20 @@ def dual_overscan_geometry(
     The same STRIP_FIDUCIAL maps every profile: it was measured on the
     600 dpi dual profile (Test 56) and cross-validated on plain 3600
     (Tests 57-59); positions are motor units, profile-independent.
+
+    FEEDL ANCHORING (empirical, dual passes 1-2 of 2026-09-10): the
+    dual engine anchors the acquisition START at FEEDL minus a FIXED
+    per-profile constant K equal to the captured default window's
+    half-length -- it does NOT centre the commanded window the way the
+    plain 3600 pass verifiably does (plain: the FEEDL-to-start offset
+    grew with half the window growth across Tests 57-60; dual 600: it
+    stayed at the default half, 5287 measured vs 5292 predicted, while
+    the window grew 270 units, and dual 2400's measured 5322 also sits
+    on its default half 5316). So the dual FEEDL here is
+    want_start + K, K = default_wire_lines x units_per_wire_line / 2,
+    with `default_wire_lines` the module's captured DEFAULT_LINES. The
+    OverscanGeometry.feedl field is overridden accordingly; margins
+    and the end position are starts/lengths and are unaffected.
     """
     if lines_per_chunk % 2:
         raise ValueError(
@@ -395,5 +410,22 @@ def dual_overscan_geometry(
         fiducial=fiducial,
         overscan_mm=overscan_mm,
         holder=holder,
+    )
+    # Re-anchor FEEDL: want_start is what overscan_geometry placed the
+    # window start at (centre convention); recover it and add K.
+    units_per_vis = 7200 // dpi
+    want_start = geom.feedl - geom.delivered_lines / 2 * units_per_vis
+    k_units = default_wire_lines * (units_per_vis / 2) / 2
+    feedl = round(want_start + k_units)
+    check_feedl(feedl, holder)
+    geom = OverscanGeometry(
+        frame=geom.frame,
+        feedl=feedl,
+        wire_lines=geom.wire_lines,
+        chunks=geom.chunks,
+        delivered_lines=geom.delivered_lines,
+        leading_margin_mm=geom.leading_margin_mm,
+        trailing_margin_mm=geom.trailing_margin_mm,
+        end_hwdpi=geom.end_hwdpi,
     )
     return geom, geom.chunks * lines_per_chunk

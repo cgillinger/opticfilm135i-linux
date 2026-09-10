@@ -50,7 +50,8 @@ from of135i.device import Scanner
 # to and how many chunks it reads.
 GEOM_IR_F1, WIRE_IR_F1 = holder.dual_overscan_geometry(
     1, dpi=3600, lines_per_chunk=tables_ir.LINES_PER_CHUNK,
-    colour_crop_lines=image.align_shift(3600))
+    colour_crop_lines=image.align_shift(3600),
+    default_wire_lines=tables_ir.DEFAULT_LINES)
 
 REPO = Path(__file__).resolve().parents[1]
 IR_DIR = REPO / "cal-data" / "ir"

@@ -2041,6 +2041,7 @@ class Scanner:
                 dpi=dpi,
                 lines_per_chunk=t.LINES_PER_CHUNK,
                 colour_crop_lines=image_mod.align_shift(dpi),
+                default_wire_lines=t.DEFAULT_LINES,
                 overscan_mm=overscan_mm if overscan_mm is not None else holder.OVERSCAN_MM,
             )
             feedl = holder.check_feedl(geom.feedl)
