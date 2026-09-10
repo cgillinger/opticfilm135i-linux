@@ -15,12 +15,21 @@ the matrices below has one status. A milestone is delivered when its
 mandatory criteria are met — the next action is then the *delivery*, not
 more general testing.
 
-**Images are accepted by human eyes.** Any criterion whose evidence is a
-scanned image is met only when the image itself has been looked at and
-approved by the project's owner — statistics, dimensions and byte counts
-support the judgement, they never replace it (a pass that delivers the
-right number of bytes of the wrong picture has happened; see the test
-log on the shading-table swap).
+**Images are accepted by human eyes — at milestones, on production
+images.** Working images (geometry runs, calibration diagnostics,
+anything whose answer is a measurement) are inspected by whoever runs
+the analysis and are not separately approved. At every milestone, and
+after any change that touches the image path (geometry, calibration,
+colour pipeline, a new resolution profile, infrared), a
+**production-ready image** is scanned and approved by the project's
+owner against a fixed checklist: the colour planes align (no stagger
+fringes), the whole frame is present including both ends of the window
+(no skew, no clipped edge), no banding or stripes, and the whole
+compares to a vendor scan of the same strip. Statistics, dimensions and
+byte counts support the judgement, they never replace it (a pass that
+delivers the right number of bytes of the wrong picture has happened;
+see the test log on the shading-table swap). Each approved image is
+archived as the reference the next working images are compared against.
 
 **Stop / reopen rules.**
 - A finished item reopens **only** on a concrete regression, new relevant
