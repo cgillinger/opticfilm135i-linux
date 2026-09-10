@@ -4032,3 +4032,105 @@ margin. Still not adopted as the default (that reopens frames 2-4). Next
 is the owner's call to adopt the corrected constants and run N3 (the
 six-frame colour negative) with overscan + crop, judged by eye as a
 production image. FEEDL_PITCH stays 10760 until then.
+
+## 2026-09-10 — Test 58 (N3): the six-frame colour negative with overscan + crop — all six delivered and coverage-verified; eye verdict pending
+
+**Setup.** Real six-frame colour negative in the strip holder. Power
+cycle, `load` in a real terminal, then one batch:
+`scan --frames 1-6 --dpi 3600 --overscan 0.75 --eject`. This is the
+first production run of the A+C path (aperture-registered crop on the
+overscan window; FEEDL_PITCH still 10760, corrected constants not yet
+the default).
+
+**Result.** All six frames delivered: product TIFF + overscan TIFF +
+diag sidecar per frame (`f-f1..6` in the private analysis area,
+`n3-20260910/`). Coverage `verified: true` on 6/6, margins 0.60–0.98 mm
+per side — both aperture edges inside every delivered window, at frame
+6's full travel included. Full transfer on every frame (raw bytes match
+the chunk count exactly). Eject normal, owner confirmed. Products are
+~5078–5118 lines × 3762 px after crop.
+
+**Session note.** The driving session was killed by the OS about ten
+minutes after the scan finished — out of memory during the *analysis*
+(full-frame float64 positives while a VM held several GB), not during
+scanner traffic. The hardware run itself was complete and the scanner
+safely ejected before the crash. Rendering was redone one frame per
+memory-capped process.
+
+**Work-image inspection (analyst).** All six frames: real scenes, full
+frame with both edges, no skew, no banding, colour planes aligned.
+Frame 6 carries a ~0.5 mm dark sliver of rebate/plastic transition at
+one edge — inside the crop by design (the margins are the point of C).
+
+**Colour finding (preview only, raw data healthy).** `to_positive`
+renders all six frames with a systematic green-yellow cast on this
+film. Cause: its per-channel *linear* density stretch — this negative's
+red channel spans ~1.8 density units against ~1.3 for green/blue, so
+the wider red range is compressed hardest. Excluding the rebate margins
+from the percentiles does not remove the cast. A diagnostic rendering
+with per-channel gamma anchored at the median density (each channel's
+median mapped to the same mid-tone) is neutral — correct skin tones,
+blues, wood — which confirms the raw negative is fine and the cast
+lives entirely in the preview's tone mapping. Consistent with the
+driver principle (raw is the product, inversion is the application's
+job): `to_positive` unchanged; both renderings placed in the owner's
+review folder (`n3-20260910/`, standard and `-v2` median-anchored).
+
+**Status.** Hardware and geometry side of N3 complete. Open: the
+owner's eye verdict on the production images (the acceptance step),
+then the decision to adopt the corrected constants (base ~0.57 mm
+earlier, pitch ~10733) as the plain-3600 default, which reopens frames
+2–4 for one re-verification load.
+
+**Owner's eye check (2026-09-10, production images, rotated upright).**
+Findings, with the analyst's identification of each:
+
+- *Full frame present on all six* — the N3 core criterion holds.
+- *A fairly large white area on one short side of every frame* — the
+  aperture-edge transition at the trailing side of the crop window
+  (opaque plastic renders dense, i.e. white, in the positive). This is
+  design C's margin made visible: both aperture edges are inside the
+  delivered window, and too much beats too little.
+- *A black outer zone along the other short side, widest at the top
+  corner, narrowing toward the bottom — on essentially all frames* —
+  film rebate (clear base) visible inside the aperture, wedge-shaped
+  because the photographed frame sits slightly rotated (yaw) relative
+  to the holder aperture. Same direction and similar size on all six
+  frames, so it is the film's seating in the holder (or the camera's
+  frame placement), not a transport artefact. No picture content is
+  lost; the wedge lives in the rebate.
+- *No red/cyan shadows along edges* — colour-plane alignment passes.
+- *Possible colour mismatch on frames 4 and 6, possibly just a blurry
+  original (frame 4 is a soft close-up)* — undecidable without a
+  vendor scan of the same strip; deferred to the comparison pass.
+
+A second opinion on the same images was also requested from another
+AI assistant by the owner. Verdict so far: geometry criteria pass;
+the colour judgement is parked on the vendor comparison.
+
+**Acceptance verdict (2026-09-10, owner + second opinion).** The owner's
+own findings above, together with an independent second-opinion review
+of the same six images (another AI assistant, working from the lossless
+PNGs), close the acceptance step. The second reviewer's formulation,
+adopted as the verdict:
+
+> N3 human-eye acceptance: PASS. All six colour-negative frames are
+> visually complete with no apparent image-area clipping. No RGB
+> stagger/fringing is visible on high-contrast edges, no scan banding
+> or density discontinuities are visible, and frame 6 is correctly
+> positioned at the furthest transport position. The small edge
+> rebate/plastic strip is outside the image area and is consistent
+> with the intentional overscan margin. Preview colour is not treated
+> as final colour rendering, but channel/hue relationships appear sane.
+
+The second reviewer additionally checked channel edge positions
+(sub-pixel R/G/B agreement) and sky row-means (smooth, no steps), and
+independently attributed frame 4's softness to the original photo, not
+the scanner. Final colour judgement remains parked on the vendor
+comparison pass (no vendor scan of this strip exists yet).
+
+Per the acceptance rule, the accepted production images become the
+reference: `n3-20260910/f-f1..6` (raw products + overscan + diag) and
+the rendered review set are archived as the A+C path's reference run
+(ACCEPTED.md marker in the analysis directory). This is the first
+production-accepted image set delivered by the overscan + crop path.
