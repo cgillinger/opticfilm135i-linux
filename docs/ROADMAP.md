@@ -223,9 +223,9 @@ frozen. C extends the holder support without reopening it.
    opaque to infrared and is not an infrared or dust-removal reference.)
 8. The CLI and the SANE backend both accept 1–6 and both refuse frame 0
    and frame 7+ before any write. ✅ done offline.
-9. Frames 1–4 show no regression. (Reopened for the positioning
-   requirement only by the A+C default flip; covered by the one-load
-   1–6 empty-holder regression, pending hardware.)
+9. Frames 1–4 show no regression. ✅ done (Test 59: the one-load 1–6
+   empty-holder regression under the A+C default — coverage 6/6,
+   calibration and timing identical to N3's band).
 10. README, this roadmap and the test log describe what was actually
     verified, separately from what was measured offline.
 
@@ -288,7 +288,7 @@ is documented as separately unverified, pending a physical slide.
   - Plain 3600 corrected positioning + overscan: HARDWARE VERIFIED (Tests 57–58)
   - Plain 3600 aperture coverage: HARDWARE VERIFIED (Test 58: 6/6 on real film)
   - Full 1–6 production-image workflow with real full-length film: ACCEPTED (Test 58/N3)
-  - A+C as the plain-3600 default: ADOPTED (offline, 224 tests) — 1–6 regression load PENDING HARDWARE
+  - A+C as the plain-3600 default: HARDWARE VERIFIED (Test 59: the 1–6 empty-holder regression load, coverage 6/6, no regression)
   - Dual robust A+C: NOT YET COMPLETE
   - Slide holder: PENDING
 - **A6 note** (Test 44/46): the driver's eject stalled from a state only

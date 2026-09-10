@@ -118,10 +118,11 @@ rough edges you should know about:
   aperture edges in every scan, and crops the product to them** —
   refusing to write a finished-looking image when coverage cannot be
   verified. A real six-frame colour negative ran the whole path with
-  coverage verified 6/6 and passed the human-eye acceptance (Test 58).
-  The default-flip's own regression — one empty-holder load across
-  frames 1–6 — is the remaining hardware check, and the dual-light
-  profiles keep their captured windows until their own overscan step
+  coverage verified 6/6 and passed the human-eye acceptance (Test 58),
+  and the default's own regression — one empty-holder load across
+  frames 1–6 — passed with coverage 6/6 and no change in calibration
+  or timing (Test 59). The dual-light profiles keep their captured
+  windows until their own overscan step
   (see [`docs/ROADMAP.md`](docs/ROADMAP.md) milestone C). **Mounted slides:** the scanner
   ships with a four-slide holder; the driver and the backend have not
   been tested with it (its frame pitch and load flow are uncaptured) — planned.

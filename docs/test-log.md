@@ -4184,3 +4184,39 @@ under the new default — one empty-holder regression load re-verifies
 them (the same criteria as Test 56 plus per-frame coverage verdicts).
 Calibration, dark_b, LOAD, PARK, USB safety, IR and the colour path are
 NOT reopened; the geometry change does not touch them.
+
+## 2026-09-10 — Test 59: the empty-holder 1–6 regression under the A+C default — PASS, the migration's hardware requirement is closed
+
+**Setup.** The regression load required by the default flip (the
+migration entry above; design doc section 9 step 3). Empty strip
+holder (confirmed), power cycle, `load`, then one batch with default
+flags — the first hardware run where the production default IS the
+A+C contract: `scan --frames 1-6 --dpi 3600 --eject`.
+
+**Result — all criteria met, 6/6:**
+
+- **Coverage verified 6/6** with both margins positive on every frame:
+  lead 0.73–0.91 mm, trail 0.59–0.94 mm — within the characterised
+  load-to-load band around the 0.75 mm design margin.
+- **Commanded FEEDL exactly the predicted grid** (6562 / 17315 /
+  28051 / 38806 / 49538 / 60276) with chunk counts 233/233/232/231/
+  231/232 — the geometry table published in the migration entry,
+  byte-for-byte.
+- **Full transfer on every frame**: raw_bytes = chunks × 519156
+  exactly, 6/6.
+- **POSITION** completed on class F inside the FEEDL-scaled budget on
+  every frame: 1.8 → 12.4 s monotone with travel (frame 6: 12.4 s
+  against a ~43 s budget) — identical to N3's times to within 0.01 s.
+- **PARK** completed per frame (13.9–16.9 s, verbatim), eject normal,
+  sound normal (owner).
+- **No regression in frames 1–4, frames 5–6 normal**: calibration
+  stable across the holder (gain 46/32/39 on all six, offsets in the
+  known ±1 band, no dark_b substitution); poll timeouts (0–5) and
+  benign CR mismatches (12–36) in the same band as N3.
+
+**Status.** The one requirement the default flip reopened — frames 1–6
+positioning under the new geometry — is re-verified on hardware. The
+A+C production default is now hardware-verified end to end on its own
+code path. Files in the private analysis area (`regr-20260910/`).
+Next per the migration order: the black-and-white six-frame control
+strip (its test plan precedes the run), then dual A+C.

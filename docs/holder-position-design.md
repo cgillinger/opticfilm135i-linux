@@ -618,13 +618,13 @@ land" is a maintenance trap. The migration to a single authority:
    image area. It does **not** reopen calibration, USB, safety or image
    processing, which the geometry change does not touch. One empty-
    holder load re-verifies all six (the variation is characterised).
-   **Pending hardware** (the only open item of this migration): power
-   cycle → `load` → `scan --frames 1-6 --eject` on the EMPTY holder,
-   default flags — the default now runs the full contract, so the
-   per-frame `.diag.json` coverage verdicts are the acceptance record.
-   Expect verified 6/6 with both margins positive, POSITION within its
-   FEEDL-scaled budget, full transfer per frame, PARK and eject normal.
-   Stop conditions as N2's.
+   **✅ Done on hardware 2026-09-10 (Test 59):** power cycle → `load` →
+   `scan --frames 1-6 --eject` on the empty holder, default flags.
+   Coverage verified 6/6 (lead 0.73–0.91 mm, trail 0.59–0.94 mm),
+   commanded FEEDL exactly the geometry grid, full transfer 6/6,
+   POSITION inside budget on every frame, PARK and eject normal,
+   calibration and timing identical to N3's band. The migration has no
+   open hardware requirement left.
 4. **Single authority:** once adopted, runtime derives every plain FEEDL
    from `STRIP_FIDUCIAL` + overscan geometry; `FEEDL_FRAME1`/`FEEDL_PITCH`
    remain in the docs as history, not as a second runtime source.
