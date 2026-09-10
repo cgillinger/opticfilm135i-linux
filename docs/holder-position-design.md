@@ -764,3 +764,13 @@ the registered IR product aligned with the visible one (work-image
 inspection). The colour path and the eye-acceptance rule are not
 reopened — these are geometry runs; a production-image milestone comes
 with the first real dual production scan.
+
+**Section 11 hardware result (2026-09-10, Test 61):** all five profiles
+verified, one frame-1 run each, with two corrections found and fixed on
+the way — the dual engine START-anchors FEEDL at the captured default
+half-window (K; the geometry now commands want_start + K, see
+holder.dual_overscan_geometry's doc), and the edge detector's contrast
+scale next to a narrow rebate strip (of135i/aperture.py, validated
+against all 21 archived verified frames). IR-to-visible registration
+measured at 0.4 / 0.06 lines through the same-index crop. Test 61 in
+the test log has the full table.

@@ -123,8 +123,8 @@ rough edges you should know about:
   frames 1–6 — passed with coverage 6/6 and no change in calibration
   or timing (Test 59). A six-frame black-and-white strip confirmed the
   path on a second film stock (Test 60). The dual-light profiles carry
-  the same contract in visible-line units (implemented offline, one
-  hardware run per profile pending; see
+  the same contract in visible-line units, hardware-verified one run
+  per profile (Test 61; see
   [`docs/ROADMAP.md`](docs/ROADMAP.md) milestone C). **Mounted slides:** the scanner
   ships with a four-slide holder; the driver and the backend have not
   been tested with it (its frame pitch and load flow are uncaptured) — planned.
@@ -269,9 +269,9 @@ sidecar — and the command exits non-zero. On dual-light scans (`--ir`,
 other resolutions) coverage is measured on the visible frame and the
 IR channel is cropped to the same lines, so the two stay exactly
 registered; `<stem>-ir.overscan.tiff` preserves the full IR frame.
-(The dual geometry is implemented and tested offline; its per-profile
-hardware verification is pending — plain 3600 is hardware-verified,
-Tests 57–60.)
+(Hardware-verified on every profile: plain 3600 in Tests 57–60, the
+five dual profiles in Test 61, including measured sub-line IR-to-
+visible registration.)
 
 `--park semantic` on `scan` selects an experimental park phase (see
 docs/replay-analysis.md); it is off by default and not hardware-verified.

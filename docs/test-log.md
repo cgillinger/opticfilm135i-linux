@@ -4337,3 +4337,79 @@ Hardware verification pending the owner's go: one run per profile,
 order 2400 → 600 → 1200 → IR 3600 → 7200, frame 1, each from its own
 power-cycle + load (the DPI→DPI PARK shift), pass criteria in section
 11. Geometry runs, not production-image milestones.
+
+## 2026-09-10 — Test 61: dual A+C on hardware, one run per profile — all five verified, and two real findings on the way
+
+**Plan.** One frame-1 run per dual profile on the Kodak Ultramax 400
+strip, order 2400 → 600 → 1200 → IR 3600 → 7200, each from its own
+power cycle + load (the DPI→DPI PARK shift). Section 11 criteria.
+
+**Findings on the way (both fixed, offline, same day):**
+
+1. **A completed pass was lost host-side** when an empty shell
+   variable made the output path `/f2400.tiff` — the scan and PARK ran
+   to completion and the write failed. The scan CLI now validates the
+   output directory before any hardware write (like every other
+   pre-hardware check). The scanner needed nothing: status 0x22,
+   driver eject from post-PARK, rerun.
+2. **The dual engine start-anchors FEEDL.** The first 600 run placed
+   the window ~0.97 mm late — trailing edge, crossbar (1.86 mm, the
+   sweep's figure) and the NEXT aperture in frame, leading edge just
+   outside; the coverage gate correctly refused the product. The
+   measured FEEDL-to-start constant was 5287 units = the captured
+   default window's half-length (5292) to five units, NOT the
+   commanded window's half (5562). Plain 3600 verifiably centres
+   (Tests 57–60: its offset grew with half the window growth), so the
+   anchoring is profile-class-specific. `dual_overscan_geometry` now
+   commands `want_start + K`, K = DEFAULT_LINES × units-per-wire-line
+   / 2. The 600 rerun verified immediately.
+3. **The edge detector's contrast scale was wrong next to a narrow
+   rebate.** The IR 3600 run positioned correctly (both edges in the
+   window) but coverage failed: the contrast requirement was scaled on
+   the local maximum — the rebate peak — while the actual step is
+   image-to-plastic, and the 5184 px dual window's ~30 % lateral
+   plastic dilutes the row means below half the rebate peak. The
+   tests now scale on the transition's own plateaus with an absolute
+   minimum step. Validated against every archived run: all 21
+   previously verified frames keep their margins to the third
+   decimal; the IR frame verifies (lead 0.92 / trail 0.64 mm). Its
+   registered products were completed offline from the preserved
+   overscan frames (the hardware part of the pass was complete).
+
+**Result — all five profiles verified on hardware:**
+
+| profile | FEEDL | chunks | coverage lead/trail (mm) | scan | park |
+|---|---|---|---|---|---|
+| 2400 | 6567* | 447 | 0.77 / 0.86 | 28 s | 65 s |
+| 600 | 6519 | 19 | 0.47 / 2.57 | 8 s | 67 s |
+| 1200 | 6555 | 75 | 0.58 / 1.20 | 15 s | 65 s |
+| IR 3600 | 6538 | 670 | 0.92 / 0.64 | 41 s | 14 s |
+| 7200 | 6539 | 2678 | 0.65 / 0.86 | 161 s | 65 s |
+
+*The 2400 run predates the re-anchoring; at that profile the two
+anchorings differ by 0.2 mm (its chunk quantum is small) and its
+margins sit in band under both, so it stands.
+
+Full transfer on every pass (raw = chunks × chunk length exactly);
+POSITION 1.8 s on class F every time; PARK and eject normal; gains
+44/33/39 across all five (7200: B 38, the ±1 band) — the dual lamp
+profile's own stable values. **IR-to-visible registration measured at
+0.4 lines (leading) / 0.06 lines (trailing)** on the same-index crop —
+the channels are exactly registered through the crop, as designed.
+All five products show the same physical frame 1, whole, between
+detected edges (work-image inspection, analyst).
+
+**Consistent observations, not faults:** the dual PARK phases run
+~65 s (IR 3600: 14 s) with ~50 benign poll timeouts and ~120–135 CR
+mismatches per pass — the captured dual programs' own pacing and
+status families (the known 9c/ad, 8d/81, 95/81, 15/01 pairs),
+identical across passes. Lead margins ran 0.47–0.92 around the
+0.75 design — the familiar per-load band.
+
+**Status.** Dual A+C is hardware-verified on all five profiles at
+frame 1 under the corrected anchoring. The geometry chain — corrected
+mapping, per-profile anchoring, overscan, coverage, registered crop,
+fail-closed — is now the same verified contract on every profile the
+scanner has. A production-image milestone (the eye rule) comes with
+the first real dual production scan; not reopened here. Files in the
+private analysis area (`dual-20260910/`).
