@@ -1920,19 +1920,56 @@ _scan_tail: list[Op] = [
     Op('bi', 0.0024, length=352),
 ]
 
-_scan_images: list[Op] = []
-for _i in range(IMAGE_CHUNK_COUNT):
-    _wi = 0x0008 if _i == 0 else 0
-    _scan_images.append(Op("cw", 0.004, bm=0x40, br=0x04, wv=0x0082, wi=_wi, data=IMAGE_DESC_DATA))
-    _scan_images.extend(IMAGE_BLOCK_OPS)
-del _i, _wi
+#: Image lines per read chunk: 519156 B / (3762 px x 3 ch x 2 B) = 23.
+#: Deliberately NOT named LINES_PER_CHUNK: the SANE generator
+#: (tools/gen_sane_tables.py) reads a module's ``LINES_PER_CHUNK`` into
+#: the Profile's ``lines_per_chunk`` field, which the backend overloads
+#: as its plain-vs-dual flag (``lines_per_chunk != 0`` means dual, see
+#: sane/gl126_ops.cpp). The plain profile must emit 0 there, so this
+#: constant carries a different name and the plain profile stays plain.
+IMAGE_CHUNK_LINES = IMAGE_CHUNK_LEN // (IMAGE_WIDTH * 3 * 2)
+#: Lines the trailing drain accounts for (180576 B / line). The captured
+#: single frame programs 5137 lines = 223 x 23 + 8: 223 chunks of image
+#: plus this 8-line remainder, read by _scan_tail and discarded. Held
+#: constant when the chunk count changes, so scan_phase(223) reproduces
+#: the captured wire exactly.
+DRAIN_LINES = IMAGE_TRAILING_DRAIN_LEN // (IMAGE_WIDTH * 3 * 2)
 
-SCAN = Phase(
-    name="scan",
-    op_range=(1265, 9404),
-    ops=_scan_head + _scan_images + _scan_tail,
-    injections=_SCAN_INJECTIONS,
-)
+
+def scan_lines_for_chunks(n_chunks: int) -> int:
+    """The line count (reg 0x25:0x26:0x27) to program for n_chunks image
+    reads: the chunks' own lines plus the fixed trailing-drain remainder.
+    scan_lines_for_chunks(IMAGE_CHUNK_COUNT) == DEFAULT_LINES (5137)."""
+    return n_chunks * IMAGE_CHUNK_LINES + DRAIN_LINES
+
+
+def scan_phase(n_chunks: int = IMAGE_CHUNK_COUNT) -> "Phase":
+    """The plain-3600 scan phase for n_chunks image-data reads.
+
+    Captured head (slope tables, scan register batch carrying the
+    line-count injection, execute), then n_chunks x (descriptor +
+    IMAGE_BLOCK_OPS), then the fixed trailing-drain tail. The descriptor
+    of the first image read carries wIndex 8, the rest wIndex 0, exactly
+    as captured. At the default n_chunks this is byte-identical to the
+    original SCAN. Overscan (docs/holder-position-design.md section 4)
+    reads more chunks -- a longer window with the same drain tail; the
+    longer plain-3600 wire is what that section's hardware A/B confirms
+    before it is relied on.
+    """
+    images: list[Op] = []
+    for i in range(n_chunks):
+        wi = 0x0008 if i == 0 else 0
+        images.append(Op("cw", 0.004, bm=0x40, br=0x04, wv=0x0082, wi=wi, data=IMAGE_DESC_DATA))
+        images.extend(IMAGE_BLOCK_OPS)
+    return Phase(
+        name="scan",
+        op_range=(1265, 9404),
+        ops=_scan_head + images + _scan_tail,
+        injections=_SCAN_INJECTIONS,
+    )
+
+
+SCAN = scan_phase()
 PHASES.append(SCAN)
 
 PARK = Phase(

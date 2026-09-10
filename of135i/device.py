@@ -44,7 +44,7 @@ from datetime import datetime, timezone
 
 import numpy as np
 
-from . import calibrate, diag, holder, safety, tables, tables_base, tables_ir
+from . import calibrate, diag, holder, image as image_mod, safety, tables, tables_base, tables_ir
 from .safety import (
     OperationNotAllowedError, UnejectableStateError, SessionState, StartState, UnsafeStartStateError,
 )
@@ -1593,7 +1593,7 @@ class Scanner:
 
     def scan(
         self, frame: int = 1, lines: int | None = None, ir: bool = False,
-        dpi: int = 3600,
+        dpi: int = 3600, overscan_mm: float | None = None,
     ) -> tuple[bytes, int] | tuple[bytes, int, dict]:
         """Run the full calibration + scan sequence for one frame.
 
@@ -1647,13 +1647,24 @@ class Scanner:
             n_lines_check = lines if lines is not None else t.DEFAULT_LINES
             if n_lines_check > 0xFFFFFF:
                 raise Of135iError(f"line count {n_lines_check} does not fit the 24-bit register")
+        if overscan_mm is not None:
+            if t is not None:
+                raise NotImplementedError(
+                    "overscan is implemented for the plain 3600 dpi path only "
+                    "(the profile whose window is otherwise shorter than the "
+                    "aperture). The dual profiles already carry 0.5-0.75 mm of "
+                    "margin per side; their overscan needs the alternating-line "
+                    "delivered-count accounting and is a separate step. "
+                    f"{safety.NO_COMMANDS_SENT}")
+            if lines is not None:
+                raise ValueError("pass either lines= or overscan_mm=, not both")
         with self._operation("scan"):
             self._prepared_for_scan = False
             if self._cal_capture is not None:
                 self._cal_capture.set_frame(frame)
             if t is not None:
                 return self._scan_dual(t, frame=frame, lines=lines)
-            return self._scan_plain(frame=frame, lines=lines)
+            return self._scan_plain(frame=frame, lines=lines, overscan_mm=overscan_mm)
 
     def _healthy_dark_b(self, dark_b):
         """Return a trustworthy dark_b and whether it was substituted.
@@ -1680,7 +1691,8 @@ class Scanner:
                 session=self.session.snapshot())
         return self._last_good_dark_b, True
 
-    def _scan_plain(self, frame: int, lines: int | None) -> tuple[bytes, int]:
+    def _scan_plain(self, frame: int, lines: int | None,
+                    overscan_mm: float | None = None) -> tuple[bytes, int]:
         # No homing move here. The vendor flow has none (protocol-notes.md
         # pass 14): positioning below is an absolute mode-0x18 feed that
         # works from wherever the previous frame left the carriage. The
@@ -1758,8 +1770,36 @@ class Scanner:
             self._diag_phase_seconds.get("cal_shading_verify", 0.0) + (time.monotonic() - _t0)
         )
 
+        # ---- geometry: overscan sizes FEEDL and the line/chunk count -----
+        # Default path (overscan_mm is None): the verified constants --
+        # FEEDL from the table grid, the captured 223-chunk window --
+        # byte-identical to before. Overscan path: the corrected mean
+        # mapping (option A) plus a leading/trailing margin (option C),
+        # docs/holder-position-design.md sections 4-5. The furthest motor
+        # position is range-checked inside overscan_geometry(); the stop
+        # FEEDL is checked here as on the default path.
+        if overscan_mm is None:
+            feedl = holder.check_feedl(tables.feedl_for_frame(frame))
+            scan_phase = tables.SCAN
+            n_chunks = tables.IMAGE_CHUNK_COUNT
+            n_lines = lines if lines is not None else tables.DEFAULT_LINES
+        else:
+            geom = holder.overscan_geometry(
+                frame,
+                res_units_per_line=7200 // 3600,
+                chunk_lines=tables.IMAGE_CHUNK_LINES,
+                colour_crop_lines=image_mod.align_shift(3600),
+                overscan_mm=overscan_mm,
+            )
+            feedl = holder.check_feedl(geom.feedl)
+            scan_phase = tables.scan_phase(geom.chunks)
+            n_chunks = geom.chunks
+            n_lines = tables.scan_lines_for_chunks(geom.chunks)
+            log.info("overscan frame %d: FEEDL=%d chunks=%d lines=%d "
+                     "margins lead=%.3f trail=%.3f mm", frame, feedl, n_chunks,
+                     n_lines, geom.leading_margin_mm, geom.trailing_margin_mm)
+
         # ---- position: relative feed from current carriage position ------
-        feedl = holder.check_feedl(tables.feedl_for_frame(frame))
         self._park_scale = position_timeout_scale(tables, feedl)
         log.info("positioning to frame %d (FEEDL=%d)", frame, feedl)
         # Strict completion (class F, budget scaled with FEEDL): never
@@ -1775,19 +1815,20 @@ class Scanner:
         )
 
         # ---- scan: 3 slope tables, line count, execute, image data ------
-        n_lines = lines if lines is not None else tables.DEFAULT_LINES
+        if n_lines > 0xFFFFFF:
+            raise Of135iError(f"line count {n_lines} does not fit the 24-bit register")
         buffers = self._run_phase(
-            tables.SCAN,
+            scan_phase,
             lines_hi=bytes([(n_lines >> 8) & 0xFF]),
             lines_lo=bytes([n_lines & 0xFF]),
         )
-        # buffers[:IMAGE_CHUNK_COUNT] are the image data (capture
-        # fidelity: the first image descriptor carries wIndex=8,
-        # subsequent ones 0 -- meaning unknown, baked into tables.py).
-        # The trailing buffer (buffers[-1]) is a drain of unclear
-        # purpose (not part of the documented image size); already
-        # read verbatim above, discarded here.
-        image = b"".join(buffers[:tables.IMAGE_CHUNK_COUNT])
+        # buffers[:n_chunks] are the image data (capture fidelity: the
+        # first image descriptor carries wIndex=8, subsequent ones 0 --
+        # meaning unknown, baked into tables.py). The trailing buffer
+        # (buffers[-1]) is a drain of unclear purpose (not part of the
+        # documented image size); already read verbatim above, discarded
+        # here.
+        image = b"".join(buffers[:n_chunks])
 
         # ---- park ---------------------------------------------------------
         # PARK's own first op is the captured end-of-access control
@@ -1802,7 +1843,8 @@ class Scanner:
             "lines": n_lines,
             "width": tables.IMAGE_WIDTH,
             "raw_bytes": len(image),
-            "chunk_count": tables.IMAGE_CHUNK_COUNT,
+            "chunk_count": n_chunks,
+            "overscan_mm": overscan_mm,
             "dark_a_mean": [float(x) for x in dark_a.astype(np.float64).mean(axis=0)],
             "dark_b_mean": [float(x) for x in dark_b.astype(np.float64).mean(axis=0)],
             "dark_b_substituted": dark_b_substituted,

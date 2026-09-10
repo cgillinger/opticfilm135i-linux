@@ -437,6 +437,19 @@ def remove_dust(visible: np.ndarray, ir: np.ndarray, sensitivity: float = 1.0) -
     return out
 
 
+def align_shift(dpi: int = 3600) -> int:
+    """Per-side line shift (and crop) applied by align_channels at `dpi`.
+
+    R lags G and B leads G by 24*dpi/7200 lines (vendor ini
+    LineSpace=-24 at the 7200 dpi base), so align_channels rolls each by
+    this many lines and crops the same number off both ends. Overscan
+    geometry needs the crop amount to size the delivered window
+    (holder.overscan_geometry's colour_crop_lines), so it lives here as
+    the single source rather than being recomputed.
+    """
+    return round(24 * dpi / 7200)
+
+
 def align_channels(arr, dpi: int = 3600):
     """Correct the staggered color-line offset of the sensor.
 
@@ -447,7 +460,7 @@ def align_channels(arr, dpi: int = 3600):
     strong RGB fringing. The shifted-in edge lines (wrap artifacts) are
     cropped away.
     """
-    shift = round(24 * dpi / 7200)
+    shift = align_shift(dpi)
     if shift == 0:
         return arr
     out = np.ascontiguousarray(arr)
