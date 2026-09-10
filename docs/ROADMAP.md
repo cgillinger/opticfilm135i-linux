@@ -293,13 +293,11 @@ is documented as separately unverified, pending a physical slide.
   - Full 1–6 production-image workflow with real full-length film: ACCEPTED (Test 58/N3)
   - A+C as the plain-3600 default: HARDWARE VERIFIED (Test 59: the 1–6 empty-holder regression load, coverage 6/6, no regression)
   - B&W six-frame control strip: PASSED (Test 60)
-  - Dual robust A+C: HARDWARE VERIFIED (Test 61: one run per profile,
-    coverage verified 5/5, IR-to-visible registration 0.4/0.06 lines;
-    the dual engine start-anchors FEEDL — design doc section 11).
-    One caveat, per the verification-level rule: the 2400 run predates
-    the FEEDL re-anchoring (the two differ by 0.2 mm there and its
-    margins are in band under both); one 2400 frame-1 confirmation run
-    on the corrected anchoring removes the footnote — PENDING
+  - Dual robust A+C: HARDWARE VERIFIED (Test 61: one run per profile
+    plus the 2400 confirmation on the corrected anchoring — coverage
+    5/5 on the sequences the driver actually commands, IR-to-visible
+    registration 0.4/0.06 lines; the dual engine start-anchors FEEDL —
+    design doc section 11)
   - Slide holder: PENDING
 - **A6 note** (Test 44/46): the driver's eject stalled from a state only
   the backend's first `init()` produced; that `init()` now writes nothing.

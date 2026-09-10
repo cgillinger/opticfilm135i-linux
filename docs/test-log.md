@@ -4423,3 +4423,11 @@ frame-1 confirmation run on the corrected anchoring (FEEDL 6543)
 closes it; ROADMAP carries the caveat until then. The reviewer also
 caught two stale ROADMAP lines (the Test 59 regression still marked
 pending, the B&W item unmarked) — fixed.
+
+**Test 61 closed (2026-09-10 evening): the 2400 confirmation run.**
+One frame-1 run on the corrected anchoring (FEEDL 6543, the value the
+production code commands): coverage VERIFIED, lead 0.834 / trail
+0.822 mm, 447 chunks with full transfer, POSITION 1.8 s, PARK 65 s,
+gains 44/33/39, eject normal. All five dual profiles are now
+hardware-verified on the sequence the driver actually commands — no
+footnote. The reviewer's correction stands answered.
