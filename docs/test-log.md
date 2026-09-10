@@ -3977,3 +3977,58 @@ gap reads 1.42-1.50 mm against the sweep's crossbar measurement of
 (A + C: corrected mean + overscan with aperture-registered crop);
 whatever is chosen, frames 2-4 reopen on a base/pitch change and
 plain-3600 overscan gets one hardware A/B before it is relied on.
+
+## 2026-09-10 — Test 57: the plain-3600 overscan A/B (section 8) — the longer wire and the corrected FEEDL both run; a host-side edge detector fixed
+
+First hardware run of overscan and of the corrected mean mapping. Empty
+strip holder (not the slide holder), one load for A and a fresh load for
+B, both ejected. Raw scans and diag sidecars: private analysis area,
+`ab-20260910/`.
+
+**A — reference** (`scan --frame 1 --dpi 3600`, default window): FEEDL
+6743, 5137 lines, 223 chunks, raw 115771788 B = 223 x 519156 exactly,
+gain 46/32/39, offset 266/265/266, 45 s. The verified baseline.
+
+**B — overscan** (`scan --frames 1,6 --dpi 3600 --overscan 0.75`):
+frame 1 FEEDL 6562, 5367 lines, 233 chunks; frame 6 FEEDL 60276, 5344
+lines, 232 chunks. Same calibration as A.
+
+**Result: the mechanics passed on every count.**
+- **The engine completes the longer window.** Both B frames transferred
+  in full -- 233 and 232 chunks, raw_bytes = chunks x 519156 exactly, no
+  short read, no hang. The section-8 stop condition (a short read would
+  mean the constant-8-line-drain assumption is wrong for a longer scan)
+  did not trigger: the assumption holds.
+- **The corrected FEEDL lands the aperture.** Measured aperture trailing
+  edge, in motor units: B-f1 11634 (N2 mean 11678, 0.16 mm short), B-f6
+  65279 (N2 mean 65342, 0.22 mm short) -- both inside the load-to-load
+  variation N2 measured. The corrected mean mapping reproduces N2 on
+  independent loads.
+- **Coverage: B captures the whole aperture, A cannot.** B-f1 verified,
+  aperture at delivered lines 75-5204, margins 0.53 mm leading /
+  0.92 mm trailing; B-f6 verified, margins 0.50 / 1.08 mm. The leading
+  margins stayed positive through this load's own ~0.2 mm offset -- the
+  robustness working as designed. A-f1 (default window) could not be
+  verified: only one aperture edge is in the window, the other runs off
+  the end, exactly why plain 3600 needs overscan (section 2.4).
+- Eject from post-PARK, both loads. Sounds normal (operator).
+
+**One fault found and fixed, host-side, no motor.** The coverage check
+first found *no* aperture in any image, including B's -- where both
+plastic edges are plainly present (profile: 69 dark lines, ~5100
+saturated, 118 dark lines). Cause: of135i.aperture's edge detector is
+tuned on the 600 dpi holder sweep, where an edge crosses in one or two
+lines; at 3600 dpi the same edge spreads over ~10 lines, so no single
+line carries the gradient the detector looks for. Fix: measure_coverage
+now bins the profile to ~600 dpi before detecting and scales the edge
+positions back (of135i/aperture_crop.py); regression tests for a blurred
+3600 edge and the unbinned 600 path added. With the fix, B verifies and
+A does not, as above. Re-ran offline against the saved A/B images; no
+rescan needed.
+
+**Status.** A+C is now hardware-demonstrated on plain 3600: longer wire
+sound, corrected mapping consistent with N2, coverage verified with
+margin. Still not adopted as the default (that reopens frames 2-4). Next
+is the owner's call to adopt the corrected constants and run N3 (the
+six-frame colour negative) with overscan + crop, judged by eye as a
+production image. FEEDL_PITCH stays 10760 until then.

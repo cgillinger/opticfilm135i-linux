@@ -169,14 +169,60 @@ def _synthesize_delivered(frame, load_shift_mm, overscan_mm=holder.OVERSCAN_MM):
     return img, g, lead_line, trail_line
 
 
+def test_coverage_finds_a_blurred_3600dpi_edge():
+    """A 3600-dpi aperture edge is spread over many lines, so the per-line
+    gradient is below the detector's threshold; measure_coverage bins to
+    ~600 dpi first. This is the fault the first plain-3600 overscan run
+    exposed (both edges in the image, none found). Build an aperture with
+    a ~10-line ramp at each edge and require it is still found."""
+    g = _geom(1)
+    n = g.delivered_lines
+    lead, trail = 120, n - 150
+    prof = np.full(n, 800.0)
+    ramp = 10
+    for i in range(n):
+        if i < lead - ramp:
+            v = 800.0
+        elif i < lead:
+            v = 800.0 + (65535.0 - 800.0) * (i - (lead - ramp)) / ramp
+        elif i < trail:
+            v = 65535.0
+        elif i < trail + ramp:
+            v = 65535.0 - (65535.0 - 800.0) * (i - trail) / ramp
+        else:
+            v = 800.0
+        prof[i] = v
+    img = np.repeat(prof[:, None], 3762, axis=1).astype(np.uint16)[:, :, None]
+    img = np.repeat(img, 3, axis=2)
+    cov = aperture_crop.measure_coverage(img, dpi=3600)
+    assert cov.verified, cov.reason
+    # The half-level crossing sits at the ramp midpoint; binning to ~600
+    # dpi before detection costs a few full-resolution lines of precision,
+    # which is far finer than the coverage margin it feeds.
+    assert abs(cov.leading_line - (lead - ramp / 2)) < 8, cov.leading_line
+    assert abs(cov.trailing_line - (trail + ramp / 2)) < 8, cov.trailing_line
+
+
+def test_coverage_600dpi_path_unbinned():
+    """At 600 dpi the bin factor is 1, so the profile is detected as-is."""
+    n = 900
+    img = np.full((n, 876, 3), 800, dtype=np.uint16)
+    img[100:800] = 40000
+    cov = aperture_crop.measure_coverage(img, dpi=600)
+    assert cov.verified, cov.reason
+    assert abs(cov.leading_line - 100) < 2 and abs(cov.trailing_line - 800) < 2
+
+
 def test_coverage_verifies_and_crops_across_load_shifts():
     for frame in (1, 6):
         for shift in (-0.24, 0.0, 0.24):
             img, g, lead_line, trail_line = _synthesize_delivered(frame, shift)
             cov = aperture_crop.measure_coverage(img, dpi=3600)
             assert cov.verified, (frame, shift, cov.reason)
-            assert abs(cov.leading_line - lead_line) < 2, (frame, shift, cov.leading_line, lead_line)
-            assert abs(cov.trailing_line - trail_line) < 2, (frame, shift)
+            # ~6-line tolerance: measure_coverage bins to ~600 dpi before
+            # detecting (see test_coverage_finds_a_blurred_3600dpi_edge).
+            assert abs(cov.leading_line - lead_line) < 8, (frame, shift, cov.leading_line, lead_line)
+            assert abs(cov.trailing_line - trail_line) < 8, (frame, shift)
             crop = aperture_crop.crop_to_aperture(img, cov, dpi=3600)
             got_mm = crop.shape[0] / (3600 / 25.4)
             assert abs(got_mm - holder.STRIP_FIDUCIAL.aperture_mm[frame - 1]) < 0.1, (frame, shift, got_mm)
@@ -266,6 +312,8 @@ def main():
         test_overscan_refuses_end_beyond_transport_bound,
         test_default_scan_phase_is_byte_identical,
         test_scan_phase_structure_for_other_chunk_counts,
+        test_coverage_finds_a_blurred_3600dpi_edge,
+        test_coverage_600dpi_path_unbinned,
         test_coverage_verifies_and_crops_across_load_shifts,
         test_wiring_default_path_uses_grid_feedl_and_captured_window,
         test_wiring_overscan_path_uses_geometry,

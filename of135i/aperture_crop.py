@@ -124,7 +124,24 @@ def measure_coverage(image, *, dpi, min_margin_mm=0.15, channel="red") -> Apertu
     profile = along_strip_profile(arr, channel=channel)
     lines_per_mm = dpi / MM_PER_INCH
 
-    threshold, aps = aperture.apertures(profile, lines_per_mm)
+    # The edge detector (of135i.aperture) is tuned on the 600 dpi holder
+    # sweep, where an aperture edge crosses in one or two lines. At higher
+    # resolutions the same physical edge is spread over proportionally
+    # more lines, so no single line carries the fraction of the lit-to-
+    # plastic drop the gradient test looks for and the edge is missed
+    # (seen on the first plain-3600 overscan run: both edges present in
+    # the image, none found). Bin the profile down to ~600 dpi before
+    # detecting, so the edge is one or two binned lines again, then scale
+    # the returned positions back. Binning only sharpens the step; the
+    # margins below are still measured in full-resolution lines.
+    factor = max(1, round(dpi / 600))
+    if factor > 1:
+        usable = (len(profile) // factor) * factor
+        binned = profile[:usable].reshape(-1, factor).mean(axis=1)
+        threshold, aps_b = aperture.apertures(binned, lines_per_mm / factor)
+        aps = [(a * factor, b * factor) for a, b in aps_b]
+    else:
+        threshold, aps = aperture.apertures(profile, lines_per_mm)
 
     if len(aps) == 0:
         return ApertureCoverage(
