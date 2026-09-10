@@ -270,6 +270,24 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             print(f"error: {err}", file=sys.stderr)
             return 2
 
+    # Validate the output location BEFORE any hardware: a scan whose
+    # files cannot be written is a completed pass thrown away (seen
+    # 2026-09-10: an empty shell variable made the path '/f.tiff' --
+    # the scan and PARK ran to completion and the data was lost in the
+    # host-side write). Fail here instead, with zero writes sent.
+    import os as _os
+    for f in frames:
+        o = _frame_output(args.output, f) if multi else args.output
+        parent = Path(o).resolve().parent
+        if not parent.is_dir():
+            print(f"error: output directory {parent} does not exist "
+                  f"(for {o}); nothing was sent to the scanner", file=sys.stderr)
+            return 2
+        if not _os.access(parent, _os.W_OK):
+            print(f"error: output directory {parent} is not writable "
+                  f"(for {o}); nothing was sent to the scanner", file=sys.stderr)
+            return 2
+
     # One device session for the whole batch, initialize() per frame:
     # the post-scan PARK phase turns the lamp off and tears the scan
     # state down, and the vendor re-runs the PREP/AFE_BASE equivalent
