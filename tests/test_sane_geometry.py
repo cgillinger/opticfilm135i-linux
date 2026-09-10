@@ -187,11 +187,98 @@ def test_frame_bounds_enforced_before_any_write():
           "(feedl_for_frame + frame_geometry + holder.check_frame agree)")
 
 
+GL126_CPP = REPO / "sane" / "gl126.cpp"
+GL126_OPS_H = REPO / "sane" / "gl126_ops.h"
+GL126_H = REPO / "sane" / "gl126.h"
+PATCH = REPO / "sane" / "gl126-integration.patch"
+
+
+def _offset_calibration_body() -> str:
+    """The source text of CommandSetGl126::offset_calibration (up to the
+    next member definition) -- the FIRST GL126 hook that writes."""
+    src = GL126_CPP.read_text()
+    start = src.index("void CommandSetGl126::offset_calibration(")
+    nxt = src.index("\nvoid CommandSetGl126::", start + 10)
+    return src[start:nxt]
+
+
+def test_offset_calibration_preflight_precedes_any_io():
+    """The 'before first write' guarantee at the internal path (Astra
+    review 2026-09-10): in offset_calibration (the first hook that
+    writes), the geometry preflight -- the 1-kFrameMax frame check,
+    feedl_for_frame(frame, profile) and frame_geometry(profile, frame) --
+    precedes check_start_state()'s read AND the first write
+    (write_table(dev, BASE_INIT...)). And the two functions it calls are
+    pure (their gl126_ops.h signatures take only a frame and a Profile --
+    no Genesys_Device, no Wire, no interface), so the preflight cannot
+    itself do I/O: an out-of-range frame or a window past the travel
+    ceiling throws before any transfer. This is the source-order proof of
+    zero-writes-on-invalid-frame at the real hook; the runtime probe/holder
+    checks above prove the throw itself.
+
+    (A live genesys-testsuite test that constructs a Genesys_Device with a
+    fake IUsbDevice and calls offset_calibration was assessed and judged
+    disproportionate: gl126 writes go through its own UsbWire ->
+    dev->interface->get_usb_device(), no testsuite precedent constructs a
+    device+interface+hook, and the preflight is pure-and-first so
+    zero-writes holds by construction. See the Astra report.)"""
+    body = _offset_calibration_body()
+    i_range = body.index("frame < 1 || frame > kFrameMax")
+    i_feedl = body.index("feedl_for_frame(frame")
+    i_geom = body.index("frame_geometry(*profile, frame)")
+    preflight_end = max(i_range, i_feedl, i_geom)
+
+    i_state = body.index("check_start_state(dev)")   # first device read
+    i_write = body.index("write_table(dev, BASE_INIT")  # first device write
+
+    assert i_range < i_state, (i_range, i_state)
+    assert preflight_end < i_state, ("preflight must precede the state read",
+                                     preflight_end, i_state)
+    assert preflight_end < i_write, ("preflight must precede the first write",
+                                     preflight_end, i_write)
+    assert i_state < i_write, (i_state, i_write)
+
+    ops_h = GL126_OPS_H.read_text()
+    # Pure signatures: frame + Profile only, no device/Wire/interface.
+    assert "feedl_for_frame(unsigned frame, const Profile& profile)" in ops_h, ops_h[:0]
+    assert "frame_geometry(const Profile& profile, unsigned frame)" in ops_h
+    for banned in ("Genesys_Device", "Wire", "interface"):
+        # neither declaration line may mention a device/wire type
+        for line in ops_h.splitlines():
+            if "feedl_for_frame(" in line or "frame_geometry(" in line:
+                assert banned not in line, (line, banned)
+    print("test_offset_calibration_preflight_precedes_any_io OK "
+          "(frame check + feedl_for_frame + frame_geometry precede the state "
+          "read and BASE_INIT; both are pure -- no device/wire param)")
+
+
+def test_public_frame_option_constraint_is_1_to_6():
+    """The 'before first write' guarantee at the PUBLIC path: the SANE
+    frontend enforces OPT_FRAME's constraint before any backend hook runs,
+    so `scanimage --frame 0` / `--frame 7` are rejected without a single
+    transfer. The integration patch declares gl126_frame_range = [1,
+    kFrameMax] and binds it to OPT_FRAME as a SANE_CONSTRAINT_RANGE;
+    kFrameMax is 6."""
+    patch = PATCH.read_text()
+    assert "static const SANE_Range gl126_frame_range" in patch
+    m = re.search(r"gl126_frame_range\s*=\s*\{.*?1,.*?gl126::kFrameMax",
+                  patch, re.DOTALL)
+    assert m, "gl126_frame_range must run [1, kFrameMax]"
+    assert "OPT_FRAME].constraint_type = SANE_CONSTRAINT_RANGE" in patch
+    assert "OPT_FRAME].constraint.range = &gl126_frame_range" in patch
+    assert "kFrameMax = 6" in GL126_H.read_text()
+    print("test_public_frame_option_constraint_is_1_to_6 OK "
+          "(OPT_FRAME SANE_CONSTRAINT_RANGE [1,6]; scanimage rejects 0/7 "
+          "before any hook)")
+
+
 def main() -> int:
     tests = [
         test_frame_geom_matches_generator,
         test_frame_geom_safety_bounds,
         test_frame_bounds_enforced_before_any_write,
+        test_offset_calibration_preflight_precedes_any_io,
+        test_public_frame_option_constraint_is_1_to_6,
     ]
     passed = 0
     skipped = 0

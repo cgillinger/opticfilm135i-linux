@@ -819,6 +819,34 @@ void CommandSetGl126::offset_calibration(Genesys_Device* dev,
 {
     DBG_HELPER(dbg);
 
+    // Geometry preflight (before ANY device I/O -- read or write). This is
+    // the first hook that writes; without it, offset/gain/shading would
+    // calibrate and write to the wire before begin_scan's own FEEDL check
+    // ever ran, so an out-of-range frame or a window that drives past the
+    // proven travel ceiling would only be caught after real writes. Run
+    // the SAME validation production runs (begin_scan): the 1-kFrameMax
+    // frame bound, then feedl_for_frame() (frame bound again + FEEDL and
+    // end_hwdpi against the travel ceiling) and frame_geometry() (the
+    // ledger invariant). All three are pure computation on the frozen
+    // frames[] ledger -- no device, no wire -- so a valid frame changes
+    // nothing on the wire and an invalid one throws HERE, before
+    // check_start_state's read and before BASE_INIT's first write (Astra
+    // review 2026-09-10; docs/holder-position-design.md).
+    bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
+    const Profile* profile = find_profile(dev->settings.xres, ir);
+    if (profile == nullptr) {
+        throw SaneException(SANE_STATUS_INVAL, "gl126: no captured profile for %u dpi%s",
+                            dev->settings.xres, ir ? " with IR" : "");
+    }
+    unsigned frame = dev->settings.frame;
+    if (frame < 1 || frame > kFrameMax) {
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: frame %u is outside 1-%u (the six-aperture strip "
+                            "holder). Nothing was written.", frame, kFrameMax);
+    }
+    (void) feedl_for_frame(frame, *profile);   // FEEDL + end_hwdpi <= travel ceiling
+    (void) frame_geometry(*profile, frame);    // ledger consistency invariant
+
     // S0: only the idle-homed state is accepted. A cold unit (0x00) is
     // brought up by the magazine load flow, which is not a hook.
     std::uint8_t state = check_start_state(dev);
@@ -830,13 +858,7 @@ void CommandSetGl126::offset_calibration(Genesys_Device* dev,
                             "Nothing was written.", state);
     }
 
-    bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
-    const Profile* profile = find_profile(dev->settings.xres, ir);
-    if (profile == nullptr) {
-        throw SaneException(SANE_STATUS_INVAL, "gl126: no captured profile for %u dpi%s",
-                            dev->settings.xres, ir ? " with IR" : "");
-    }
-    DBG(DBG_info, "gl126: offset calibration, profile %s\n", profile->name);
+    DBG(DBG_info, "gl126: offset calibration, profile %s frame %u\n", profile->name, frame);
 
     // S1: base table + AFE base values, as the driver's initialize() writes
     // them (verified byte-exact on hardware, Test 43).

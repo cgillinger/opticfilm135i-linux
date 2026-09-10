@@ -25,7 +25,7 @@ done
 Symlinks rather than copies: an edit here is picked up by the next build
 with nothing to re-sync. The eventual merge request takes copies.
 
-## Status (2026-09-08, evening; hook history below)
+## Status (2026-09-10: Lager 1 A+C geometry migrated, offline-verified — see the Lager 1 section below; hook history from 2026-09-08 onward)
 
 - **Stage 2 — done (offline).** `tools/gen_sane_tables.py` emits
   `sane/gl126_tables.{h,cpp}` from `of135i/tables*.py`: the base, AFE,

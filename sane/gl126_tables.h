@@ -180,8 +180,10 @@ struct Profile {
     unsigned lines_per_chunk;
     unsigned shading_lines;
     unsigned shading_upload_len;
-    unsigned captured_lines;   /* the line-count register value as captured
-                                  (DEFAULT_LINES); written to the wire as is */
+    unsigned captured_lines;   /* LEGACY capture evidence (DEFAULT_LINES, the
+                                  frame-1 vendor trace's line count); NOT written
+                                  to the wire at runtime since Test 58 --
+                                  frames[].line_register drives the scan register */
     unsigned chunk_count;      /* image chunks the vendor read (IMAGE_CHUNK_COUNT):
                                   chunk_count * lines_per_chunk lines are read,
                                   which for ir3600 is fewer than captured_lines */
