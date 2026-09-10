@@ -3915,3 +3915,65 @@ supposed to be -- no film at all, so the geometry is isolated by
 construction rather than by argument. Then the same from two further
 separate loads for the repeatability. Base and pitch are decided
 together on those.
+
+## 2026-09-10 — Test 56 (N2): the empty holder, frames 1-6, three separate loads — the pitch question dissolves into a robustness question
+
+The run N1 was supposed to be, three times: holder completely empty
+(operator-confirmed before the first load), frames 1-6 at 600 dpi,
+each run from its own power cycle and its own load with the holder
+taken out and reinserted between runs (`empty-a/b/c`). All three runs
+mechanically clean: eighteen frames positioned, calibrated, delivered
+and ejected, no fail-closed stop, sounds normal. Raw data, JSON
+reports and control images: private analysis area, `holder-20260910/`.
+Analysis: docs/holder-position-design.md (all numbers below are
+derived there).
+
+**The known window fault, confirmed by construction, 18/18.** Every
+frame reads `aperture_found: false` with `clipped: leading`: the
+aperture is at saturation across the whole window and the only edge in
+view is the trailing plastic edge — the leading edge sits before line
+0. This is the N1 window-offset finding (the window sits late), now
+with no film to argue about, quantified: 0.57 mm late at frame 1
+growing linearly to 1.03 mm at frame 6. Because the leading edge never
+entered the window, the aperture length itself is *still* unmeasured;
+the sweep's figures stand.
+
+**N1's pitch steps were not geometry.** The empty runs do not
+reproduce them (N1: 10696/10724/10730/10752/10777; empty-a:
+10727/10718/10711/10725/10761; b and c different again). Free-pitch
+fits: 10725.3 / 10729.0 / 10743.8 (N1: 10735.6). Neither 10752 nor
+10760 fits any run — unanimous across all four loads.
+
+**The main finding is the load-to-load variation of the mapping
+itself.** The per-frame *means* over the three empty loads are linear
+to ≤ 0.022 mm (pitch 10732.7) — the holder is a base plus a constant
+pitch, and the bow seen inside single runs is the load's own
+signature, not the plastic. But each load deviates from that mean with
+its own slope: up to ±0.24 mm, growing with travel (the per-load pitch
+varies 10725→10744). N1-with-film sits inside the same band, so the
+variation is not the film. The plan's repeatability threshold ("a few
+hundredths of a millimetre") is not met; the earlier ±0.028 mm figure
+(Tests 17-23) was frame-1 repeats and is consistent with the frame-1
+column — it never saw the growth over travel.
+
+**Consequence.** Worst-case placement (±0.5 mm design at frame 6,
+2× observed at n=3-4) exceeds the plain 3600 window's entire margin —
+that window is smaller than aperture 1 to begin with — and eats the
+dual profiles' margin exactly. Choosing between 10752/10760/10733 is
+therefore no longer the load-bearing question; making coverage robust
+against the variation is. Options (corrected constants, per-frame
+table, overscan + host-side crop, dynamic per-load reference) are laid
+out and judged against worst case in docs/holder-position-design.md,
+with a recommendation. Decided in this entry: **nothing** —
+FEEDL_PITCH stays 10760 and the base stays until the owner has read
+the analysis and chosen.
+
+Side observation, flagged unresolved: where the next aperture's
+leading edge entered the window (empty-a f3-f5), the inter-aperture
+gap reads 1.42-1.50 mm against the sweep's crossbar measurement of
+1.90-2.00 mm; no decision turns on it.
+
+**Next:** owner's decision on the position-design recommendation
+(A + C: corrected mean + overscan with aperture-registered crop);
+whatever is chosen, frames 2-4 reopen on a base/pitch change and
+plain-3600 overscan gets one hardware A/B before it is relied on.

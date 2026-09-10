@@ -152,6 +152,15 @@ with a constant pitch; no position table is needed. The 0.09 mm
 scatter in the optical pitch measurement is measurement noise plus the
 scan pass's own scale error, not holder irregularity.
 
+> **Revised by N2 (Test 56, 2026-09-10).** The "linear, no position
+> table" half of this conclusion is confirmed by construction: the
+> per-frame means over three empty loads are linear to ≤ 0.022 mm.
+> The 10752 half is not: 10752 is what the vendor *commands* on its
+> grid, but the measured end-to-end mapping — commanded FEEDL to
+> where the aperture lands in the delivered image, which is what
+> coverage depends on — has pitch ≈ 10733, and it varies by load.
+> See docs/holder-position-design.md §2.2.
+
 ## 4. Frames 5 and 6 are inside the transport's demonstrated envelope
 
 Two independent facts:
@@ -239,6 +248,13 @@ So load-to-load repeatability is not the limiting factor. The pitch is,
 and at plain 3600 dpi it is larger than the margin -- which is the
 concrete reason the pitch has to be settled before frames 5 and 6 are
 promised at that resolution.
+
+> **Revised by N2 (Test 56, 2026-09-10).** The ±0.028 mm figure was
+> frame-1 repeats; over three separate loads the mapping deviates by
+> up to ±0.24 mm, *growing with travel* — load-to-load variation IS a
+> limiting factor, on par with the pitch question, and larger than
+> this section's margins at every profile. The margin analysis that
+> supersedes this table is docs/holder-position-design.md §2.4.
 
 ## 7. Three things that must not be confused
 
