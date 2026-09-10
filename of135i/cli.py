@@ -192,6 +192,11 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # dual flow; --ir then only decides whether the IR channel is used
     # (dust removal) and written out.
     dual = args.ir or args.dpi != 3600
+    if getattr(args, "overscan", None) is not None and dual:
+        print("error: --overscan is implemented for plain 3600 dpi only "
+              "(no --ir, --dpi 3600); the dual profiles already carry margin",
+              file=sys.stderr)
+        return 2
     if (args.frame is None) == (args.frames is None):
         print("error: give exactly one of --frame or --frames", file=sys.stderr)
         return 2
@@ -239,7 +244,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                 raw, width, _meta = scanner.scan(frame=frame, ir=True, dpi=args.dpi)
                 _finish_dual_scan(args, raw, width, out, write_ir=args.ir)
             else:
-                raw, width = scanner.scan(frame=frame)
+                raw, width = scanner.scan(
+                    frame=frame, overscan_mm=getattr(args, "overscan", None))
                 _finish_plain_scan(args, raw, width, out)
             del raw
             _write_diag_sidecar(args, scanner, out, frame)
@@ -255,6 +261,20 @@ def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
                        out: str) -> None:
     arr = image.assemble(raw, width)
     arr = image.align_channels(arr, dpi=args.dpi)
+    if getattr(args, "overscan", None) is not None:
+        # Per-scan coverage check on the delivered (colour-cropped) image,
+        # before any orientation transform (the strip runs along axis 0
+        # here). docs/holder-position-design.md section 5.
+        from . import aperture_crop
+        cov = aperture_crop.measure_coverage(arr, dpi=args.dpi)
+        if cov.verified:
+            print(f"aperture coverage: VERIFIED — margins lead "
+                  f"{cov.leading_margin_mm:.3f} mm, trail "
+                  f"{cov.trailing_margin_mm:.3f} mm (whole aperture captured)")
+        else:
+            print(f"aperture coverage: NOT verified — {cov.reason}. "
+                  f"The raw overscan image is written as-is; do not treat it "
+                  f"as a guaranteed-complete frame.", file=sys.stderr)
     if args.positive:
         # Match the vendor apps' orientation: the sensor image is
         # mirrored (vendor ini HorizontalMirror=1) and rotated.
@@ -715,6 +735,11 @@ def build_parser() -> argparse.ArgumentParser:
              "clean the visible image with it")
     p_scan.add_argument("--no-clean", action="store_true",
         help="skip IR-based dust/scratch removal on the visible image (--ir only)")
+    p_scan.add_argument("--overscan", type=float, default=None, metavar="MM",
+        help="plain 3600 dpi only: scan a longer window that covers the whole "
+             "aperture plus this margin per side (docs/holder-position-design.md), "
+             "using the corrected mean mapping; reports per-scan aperture coverage. "
+             "Typical: 0.75. HARDWARE-UNVERIFIED (its A/B is section 8)")
     p_scan.add_argument("--no-diag", action="store_true",
         help="skip writing the <output>.diag.json calibration/timing sidecar")
     p_scan.add_argument("--warmup-budget", type=float, default=None, metavar="SECONDS",
