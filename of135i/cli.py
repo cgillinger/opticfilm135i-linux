@@ -45,7 +45,8 @@ log = logging.getLogger("of135i")
 _MAX_OVERSCAN_MM = 5.0
 
 
-def _validate_overscan(overscan: float, frames) -> str | None:
+def _validate_overscan(overscan: float, frames, dpi: int = 3600,
+                       dual: bool = False) -> str | None:
     """Check a --overscan value and its whole resulting geometry BEFORE any
     hardware write. Returns an error message, or None if every frame's
     window (FEEDL, scan start/end, line and chunk count) is inside the
@@ -61,13 +62,24 @@ def _validate_overscan(overscan: float, frames) -> str | None:
                 f"sanity limit")
     for frame in frames:
         try:
-            holder.overscan_geometry(
-                frame,
-                res_units_per_line=7200 // 3600,
-                chunk_lines=tables.IMAGE_CHUNK_LINES,
-                colour_crop_lines=image.align_shift(3600),
-                overscan_mm=overscan,
-            )
+            if dual:
+                from .device import dual_tables
+                t = dual_tables(dpi)
+                holder.dual_overscan_geometry(
+                    frame,
+                    dpi=dpi,
+                    lines_per_chunk=t.LINES_PER_CHUNK,
+                    colour_crop_lines=image.align_shift(dpi),
+                    overscan_mm=overscan,
+                )
+            else:
+                holder.overscan_geometry(
+                    frame,
+                    res_units_per_line=7200 // 3600,
+                    chunk_lines=tables.IMAGE_CHUNK_LINES,
+                    colour_crop_lines=image.align_shift(3600),
+                    overscan_mm=overscan,
+                )
         except (safety.FrameOutOfRangeError, safety.FeedlOutOfRangeError) as e:
             return (f"--overscan {overscan} mm is out of range for frame "
                     f"{frame}: {e}")
@@ -226,18 +238,12 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # dual flow; --ir then only decides whether the IR channel is used
     # (dust removal) and written out.
     dual = args.ir or args.dpi != 3600
-    if getattr(args, "overscan", None) is not None and dual:
-        print("error: --overscan is implemented for plain 3600 dpi only "
-              "(no --ir, --dpi 3600). The dual windows are wider than plain "
-              "3600, but robust aperture coverage under the measured load-to-"
-              "load variation has not yet been implemented or verified for "
-              "them under the new positioning model", file=sys.stderr)
-        return 2
-    if not dual and getattr(args, "overscan", None) is None:
-        # Plain 3600 production default: the A+C contract (corrected
-        # mapping + overscan + per-scan coverage + registered crop),
-        # accepted in Test 58. There is no fixed-window plain path any
-        # more; --overscan only tunes the margin.
+    if getattr(args, "overscan", None) is None:
+        # The production default on BOTH paths: the A+C contract
+        # (corrected mapping + overscan + per-scan coverage + registered
+        # crop), accepted in Test 58 for plain and carried to the dual
+        # profiles in visible-line units. --overscan only tunes the
+        # margin; there is no fixed-window path any more.
         args.overscan = holder.OVERSCAN_MM
     if (args.frame is None) == (args.frames is None):
         print("error: give exactly one of --frame or --frames", file=sys.stderr)
@@ -259,7 +265,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # Validate --overscan and its whole geometry before opening the device,
     # so a bad value is refused with zero hardware activity (Astra point 3).
     if getattr(args, "overscan", None) is not None:
-        err = _validate_overscan(args.overscan, frames)
+        err = _validate_overscan(args.overscan, frames, dpi=args.dpi, dual=dual)
         if err is not None:
             print(f"error: {err}", file=sys.stderr)
             return 2
@@ -293,8 +299,10 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                       " (dual-light pass)" if dual else "")
             cov = None
             if dual:
-                raw, width, _meta = scanner.scan(frame=frame, ir=True, dpi=args.dpi)
-                _finish_dual_scan(args, raw, width, out, write_ir=args.ir)
+                raw, width, _meta = scanner.scan(
+                    frame=frame, ir=True, dpi=args.dpi,
+                    overscan_mm=getattr(args, "overscan", None))
+                cov = _finish_dual_scan(args, raw, width, out, write_ir=args.ir)
             else:
                 raw, width = scanner.scan(
                     frame=frame, overscan_mm=getattr(args, "overscan", None))
@@ -397,11 +405,20 @@ def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
 
 
 def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
-                      out: str, write_ir: bool = True) -> None:
+                      out: str, write_ir: bool = True):
     """Split a dual-light scan's raw buffer into visible/IR images and
     write <out> (visible, color) and, with write_ir, <out stem>-ir.tiff
     (the IR channel, replicated into R=G=B so it opens in any RGB
-    viewer).
+    viewer). Returns the frame's ApertureCoverage.
+
+    The dual path carries the same A+C production contract as plain
+    (Test 58): coverage is measured on the aligned visible frame, the
+    full overscan frame(s) are always preserved (`<out>.overscan.<ext>`,
+    and with write_ir `<stem>-ir.overscan.tiff`), and the products are
+    written only when coverage verifies -- cropped to the SAME line
+    indices in both channels, so visible and IR stay exactly registered
+    through the crop (they are on one pixel grid from the alignment
+    step; dust removal runs before the crop on that same grid).
 
     Any orientation transform (the --positive mirror+rotate, and
     --rotate) is applied identically to both images so they stay
@@ -438,28 +455,67 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
     if write_ir and not args.no_clean:
         visible = image.remove_dust(visible, ir)
 
-    if args.positive:
-        # Same orientation fix as the non-IR path; rot90/[:, ::-1] work
-        # unchanged on ir's 2D (lines, width) shape too.
-        visible = _np.ascontiguousarray(_np.rot90(visible, 3)[:, ::-1])
-        ir = _np.ascontiguousarray(_np.rot90(ir, 3)[:, ::-1])
+    from . import aperture_crop
+    cov = aperture_crop.measure_coverage(visible, dpi=args.dpi)
 
-        # Per-frame preview inversion (image.to_positive); real colour
-        # work starts from the raw negative written without --positive.
-        visible = image.to_positive(visible)
-    if args.rotate:
-        visible = _np.ascontiguousarray(_np.rot90(visible, k=args.rotate // 90))
-        ir = _np.ascontiguousarray(_np.rot90(ir, k=args.rotate // 90))
+    def _orient_pair(vis, irr):
+        # Same orientation fix as the plain path, applied identically to
+        # both channels; rot90/[:, ::-1] work unchanged on ir's 2D
+        # (lines, width) shape too. to_positive is a visible-only
+        # preview inversion; real colour work starts from the raw
+        # negative written without --positive.
+        if args.positive:
+            vis = _np.ascontiguousarray(_np.rot90(vis, 3)[:, ::-1])
+            if irr is not None:
+                irr = _np.ascontiguousarray(_np.rot90(irr, 3)[:, ::-1])
+            vis = image.to_positive(vis)
+        if args.rotate:
+            vis = _np.ascontiguousarray(_np.rot90(vis, k=args.rotate // 90))
+            if irr is not None:
+                irr = _np.ascontiguousarray(_np.rot90(irr, k=args.rotate // 90))
+        return vis, irr
 
-    _write_image(visible, out, positive=args.positive, dpi=args.dpi)
-    print(f"wrote {out} ({visible.shape[1]}x{visible.shape[0]}, 16-bit RGB, visible)")
+    def _write_ir_file(arr, path):
+        image.write_tiff16(_np.stack([arr, arr, arr], axis=-1), path, dpi=args.dpi)
+
+    # Preserve the full overscan frame(s) regardless of the verdict
+    # (raw-data principle), oriented like the products.
+    raw_out = _overscan_raw_path(out)
+    ov_vis, ov_ir = _orient_pair(visible, ir if write_ir else None)
+    _write_image(ov_vis, raw_out, positive=args.positive, dpi=args.dpi)
+    print(f"wrote {raw_out} ({ov_vis.shape[1]}x{ov_vis.shape[0]}, full "
+          f"overscan frame, visible)")
+    if write_ir:
+        out_path = Path(out)
+        ir_over = str(out_path.with_name(out_path.stem + "-ir.overscan.tiff"))
+        _write_ir_file(ov_ir, ir_over)
+        print(f"wrote {ir_over} ({ov_ir.shape[1]}x{ov_ir.shape[0]}, full "
+              f"overscan frame, IR channel)")
+    del ov_vis, ov_ir
+
+    if not cov.verified:
+        print(f"aperture coverage: NOT verified — {cov.reason}. Kept the full "
+              f"overscan frame(s); no registered product written for this "
+              f"frame.", file=sys.stderr)
+        return cov
+
+    print(f"aperture coverage: VERIFIED — margins lead "
+          f"{cov.leading_margin_mm:.3f} mm, trail {cov.trailing_margin_mm:.3f} mm")
+    vis_c = aperture_crop.crop_to_aperture(visible, cov, dpi=args.dpi)
+    ir_c = aperture_crop.crop_to_aperture(ir, cov, dpi=args.dpi) if write_ir else None
+    vis_c, ir_c = _orient_pair(vis_c, ir_c)
+
+    _write_image(vis_c, out, positive=args.positive, dpi=args.dpi)
+    print(f"wrote {out} ({vis_c.shape[1]}x{vis_c.shape[0]}, 16-bit RGB, "
+          f"visible, aperture-registered)")
 
     if write_ir:
-        ir_rgb = _np.stack([ir, ir, ir], axis=-1)
         out_path = Path(out)
         ir_out = str(out_path.with_name(out_path.stem + "-ir.tiff"))
-        image.write_tiff16(ir_rgb, ir_out, dpi=args.dpi)
-        print(f"wrote {ir_out} ({ir.shape[1]}x{ir.shape[0]}, 16-bit, IR channel)")
+        _write_ir_file(ir_c, ir_out)
+        print(f"wrote {ir_out} ({ir_c.shape[1]}x{ir_c.shape[0]}, 16-bit, "
+              f"IR channel, aperture-registered)")
+    return cov
 
 
 def _write_diag_sidecar(args: argparse.Namespace, scanner: Scanner, out: str,
@@ -533,16 +589,17 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
     Note: with IR (and unless --no-clean) the main negative is
     dust-cleaned; it is calibrated, channel-aligned linear data, not an
     untouched sensor dump. Returns (main, ir_file, preview_file,
-    dust_cleaned, coverage) -- coverage is the plain path's
-    ApertureCoverage (None on dual).
+    dust_cleaned, coverage) -- coverage is the frame's ApertureCoverage.
 
-    Plain 3600 carries the same A+C production contract as `scan`
+    Both paths carry the same A+C production contract as `scan`
     (Test 58): the device delivers the overscan window; the full frame
-    is always preserved as `<out stem>.overscan.<ext>`, and the MAIN
-    negative is written only when aperture coverage verifies, cropped
-    to the edges detected in THIS scan. On a coverage failure main is
-    None -- nothing that looks like a finished frame exists for an
-    unverified frame.
+    is always preserved as `<out stem>.overscan.<ext>` (and, with IR,
+    `<stem>-ir.overscan.tiff`), and the MAIN negative is written only
+    when aperture coverage verifies, cropped to the edges detected in
+    THIS scan -- on the dual path the IR channel is cropped by the SAME
+    line indices, keeping the channels exactly registered. On a
+    coverage failure main is None -- nothing that looks like a finished
+    frame exists for an unverified frame.
 
     `progress`, if given, is filled in as each file lands ("main", "ir",
     "preview"), so a failure part-way through a frame leaves a record of
@@ -557,11 +614,47 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
     preview_file = None
     coverage = None
     if dual:
+        from . import aperture_crop
         visible, ir = image.split_ir(raw, width=width)
         _shift = round(24 * args.dpi / 7200)
         visible = image.align_channels(visible, dpi=args.dpi)
         if _shift:
             ir = ir[_shift:-_shift]
+        if args.ir and not args.no_clean:
+            visible = image.remove_dust(visible, ir)
+        coverage = aperture_crop.measure_coverage(visible, dpi=args.dpi)
+        # Preserve the full overscan frame(s) regardless of the verdict
+        # (raw-data principle) -- rotated like the main negative, never
+        # mirrored.
+        over_v, over_i = visible, (ir if args.ir else None)
+        if args.rotate:
+            k = args.rotate // 90
+            over_v = _np.ascontiguousarray(_np.rot90(visible, k=k))
+            if over_i is not None:
+                over_i = _np.ascontiguousarray(_np.rot90(over_i, k=k))
+        raw_out = _overscan_raw_path(out)
+        _write_image(over_v, raw_out, positive=False, dpi=args.dpi)
+        _note("overscan", raw_out)
+        print(f"wrote {raw_out} ({over_v.shape[1]}x{over_v.shape[0]}, full "
+              f"overscan frame, visible)")
+        if over_i is not None:
+            ir_over = str(Path(out).with_name(Path(out).stem + "-ir.overscan.tiff"))
+            image.write_tiff16(_np.stack([over_i, over_i, over_i], axis=-1),
+                               ir_over, dpi=args.dpi)
+            _note("ir_overscan", ir_over)
+            print(f"wrote {ir_over} ({over_i.shape[1]}x{over_i.shape[0]}, "
+                  f"full overscan frame, IR channel)")
+        del over_v, over_i
+        if not coverage.verified:
+            print(f"aperture coverage: NOT verified — {coverage.reason}. "
+                  f"Kept the full overscan frame(s); no main negative "
+                  f"written for this frame.", file=sys.stderr)
+            return None, None, None, bool(args.ir and not args.no_clean), coverage
+        print(f"aperture coverage: VERIFIED — margins lead "
+              f"{coverage.leading_margin_mm:.3f} mm, trail "
+              f"{coverage.trailing_margin_mm:.3f} mm")
+        visible = aperture_crop.crop_to_aperture(visible, coverage, dpi=args.dpi)
+        ir = aperture_crop.crop_to_aperture(ir, coverage, dpi=args.dpi)
     else:
         from . import aperture_crop
         full = image.align_channels(image.assemble(raw, width), dpi=args.dpi)
@@ -590,9 +683,9 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
         del full
         ir = None
 
+    # Dust removal already ran in the dual branch above (before the
+    # coverage measurement, on the uncropped grid).
     dust_cleaned = bool(dual and args.ir and not args.no_clean)
-    if dust_cleaned:
-        visible = image.remove_dust(visible, ir)
 
     # Preview (positive): built with the SAME vendor orientation the scan
     # command applies before to_positive -- mirror + rot90(·,3) (vendor ini
@@ -916,13 +1009,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--no-clean", action="store_true",
         help="skip IR-based dust/scratch removal on the visible image (--ir only)")
     p_scan.add_argument("--overscan", type=float, default=None, metavar="MM",
-        help="plain 3600 dpi only: overscan margin per side around the whole "
-             "aperture (default 0.75, the production geometry accepted in "
-             "Test 58; docs/holder-position-design.md). The window uses the "
-             "corrected mean mapping; the aperture-registered image goes to -o "
-             "and the full overscan frame to <o>.overscan.<ext>; on a coverage "
-             "failure only the overscan raw is kept and the exit status is "
-             "non-zero")
+        help="overscan margin per side around the whole aperture (default "
+             "0.75, the production geometry accepted in Test 58; "
+             "docs/holder-position-design.md). Applies to plain and "
+             "dual-light scans alike: the window uses the corrected mean "
+             "mapping, the aperture-registered image goes to -o (with --ir "
+             "also <stem>-ir.tiff, cropped to the same lines) and the full "
+             "overscan frame(s) to <o>.overscan.<ext> (and "
+             "<stem>-ir.overscan.tiff); on a coverage failure only the "
+             "overscan raw is kept and the exit status is non-zero")
     p_scan.add_argument("--no-diag", action="store_true",
         help="skip writing the <output>.diag.json calibration/timing sidecar")
     p_scan.add_argument("--warmup-budget", type=float, default=None, metavar="SECONDS",

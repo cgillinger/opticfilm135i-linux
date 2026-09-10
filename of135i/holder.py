@@ -346,3 +346,54 @@ def overscan_geometry(
         end_hwdpi=end_hwdpi,
     )
 
+
+
+def dual_overscan_geometry(
+    frame: int,
+    *,
+    dpi: int,
+    lines_per_chunk: int,
+    colour_crop_lines: int,
+    fiducial: FiducialModel | None = None,
+    overscan_mm: float = OVERSCAN_MM,
+    holder: Holder = DEFAULT,
+) -> tuple[OverscanGeometry, int]:
+    """A+C geometry for a dual-light profile: the same overscan_geometry,
+    expressed in VISIBLE lines, plus the wire register line count.
+
+    A dual scan interleaves one infrared and one visible line per
+    physical line position, so the transport advances (7200/dpi)/2
+    motor units per WIRE line and 7200/dpi per VISIBLE line -- the
+    visible array has the nominal line density (protocol-notes.md pass
+    18; verified against every module's DEFAULT_LINES <-> ~37 mm
+    window). The window arithmetic is therefore the plain one in
+    visible lines, with the chunk quantum halved: `lines_per_chunk`
+    (the module's WIRE lines per image chunk) is even in every profile
+    (98/48/16/16/8), so lines_per_chunk//2 visible lines per chunk is
+    exact and any chunk multiple keeps the wire count even -- the
+    IR/visible parity of the buffer is preserved by construction.
+
+    Returns (geometry, wire_lines): `geometry` is in visible lines
+    (delivered_lines is what align_channels leaves per channel);
+    `wire_lines` is the alternating-line count to program into the
+    24-bit line register and equals geometry.chunks * lines_per_chunk.
+    The same STRIP_FIDUCIAL maps every profile: it was measured on the
+    600 dpi dual profile (Test 56) and cross-validated on plain 3600
+    (Tests 57-59); positions are motor units, profile-independent.
+    """
+    if lines_per_chunk % 2:
+        raise ValueError(
+            f"lines_per_chunk {lines_per_chunk} is odd: a dual chunk must "
+            f"hold whole IR/visible line pairs")
+    if 7200 % dpi:
+        raise ValueError(f"dpi {dpi} does not divide the 7200 dpi motor base")
+    geom = overscan_geometry(
+        frame,
+        res_units_per_line=7200 // dpi,
+        chunk_lines=lines_per_chunk // 2,
+        colour_crop_lines=colour_crop_lines,
+        fiducial=fiducial,
+        overscan_mm=overscan_mm,
+        holder=holder,
+    )
+    return geom, geom.chunks * lines_per_chunk

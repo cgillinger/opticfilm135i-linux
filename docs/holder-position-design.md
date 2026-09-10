@@ -686,3 +686,81 @@ control strip and, later, the dual and SANE work.
 **Not N3, deliberately deferred** (Astra points 5/6/11/12/13): dual A+C,
 the six-frame B&W control strip, the SANE geometry migration, and the
 slide holder. Each waits for N3 to lock the plain-path contract first.
+
+## 11. Dual A+C: the same contract in visible lines (offline 2026-09-10)
+
+After Test 59/60 locked the plain contract, the dual-light profiles
+(600/1200/2400/7200 dpi and infrared 3600) adopt the same design. The
+one thing dual adds is the **alternating-line accounting** this
+document deferred in section 4:
+
+**The accounting.** A dual scan interleaves one infrared (even index)
+and one visible (odd index) line per physical line position; the
+visible array has the nominal line density (protocol-notes.md pass 18,
+verified numerically here against every module's DEFAULT_LINES ↔ ~37 mm
+window). So the transport advances (7200/dpi)/2 motor units per WIRE
+line and 7200/dpi per VISIBLE line — and the whole section-4 window
+arithmetic applies unchanged **in visible lines**, with the chunk
+quantum halved: every module's LINES_PER_CHUNK (98/48/16/16/8) is
+even, so LINES_PER_CHUNK/2 visible lines per chunk is exact, and any
+chunk multiple keeps the wire count even — the IR/visible parity of
+the buffer is preserved by construction, no KeepParity special case in
+the driver. The wire register (24-bit, lines_top/hi/lo) gets twice the
+visible count. Implemented as `holder.dual_overscan_geometry()`, a
+thin parameter mapping onto `overscan_geometry()` — one formula, not
+two.
+
+**Decisions taken (under the section-6/9 principles, listed for the
+owner):**
+
+1. **Same fiducial model for every profile.** STRIP_FIDUCIAL was
+   *measured on the 600 dpi dual profile* (Test 56) and
+   cross-validated on plain 3600 (Tests 57–59); positions are motor
+   units, profile-independent. No per-profile grid.
+2. **Overscan-by-default for dual too**, same 0.75 mm margin; the
+   CLI's plain-only refusal is removed and `--overscan` tunes both
+   paths. Ledger (all profiles × frames 1–6): leading exactly 0.75,
+   trailing ≥ 0.75 (600's coarse 49-visible-line quantum gives it
+   2.4–2.6 mm), every window end ≤ 66 088 against the 71 490 bound,
+   every wire count even and within 24 bits, wire ≈ +1–2 % of the
+   captured defaults.
+3. **Coverage is measured on the aligned visible frame; the IR channel
+   is cropped by the SAME line indices.** The two are on one pixel
+   grid after split + align_channels + the ir stagger trim, so equal
+   indices keep them exactly registered through the crop. Dust removal
+   runs before the crop, on that same grid.
+4. **Artefact model:** `out` = registered visible product; with --ir
+   also `<stem>-ir.tiff` = registered IR. Always preserved:
+   `<out>.overscan.<ext>` (full visible) and, with --ir,
+   `<stem>-ir.overscan.tiff` (full IR). Coverage failure = neither
+   product written, overscan files kept, exit non-zero — `scan` and
+   `digitize` alike.
+5. **Explicit `lines=` on the dual path stays as the documented
+   diagnostic/capture-replay path** on the historical FEEDL grid — it
+   is what the SANE wire-equality tests inject and what long
+   whole-strip sweeps use, and it is not reachable from the CLI. This
+   is the one place the old grid still drives hardware, deliberately
+   and labelled; plain has no such path (its lines= was unused and is
+   refused).
+6. **Nothing guessed:** the scan phases, chunk shapes, register
+   mechanisms (including the 24-bit line count and tables_ir's
+   cancelled tail descriptor) are the modules' captured programs
+   unchanged; only the injected FEEDL and line count differ, exactly
+   as on plain.
+
+**Tests** (tests/test_dual_overscan.py, in release_check): the full
+ledger; wiring (the default commands the geometry, lines= commands the
+grid); the CLI pair contract (registration + fail-closed);
+_validate_overscan over every profile. 231 offline tests green.
+
+**Hardware verification (pending the owner's go):** one run per
+profile, order 2400 → 600 → 1200 → IR 3600 → 7200 (the hook-8 order),
+frame 1, low debug level. Because a DPI change shifts the PARK end
+position (~7.5 mm; dpi-drift-analysis.md), each run is its own
+power-cycle + load. Pass per run: coverage verified with positive
+margins on the visible frame, full transfer (chunks × chunk length),
+POSITION within budget, PARK/eject normal; for IR 3600 additionally
+the registered IR product aligned with the visible one (work-image
+inspection). The colour path and the eye-acceptance rule are not
+reopened — these are geometry runs; a production-image milestone comes
+with the first real dual production scan.

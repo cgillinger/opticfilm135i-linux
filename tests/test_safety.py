@@ -1470,12 +1470,15 @@ def test_position_wait_is_strict_for_every_dpi_profile():
         polls = [op for op in t.POSITION.ops if op.kind == "poll" and op.wv == 0x018E]
         assert len(polls) == 1 and (polls[0].resp[0] & 0xF0) == 0xF0, (name, polls)
         f1 = t.feedl_for_frame(1)
+        # Both paths command the A+C geometry since the Test 58/60
+        # migration (plain in delivered lines, dual in visible lines).
+        from of135i import holder as _holder
+        from of135i import image as _image
         if ir:
-            f4 = t.feedl_for_frame(4)
+            f4 = _holder.dual_overscan_geometry(
+                4, dpi=int(name), lines_per_chunk=t.LINES_PER_CHUNK,
+                colour_crop_lines=_image.align_shift(int(name)))[0].feedl
         else:
-            # Plain 3600 commands the A+C geometry since Test 58.
-            from of135i import holder as _holder
-            from of135i import image as _image
             f4 = _holder.overscan_geometry(
                 4, res_units_per_line=7200 // 3600,
                 chunk_lines=t.IMAGE_CHUNK_LINES,

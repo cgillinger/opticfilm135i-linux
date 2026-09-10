@@ -4297,3 +4297,43 @@ timing all in the same band as Tests 58–59. As planned, nothing
 IR-related was tested (silver-halide film). Files in the private
 analysis area (`bw-20260910/`). Next per the migration order: dual
 A+C.
+
+## 2026-09-10 — Offline: dual A+C — the same production contract in visible lines (design doc section 11)
+
+The dual-light profiles (600/1200/2400/7200 dpi and infrared 3600)
+adopt the accepted A+C contract. The one addition is the
+alternating-line accounting deferred in section 4: one IR and one
+visible line per physical position, so the window arithmetic is the
+plain one in VISIBLE lines with the chunk quantum halved
+(LINES_PER_CHUNK/2, exact and parity-preserving since every profile's
+quantum is even), and the 24-bit wire register gets twice the visible
+count. `holder.dual_overscan_geometry()` is a parameter mapping onto
+the existing `overscan_geometry()` — one formula for both paths.
+
+Six decisions taken under the established principles (listed in
+section 11 for the owner): same STRIP_FIDUCIAL for every profile
+(measured on 600 dual, cross-validated on plain); overscan-by-default
+for dual with the same 0.75 mm margin; coverage on the aligned visible
+frame with the IR channel cropped by the same indices (exact
+registration, dust removal before the crop); the artefact model
+(registered visible + IR products only on verified coverage; full
+visible + IR overscan frames always preserved); explicit `lines=` kept
+as the labelled diagnostic/capture path on the historical grid (SANE
+wire tests, sweeps — not CLI-reachable); nothing guessed (captured
+phases and register mechanisms unchanged, only injected FEEDL and line
+count).
+
+Ledger over all profiles × frames 1–6: leading margin exactly 0.75 mm,
+trailing ≥ 0.75 (600's coarse quantum gives 2.4–2.6 mm), all window
+ends ≤ 66 088 against the 71 490 bound, all wire counts even and
+within 24 bits, ~+1–2 % over the captured defaults. `scan` and
+`digitize` both carry the dual contract, `_validate_overscan` checks
+the dual geometry pre-hardware, and tests/test_dual_overscan.py (7
+tests: ledger, wiring both ways, CLI registration + fail-closed,
+validation) joins release_check. **231 offline tests green.** SANE
+untouched (its dual tables migrate with the backend).
+
+Hardware verification pending the owner's go: one run per profile,
+order 2400 → 600 → 1200 → IR 3600 → 7200, frame 1, each from its own
+power-cycle + load (the DPI→DPI PARK shift), pass criteria in section
+11. Geometry runs, not production-image milestones.

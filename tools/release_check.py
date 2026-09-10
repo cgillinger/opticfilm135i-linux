@@ -19,7 +19,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 SUITES = ("test_safety", "test_calibrate", "test_hwblock", "test_park",
           "test_offline", "test_diag", "test_dpi", "test_ir", "test_sane_lock",
-          "test_sane_ops", "test_aperture_crop", "test_overscan")
+          "test_sane_ops", "test_aperture_crop", "test_overscan",
+          "test_dual_overscan")
 
 
 def run_suite(name: str) -> tuple[bool, int, str]:

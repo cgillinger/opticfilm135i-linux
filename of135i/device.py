@@ -1651,17 +1651,20 @@ class Scanner:
                 "scan() requires initialize() first (before every frame) in this session. "
                 f"{safety.NO_COMMANDS_SENT}", session=self.session.snapshot())
         if t is not None:
-            n_lines_check = lines if lines is not None else t.DEFAULT_LINES
-            if n_lines_check > 0xFFFFFF:
-                raise Of135iError(f"line count {n_lines_check} does not fit the 24-bit register")
-        if overscan_mm is not None and t is not None:
-            raise NotImplementedError(
-                "overscan is implemented for the plain 3600 dpi path only "
-                "(the profile whose window is otherwise shorter than the "
-                "aperture). The dual profiles already carry 0.5-0.75 mm of "
-                "margin per side; their overscan needs the alternating-line "
-                "delivered-count accounting and is a separate step. "
-                f"{safety.NO_COMMANDS_SENT}")
+            # Dual: the production default (lines=None, overscan_mm=None)
+            # is the same A+C geometry as plain, in visible lines
+            # (holder.dual_overscan_geometry). Explicit lines= remains
+            # the documented diagnostic/capture-replay path -- it keeps
+            # the historical FEEDL grid and is what the SANE
+            # wire-equality tests and long sweeps use; it is not the
+            # production path.
+            if lines is not None:
+                if overscan_mm is not None:
+                    raise ValueError("pass either lines= or overscan_mm=, not both")
+                if lines > 0xFFFFFF:
+                    raise Of135iError(f"line count {lines} does not fit the 24-bit register")
+            elif overscan_mm is None:
+                overscan_mm = holder.OVERSCAN_MM
         if t is None:
             # Plain 3600: the A+C overscan geometry IS the production
             # path (single runtime truth; docs/holder-position-design.md
@@ -1678,7 +1681,8 @@ class Scanner:
             if self._cal_capture is not None:
                 self._cal_capture.set_frame(frame)
             if t is not None:
-                return self._scan_dual(t, frame=frame, lines=lines)
+                return self._scan_dual(t, frame=frame, lines=lines,
+                                       overscan_mm=overscan_mm)
             return self._scan_plain(frame=frame, overscan_mm=overscan_mm)
 
     def _healthy_dark_b(self, dark_b):
@@ -1884,7 +1888,8 @@ class Scanner:
 
     # ----------------------------------------------------------- scan (IR)
 
-    def _scan_dual(self, t, frame: int = 1, lines: int | None = None) -> tuple[bytes, int, dict]:
+    def _scan_dual(self, t, frame: int = 1, lines: int | None = None,
+                   overscan_mm: float | None = None) -> tuple[bytes, int, dict]:
         """Dual-light (alternating IR/visible line) counterpart of scan(),
         driven by the phases of table module `t` -- tables_ir (3600 dpi,
         trace 04) or a tables_dpi<N> module (the 2026-09-02 captures);
@@ -2025,7 +2030,26 @@ class Scanner:
         # dpi between 2400 and 3600); re-loading the magazine resets
         # the carriage to the load-position reference. A proper homing
         # command would fix this, but requires hardware testing.
-        feedl = holder.check_feedl(t.feedl_for_frame(frame))
+        #
+        # Geometry: production (lines=None) = the A+C corrected mapping
+        # in visible lines (holder.dual_overscan_geometry); explicit
+        # lines= = the diagnostic/capture path on the historical grid.
+        geom = None
+        if lines is None:
+            geom, wire_lines = holder.dual_overscan_geometry(
+                frame,
+                dpi=dpi,
+                lines_per_chunk=t.LINES_PER_CHUNK,
+                colour_crop_lines=image_mod.align_shift(dpi),
+                overscan_mm=overscan_mm if overscan_mm is not None else holder.OVERSCAN_MM,
+            )
+            feedl = holder.check_feedl(geom.feedl)
+            log.info("dual overscan frame %d (%d dpi): FEEDL=%d chunks=%d "
+                     "wire_lines=%d margins lead=%.3f trail=%.3f mm",
+                     frame, dpi, feedl, geom.chunks, wire_lines,
+                     geom.leading_margin_mm, geom.trailing_margin_mm)
+        else:
+            feedl = holder.check_feedl(t.feedl_for_frame(frame))
         self._park_scale = position_timeout_scale(t, feedl)
         log.info("positioning to frame %d (FEEDL=%d, %d dpi dual)", frame, feedl, dpi)
         # Strict completion (class F, budget scaled with FEEDL): never
@@ -2041,9 +2065,9 @@ class Scanner:
         )
 
         # ---- scan: 3 slope tables, line count, execute, image data ------
-        if lines is None:
-            n_chunks = t.IMAGE_CHUNK_COUNT
-            n_lines = t.DEFAULT_LINES
+        if geom is not None:
+            n_chunks = geom.chunks
+            n_lines = wire_lines
         else:
             n_chunks = max(1, -(-lines // t.LINES_PER_CHUNK))
             n_lines = n_chunks * t.LINES_PER_CHUNK
@@ -2074,6 +2098,8 @@ class Scanner:
             "width": W,
             "raw_bytes": len(image),
             "chunk_count": n_chunks,
+            "overscan_mm": (overscan_mm if overscan_mm is not None
+                            else holder.OVERSCAN_MM) if geom is not None else None,
             "dark_a_mean": [float(x) for x in dark_a.astype(np.float64).mean(axis=0)],
             "dark_b_mean": [float(x) for x in dark_b.astype(np.float64).mean(axis=0)],
             "dark_b_substituted": dark_b_substituted,

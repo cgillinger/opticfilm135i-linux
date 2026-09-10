@@ -289,7 +289,8 @@ is documented as separately unverified, pending a physical slide.
   - Plain 3600 aperture coverage: HARDWARE VERIFIED (Test 58: 6/6 on real film)
   - Full 1–6 production-image workflow with real full-length film: ACCEPTED (Test 58/N3)
   - A+C as the plain-3600 default: HARDWARE VERIFIED (Test 59: the 1–6 empty-holder regression load, coverage 6/6, no regression)
-  - Dual robust A+C: NOT YET COMPLETE
+  - Dual robust A+C: IMPLEMENTED OFFLINE (same contract in visible lines,
+    design doc section 11; 231 tests) — one hardware run per profile PENDING
   - Slide holder: PENDING
 - **A6 note** (Test 44/46): the driver's eject stalled from a state only
   the backend's first `init()` produced; that `init()` now writes nothing.

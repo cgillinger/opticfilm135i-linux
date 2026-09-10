@@ -41,9 +41,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 
-from of135i import calibrate, image, tables_ir
+from of135i import calibrate, holder, image, tables_ir
 from of135i import device as _device
 from of135i.device import Scanner
+
+# The production dual geometry for frame 1 at 3600 dpi (the A+C default,
+# Test 58 contract): what Scanner.scan(frame=1, ir=True) now positions
+# to and how many chunks it reads.
+GEOM_IR_F1, WIRE_IR_F1 = holder.dual_overscan_geometry(
+    1, dpi=3600, lines_per_chunk=tables_ir.LINES_PER_CHUNK,
+    colour_crop_lines=image.align_shift(3600))
 
 REPO = Path(__file__).resolve().parents[1]
 IR_DIR = REPO / "cal-data" / "ir"
@@ -54,7 +61,7 @@ PHASE_ORDER_IR = [
     tables_ir.CAL_DARK_A, tables_ir.CAL_DARK_B, tables_ir.CAL_WHITE,
     tables_ir.CAL_GAIN_CHECK_A, tables_ir.CAL_GAIN_CHECK_B,
     tables_ir.CAL_SHADING_MEASURE, tables_ir.CAL_SHADING_UPLOAD, tables_ir.CAL_SHADING_VERIFY,
-    tables_ir.POSITION, tables_ir.SCAN, tables_ir.PARK,
+    tables_ir.POSITION, tables_ir.scan_phase(GEOM_IR_F1.chunks), tables_ir.PARK,
 ]
 
 # This trace's own captured gain codes (AFE regs 2/3/4), read directly
@@ -296,8 +303,8 @@ def _expected_stream():
     values computed from _build_cal_buffers()'s canned data -- mirrors
     tests/test_calibrate.py's _expected_stream()."""
     off_r, off_g, off_b = (0x010B, 0x010A, 0x010B)  # calibrate.offset_codes()'s constant
-    feedl = tables_ir.feedl_for_frame(1)
-    n_lines = tables_ir.DEFAULT_LINES
+    feedl = GEOM_IR_F1.feedl
+    n_lines = WIRE_IR_F1
 
     a_off = _captured_shading_offsets(tables_ir.CAL_SHADING_UPLOAD, "shading_table_a")
     b_off = _captured_shading_offsets(tables_ir.CAL_SHADING_UPLOAD, "shading_table_b")
@@ -354,7 +361,7 @@ def test_scan_sequence_matches_trace_ir():
 
     assert width == tables_ir.IMAGE_WIDTH == 5184
     assert meta == {"width": 5184, "alternating": True, "dpi": 3600}
-    assert len(raw) == tables_ir.IMAGE_CHUNK_COUNT * tables_ir.IMAGE_CHUNK_LEN
+    assert len(raw) == GEOM_IR_F1.chunks * tables_ir.IMAGE_CHUNK_LEN
 
     expected = _expected_stream()
     actual = b"".join(mock.writes)

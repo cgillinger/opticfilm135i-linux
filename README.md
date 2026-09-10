@@ -121,9 +121,11 @@ rough edges you should know about:
   coverage verified 6/6 and passed the human-eye acceptance (Test 58),
   and the default's own regression — one empty-holder load across
   frames 1–6 — passed with coverage 6/6 and no change in calibration
-  or timing (Test 59). The dual-light profiles keep their captured
-  windows until their own overscan step
-  (see [`docs/ROADMAP.md`](docs/ROADMAP.md) milestone C). **Mounted slides:** the scanner
+  or timing (Test 59). A six-frame black-and-white strip confirmed the
+  path on a second film stock (Test 60). The dual-light profiles carry
+  the same contract in visible-line units (implemented offline, one
+  hardware run per profile pending; see
+  [`docs/ROADMAP.md`](docs/ROADMAP.md) milestone C). **Mounted slides:** the scanner
   ships with a four-slide holder; the driver and the backend have not
   been tested with it (its frame pitch and load flow are uncaptured) — planned.
   **Panorama:** Plustek's optional panoramic holder (frames up to
@@ -255,17 +257,21 @@ the vendor application does it.
 .venv/bin/python -m of135i eject
 ```
 
-A **plain 3600 dpi** scan (no `--ir`, `--dpi 3600`) runs the
-aperture-registered production contract: the scanner reads a window
-covering the whole aperture plus a 0.75 mm margin per side
-(`--overscan MM` tunes it), both plastic edges are detected in the
-delivered image, and the product written to `-o` is cropped to them.
-The full uncropped window is always preserved beside it as
-`<o>.overscan.<ext>`, and the `.diag.json` sidecar records the
+Every scan runs the aperture-registered production contract: the
+scanner reads a window covering the whole aperture plus a 0.75 mm
+margin per side (`--overscan MM` tunes it), both plastic edges are
+detected in the delivered image, and the product written to `-o` is
+cropped to them. The full uncropped window is always preserved beside
+it as `<o>.overscan.<ext>`, and the `.diag.json` sidecar records the
 coverage verdict and margins. If coverage cannot be verified, **no
 product is written** for that frame — only the overscan raw and the
-sidecar — and the command exits non-zero. Dual-light scans (`--ir`,
-other resolutions) keep their captured fixed windows for now.
+sidecar — and the command exits non-zero. On dual-light scans (`--ir`,
+other resolutions) coverage is measured on the visible frame and the
+IR channel is cropped to the same lines, so the two stay exactly
+registered; `<stem>-ir.overscan.tiff` preserves the full IR frame.
+(The dual geometry is implemented and tested offline; its per-profile
+hardware verification is pending — plain 3600 is hardware-verified,
+Tests 57–60.)
 
 `--park semantic` on `scan` selects an experimental park phase (see
 docs/replay-analysis.md); it is off by default and not hardware-verified.
