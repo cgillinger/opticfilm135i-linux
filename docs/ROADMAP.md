@@ -142,14 +142,14 @@ Each is outside the promised function or has a verified safe handling:
   is not blocked.)
 - **Holders and frame positions:** A promises positions 1–4, the only
   ones verified frame for frame when A was frozen. The holder's six
-  apertures have since been measured (`docs/holder-geometry.md`) and the
-  driver reaches and scans 1–6; frames 5 and 6 are hardware-verified for
-  transport, scan and PARK (Test 55–57), though the corrected
-  positioning constants and the full production-image workflow are not
-  yet adopted as default (`docs/holder-position-design.md`); the
-  mounted-slide holder is uncharacterised; panorama is a vendor software
-  mode (one continuous scan, the holder encodes as the strip holder)
-  that needs its own capture. (Out of scope for A; milestone C.)
+  apertures have since been measured (`docs/holder-geometry.md`) and
+  frames 1–6 are fully supported: the corrected A+C positioning is the
+  production default, hardware-verified across all six frames and every
+  profile, and the six-frame production workflow is accepted
+  (Tests 55–61; `docs/holder-position-design.md`). The mounted-slide
+  holder is uncharacterised; panorama is a vendor software mode (one
+  continuous scan, the holder encodes as the strip holder) that needs
+  its own capture. (The 1–6 work was delivered under milestone C.)
 
 ---
 
