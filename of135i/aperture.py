@@ -40,7 +40,20 @@ LOCAL_SKIP = 2
 EDGE_GRADIENT = 0.25
 #: ... and the levels either side of the refined transition must really
 #: be a lit plateau and the plastic, not two parts of the same plateau.
+#: Measured against the transition's OWN plateaus (max(lo, hi) - floor),
+#: not against the local maximum: a narrow bright rebate strip next to a
+#: trailing edge put the local max at the rebate peak while the actual
+#: step was image-level to plastic, and the real edge was discarded
+#: (dual 3600, 2026-09-10 -- the 5184 px window's lateral plastic
+#: dilutes the row means, so the image level sits below half the rebate
+#: peak).
 EDGE_CONTRAST = 0.5
+#: An absolute lower bound on the same step, as a fraction of the
+#: profile's overall lit range (99th percentile minus floor). The
+#: plateau-relative rules above scale down with their own levels, so
+#: noise wiggles inside the plastic (span a few counts) would otherwise
+#: qualify.
+EDGE_MIN_STEP = 0.08
 #: One side of a holder edge is the opaque plastic, which reads at the
 #: scan's black level. Film in the aperture produces its own strong
 #: transitions -- a dark subject against a bright one -- and on the
@@ -134,6 +147,7 @@ def edges(profile, threshold=None):
         else:
             groups.append([int(i)])
 
+    global_range = max(float(np.percentile(prof, 99.0)) - floor, 1.0)
     out, levels = [], []
     for g in groups:
         i0, i1 = g[0], g[-1]
@@ -144,12 +158,16 @@ def edges(profile, threshold=None):
         if left.size == 0 or right.size == 0:
             continue
         lo_lvl, hi_lvl = float(np.median(left)), float(np.median(right))
-        local_lit = float(np.max(lit[max(0, i0 - 1):i1 + 2]))
-        if abs(hi_lvl - lo_lvl) < EDGE_CONTRAST * max(local_lit - floor, 1.0):
+        # The transition's own scale: its brighter plateau over the
+        # floor. See the EDGE_CONTRAST note for why the local maximum
+        # is the wrong scale next to a narrow rebate strip.
+        step_scale = max(max(lo_lvl, hi_lvl) - floor, 1.0)
+        if abs(hi_lvl - lo_lvl) < EDGE_CONTRAST * step_scale:
+            continue
+        if abs(hi_lvl - lo_lvl) < EDGE_MIN_STEP * global_range:
             continue
         # One side must be the plastic itself, not merely darker.
-        if min(lo_lvl, hi_lvl) > floor + PLASTIC_LEVEL * max(
-                local_lit - floor, 1.0):
+        if min(lo_lvl, hi_lvl) > floor + PLASTIC_LEVEL * step_scale:
             continue
         th = (lo_lvl + hi_lvl) / 2.0
         levels.append(th)
