@@ -205,8 +205,8 @@ frozen. C extends the holder support without reopening it.
    the plain-3600 **production default** — the single runtime
    geometry; the vendor grid remains as capture evidence and as the
    SANE tables' interim source. The default flip reopened frames 1–6
-   for the positioning requirement; one empty-holder regression load
-   re-verifies them (pending hardware).
+   for the positioning requirement; the one empty-holder regression
+   load re-verified them (Test 59, coverage 6/6).
 3. Each of the six scan windows contains its whole aperture with positive
    measured margin on both sides, on hardware, with the empty holder.
 4. Load-to-load variation is measured over three separate loads and is
@@ -221,6 +221,8 @@ frozen. C extends the holder support without reopening it.
 7. A full-length six-frame **black-and-white** negative does the same, as
    an independent physical control. (Silver black-and-white film is
    opaque to infrared and is not an infrared or dust-removal reference.)
+   ✅ done (Test 60: Kodak 5052 TMX, coverage 6/6, calibration and
+   timing identical to the colour strip's band).
 8. The CLI and the SANE backend both accept 1–6 and both refuse frame 0
    and frame 7+ before any write. ✅ done offline.
 9. Frames 1–4 show no regression. ✅ done (Test 59: the one-load 1–6
@@ -277,10 +279,11 @@ is documented as separately unverified, pending a physical slide.
   hardware-demonstrated on the plain 3600 dpi profile (Test 57) and
   production-accepted on a real six-frame colour negative (Test 58/N3:
   coverage verified 6/6, human-eye acceptance PASS). A+C is now the
-  plain-3600 production default and the single runtime geometry; the
-  default flip's own 1–6 empty-holder regression load is the remaining
-  hardware check. Still to come: the dual-profile overscan variant and
-  the black-and-white six-frame control strip.
+  plain-3600 production default and the single runtime geometry,
+  re-verified across frames 1–6 by the empty-holder regression load
+  (Test 59) and on a second film stock (Test 60); the dual profiles
+  carry the same contract, hardware-verified one run per profile
+  (Test 61).
 
   Status, conservatively:
   - Strip holder geometry 1–6: HARDWARE VERIFIED
@@ -289,9 +292,14 @@ is documented as separately unverified, pending a physical slide.
   - Plain 3600 aperture coverage: HARDWARE VERIFIED (Test 58: 6/6 on real film)
   - Full 1–6 production-image workflow with real full-length film: ACCEPTED (Test 58/N3)
   - A+C as the plain-3600 default: HARDWARE VERIFIED (Test 59: the 1–6 empty-holder regression load, coverage 6/6, no regression)
+  - B&W six-frame control strip: PASSED (Test 60)
   - Dual robust A+C: HARDWARE VERIFIED (Test 61: one run per profile,
     coverage verified 5/5, IR-to-visible registration 0.4/0.06 lines;
-    the dual engine start-anchors FEEDL — design doc section 11)
+    the dual engine start-anchors FEEDL — design doc section 11).
+    One caveat, per the verification-level rule: the 2400 run predates
+    the FEEDL re-anchoring (the two differ by 0.2 mm there and its
+    margins are in band under both); one 2400 frame-1 confirmation run
+    on the corrected anchoring removes the footnote — PENDING
   - Slide holder: PENDING
 - **A6 note** (Test 44/46): the driver's eject stalled from a state only
   the backend's first `init()` produced; that `init()` now writes nothing.

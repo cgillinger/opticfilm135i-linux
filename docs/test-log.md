@@ -4413,3 +4413,13 @@ fail-closed — is now the same verified contract on every profile the
 scanner has. A production-image milestone (the eye rule) comes with
 the first real dual production scan; not reopened here. Files in the
 private analysis area (`dual-20260910/`).
+
+**External review note on Test 61 (same day):** the reviewer accepts
+the engineering reasoning for letting the pre-re-anchoring 2400 run
+stand, but correctly holds it against the project's own
+verification-level rule — a changed command sequence is not
+hardware-verified until that sequence has run. Accepted: one 2400
+frame-1 confirmation run on the corrected anchoring (FEEDL 6543)
+closes it; ROADMAP carries the caveat until then. The reviewer also
+caught two stale ROADMAP lines (the Test 59 regression still marked
+pending, the B&W item unmarked) — fixed.
