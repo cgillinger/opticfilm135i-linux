@@ -553,3 +553,121 @@ overscan path does not disturb it.
 
 **Decided here: nothing.** FEEDL_PITCH stays 10760 and the base stays
 until the owner runs the A/B and adopts them.
+
+### 8a. A/B result — Test 57 (2026-09-10): passed
+
+Run on the empty strip holder, A on its own load and B (`--overscan
+0.75`, frames 1 and 6) on a fresh load, both ejected. Full detail in
+docs/test-log.md, Test 57.
+
+- **The engine completes the longer window.** Both B frames transferred
+  in full (233 and 232 chunks, raw_bytes = chunks × 519156 exactly). The
+  constant-8-line-drain assumption holds for a longer scan; item 1 did
+  not trigger.
+- **The corrected FEEDL lands the aperture,** consistent with N2:
+  trailing edge B-f1 11634 (N2 mean 11678), B-f6 65279 (N2 mean 65342),
+  both inside the load variation.
+- **Coverage verified on B, not on A.** B-f1 margins 0.53 / 0.92 mm,
+  B-f6 0.50 / 1.08 mm — leading positive through this load's ~0.2 mm
+  offset. A-f1 (default window) could not be verified: only one edge is
+  in the window. This is the direct demonstration that plain 3600 needs
+  overscan.
+- Eject from post-PARK on both loads; sounds normal.
+
+**One fault, fixed host-side, no motor:** the coverage detector is tuned
+on the 600 dpi sweep and missed the ~10-line-wide 3600 dpi edge;
+`measure_coverage` now bins to ~600 dpi before detecting. Verified
+offline against the saved images. So A+C is hardware-demonstrated on
+plain 3600.
+
+## 9. Migration to one authoritative geometry
+
+Today two positioning models coexist, on purpose:
+
+- **Legacy** `FEEDL_FRAME1` / `FEEDL_PITCH` (6746 / 10760) — the default
+  the table modules command, hardware-verified for frames 1–4 since
+  Tests 17–28.
+- **Corrected** `holder.STRIP_FIDUCIAL` (base 11678.3, pitch 10732.7) —
+  the measured mean mapping, consumed only on the overscan path.
+
+That split was the right safety choice before Test 57: it kept the
+verified frames untouched while the new geometry was unproven. It must
+not become permanent — two competing truths for "where does frame *n*
+land" is a maintenance trap. The migration to a single authority:
+
+1. **Now (done):** overscan path uses the corrected model + coverage;
+   default path unchanged. `10752` (vendor grid) and `10760` (old
+   default) are documented as historical evidence (this doc, §3/§5;
+   holder-geometry.md).
+2. **After N3 eye-acceptance (§10):** make the corrected model the
+   production default for the plain path — either overscan-by-default
+   for plain 3600, or the plain default FEEDL derived from
+   `STRIP_FIDUCIAL`. This is the point at which the plain path stops
+   using 6746/10760 at runtime.
+3. **Re-verification triggered by step 2** (Astra point 8): the change
+   reopens frames 2–4 *for the positioning requirement only* — right
+   frame, POSITION completes on class F, aperture coverage, PARK, whole
+   image area. It does **not** reopen calibration, USB, safety or image
+   processing, which the geometry change does not touch. One empty-
+   holder load re-verifies all six (the variation is characterised).
+4. **Single authority:** once adopted, runtime derives every plain FEEDL
+   from `STRIP_FIDUCIAL` + overscan geometry; `FEEDL_FRAME1`/`FEEDL_PITCH`
+   remain in the docs as history, not as a second runtime source.
+5. **SANE follows (separately):** once the CLI/driver model is fixed and
+   N3-accepted, the same authoritative geometry, the same scan-end
+   transport bound, and the same coverage principle (where the backend
+   architecture allows) move into `sane/` — so the change is made once,
+   not twice. Not before the driver model is final.
+
+The dual profiles adopt the same corrected mapping when their own A+C is
+implemented and verified (a separate step, after N3).
+
+## 10. N3 — the six-frame colour negative (the production milestone)
+
+N3 is the first real production test of the whole 1–6 solution and the
+`scan` crop/fail-closed contract, on a real full-length colour negative.
+It is a **production-image milestone**: the finished image goes to the
+owner's eye under the ROADMAP human-eyes rule; the automated coverage
+measurement is strong evidence but does not replace visual acceptance.
+
+**Precondition:** the offline work of §7/§9 done and green; the corrected
+model still behind `--overscan` (N3 is run with the flag, not by flipping
+the default — the default flip is step 9.2, *after* N3 passes).
+
+**Command** (real terminal, empty→loaded with the six-frame colour
+negative in the strip holder, one load):
+
+    .venv/bin/python -m of135i status            # expect 0x01 = 0x22
+    .venv/bin/python -m of135i load              # prompts; expect f455/dc55
+    .venv/bin/python -m of135i scan --frames 1-6 --dpi 3600 --overscan 0.75 \
+        --eject -o <review>/n3-YYYYMMDD/f.tiff
+
+Each frame writes `f-fN.tiff` (aperture-registered product) and
+`f-fN.overscan.tiff` (full overscan frame), plus `f-fN.diag.json` with
+the coverage verdict. A coverage failure on any frame leaves that frame's
+product unwritten and makes the command exit non-zero.
+
+**Per frame, N3 checks** (measured, then eye):
+- POSITION completes on class F; the right physical negative frame is
+  scanned; whole image area present; both aperture edges identifiable;
+  coverage verified; the crop holds the whole frame; no neighbour frame
+  bleeds into the crop; no unexpected plastic left in the product;
+  channel alignment correct; colour looks normal; PARK normal; frame 6
+  works at full travel.
+
+**Stop conditions.** Any scraping. A non-zero exit / coverage failure on
+a frame — inspect the `.overscan` raw and the `.diag.json` before
+continuing; do not treat a missing product as a scan that merely needs a
+retry. Deviation handling as N1/N2 (power cycle → `load --double-jog` →
+`eject`).
+
+**Acceptance.** The per-frame products land in
+`~/Bilder/opticfilm-granskning/`; Christian judges them against the
+production checklist (colour planes aligned, whole frame including both
+ends, no banding, comparable to a vendor scan of the same strip). Only
+then does step 9.2 (adopt the default) proceed, followed by the B&W
+control strip and, later, the dual and SANE work.
+
+**Not N3, deliberately deferred** (Astra points 5/6/11/12/13): dual A+C,
+the six-frame B&W control strip, the SANE geometry migration, and the
+slide holder. Each waits for N3 to lock the plain-path contract first.

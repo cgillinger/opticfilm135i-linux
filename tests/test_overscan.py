@@ -302,6 +302,74 @@ def test_wiring_overscan_path_uses_geometry():
     assert diag["feedl"] == g.feedl
 
 
+# --------------------------------------------------------------------------
+# CLI production flow: crop artefact + fail-closed on coverage failure
+# --------------------------------------------------------------------------
+
+def _fake_scan_args(out, overscan=0.75):
+    import types
+    return types.SimpleNamespace(
+        dpi=3600, overscan=overscan, positive=False, rotate=0,
+        no_clean=False, ir=False, output=out, frames=None)
+
+
+def _synthetic_raw(n_chunks, aperture, plastic_both=True):
+    """Image bytes for `n_chunks` plain-3600 chunks (n_chunks*23 lines),
+    a bright aperture over the given (start,end) delivered-ish line span
+    with dark plastic outside it. `plastic_both=False` runs the aperture
+    off the leading end (one edge only)."""
+    lines = n_chunks * 23
+    W = 3762
+    col = np.full(lines, 800, dtype=np.uint16)
+    a, b = aperture
+    col[max(0, a):b] = 40000
+    if not plastic_both:
+        col[:b] = 40000  # aperture runs off the leading end
+    img = np.repeat(col[:, None], W, axis=1)
+    arr = np.repeat(img[:, :, None], 3, axis=2).astype("<u2")
+    return arr.tobytes()
+
+
+def test_cli_overscan_verified_writes_crop_and_raw():
+    import tempfile, os
+    from of135i import cli
+    n = 190  # 4370 lines -> ~30 mm delivered, aperture ~27 mm (> MIN 25)
+    raw = _synthetic_raw(n, (300, 4100))
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "f1.pnm")
+        cov = cli._finish_plain_scan(_fake_scan_args(out), raw, 3762, out)
+        assert cov is not None and cov.verified, cov.reason if cov else None
+        assert os.path.exists(out), "aperture-registered product not written"
+        assert os.path.exists(cli._overscan_raw_path(out)), "overscan raw not preserved"
+        # the crop is shorter than the full overscan frame
+        crop_sz = os.path.getsize(out)
+        full_sz = os.path.getsize(cli._overscan_raw_path(out))
+        assert crop_sz < full_sz, (crop_sz, full_sz)
+
+
+def test_cli_overscan_failure_writes_no_product():
+    import tempfile, os
+    from of135i import cli
+    n = 190
+    raw = _synthetic_raw(n, (0, 4100), plastic_both=False)  # leading edge missing
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "f1.pnm")
+        cov = cli._finish_plain_scan(_fake_scan_args(out), raw, 3762, out)
+        assert cov is not None and not cov.verified, "should not verify a clipped frame"
+        assert not os.path.exists(out), "no aperture-registered product may exist after a coverage failure"
+        assert os.path.exists(cli._overscan_raw_path(out)), "the full overscan raw must still be kept"
+
+
+def test_cli_validate_overscan_rejects_bad_values():
+    from of135i import cli
+    assert cli._validate_overscan(-1.0, [1]) is not None
+    assert cli._validate_overscan(0.0, [1]) is not None
+    assert cli._validate_overscan(float("nan"), [1]) is not None
+    assert cli._validate_overscan(float("inf"), [1]) is not None
+    assert cli._validate_overscan(999.0, [1]) is not None
+    assert cli._validate_overscan(0.75, [1, 2, 3, 4, 5, 6]) is None
+
+
 def main():
     tests = [
         test_overscan_covers_both_sides_after_rounding_and_crop,
@@ -317,6 +385,9 @@ def main():
         test_coverage_verifies_and_crops_across_load_shifts,
         test_wiring_default_path_uses_grid_feedl_and_captured_window,
         test_wiring_overscan_path_uses_geometry,
+        test_cli_overscan_verified_writes_crop_and_raw,
+        test_cli_overscan_failure_writes_no_product,
+        test_cli_validate_overscan_rejects_bad_values,
     ]
     for t in tests:
         t()

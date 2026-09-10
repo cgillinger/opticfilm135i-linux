@@ -33,11 +33,45 @@ from typing import Callable
 
 import usb.core
 
-from . import diag, holder, image, safety
+from . import diag, holder, image, safety, tables
 from .device import SUPPORTED_DPIS, Scanner
 from .usbio import InterruptOverflowError, Of135iError, UsbIo
 
 log = logging.getLogger("of135i")
+
+#: Sanity ceiling on --overscan (mm). The real per-frame bound is the
+#: transport ceiling, checked by holder.overscan_geometry frame by frame;
+#: this only rejects absurd input early.
+_MAX_OVERSCAN_MM = 5.0
+
+
+def _validate_overscan(overscan: float, frames) -> str | None:
+    """Check a --overscan value and its whole resulting geometry BEFORE any
+    hardware write. Returns an error message, or None if every frame's
+    window (FEEDL, scan start/end, line and chunk count) is inside the
+    proven transport travel. A bad argument is thus caught before the
+    device is even opened, not after calibration."""
+    import math
+    if not math.isfinite(overscan):
+        return f"--overscan must be a finite number, got {overscan}"
+    if overscan <= 0:
+        return f"--overscan must be greater than 0 mm, got {overscan}"
+    if overscan > _MAX_OVERSCAN_MM:
+        return (f"--overscan {overscan} mm exceeds the {_MAX_OVERSCAN_MM} mm "
+                f"sanity limit")
+    for frame in frames:
+        try:
+            holder.overscan_geometry(
+                frame,
+                res_units_per_line=7200 // 3600,
+                chunk_lines=tables.IMAGE_CHUNK_LINES,
+                colour_crop_lines=image.align_shift(3600),
+                overscan_mm=overscan,
+            )
+        except (safety.FrameOutOfRangeError, safety.FeedlOutOfRangeError) as e:
+            return (f"--overscan {overscan} mm is out of range for frame "
+                    f"{frame}: {e}")
+    return None
 
 _STATUS_REGS = (0x01, 0x31, 0x32, 0x35)
 _BUTTON_NAMES = {0x48: "eject", 0x04: "sensor"}
@@ -194,8 +228,10 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     dual = args.ir or args.dpi != 3600
     if getattr(args, "overscan", None) is not None and dual:
         print("error: --overscan is implemented for plain 3600 dpi only "
-              "(no --ir, --dpi 3600); the dual profiles already carry margin",
-              file=sys.stderr)
+              "(no --ir, --dpi 3600). The dual windows are wider than plain "
+              "3600, but robust aperture coverage under the measured load-to-"
+              "load variation has not yet been implemented or verified for "
+              "them under the new positioning model", file=sys.stderr)
         return 2
     if (args.frame is None) == (args.frames is None):
         print("error: give exactly one of --frame or --frames", file=sys.stderr)
@@ -213,6 +249,14 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             print(f"error: {e}", file=sys.stderr)
             return 2
     multi = args.frames is not None
+
+    # Validate --overscan and its whole geometry before opening the device,
+    # so a bad value is refused with zero hardware activity (Astra point 3).
+    if getattr(args, "overscan", None) is not None:
+        err = _validate_overscan(args.overscan, frames)
+        if err is not None:
+            print(f"error: {err}", file=sys.stderr)
+            return 2
 
     # One device session for the whole batch, initialize() per frame:
     # the post-scan PARK phase turns the lamp off and tears the scan
@@ -235,57 +279,115 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             print("error: no magazine detected — insert the cassette "
                   "and run load_magazine.py first", file=sys.stderr)
             return 1
+        incomplete: list[int] = []
         for frame in frames:
             scanner.initialize(ir=dual, dpi=args.dpi)
             out = _frame_output(args.output, frame) if multi else args.output
             log.info("scanning frame %d @ %d dpi%s", frame, args.dpi,
                       " (dual-light pass)" if dual else "")
+            cov = None
             if dual:
                 raw, width, _meta = scanner.scan(frame=frame, ir=True, dpi=args.dpi)
                 _finish_dual_scan(args, raw, width, out, write_ir=args.ir)
             else:
                 raw, width = scanner.scan(
                     frame=frame, overscan_mm=getattr(args, "overscan", None))
-                _finish_plain_scan(args, raw, width, out)
+                cov = _finish_plain_scan(args, raw, width, out)
             del raw
-            _write_diag_sidecar(args, scanner, out, frame)
+            if cov is not None and not cov.verified:
+                incomplete.append(frame)
+            _write_diag_sidecar(args, scanner, out, frame, coverage=cov)
         if args.eject:
             scanner.eject()
             print("ejected")
+        if incomplete:
+            # Fail closed on image integrity: a coverage failure is not a
+            # normal complete scan. The full overscan raw is preserved, but
+            # no aperture-registered product was written and the exit status
+            # says so (Astra point 2).
+            print(f"error: aperture coverage NOT verified for frame(s) "
+                  f"{', '.join(map(str, incomplete))} — see the .diag.json "
+                  f"and the .overscan raw file(s); no registered product was "
+                  f"written for them", file=sys.stderr)
+            return 4
         return 0
 
     return _run_writing_session(body)
 
 
-def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
-                       out: str) -> None:
-    arr = image.assemble(raw, width)
-    arr = image.align_channels(arr, dpi=args.dpi)
-    if getattr(args, "overscan", None) is not None:
-        # Per-scan coverage check on the delivered (colour-cropped) image,
-        # before any orientation transform (the strip runs along axis 0
-        # here). docs/holder-position-design.md section 5.
-        from . import aperture_crop
-        cov = aperture_crop.measure_coverage(arr, dpi=args.dpi)
-        if cov.verified:
-            print(f"aperture coverage: VERIFIED — margins lead "
-                  f"{cov.leading_margin_mm:.3f} mm, trail "
-                  f"{cov.trailing_margin_mm:.3f} mm (whole aperture captured)")
-        else:
-            print(f"aperture coverage: NOT verified — {cov.reason}. "
-                  f"The raw overscan image is written as-is; do not treat it "
-                  f"as a guaranteed-complete frame.", file=sys.stderr)
+def _orient_plain(args: argparse.Namespace, arr):
+    """The plain-scan orientation transform: the vendor mirror + rotate for
+    --positive (then the density inversion), and --rotate. Applied to a
+    delivered image whose strip runs along axis 0."""
+    import numpy as _np
     if args.positive:
         # Match the vendor apps' orientation: the sensor image is
         # mirrored (vendor ini HorizontalMirror=1) and rotated.
-        import numpy as _np
         arr = _np.ascontiguousarray(_np.rot90(arr, 3)[:, ::-1])
         arr = image.to_positive(arr)
     if args.rotate:
-        import numpy as _np
         arr = _np.ascontiguousarray(_np.rot90(arr, k=args.rotate // 90))
-    _write_image(arr, out, positive=args.positive, dpi=args.dpi)
-    print(f"wrote {out} ({arr.shape[1]}x{arr.shape[0]}, 16-bit RGB)")
+    return arr
+
+
+def _overscan_raw_path(out: str) -> str:
+    """The filename for the preserved full overscan frame beside `out`."""
+    p = Path(out)
+    return str(p.with_name(f"{p.stem}.overscan{p.suffix}"))
+
+
+def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
+                       out: str):
+    """Write a plain scan's output.
+
+    Without --overscan: `out` is the channel-aligned delivered image, as
+    before. Returns None.
+
+    With --overscan there are three distinct artefacts, never conflated:
+      1. the raw scanner buffer (`raw`, not written here);
+      2. the channel-aligned full overscan frame -> `<out>.overscan.<ext>`,
+         always written (the raw-data principle);
+      3. the aperture-registered production image -> `out`, cropped to the
+         plastic edges detected in THIS scan -- written only when coverage
+         verifies. On a coverage failure `out` is deliberately NOT written,
+         so nothing that looks like a finished scan exists for an
+         unverified frame (fail closed on image integrity).
+    Returns the ApertureCoverage in the overscan case.
+    """
+    arr = image.assemble(raw, width)
+    arr = image.align_channels(arr, dpi=args.dpi)
+    if getattr(args, "overscan", None) is None:
+        arr = _orient_plain(args, arr)
+        _write_image(arr, out, positive=args.positive, dpi=args.dpi)
+        print(f"wrote {out} ({arr.shape[1]}x{arr.shape[0]}, 16-bit RGB)")
+        return None
+
+    # Coverage on the delivered (colour-cropped) image, before orientation
+    # (the strip runs along axis 0 here). docs/holder-position-design.md
+    # section 5.
+    from . import aperture_crop
+    cov = aperture_crop.measure_coverage(arr, dpi=args.dpi)
+
+    # (2) preserve the full overscan frame regardless of the verdict.
+    raw_out = _overscan_raw_path(out)
+    full = _orient_plain(args, arr)
+    _write_image(full, raw_out, positive=args.positive, dpi=args.dpi)
+    print(f"wrote {raw_out} ({full.shape[1]}x{full.shape[0]}, full overscan frame)")
+    del full
+
+    if cov.verified:
+        # (3) the aperture-registered product, cropped to the detected edges.
+        crop = aperture_crop.crop_to_aperture(arr, cov, dpi=args.dpi)
+        crop = _orient_plain(args, crop)
+        _write_image(crop, out, positive=args.positive, dpi=args.dpi)
+        print(f"aperture coverage: VERIFIED — margins lead "
+              f"{cov.leading_margin_mm:.3f} mm, trail {cov.trailing_margin_mm:.3f} mm")
+        print(f"wrote {out} ({crop.shape[1]}x{crop.shape[0]}, aperture-registered)")
+    else:
+        print(f"aperture coverage: NOT verified — {cov.reason}. Kept the full "
+              f"overscan at {raw_out}; no aperture-registered product written "
+              f"for this frame.", file=sys.stderr)
+    return cov
 
 
 def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
@@ -354,15 +456,30 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
         print(f"wrote {ir_out} ({ir.shape[1]}x{ir.shape[0]}, 16-bit, IR channel)")
 
 
-def _write_diag_sidecar(args: argparse.Namespace, scanner: Scanner, out: str, frame: int) -> None:
+def _write_diag_sidecar(args: argparse.Namespace, scanner: Scanner, out: str,
+                        frame: int, coverage=None) -> None:
     """Write <out>'s .diag.json sidecar from scanner.last_diag (see
     diag.py/device.py) unless --no-diag was given, and log a one-line
-    INFO summary of the per-frame calibration/health counters."""
+    INFO summary of the per-frame calibration/health counters.
+
+    When `coverage` is given (the overscan path), the sidecar records
+    whether the aperture was fully captured and, if not, why -- so an
+    automated workflow can tell a verified frame from an incomplete one
+    without re-reading the image (Astra point 2)."""
     if args.no_diag or scanner.last_diag is None:
         return
     d = scanner.last_diag
     sidecar = dict(d)
     sidecar["output"] = out
+    if coverage is not None:
+        sidecar["coverage"] = {
+            "verified": coverage.verified,
+            "reason": coverage.reason,
+            "leading_line": coverage.leading_line,
+            "trailing_line": coverage.trailing_line,
+            "leading_margin_mm": coverage.leading_margin_mm,
+            "trailing_margin_mm": coverage.trailing_margin_mm,
+        }
     sidecar["cli"] = {
         "frame": frame,
         "frames": args.frames,
@@ -371,6 +488,7 @@ def _write_diag_sidecar(args: argparse.Namespace, scanner: Scanner, out: str, fr
         "positive": args.positive,
         "rotate": args.rotate,
         "no_clean": args.no_clean,
+        "overscan": getattr(args, "overscan", None),
     }
     path = diag.sidecar_path(out)
     diag.write_sidecar(path, sidecar)
@@ -738,8 +856,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--overscan", type=float, default=None, metavar="MM",
         help="plain 3600 dpi only: scan a longer window that covers the whole "
              "aperture plus this margin per side (docs/holder-position-design.md), "
-             "using the corrected mean mapping; reports per-scan aperture coverage. "
-             "Typical: 0.75. HARDWARE-UNVERIFIED (its A/B is section 8)")
+             "using the corrected mean mapping. Writes the aperture-registered "
+             "image to -o and the full overscan frame to <o>.overscan.<ext>; on a "
+             "coverage failure only the overscan raw is kept and the exit status "
+             "is non-zero. Typical: 0.75. Hardware-demonstrated on frames 1 and 6 "
+             "(Test 57); not yet the production default")
     p_scan.add_argument("--no-diag", action="store_true",
         help="skip writing the <output>.diag.json calibration/timing sidecar")
     p_scan.add_argument("--warmup-budget", type=float, default=None, metavar="SECONDS",

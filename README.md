@@ -104,15 +104,24 @@ rough edges you should know about:
   transport states (e.g. after the older `--full` load flow) stalled
   the mechanism with the magazine stuck part-way; recovery was a power
   cycle plus an initialization with the vendor software.
-- **Film strip holder: frames 1–4 verified, 5–6 measured but not yet
-  run.** The driver knows one geometry: frames at a fixed pitch, each
-  36.2 mm long (5137 lines at 3600 dpi). Positions 1–4 are verified
-  frame for frame against the vendor's output of the same strip.
-  The holder's six apertures have now been measured — length,
-  crossbars and pitch, from the vendor's own whole-holder pass, where
-  positions 5 and 6 were empty ([`docs/holder-geometry.md`](docs/holder-geometry.md)) —
-  and the driver accepts frames 1–6, but 5 and 6 have not yet been
-  scanned on hardware by this driver. **Mounted slides:** the scanner
+- **Film strip holder: all six frames hardware-verified for transport,
+  scan and PARK; frames 1–4 also verified frame for frame against the
+  vendor's output.** The driver knows one geometry: frames at a fixed
+  pitch, each 36.2 mm long (5137 lines at 3600 dpi) by default.
+  Positions 1–4 are verified frame for frame against the vendor's
+  output of the same strip. The holder's six apertures have been
+  measured — length, crossbars and pitch, from the vendor's own
+  whole-holder pass ([`docs/holder-geometry.md`](docs/holder-geometry.md))
+  — and the driver reaches and scans all six positions on hardware,
+  across three separate loads (`docs/test-log.md` Test 55–57):
+  positioning, calibration, the scan pass and PARK all complete on
+  frames 5 and 6 no differently from 1–4. That testing also found the
+  default scan window sits slightly late on the aperture and the
+  transport varies somewhat between loads; a corrected-positioning-plus-
+  overscan fix is hardware-demonstrated on the plain 3600 dpi profile
+  (Test 57) but is not yet the default, and the full six-frame
+  production-image workflow on real film is not yet accepted (see
+  [`docs/ROADMAP.md`](docs/ROADMAP.md) milestone C). **Mounted slides:** the scanner
   ships with a four-slide holder; the driver and the backend have not
   been tested with it (its frame pitch and load flow are uncaptured) — planned.
   **Panorama:** Plustek's optional panoramic holder (frames up to

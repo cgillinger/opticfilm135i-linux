@@ -143,7 +143,10 @@ Each is outside the promised function or has a verified safe handling:
 - **Holders and frame positions:** A promises positions 1–4, the only
   ones verified frame for frame when A was frozen. The holder's six
   apertures have since been measured (`docs/holder-geometry.md`) and the
-  driver accepts 1–6, but 5 and 6 are not hardware-verified; the
+  driver reaches and scans 1–6; frames 5 and 6 are hardware-verified for
+  transport, scan and PARK (Test 55–57), though the corrected
+  positioning constants and the full production-image workflow are not
+  yet adopted as default (`docs/holder-position-design.md`); the
   mounted-slide holder is uncharacterised; panorama is a vendor software
   mode (one continuous scan, the holder encodes as the strip holder)
   that needs its own capture. (Out of scope for A; milestone C.)
@@ -190,9 +193,16 @@ frozen. C extends the holder support without reopening it.
    ✅ done offline (`docs/holder-geometry.md`): six apertures, 35.80–36.12
    mm long, crossbars 1.90–2.00 mm, constant pitch, measured from the
    vendor's whole-holder pass with positions 5 and 6 empty.
-2. The pitch is settled by evidence rather than by the older nominal
-   reading. Seven observed vendor grid steps say 10752; the driver still
-   carries 10760, a 0.14 mm difference at frame 6. **Open decision.**
+2. The pitch is settled by evidence, not by either older nominal
+   reading. **Resolved (Test 56/N2):** neither the vendor's commanded
+   grid (10752) nor the driver's constant (10760) describes the
+   measured end-to-end mapping (~10733, from three empty-holder loads
+   plus N1); the decision taken is **A+C — a corrected mean mapping
+   plus overscan with a host-side aperture-registered crop**
+   (`docs/holder-position-design.md`), hardware-demonstrated on the
+   plain 3600 dpi profile (Test 57). Adopting the corrected constants
+   as the default is the remaining step (it reopens frames 2–4's
+   verification).
 3. Each of the six scan windows contains its whole aperture with positive
    measured margin on both sides, on hardware, with the empty holder.
 4. Load-to-load variation is measured over three separate loads and is
@@ -220,7 +230,7 @@ is documented as separately unverified, pending a physical slide.
 
 ---
 
-## Current status (2026-09-07)
+## Current status (2026-09-10)
 
 - **M1 — protocol** ✅ and **M2 — driver drives the hardware** ✅.
 - **M3 — robustness:** ✅ **complete.** Every row of the A-matrix is met;
@@ -246,6 +256,28 @@ is documented as separately unverified, pending a physical slide.
   are implemented offline and wire-equal to the driver; their hardware
   runs and eye checks are next. Still to do for B1 after that: install/
   packaging (docs/sane-port.md). **B2** not started.
+- **C — full-length holder, in progress:** the strip holder's six
+  apertures are measured and the driver reaches and scans all six
+  positions on hardware — transport, scan and PARK verified across
+  three separate empty-holder loads plus one with film (Test 55–57).
+  That testing found neither nominal pitch candidate (10752 or 10760)
+  matches the measured end-to-end mapping (~10733) and that the
+  transport varies somewhat load to load; the decision taken is a
+  corrected mean mapping plus overscan with a host-side
+  aperture-registered crop (A+C, `docs/holder-position-design.md`),
+  hardware-demonstrated on the plain 3600 dpi profile (Test 57). Not
+  yet done: adopting the corrected constants as the default (reopens
+  frames 2–4's verification), the dual-profile overscan variant, and
+  the full six-frame production-image workflow on real film (N3).
+
+  Status, conservatively:
+  - Strip holder geometry 1–6: HARDWARE VERIFIED
+  - Frames 5–6 transport / scan / PARK: HARDWARE VERIFIED
+  - Plain 3600 corrected positioning + overscan: HARDWARE DEMONSTRATED (Test 57)
+  - Plain 3600 aperture coverage (frames 1 and 6): HARDWARE VERIFIED
+  - Full 1–6 production-image workflow with real full-length film: NOT YET ACCEPTED — N3 pending
+  - Dual robust A+C: NOT YET COMPLETE
+  - Slide holder: PENDING
 - **A6 note** (Test 44/46): the driver's eject stalled from a state only
   the backend's first `init()` produced; that `init()` now writes nothing.
   No CLI workflow was ever affected. The stall mechanism itself is an
