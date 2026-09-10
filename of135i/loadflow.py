@@ -45,6 +45,24 @@ REINSERT_PROMPT = (
     "stop (Ctrl-C aborts; a power cycle is then required): "
 )
 
+#: What the operator sees when the load feed does not engage -- by far
+#: most often because the magazine was not taken out and reinserted to
+#: the stop at the prompt (Tests 48/49: 2/2 the same benign signature).
+#: The session is still failed and a power cycle is still required (the
+#: safety model is unchanged); only the explanation is human.
+FEED_NOT_ENGAGED_MSG = """
+The load feed did not engage. This is almost always because the magazine
+was not taken fully out and reinserted to the mechanical stop when the
+prompt asked for it -- the scanner is fine and nothing is stuck.
+
+To try again:
+  1. Power the scanner OFF, wait until its light is out, then ON again.
+  2. Run `of135i load` and, at the prompt, take the magazine FULLY OUT,
+     push it back in to the stop, and THEN press Enter.
+
+If you did reinsert it correctly and still see this, the feed genuinely
+failed to grab; the same power cycle resets that safely too."""
+
 
 def run(ask=input, release_only: bool = False, double_jog: bool = False) -> int:
     """Run the vendor's magazine insert flow end to end; returns the
@@ -97,7 +115,20 @@ def run(ask=input, release_only: bool = False, double_jog: bool = False) -> int:
                 print(f"interrupt events after the second reinsert: {scanner.io.drain_events()}")
                 print(f"reg 0x32 before/after the second reinsert: {reg32_before:#04x} / {reg32_after:#04x}")
             print("running the vendor load sequence...")
-            scanner.load_magazine()      # raises LoadIncompleteError -> exit 1 below
+            try:
+                scanner.load_magazine()  # raises LoadIncompleteError/StrictPollTimeoutError
+            except SafetyError as e:
+                # The one failure an operator commonly causes themselves:
+                # translate it, keep the technical cause to one short
+                # line, and skip the raw session dump that reads like a
+                # crash. The session is failed exactly as before.
+                print(FEED_NOT_ENGAGED_MSG, file=sys.stderr)
+                cause = str(e).split(". ")[0]
+                if len(cause) > 120:
+                    cause = cause[:117] + "..."
+                print(f"\n(technical cause: {type(e).__name__}: {cause})",
+                      file=sys.stderr)
+                return 1
             print(f"interrupt events after the load: {scanner.io.drain_events()}")
             print("load sequence completed (status class and loader-sensor bit matched the "
                   "capture after the feed, the traverse and a final read). This sets "

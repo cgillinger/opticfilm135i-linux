@@ -851,6 +851,47 @@ def test_holder_geometry_edges_survive_uneven_illumination():
     assert abs(falls[0] - (edge - 1.5)) < 1.5, falls
 
 
+def test_loadflow_skipped_reinsert_gets_a_human_message():
+    """An operator who ignores the reinsert step gets a calm explanation
+    and a short technical line -- not the raw session dump that reads
+    like a crash. The exit code and the failed session are unchanged."""
+    import contextlib, io as _io
+    from of135i import loadflow, safety
+
+    class _FakeIo:
+        def drain_events(self): return []
+        def read_reg(self, reg): return 0x1F
+
+    class _FakeScanner:
+        io = _FakeIo()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def is_magazine_present(self): return True
+        def initialize(self, prep=True): pass
+        def jog_magazine(self): pass
+        def load_magazine(self):
+            raise safety.LoadIncompleteError(
+                "load feed completion mismatch: status 0xfc55, want class 0xf455. "
+                "The session stops here.",
+                status_word=0xFC55, expected=0xF455)
+
+    orig = loadflow.Scanner
+    err = _io.StringIO()
+    try:
+        loadflow.Scanner = type("S", (), {"open": staticmethod(lambda: _FakeScanner())})
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(_io.StringIO()):
+            rc = loadflow.run(ask=lambda prompt: "")
+    finally:
+        loadflow.Scanner = orig
+    text = err.getvalue()
+    assert rc == 1, rc
+    assert "did not engage" in text, text
+    assert "reinserted to the mechanical stop" in text, text
+    assert "technical cause: LoadIncompleteError" in text, text
+    assert "hardware state" not in text, "the crash-style dump must not appear"
+    print("test_loadflow_skipped_reinsert_gets_a_human_message OK")
+
+
 def main() -> int:
     tests = [
         test_assemble_shape_and_endianness,
@@ -876,6 +917,7 @@ def main() -> int:
         test_digitize_frames_defaults_to_1_4_and_validates_before_hardware,
         test_clear_roll_outputs_only_frame_files,
         test_digitize_records_partial_frame_progress,
+        test_loadflow_skipped_reinsert_gets_a_human_message,
         test_sane_tables_generated_and_current,
         test_sane_tables_injections_land_on_value_bytes,
         test_holder_geometry_measures_a_synthetic_holder,
