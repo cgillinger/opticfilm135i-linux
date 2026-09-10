@@ -468,5 +468,88 @@ characterized); the overscan window gets its A/B at plain 3600; and
 the acceptance remains N3, the six-frame colour negative, judged by
 eye as a production image under the 2026-09-10 acceptance rule.
 
-**Decided here: nothing.** FEEDL_PITCH stays 10760 and the base
-stays until the owner has read this and chosen.
+## 7. Implementation status (offline, 2026-09-10)
+
+A + C is implemented offline; nothing has run on hardware and no
+verified default changed.
+
+- **Geometry** (`of135i/holder.py`): `FiducialModel` (the corrected mean
+  mapping, base 11678.3 / pitch 10732.7) and `overscan_geometry()`,
+  which returns FEEDL, chunk count, delivered line count and the
+  guaranteed margins, and range-checks the furthest reached position.
+- **Wire** (`of135i/tables.py`): `scan_phase(n_chunks)` and
+  `scan_lines_for_chunks()` — the plain-3600 scan built for any chunk
+  count, byte-identical to the captured phase at the default, extending
+  by whole 23-line chunks with the 8-line drain tail held constant.
+- **Edge detector** (`of135i/aperture.py`): extracted from the offline
+  tool so the delivery-path crop and the geometry measurement use one
+  implementation; byte-identical on the N2 data.
+- **Coverage + crop** (`of135i/aperture_crop.py`): the §5 per-scan
+  verification and the deterministic aperture-registered crop, raw kept.
+- **Driver wiring** (`of135i/device.py`): `scan(..., overscan_mm=)` on
+  the plain-3600 path takes FEEDL and the chunk/line count from the
+  geometry; the default path (`overscan_mm=None`) is untouched. Overscan
+  on a dual profile, or together with an explicit line count, is
+  refused.
+- **Tests**: `tests/test_overscan.py` (geometry guarantee, wire
+  identity, coverage round-trip across load shifts, driver wiring) and
+  `tests/test_aperture_crop.py`, both in `release_check`.
+
+**Not yet done, and deliberately so:**
+
+- **Adopting the corrected constants as the plain default.** The
+  overscan path uses them; the table modules still command 6746/10760
+  by default. Flipping the default is what reopens frames 2–4, so it
+  waits for the hardware step below.
+- **Dual-profile overscan.** Refused with a clear message for now: the
+  alternating IR/visible delivered-line accounting is its own step, and
+  the dual windows already carry 0.5–0.75 mm/side. The tight profile —
+  the one that cannot work without overscan — is the one implemented.
+- **CLI surface and auto-crop in the scan output.** The coverage check
+  and crop are a library ready for the flow to call; wiring a
+  `--overscan` option and writing cropped + raw is the remaining
+  plumbing.
+
+## 8. The plain-3600 overscan A/B (before it is relied on)
+
+The longer plain-3600 wire (233 chunks + the 8-line drain, corrected
+FEEDL) has never run. One hardware A/B confirms it before the profile is
+promised. It is also the first hardware test of the corrected mean
+mapping, since the overscan path commands it.
+
+**A — reference.** Current plain 3600, frame 1, default window (5137
+lines, grid FEEDL 6743), one load on the empty holder. The verified
+baseline.
+
+**B — overscan.** Same load, frame 1, `overscan_mm=0.75`: 233 chunks /
+5367 programmed lines, corrected FEEDL 6562. Then a frame near the far
+end (frame 5 or 6), where the corrected pitch matters most.
+
+**What B must show.**
+1. The engine completes the longer window — all 233 image chunks full,
+   no short transfer, no lines pending. A short read here would mean the
+   8-line-drain-held-constant assumption is wrong for a longer scan;
+   stop and reconsider the tail before anything else.
+2. `aperture_crop.measure_coverage` verifies: both plastic edges found,
+   each with ≥ min_margin. On the empty holder both margins should be
+   ≈ 0.75 mm (the corrected FEEDL centred it); a lopsided pair means the
+   corrected base is off.
+3. B's aperture interior matches A's over their overlap (cross-correlate
+   the shared region; the picture must be the same, only the window
+   longer and earlier).
+4. PARK normal, eject from post-PARK.
+
+**Stop conditions.** Any scraping. A short transfer or an engine that
+does not complete on the longer window (item 1). `measure_coverage` not
+verified on the empty holder (item 2) — the geometry is mis-sized, do
+not scan further. Deviation handling as N1/N2.
+
+**Then, and only then:** adopt the corrected constants as the plain
+default (reopening frames 2–4 → re-verify all six on the empty holder,
+one load), run N3's six-frame negative with overscan + crop, and take
+Christian's eye verdict on a production image under the 2026-09-10 rule.
+Frames 2–4's existing verification stands until that adoption; the
+overscan path does not disturb it.
+
+**Decided here: nothing.** FEEDL_PITCH stays 10760 and the base stays
+until the owner runs the A/B and adopts them.
