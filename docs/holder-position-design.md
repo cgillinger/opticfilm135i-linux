@@ -263,19 +263,194 @@ they scatter around the grid. Two shapes for us:
 Kept as a recorded option if more loads ever show variation beyond
 the overscan budget; not proposed now.
 
-## 4. Recommendation
+## 4. Overscan geometry, derived (leading and trailing are separate controls)
 
-**A + C combined; B rejected; D parked.**
+Decision taken 2026-09-10: **A + C**. Before implementation, two things
+the owner asked to be made explicit. This section is the first.
+
+**The two controls are not the same axis.** The scan moves forward
+(increasing motor position) while it reads. So the window is
+`[start, end]` with:
+
+- **`start` set by FEEDL** — where acquisition begins. Continuous in
+  motor units. Moving `start` *earlier* (more leading coverage) means
+  **lowering FEEDL**.
+- **`end` set by the line count** — `end = start + delivered_lines ×
+  (7200/dpi)`. Increasing the line count extends the window **forward
+  only** (trailing side), and it is quantised to whole image chunks.
+
+Therefore a longer line count **cannot** add leading coverage: that is
+purely a FEEDL move. And option A's base correction is *also* a FEEDL
+move (≈0.57 mm earlier at frame 1, plus the pitch change along the
+strip). The two must be booked separately or A's centring gets
+miscounted as overscan. The implementation books them as three explicit
+terms:
+
+    FEEDL(n)   = base_corrected + (n−1)·pitch_corrected   (A: centres the mean)
+               − leading_overscan                          (C: leading slack)
+    line_count = ceil( ( aperture_len + leading_overscan + trailing_overscan
+                         + 2·colour_crop ) / chunk_lines ) · chunk_lines
+                                                            (C: trailing slack, rounded UP)
+
+Rounding the line count **up** can only *add* trailing margin, never
+remove it. The colour-line crop (`image.align_channels`, `shift` lines
+each side: 12 at 3600, 49 at 600) is removed from the delivered image,
+so the wire count carries `2·colour_crop` extra that the crop then eats
+— it is added before rounding so the *delivered* window still meets the
+target.
+
+**Worked ledger** (mean mapping from §2.2; aperture lengths from the
+sweep; per-load spread = observed max deviation from §2.3; target
+overscan 0.75 mm/side). Positions in motor units (1/7200 in) from the
+load reference.
+
+*dual 600 (the profile N2 ran):*
+
+| | frame 1 | frame 6 |
+|---|---|---|
+| aperture (lead … trail) | 1438 … 11677 | 55179 … 65344 |
+| aperture length | 10238 u (36.12 mm) | 10165 u (35.86 mm) |
+| observed load spread | ±22 u (±0.079 mm) | ±67 u (±0.237 mm) |
+| **A+C** window | 1226 … 12986 | 54967 … 66727 |
+| wire lines (chunks) | 1078 (11) | 1078 (11) |
+| delivered lines | 980 | 980 |
+| mean-load margin lead / trail | +0.750 / +4.618 mm | +0.750 / +4.877 mm |
+| worst observed-load lead | +0.671 mm | +0.513 mm |
+| design −0.50 mm lead / trail | +0.250 / +4.118 mm | +0.250 / +4.377 mm |
+| window end vs bound 71490 u | 12986 (206 mm spare) | 66727 (16.8 mm spare) |
+
+*plain 3600 (the tight profile, and the one that needs C most):*
+
+| | frame 1 | frame 6 |
+|---|---|---|
+| aperture (lead … trail) | 1438 … 11677 | 55179 … 65344 |
+| aperture length | 10238 u (36.12 mm) | 10165 u (35.86 mm) |
+| observed load spread | ±22 u (±0.079 mm) | ±67 u (±0.237 mm) |
+| **A+C** window | 1226 … 11896 | 54967 … 65591 |
+| wire lines (chunks) | 5359 (233) | 5336 (232) |
+| delivered lines | 5335 | 5312 |
+| mean-load margin lead / trail | +0.750 / +0.772 mm | +0.750 / +0.869 mm |
+| worst observed-load lead | +0.671 mm | +0.513 mm |
+| design −0.50 mm lead / trail | +0.250 / +0.272 mm | +0.250 / +0.369 mm |
+| window end vs bound 71490 u | 11896 (210 mm spare) | 65591 (20.8 mm spare) |
+
+Reading the ledger:
+
+- **Both sides get ≥ 0.75 mm on the mean load, ≥ 0.51 mm on the worst
+  observed load, ≥ 0.25 mm even at the ±0.5 mm design worst case** —
+  at every frame, in both profiles, *after* chunk-rounding and *after*
+  the colour crop. The leading 0.75 is exact (continuous FEEDL); the
+  trailing is ≥ 0.75 (rounded up — huge on dual 600, whose chunk is
+  ~2 mm, tight on plain 3600, whose chunk is 0.16 mm).
+- **The end position stays inside the transport bound** (71490 u, the
+  load traverse the machine performs every load): the worst case is
+  frame 6, ending 16.8 mm (dual) / 20.8 mm (plain) short of it. The
+  implementation range-checks the *end* position, not only the stop,
+  extending the existing `holder.check_feedl` guard.
+- Plain 3600's numbers confirm §2.4: its *current* window is shorter
+  than aperture 1, so C is not an enhancement there, it is the only
+  thing that makes plain-3600 whole-aperture delivery possible at all.
+
+The illustrative constants used here (base 11678.3, pitch 10732.7) are
+the §2.2 fit; the final adopted constants are the decision, and the
+ledger is regenerated from them by `tools/holder_geometry.py overscan`
+(added with the implementation) so the guarantee is checked against the
+numbers actually shipped, not against these.
+
+## 5. Edge verification: coverage is proven per scan, not assumed
+
+The second thing the owner asked to be explicit, and the reason C is
+robust rather than merely hopeful: **the ±0.5 mm design worst case is
+an assumption from n=3 loads, not a measured ceiling.** Overscan sized
+to it is a bet. The bet is made safe by *checking the aperture's own
+edges in every delivered image* — the registration reference is in the
+data, so each scan proves its own coverage instead of trusting the
+budget.
+
+**The rule.** After a scan, the host locates both plastic aperture
+edges in the overscanned image (the half-level crossings the geometry
+tool already resolves to 0.025 mm):
+
+- **both edges found, each with ≥ `min_margin` of overscan beyond it**
+  → coverage verified for *this* scan; crop to the aperture (or to a
+  fixed 24×36 registered inside it) and deliver.
+- **an edge missing, or found with less than `min_margin` slack** →
+  the window did not contain the whole aperture on this load. Do
+  **not** deliver a silently-clipped frame as if complete: flag it,
+  and in a batch fail that frame closed (same discipline as the
+  residual-dark_b substitution — a suspect frame is never dressed up
+  as a good one). The raw overscan data is kept regardless, so a
+  flagged frame can be inspected, not just discarded.
+
+This is what turns C from "trust ±0.5 mm" into "verify per scan and
+fail loudly if the transport ever exceeds the budget". If a real load
+ever shifts more than the overscan, we find out from the image, not
+from a customer.
+
+**Does the edge survive a real colour negative?** The edge is
+plastic-vs-open on the empty holder (≈780 vs ≈39800 counts — trivial),
+but N3 puts film across the aperture, and plain 3600 has no IR pass to
+fall back on. Assessment:
+
+- **Dual / IR (600–7200):** trivial. The IR pass sees the near-
+  transparent film base as bright and the plastic as dark regardless
+  of the picture; the edge is a clean step in the IR channel, which is
+  exactly the channel `holder_geometry.py` already measures. No image
+  content can weaken it.
+- **Plain 3600 (no IR):** still robust, for a specific physical
+  reason. The aperture edge does not fall on picture content — it
+  falls on the **inter-frame rebate**, the clear film base between
+  photographed frames. Clear C-41 base passes strong light in the red
+  channel (the orange mask is a red-pass filter); against the plastic
+  floor (~780) that is a several-fold step in R at the very edge, with
+  no image detail there to erode it. The detector uses the red channel
+  (or luminance) with the per-scan adaptive threshold the tool already
+  computes, at the outer overscan region where base — not image — is
+  guaranteed to sit.
+- **Evidence it already works on film:** N1 (Test 55) was run *with a
+  negative in the holder* and the trailing plastic edge was still
+  found in all six frames (that is where its fiducials came from); the
+  lit level ran 7300–23300 counts for film against ≈780 for plastic, a
+  ~10× step. Edge detection on film is not a hypothesis; it is
+  demonstrated. What N3 adds is confirming the **leading** edge too
+  (now that overscan brings it into frame) and confirming plain 3600
+  specifically.
+- **Failure handling covers the residual risk:** if a particular
+  frame's edge is genuinely ambiguous (an unusually dense rebate, a
+  scratch), the min-margin rule flags rather than mis-crops. The floor
+  is set from the empty-holder and N1 contrast; N3 confirms it against
+  the real negative and is where the threshold is finalised.
+
+So edge verification is designed for both the empty holder and the
+real negative, is already demonstrated on film for the trailing edge,
+and fails safe where it cannot decide. Confirming it on N3 — both
+edges, both profiles — is part of that milestone, not a precondition
+that blocks implementation.
+
+## 6. Recommendation
+
+**A + C combined; B rejected; D parked.** Chosen by the owner
+2026-09-10, with §4 (overscan geometry) and §5 (edge verification)
+made explicit as conditions on the implementation.
 
 1. **Correct the mean** (option A): pitch ≈ 10733, base ≈ 0.57 mm
    earlier — final constants read off §2.2's fit when the decision is
    taken.
 2. **Make coverage robust with overscan + aperture-registered host
-   crop** (option C): +0.75 mm/side (chunk-rounded), both edges in
-   every frame, deterministic crop. For the dual profiles this is
-   inside vendor-demonstrated behaviour; plain 3600 gets one
-   hardware A/B for the longer window before it is promised.
-3. Plain 3600 **requires** C regardless of anything else: its window
+   crop** (option C): 0.75 mm/side (leading exact via FEEDL, trailing
+   ≥ target chunk-rounded up — §4), both edges brought into every
+   frame, deterministic crop registered on the plastic edges.
+   Leading and trailing are booked as separate terms so A's centring
+   is not miscounted as overscan (§4). For the dual profiles the
+   longer window is inside vendor-demonstrated behaviour; plain 3600
+   gets one hardware A/B for the longer window before it is promised.
+3. **Verify coverage per scan** (§5): both aperture edges must be
+   found with ≥ min_margin slack, else the frame is flagged / failed
+   closed, never delivered as silently clipped. This is what makes the
+   ±0.5 mm sizing safe against an unknown true worst case. The raw
+   overscan image is always kept; crop is a deterministic host-side
+   operation on top of it.
+4. Plain 3600 **requires** C regardless of anything else: its window
    is smaller than aperture 1, so without overscan it cannot deliver
    the whole opening even on a perfect stop.
 
