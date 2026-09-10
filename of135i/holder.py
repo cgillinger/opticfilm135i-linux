@@ -72,7 +72,12 @@ can assert.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+
+#: Motor unit: 1/7200 inch, in millimetres. Every ``_hwdpi`` quantity in
+#: this module is in these units.
+MM_PER_UNIT = 25.4 / 7200.0
 
 
 @dataclass(frozen=True)
@@ -185,3 +190,156 @@ def check_feedl(feedl: int, holder: Holder = DEFAULT) -> int:
 def frames(holder: Holder = DEFAULT) -> range:
     """Every frame the holder has, in order -- for batch defaults."""
     return range(1, holder.frames + 1)
+
+
+
+#: The six apertures' measured lengths, in millimetres, frame 1..6, from
+#: the vendor whole-holder sweep (docs/holder-geometry.md section 2). The
+#: overscan geometry sizes the window per frame against these, not
+#: against the mean, so the longest aperture (frame 1) sets the tightest
+#: case.
+STRIP_APERTURE_MM = (36.119, 36.047, 35.957, 35.797, 35.799, 35.860)
+
+
+@dataclass(frozen=True)
+class FiducialModel:
+    """Where each aperture's trailing plastic edge lands, in motor units.
+
+    A base plus a constant pitch, in 1/7200 inch from the load reference
+    -- the *measured* end-to-end mapping from a commanded frame to where
+    the aperture actually sits in the delivered image, not the vendor's
+    nominal command grid. This is option A of docs/holder-position-
+    design.md: the corrected mean mapping. It is deliberately a constant
+    pitch, not a per-frame table (the per-frame means are linear to
+    0.022 mm; a table would add nothing and would not touch the load-to-
+    load variation either).
+
+    ``fiducial(n)`` is the aperture *trailing* edge; the leading edge is
+    that minus the frame's aperture length, so the window can be sized
+    around the whole opening.
+    """
+
+    base_hwdpi: float      #: aperture-trailing position of frame 1
+    pitch_hwdpi: float     #: constant step between consecutive frames
+    aperture_mm: tuple[float, ...]  #: per-frame aperture length
+
+    def trailing_hwdpi(self, frame: int) -> float:
+        return self.base_hwdpi + (frame - 1) * self.pitch_hwdpi
+
+    def leading_hwdpi(self, frame: int) -> float:
+        return self.trailing_hwdpi(frame) - self.aperture_mm[frame - 1] / MM_PER_UNIT
+
+
+#: The corrected mean mapping for the strip holder, fitted to the three
+#: empty-holder loads of Test 56 (docs/holder-position-design.md
+#: section 2.2: base 11678.3, pitch 10732.7, residual <= 0.022 mm). This
+#: is NOT yet the driver's commanded grid -- the table modules still use
+#: FEEDL_FRAME1/FEEDL_PITCH (6746 / 10760) as their verified default.
+#: This model is consumed only on the overscan path, and adopting it as
+#: the plain default is the hardware-verification step that reopens
+#: frames 2-4.
+STRIP_FIDUCIAL = FiducialModel(
+    base_hwdpi=11678.3,
+    pitch_hwdpi=10732.7,
+    aperture_mm=STRIP_APERTURE_MM,
+)
+
+
+@dataclass(frozen=True)
+class OverscanGeometry:
+    """The scan window for one frame, sized to contain the whole aperture
+    plus an overscan margin on each side, ready to hand to the engine.
+
+    ``feedl`` is the commanded positioning target (window centre, the
+    driver's convention); ``wire_lines`` is the line count to program and
+    ``chunks`` the number of image chunks to read; ``delivered_lines`` is
+    what survives the colour-line crop. The ``*_margin_mm`` fields are the
+    guaranteed slack between the aperture edge and the delivered window
+    edge on the *mean* mapping -- the leading one is exact (set by FEEDL),
+    the trailing one is >= the target (the line count rounds up to whole
+    chunks). ``end_hwdpi`` is the furthest motor position the pass
+    reaches, checked against the transport bound.
+    """
+
+    frame: int
+    feedl: int
+    wire_lines: int
+    chunks: int
+    delivered_lines: int
+    leading_margin_mm: float
+    trailing_margin_mm: float
+    end_hwdpi: float
+
+
+#: Default overscan slack per side, millimetres. Covers the +/-0.5 mm
+#: design worst case (2x the observed load spread at n=3) with 0.25 mm to
+#: spare; docs/holder-position-design.md section 4.
+OVERSCAN_MM = 0.75
+
+
+def overscan_geometry(
+    frame: int,
+    *,
+    res_units_per_line: int,
+    chunk_lines: int,
+    colour_crop_lines: int,
+    fiducial: FiducialModel | None = None,
+    overscan_mm: float = OVERSCAN_MM,
+    holder: Holder = DEFAULT,
+) -> OverscanGeometry:
+    """Size the scan window for ``frame`` to cover the whole aperture plus
+    ``overscan_mm`` on each side, and return the engine parameters.
+
+    ``res_units_per_line`` is 7200/dpi (motor units per delivered line),
+    ``chunk_lines`` the image-chunk quantum (t.LINES_PER_CHUNK), and
+    ``colour_crop_lines`` the per-side loss to align_channels (its
+    ``shift``). The frame number is range-checked first, and the furthest
+    motor position the pass reaches is range-checked against
+    FEEDL_CEILING before the geometry is returned -- so a window that
+    would drive past proven travel is refused before any write, exactly
+    as a bad FEEDL is.
+
+    Leading coverage is a FEEDL move (continuous); trailing coverage is a
+    line-count move (rounded UP to whole chunks, which can only add
+    margin). The two are computed separately so the mean-mapping centring
+    is never miscounted as overscan. See docs/holder-position-design.md
+    section 4 for the derivation this implements.
+    """
+    check_frame(frame, holder)
+    fid = fiducial if fiducial is not None else STRIP_FIDUCIAL
+    over = overscan_mm / MM_PER_UNIT
+
+    lead = fid.leading_hwdpi(frame)
+    trail = fid.trailing_hwdpi(frame)
+    want_start = lead - over
+    want_end = trail + over
+
+    # Trailing side: line count sets the window end. The wire must carry
+    # the delivered span plus the two crop strips align_channels eats.
+    span = want_end - want_start
+    delivered_needed = span / res_units_per_line
+    wire_needed = delivered_needed + 2 * colour_crop_lines
+    chunks = math.ceil(wire_needed / chunk_lines)
+    wire_lines = chunks * chunk_lines
+    delivered_lines = wire_lines - 2 * colour_crop_lines
+
+    # Leading side: place window start exactly at want_start. The window
+    # centre (= commanded FEEDL, driver convention) is start + half-window.
+    half = delivered_lines / 2 * res_units_per_line
+    feedl = round(want_start + half)
+    end_hwdpi = want_start + delivered_lines * res_units_per_line
+
+    # Guard the furthest reached position, not only the stop.
+    check_feedl(round(end_hwdpi), holder)
+
+    return OverscanGeometry(
+        frame=frame,
+        feedl=feedl,
+        wire_lines=wire_lines,
+        chunks=chunks,
+        delivered_lines=delivered_lines,
+        leading_margin_mm=overscan_mm,  # exact by construction (FEEDL move)
+        trailing_margin_mm=(end_hwdpi - trail) * MM_PER_UNIT,
+        end_hwdpi=end_hwdpi,
+    )
+
