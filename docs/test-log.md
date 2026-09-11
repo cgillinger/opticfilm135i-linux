@@ -4431,3 +4431,80 @@ production code commands): coverage VERIFIED, lead 0.834 / trail
 gains 44/33/39, eject normal. All five dual profiles are now
 hardware-verified on the sequence the driver actually commands — no
 footnote. The reviewer's correction stands answered.
+
+### Test 62: SANE stage 1 (Lager 1) on hardware — the C++ backend drives the A+C geometry
+
+2026-09-11, colour negative, glassless six-frame strip holder. The first
+SANE motor run of the separate C++ backend on the new A+C geometry. Code
+under test: repo HEAD f785bfc (the fix below), the built libsane-genesys.so
+relinked from current sources, 0 warnings. Commands per the hardware plan:
+`scanimage --force-calibration --mode Color --resolution <dpi> --frame N`,
+low debug (SANE_DEBUG_GENESYS=6, never the image-dumping level 8).
+
+**A real backend bug, found on the first frame and fixed.** Frame 1 failed
+instantly (rc=1, no motor): `sane_open` returned INVAL from
+`calculate_scan_session`. Root cause: genesys' `init_options` runs
+`calc_parameters` once with its hardcoded default (mode GRAY, colour filter
+GREEN) before the frontend applies `--mode Color`; gl126 pinned the colour
+profile for that default and the colour-shift invariant threw (GRAY gives
+max_color_shift_lines 0, the profile expects the ld_shift). The offline
+suite had never exercised the full `sane_open` path — that gap let it reach
+hardware. Fix (two changes in gl126.cpp, per external review):
+`calculate_scan_session` pins/enforces only for a real capture (colour, IR,
+or host-side gray — HOST_SIDE_GRAY with colour filter NONE, scanned RGB and
+reduced on the host); the option-init default is left tolerant (raw window
+reported, never pinned as USB geometry); `offset_calibration`'s preflight
+refuses an actual single-channel gray before the first write (calibration
+writes before begin_scan, so begin_scan is too late). Rebuilt, offline suite
+green, then re-run.
+
+**Load A — plain3600, frames 1-6, one load, no eject between frames.** All
+six exact to the ledger: FEEDL 6562/17315/28051/38806/49538/60276, chunks
+233/233/232/231/231/232, full transfer (frame 1 exactly 233×519156 B),
+POSITION within budget, semantic PARK (2 waits) each, no eject, no errors.
+Images: six distinct real photos, in order, whole frame, aperture edge
+present.
+
+**Load B — dual2400 frame 1.** FEEDL 6543, line register 7152, 447 chunks
+full transfer (exactly 447×504576 B), 5256×3560 px from 7152 raw lines,
+semantic PARK, eject normal. Coverage VERIFIED (lead 0.86 / trail 0.80 mm).
+BUT the delivered image proportion is FAIL (found in review, Astra): the
+dual profile reads the sensor across at 3600 dpi and delivers 2400 along the
+film, so 5256×3560 displayed as square pixels stretches the frame by exactly
+3600/2400 = 1.500. Confirmed offline on the delivered raw (correcting X to
+3504 px makes it match plain frame 1's proportions). Transport is not
+implicated; it is a delivered-image-geometry defect, host-side fixable
+(resample X or report per-axis dpi), and the Python export (write_tiff16)
+has the same latent defect. See docs/sane-port.md, "Risks and open
+questions". Plain3600 is isotropic and unaffected.
+
+**Coverage and a seating finding.** First plain load: f1-f4 verified, f5/f6
+"no aperture found". Not a backend fault — the geometry is byte-exact to the
+ledger and the images are complete. A reload changed which frames passed
+(f6 MISS→OK), pointing to per-load position variation (the N2 finding). On
+ejecting, the negative was found sitting skewed, ~3-4 mm off — the holder
+does not grip tightly and the strip had slipped. A skewed aperture edge
+smears across the width in the coverage row-mean profile, so the detector
+finds no clean edge. Re-seated straight and re-run: **coverage 6/6 verified**
+(lead 0.48-0.72 / trail 0.86-1.11 mm). Added as a plan precondition; a plain
+coverage-detector robustness-to-skew improvement is noted as future work.
+
+**Verified, separated.** Parameter computation: `sane_open` now succeeds on
+the option-init default (the run got past init). Real scan session: plain
+1-6 + dual2400 f1 exact geometry, full transfer, semantic PARK. Coverage:
+plain 6/6 (straight seat) + dual verified. A faithful offline regression
+test was added for the open/parameter path (tests/gl126_session_probe.cpp
+links the built .so and calls the real calculate_scan_session;
+tests/test_sane_open_params.py covers the GRAY default, Color, host-side
+gray, an actual single-channel gray, and IR — case 1 threw on the buggy
+build, OK now). release_check 242.
+
+Status: SANE stage 1 plain3600 frames 1-6 are hardware-verified for
+transport, coverage AND image proportion. The dual runtime path (dpi2400 f1)
+is hardware-verified for TRANSPORT (FEEDL, chunks, full transfer, PARK,
+coverage) but its delivered image proportion is FAIL until the anisotropic
+X sampling is corrected host-side (see above). Eye acceptance of the plain
+production images is the operator's step. The other dual profiles are NOT
+claimed verified. Next code task: the calibration-cache B1 item (ordinary
+scans without --force-calibration). Files in
+plustek-135i-analys/sane-l1-20260911{,-r2,-r3,-dual}/.
