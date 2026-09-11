@@ -516,6 +516,16 @@ Prerequisite: the shared lock above, implemented and checked.
   returns by itself. `sane_close` must not rely on a later reopen.
 - **Position drift between DPIs** (~7.5 mm, open) — a homing fix in the
   Python driver first, then port.
+- **Calibration cache vs. the per-frame contract (decide before B1 is
+  declared done).** GL126's `begin_scan()` requires `CalStage::ShadingDone`
+  from the same `sane_start` — the vendor calibrates every frame — so a scan
+  that reuses a cached calibration would skip the very hooks the motor path
+  depends on and stall before the motor moves. Bring-up and the Lager 1
+  hardware plan force calibration with `--force-calibration`, which makes
+  those runs deterministic. A finished backend must not require the user to
+  know that flag for an ordinary scan to work: decide how GL126 opts out of
+  or invalidates the Genesys calibration cache so the "calibrate every frame"
+  contract holds automatically. Does not block the Lager 1 hardware test.
 
 ## Delivery checklist (from the SANE requirements survey)
 
