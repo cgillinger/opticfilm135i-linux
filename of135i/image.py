@@ -73,13 +73,33 @@ def srgb_icc() -> bytes:
     return SRGB_ICC_PATH.read_bytes()
 
 
+def sampling_resolution(dpi: int) -> tuple[int, int]:
+    """(across, along) sampling resolution in dpi for a scan at `dpi`.
+
+    Most profiles are isotropic (across == along == dpi). The exception is
+    the dual-light 2400 dpi profile: it reads the sensor ACROSS at the
+    3600 dpi hardware step (DPISET 1200) but delivers 2400 dpi ALONG the
+    film after IR/visible separation (docs/protocol-notes.md, "Widths and
+    chunking (vendor)"). Its pixels are therefore anisotropic -- 3600
+    across, 2400 along -- so a viewer that assumes square pixels stretches
+    the image by 3600/2400 = 1.5. The driver delivers the raw pixels
+    unchanged (its raw-data principle); stating the true per-axis scale in
+    the file's resolution tags lets a TIFF-aware viewer show correct
+    proportions without resampling.
+    """
+    across = 3600 if dpi == 2400 else dpi
+    return across, dpi
+
+
 def write_tiff16(arr: np.ndarray, path: str | Path, icc: bytes | None = None,
-                 dpi: int | None = None) -> None:
+                 dpi: "int | tuple[int, int] | None" = None) -> None:
     """Write an (lines, width, 3) uint16 array as an uncompressed 16-bit
     RGB TIFF, using only stdlib struct. `icc`, if given, is embedded as
     the ICCProfile tag (34675). `dpi`, if given, is written as the scan
-    resolution in both axes (the scanner's pixels are square, so X and Y
-    carry the same value).
+    resolution: pass a single int for square pixels, or an
+    ``(x_dpi, y_dpi)`` tuple for anisotropic pixels (the 2400 dpi dual
+    profile reads 3600 across and delivers 2400 along -- see
+    `sampling_resolution`). Do not assume square pixels for every profile.
 
     XResolution, YResolution and ResolutionUnit are baseline-required
     fields: a file without them is read as 72 dpi, so a 3600 dpi scan
@@ -107,8 +127,13 @@ def write_tiff16(arr: np.ndarray, path: str | Path, icc: bytes | None = None,
     # XResolution/YResolution are RATIONAL (two LONGs each), too wide for
     # the IFD's 4-byte value field, so they live out of line like the
     # arrays above: X at resolution_offset, Y 8 bytes after it.
-    res_num = int(dpi) if dpi else 1
-    resolution = struct.pack("<IIII", res_num, 1, res_num, 1)
+    if dpi:
+        x_dpi, y_dpi = (dpi, dpi) if isinstance(dpi, int) else (int(dpi[0]), int(dpi[1]))
+        has_res = True
+    else:
+        x_dpi = y_dpi = 1
+        has_res = False
+    resolution = struct.pack("<IIII", x_dpi, 1, y_dpi, 1)
     resolution_offset = sample_format_offset + len(sample_format)
 
     icc_data = bytes(icc) if icc else b""
@@ -136,7 +161,7 @@ def write_tiff16(arr: np.ndarray, path: str | Path, icc: bytes | None = None,
         _ifd_entry(279, _TAG_TYPE_LONG, 1, long1(len(pixel_data))),  # StripByteCounts
         _ifd_entry(282, _TAG_TYPE_RATIONAL, 1, long1(resolution_offset)),      # XResolution
         _ifd_entry(283, _TAG_TYPE_RATIONAL, 1, long1(resolution_offset + 8)),  # YResolution
-        _ifd_entry(296, _TAG_TYPE_SHORT, 1, short1(2 if dpi else 1)),  # ResolutionUnit: inch / none
+        _ifd_entry(296, _TAG_TYPE_SHORT, 1, short1(2 if has_res else 1)),  # ResolutionUnit: inch / none
         _ifd_entry(339, _TAG_TYPE_SHORT, 3, long1(sample_format_offset)),  # SampleFormat = uint
     ]
     if icc:

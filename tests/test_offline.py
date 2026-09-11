@@ -180,6 +180,63 @@ def test_tiff_resolution_tags():
     print("test_tiff_resolution_tags OK")
 
 
+def test_tiff_anisotropic_resolution():
+    """The 2400 dpi dual profile has anisotropic pixels (3600 across the
+    sensor, 2400 along the film). Writing a single square dpi stretches the
+    image 1.5x for a square-pixel viewer (the dual2400 proportion FAIL,
+    Test 62). sampling_resolution states the true per-axis scale, and
+    write_tiff16 must record X != Y so a TIFF-aware viewer shows correct
+    proportions without resampling the raw pixels."""
+    from PIL import Image
+
+    assert image.sampling_resolution(2400) == (3600, 2400)
+    for d in (600, 1200, 3600, 7200):
+        assert image.sampling_resolution(d) == (d, d), d
+
+    arr = np.full((5, 7, 3), 4242, dtype="<u2")
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "dual2400.tiff"
+        image.write_tiff16(arr, path, dpi=image.sampling_resolution(2400))
+        im = Image.open(path)
+        assert im.tag_v2[282] == 3600, im.tag_v2[282]   # XResolution: across
+        assert im.tag_v2[283] == 2400, im.tag_v2[283]   # YResolution: along
+        assert im.tag_v2[296] == 2, im.tag_v2[296]       # unit inch
+        assert Path(path).read_bytes()[8:8 + arr.nbytes] == arr.tobytes()  # pixels intact
+
+        # An int stays square (back-compat).
+        image.write_tiff16(arr, path, dpi=3600)
+        im = Image.open(path)
+        assert im.tag_v2[282] == 3600 and im.tag_v2[283] == 3600
+    print("test_tiff_anisotropic_resolution OK")
+
+
+def test_axis_dpi_rotation_parity():
+    """cli._axis_dpi must swap the (x, y) resolution on every odd 90 deg turn
+    (Astra: anisotropic per-axis dpi must follow rotation). The delivered
+    strip is (across=width, along=height); --rotate adds rotate//90 quarter-
+    turns and the --positive path adds a rot90(,3). Only dpi2400 is
+    anisotropic, so only it can change under rotation."""
+    from types import SimpleNamespace
+    from of135i import cli
+
+    def ad(dpi, rotate, positive):
+        return cli._axis_dpi(SimpleNamespace(dpi=dpi, rotate=rotate), positive)
+
+    # 2400: (across=3600, along=2400) unrotated; swaps on odd quarter-turns.
+    assert ad(2400, 0, False) == (3600, 2400)
+    assert ad(2400, 90, False) == (2400, 3600)
+    assert ad(2400, 180, False) == (3600, 2400)
+    assert ad(2400, 270, False) == (2400, 3600)
+    # --positive adds 3 quarter-turns (odd) -> swapped at rotate 0.
+    assert ad(2400, 0, True) == (2400, 3600)
+    assert ad(2400, 90, True) == (3600, 2400)
+    # Isotropic profiles never change.
+    for r in (0, 90, 180, 270):
+        assert ad(3600, r, False) == (3600, 3600), r
+        assert ad(600, r, True) == (600, 600), r
+    print("test_axis_dpi_rotation_parity OK")
+
+
 # ------------------------------------------------ digitize staging (Test 35)
 
 
@@ -900,6 +957,8 @@ def main() -> int:
         test_tiff_roundtrip_via_pillow,
         test_tiff_icc_profile_via_pillow,
         test_tiff_resolution_tags,
+        test_tiff_anisotropic_resolution,
+        test_axis_dpi_rotation_parity,
         test_pnm_roundtrip_via_pillow,
         test_digitize_layout_and_paths,
         test_digitize_manifest_roundtrip_and_torn_line,

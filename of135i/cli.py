@@ -179,12 +179,29 @@ def _print_session_failure(scanner: Scanner | None) -> None:
         print(safety.NO_COMMANDS_SENT, file=sys.stderr)
 
 
-def _write_image(arr, out: str, positive: bool = False, dpi: int | None = None) -> None:
+def _axis_dpi(args, positive: bool):
+    """The (x_dpi, y_dpi) to stamp on the TIFF, accounting for the profile's
+    anisotropy and the orientation transform applied before writing.
+
+    The delivered strip runs along axis 0 (height) with the sensor-across
+    direction on axis 1 (width): so unrotated, (x, y) = (across, along) =
+    image.sampling_resolution(dpi). The 2400 dpi dual profile is the only
+    anisotropic one (3600 across / 2400 along). Every 90 deg turn swaps the
+    axes; the positive path adds a rot90(,3) (the horizontal mirror does
+    not swap axes), --rotate adds args.rotate // 90. An even number of
+    quarter-turns keeps (across, along); an odd number swaps it."""
+    across, along = image.sampling_resolution(args.dpi)
+    quarter = ((3 if positive else 0) + (getattr(args, "rotate", 0) or 0) // 90) % 2
+    return (along, across) if quarter else (across, along)
+
+
+def _write_image(arr, out: str, positive: bool = False, dpi=None) -> None:
     """Write `arr`; a --positive TIFF gets an sRGB ICC profile embedded
     (the positive rendering targets the vendor app's sRGB output), a
     raw negative none (linear scanner data). `dpi` becomes the TIFF's
-    resolution tags, so the file states the scale it was scanned at;
-    PPM has no such field."""
+    resolution tags, so the file states the scale it was scanned at; pass
+    an (x_dpi, y_dpi) tuple for the anisotropic 2400 dpi dual profile (see
+    _axis_dpi / image.sampling_resolution). PPM has no such field."""
     if out.lower().endswith((".pnm", ".ppm")):
         image.write_pnm16(arr, out)
     else:
@@ -391,7 +408,7 @@ def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
     arr = image.align_channels(arr, dpi=args.dpi)
     if getattr(args, "overscan", None) is None:
         arr = _orient_plain(args, arr)
-        _write_image(arr, out, positive=args.positive, dpi=args.dpi)
+        _write_image(arr, out, positive=args.positive, dpi=_axis_dpi(args, args.positive))
         print(f"wrote {out} ({arr.shape[1]}x{arr.shape[0]}, 16-bit RGB)")
         return None
 
@@ -404,7 +421,7 @@ def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
     # (2) preserve the full overscan frame regardless of the verdict.
     raw_out = _overscan_raw_path(out)
     full = _orient_plain(args, arr)
-    _write_image(full, raw_out, positive=args.positive, dpi=args.dpi)
+    _write_image(full, raw_out, positive=args.positive, dpi=_axis_dpi(args, args.positive))
     print(f"wrote {raw_out} ({full.shape[1]}x{full.shape[0]}, full overscan frame)")
     del full
 
@@ -412,7 +429,7 @@ def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
         # (3) the aperture-registered product, cropped to the detected edges.
         crop = aperture_crop.crop_to_aperture(arr, cov, dpi=args.dpi)
         crop = _orient_plain(args, crop)
-        _write_image(crop, out, positive=args.positive, dpi=args.dpi)
+        _write_image(crop, out, positive=args.positive, dpi=_axis_dpi(args, args.positive))
         print(f"aperture coverage: VERIFIED — margins lead "
               f"{cov.leading_margin_mm:.3f} mm, trail {cov.trailing_margin_mm:.3f} mm")
         print(f"wrote {out} ({crop.shape[1]}x{crop.shape[0]}, aperture-registered)")
@@ -495,13 +512,13 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
         return vis, irr
 
     def _write_ir_file(arr, path):
-        image.write_tiff16(_np.stack([arr, arr, arr], axis=-1), path, dpi=args.dpi)
+        image.write_tiff16(_np.stack([arr, arr, arr], axis=-1), path, dpi=_axis_dpi(args, False))
 
     # Preserve the full overscan frame(s) regardless of the verdict
     # (raw-data principle), oriented like the products.
     raw_out = _overscan_raw_path(out)
     ov_vis, ov_ir = _orient_pair(visible, ir if write_ir else None)
-    _write_image(ov_vis, raw_out, positive=args.positive, dpi=args.dpi)
+    _write_image(ov_vis, raw_out, positive=args.positive, dpi=_axis_dpi(args, args.positive))
     print(f"wrote {raw_out} ({ov_vis.shape[1]}x{ov_vis.shape[0]}, full "
           f"overscan frame, visible)")
     if write_ir:
@@ -524,7 +541,7 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
     ir_c = aperture_crop.crop_to_aperture(ir, cov, dpi=args.dpi) if write_ir else None
     vis_c, ir_c = _orient_pair(vis_c, ir_c)
 
-    _write_image(vis_c, out, positive=args.positive, dpi=args.dpi)
+    _write_image(vis_c, out, positive=args.positive, dpi=_axis_dpi(args, args.positive))
     print(f"wrote {out} ({vis_c.shape[1]}x{vis_c.shape[0]}, 16-bit RGB, "
           f"visible, aperture-registered)")
 
@@ -652,14 +669,14 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
             if over_i is not None:
                 over_i = _np.ascontiguousarray(_np.rot90(over_i, k=k))
         raw_out = _overscan_raw_path(out)
-        _write_image(over_v, raw_out, positive=False, dpi=args.dpi)
+        _write_image(over_v, raw_out, positive=False, dpi=_axis_dpi(args, False))
         _note("overscan", raw_out)
         print(f"wrote {raw_out} ({over_v.shape[1]}x{over_v.shape[0]}, full "
               f"overscan frame, visible)")
         if over_i is not None:
             ir_over = str(Path(out).with_name(Path(out).stem + "-ir.overscan.tiff"))
             image.write_tiff16(_np.stack([over_i, over_i, over_i], axis=-1),
-                               ir_over, dpi=args.dpi)
+                               ir_over, dpi=_axis_dpi(args, False))
             _note("ir_overscan", ir_over)
             print(f"wrote {ir_over} ({over_i.shape[1]}x{over_i.shape[0]}, "
                   f"full overscan frame, IR channel)")
@@ -685,7 +702,7 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
         if args.rotate:
             over = _np.ascontiguousarray(_np.rot90(full, k=args.rotate // 90))
         raw_out = _overscan_raw_path(out)
-        _write_image(over, raw_out, positive=False, dpi=args.dpi)
+        _write_image(over, raw_out, positive=False, dpi=_axis_dpi(args, False))
         _note("overscan", raw_out)
         print(f"wrote {raw_out} ({over.shape[1]}x{over.shape[0]}, full "
               f"overscan frame)")
@@ -727,7 +744,7 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
         if prev is not None:
             prev = _np.ascontiguousarray(_np.rot90(prev, k=k))
 
-    _write_image(visible, out, positive=False, dpi=args.dpi)  # raw negative, never inverted
+    _write_image(visible, out, positive=False, dpi=_axis_dpi(args, False))  # raw negative, never inverted
     _note("main", out)
     print(f"wrote {out} ({visible.shape[1]}x{visible.shape[0]}, 16-bit RGB "
           f"negative{', dust-cleaned' if dust_cleaned else ''})")
@@ -735,13 +752,13 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
     if dual and args.ir:
         ir_rgb = _np.stack([ir, ir, ir], axis=-1)
         ir_file = str(Path(out).with_name(Path(out).stem + "-ir.tiff"))
-        image.write_tiff16(ir_rgb, ir_file, dpi=args.dpi)
+        image.write_tiff16(ir_rgb, ir_file, dpi=_axis_dpi(args, False))
         _note("ir", ir_file)
         print(f"wrote {ir_file} ({ir.shape[1]}x{ir.shape[0]}, 16-bit, IR channel)")
 
     if prev is not None:
         preview_file = str(Path(out).with_name(Path(out).stem + "-preview.tiff"))
-        _write_image(prev, preview_file, positive=True, dpi=args.dpi)
+        _write_image(prev, preview_file, positive=True, dpi=_axis_dpi(args, True))
         _note("preview", preview_file)
         print(f"wrote {preview_file} ({prev.shape[1]}x{prev.shape[0]}, "
               f"16-bit RGB, positive preview)")
