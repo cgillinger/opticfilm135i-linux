@@ -526,6 +526,18 @@ Prerequisite: the shared lock above, implemented and checked.
   know that flag for an ordinary scan to work: decide how GL126 opts out of
   or invalidates the Genesys calibration cache so the "calibrate every frame"
   contract holds automatically. Does not block the Lager 1 hardware test.
+- **Lateral (across-strip) overscan.** The plain path delivers the fixed
+  aperture width (3762 px) with overscan only ALONG the strip
+  (leading/trailing); the across-strip width is not overscanned. A small
+  lateral film offset in the loose holder can then push one width edge to or
+  past the aperture edge and clip a sliver of the frame (observed 2026-09-11
+  on frame 6 with a straight seat: the right width edge ran to the boundary,
+  no subject lost). This is not a SANE regression -- the native driver uses
+  the same aperture width -- but adding a lateral overscan margin (and, in
+  Lager 2, cropping back host-side) would make width clipping fail-safe like
+  the along-strip direction. A deliberate geometry item: it reopens the
+  closed geometry phase, needs an offline generator change plus one hardware
+  re-verification, and is partly mitigated by seating the strip squarely.
 
 ## Delivery checklist (from the SANE requirements survey)
 
