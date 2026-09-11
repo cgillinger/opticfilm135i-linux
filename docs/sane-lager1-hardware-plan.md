@@ -41,6 +41,12 @@ prove the RIGHT binary ran:
 
 ## Preconditions (hardware protocol)
 - Scanner healthy (`reg 0x01 = 0x22`), any VM detached.
+- **Seat the film strip straight first, when coverage matters.** The holder
+  does not grip tightly; a strip can slip several mm and sit skewed. A skewed
+  aperture edge smears across the width in the coverage row-mean profile and
+  fails the far frames (2026-09-11: a 3-4 mm slip failed f5/f6 coverage; a
+  straight re-seat verified all six). Confirm the strip lies against the stop
+  and has not slipped.
 - Power-cycle → `of135i load` in its own terminal window.
 - **Low debug level** (NEVER 255 — it hexdumps the image and falsifies
   timings).
