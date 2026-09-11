@@ -663,7 +663,25 @@ ScanSession CommandSetGl126::calculate_scan_session(const Genesys_Device* dev,
        the delivered size. */
     bool ir = settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
     const Profile* profile = find_profile(settings.xres, ir);
-    bool pinned = profile != nullptr;
+    /* The vendor's visible pass is always the full 3-channel RGB16 capture.
+       A request maps to that capture when it is colour, IR, or a host-side
+       gray request: the model declares HOST_SIDE_GRAY, so a Gray scan with
+       colour filter NONE is scanned as RGB and reduced to gray on the host
+       (compute_session() expands channels 1->3 for that case, low.cpp). The
+       option-init default genesys applies before the frontend chooses (mode
+       GRAY, colour filter GREEN) is NOT such a capture: report its raw
+       window for parameter queries without pinning the profile geometry or
+       enforcing the colour-shift invariant here. An actual single-channel
+       gray request (a colour filter other than NONE) is likewise not a
+       capture this backend performs; it is refused before any device I/O by
+       the preflight at the top of offset_calibration(), so this parameter-
+       only path stays tolerant and never reaches the wire (Astra review
+       2026-09-11). */
+    bool host_side_gray = has_flag(dev->model->flags, ModelFlag::HOST_SIDE_GRAY) &&
+                          settings.get_channels() == 1 &&
+                          settings.color_filter == ColorFilter::NONE;
+    bool is_capture = ir || settings.get_channels() == 3 || host_side_gray;
+    bool pinned = profile != nullptr && is_capture;
     /* sane_get_parameters can run before the frontend has chosen a valid
        frame (settings.frame defaults to 1, of135i/gl126-integration.patch);
        default to frame 1 for parameter reporting only -- begin_scan does
@@ -846,6 +864,26 @@ void CommandSetGl126::offset_calibration(Genesys_Device* dev,
     }
     (void) feedl_for_frame(frame, *profile);   // FEEDL + end_hwdpi <= travel ceiling
     (void) frame_geometry(*profile, frame);    // ledger consistency invariant
+
+    // The visible pass is always the vendor's 3-channel RGB16 capture. Colour,
+    // IR, and host-side gray (HOST_SIDE_GRAY: colour filter NONE, scanned RGB
+    // and reduced on the host) are captures we perform; a single-channel gray
+    // scan with a colour filter (RED/GREEN/BLUE) is not. calculate_scan_session
+    // leaves that request tolerant so option-init parameter queries do not
+    // fail, which makes THIS the real guard: refuse it here, before the first
+    // write, so calibration never runs for a mode we cannot deliver. Pure
+    // computation on the frontend's settings -- no device, no wire (Astra
+    // review 2026-09-11).
+    bool host_side_gray = has_flag(dev->model->flags, ModelFlag::HOST_SIDE_GRAY) &&
+                          dev->settings.get_channels() == 1 &&
+                          dev->settings.color_filter == ColorFilter::NONE;
+    if (!(ir || dev->settings.get_channels() == 3 || host_side_gray)) {
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: the visible pass is always the vendor's 3-channel RGB16 "
+                            "capture; a single-channel gray scan is not supported. Use Color, "
+                            "or Gray with colour filter None (host-side gray). Nothing was "
+                            "written.");
+    }
 
     // S0: only the idle-homed state is accepted. A cold unit (0x00) is
     // brought up by the magazine load flow, which is not a hook.
