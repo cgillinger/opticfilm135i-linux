@@ -538,6 +538,32 @@ Prerequisite: the shared lock above, implemented and checked.
   the along-strip direction. A deliberate geometry item: it reopens the
   closed geometry phase, needs an offline generator change plus one hardware
   re-verification, and is partly mitigated by seating the strip squarely.
+- **Anisotropic dual/IR pixels delivered as square (dual image proportion
+  FAIL, 2026-09-11).** The dual-light profiles read the sensor across at
+  3600 dpi regardless of the requested resolution (docs/protocol-notes.md,
+  "Widths and chunking (vendor)": DPISET 200/400/1200/1200/1200; the vendor
+  app resamples), while along the film they deliver the requested dpi after
+  IR/visible separation. dual2400 thus delivers 5256 px across (37.1 mm at
+  3600) x 3560 lines (37.7 mm at 2400): physically near-square, but the
+  backend reports `xres = yres = 2400` and does NOT resample X, so a
+  square-pixel viewer stretches the frame by exactly 3600/2400 = 1.500 (Astra
+  measured ~1.48; faces and buildings are drawn out along the sensor axis).
+  Confirmed on the delivered raw: correcting X to 5256*2400/3600 = 3504 px
+  makes the dual match plain3600 frame 1's proportions exactly. Plain3600 is
+  isotropic (3600 both axes, cropped to the aperture width) and unaffected --
+  frames 1-6 have correct proportions. **The transport is not implicated**
+  (FEEDL, chunks, full transfer, PARK all verified); this is a delivered-
+  image-geometry defect. Fix host-side only, leaving the raw transfer, chunk
+  bookkeeping and IR parity intact: either resample X to the target dpi (as
+  the vendor does) so the delivered image is square, or report the true
+  per-axis resolution so the frontend rescales. Applies to every anisotropic
+  dual/IR profile (per-profile: sensor-read dpi across vs delivered dpi
+  along). **The Python driver has the same latent defect**: `image.py
+  write_tiff16` documents and writes a single square dpi for both axes, and
+  no X-resample exists in the dual/IR path -- so driver dual/IR TIFFs are
+  X-stretched too (plain3600 unaffected). Until fixed, the dual runtime
+  path's delivered image proportion is FAIL; its transport verification
+  stands.
 
 ## Delivery checklist (from the SANE requirements survey)
 
