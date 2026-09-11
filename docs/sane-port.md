@@ -538,32 +538,61 @@ Prerequisite: the shared lock above, implemented and checked.
   the along-strip direction. A deliberate geometry item: it reopens the
   closed geometry phase, needs an offline generator change plus one hardware
   re-verification, and is partly mitigated by seating the strip squarely.
-- **Anisotropic dual/IR pixels delivered as square (dual image proportion
-  FAIL, 2026-09-11).** The dual-light profiles read the sensor across at
-  3600 dpi regardless of the requested resolution (docs/protocol-notes.md,
-  "Widths and chunking (vendor)": DPISET 200/400/1200/1200/1200; the vendor
-  app resamples), while along the film they deliver the requested dpi after
-  IR/visible separation. dual2400 thus delivers 5256 px across (37.1 mm at
-  3600) x 3560 lines (37.7 mm at 2400): physically near-square, but the
-  backend reports `xres = yres = 2400` and does NOT resample X, so a
-  square-pixel viewer stretches the frame by exactly 3600/2400 = 1.500 (Astra
-  measured ~1.48; faces and buildings are drawn out along the sensor axis).
-  Confirmed on the delivered raw: correcting X to 5256*2400/3600 = 3504 px
-  makes the dual match plain3600 frame 1's proportions exactly. Plain3600 is
-  isotropic (3600 both axes, cropped to the aperture width) and unaffected --
-  frames 1-6 have correct proportions. **The transport is not implicated**
-  (FEEDL, chunks, full transfer, PARK all verified); this is a delivered-
-  image-geometry defect. Fix host-side only, leaving the raw transfer, chunk
-  bookkeeping and IR parity intact: either resample X to the target dpi (as
-  the vendor does) so the delivered image is square, or report the true
-  per-axis resolution so the frontend rescales. Applies to every anisotropic
-  dual/IR profile (per-profile: sensor-read dpi across vs delivered dpi
-  along). **The Python driver has the same latent defect**: `image.py
-  write_tiff16` documents and writes a single square dpi for both axes, and
-  no X-resample exists in the dual/IR path -- so driver dual/IR TIFFs are
-  X-stretched too (plain3600 unaffected). Until fixed, the dual runtime
-  path's delivered image proportion is FAIL; its transport verification
-  stands.
+- **dual2400 delivers anisotropic pixels as square (image proportion FAIL,
+  2026-09-11).** Per-axis sampling is NOT uniform across the profiles --
+  establish it per profile from the captured DPISET (reg 0x2c:0x2d) before
+  any shared correction rule. DPISET maps 200->600, 400->1200, 1200->3600
+  dpi across the sensor; the profile's own dpi is delivered along the film.
+  From the captured tables:
+
+  | profile   | DPISET | across dpi | along dpi | width px | isotropic? |
+  |-----------|--------|-----------|-----------|----------|------------|
+  | dpi600    | 0x00c8 (200)  | 600  | 600  | 876   | yes |
+  | dpi1200   | 0x0190 (400)  | 1200 | 1200 | 1752  | yes |
+  | dpi2400   | 0x04b0 (1200) | 3600 | 2400 | 5256  | **NO (1.5x)** |
+  | plain3600 | 0x04b0 (1200) | 3600 | 3600 | 3762  | yes (aperture-cropped) |
+  | ir3600    | 0x04b0 (1200) | 3600 | 3600 | 5184  | yes |
+  | dpi7200   | 0x04b0 (1200), 2x clock | 7200 | 7200 | 10512 | yes |
+
+  So the **only** confirmed anisotropic profile is **dpi2400**: 3600 across,
+  2400 along (the vendor app resamples X). dual2400 delivers 5256 px across
+  (37.1 mm at 3600) x 3560 lines (37.7 mm at 2400): physically near-square,
+  but the backend reports `xres = yres = 2400` and does NOT resample X, so a
+  square-pixel viewer stretches it by exactly 3600/2400 = 1.500 (Astra
+  measured ~1.48). Confirmed on the delivered raw: correcting X to
+  5256*2400/3600 = 3504 px makes it match plain3600 frame 1's proportions.
+  **The transport is not implicated** (FEEDL, chunks, full transfer, PARK all
+  verified); this is a delivered-image-geometry defect. Fix host-side only,
+  leaving the raw transfer, chunk bookkeeping and IR parity intact. PNM (the
+  SANE output) carries no resolution metadata, so the SANE fix must resample
+  X to the along-film dpi (as the vendor does) via an ImagePipelineNodeScaleRows
+  in the host pipeline -- a delivered-geometry change that needs a hardware
+  confirmation run before it is claimed verified; a design note follows below.
+  Until then the dual runtime path's delivered image proportion is FAIL; its
+  transport verification stands. **The Python export has the same defect but
+  a different, principled fix** (done, separate commit): its TIFF output
+  carries per-axis resolution tags, so it states the true (across, along)
+  dpi and preserves the raw pixels unchanged rather than resampling --
+  `of135i/image.py sampling_resolution` + `write_tiff16(dpi=(x,y))`, wired
+  through the scan/batch and digitize export paths with rotation-aware axis
+  swapping (`cli._axis_dpi`). plain3600 and the other isotropic profiles are
+  unaffected in both.
+
+  **SANE anisotropy fix -- design (not yet implemented; ends in a hardware
+  run).** Add a per-profile `delivered_width` to the generated Profile table
+  (= round(image_width * along_dpi / across_dpi); == image_width for every
+  profile but dpi2400, where it is 3504), computed data-driven from DPISET
+  with a consistency assert. In `calculate_scan_session`, when
+  `delivered_width != image_width`, push an `ImagePipelineNodeScaleRows(...,
+  delivered_width)` in the host pipeline and report `params.pixels =
+  delivered_width` to the frontend, while the RAW read path
+  (`optical_line_count`, `buffer_size_read = chunk_len`, the GL126
+  `bulk_read_data` branch) keeps `image_width` untouched -- so the wire-
+  equality tests must stay byte-identical (that is the proof the transport is
+  unchanged). Verify offline: the session probe reports the corrected width
+  and unchanged raw byte accounting, the ops wire tests are byte-identical,
+  and the ScaleRows math matches the already-confirmed X->3504 render. Then
+  one hardware confirmation run (dual2400 f1) before claiming verified.
 
 ## Delivery checklist (from the SANE requirements survey)
 
