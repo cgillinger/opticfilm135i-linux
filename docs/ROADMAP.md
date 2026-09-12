@@ -308,13 +308,14 @@ is documented as separately unverified, pending a physical slide.
     registration 0.4/0.06 lines; the dual engine start-anchors FEEDL —
     design doc section 11)
   - dpi2400 delivered-image proportion (anisotropic 3600 across / 2400
-    along): the SANE backend now delivers the sensor axis scaled
-    5256 → 3504 px (square pixels) via the core's host row scaling, and
-    the Python TIFF export states the true per-axis dpi (both, 2026-09-12).
-    OFFLINE-VERIFIED (raw transport byte-identical, delivered width 3504,
-    249 tests green); **delivered SANE image PENDING one hardware
-    confirmation run** (dual2400 f1 — see `docs/sane-port.md`). The
-    transport itself stays HARDWARE VERIFIED (Test 61/62).
+    along): the SANE backend delivers the sensor axis scaled 5256 → 3504 px
+    (square pixels) via the core's host row scaling, and the Python TIFF
+    export states the true per-axis dpi (both, 2026-09-12).
+    HARDWARE-CONFIRMED for SANE dual2400 frame 1 (Test 63: delivered PNM
+    3504×3560, raw 5256/225,545,472 B unchanged, FEEDL 6543, coverage
+    verified, proportion near-square 37.1×36.05 mm, channel shift 0/0,
+    normal PARK). Milestone image eye-acceptance is Christian's step. NOT
+    generalised to the other dual profiles.
   - Slide holder: PENDING
 - **A6 note** (Test 44/46): the driver's eject stalled from a state only
   the backend's first `init()` produced; that `init()` now writes nothing.

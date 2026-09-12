@@ -624,9 +624,15 @@ Prerequisite: the shared lock above, implemented and checked.
   saved driver dual2400 raw, the overscan window's raw aspect 5256x3560 =
   1.476 (Astra measured ~1.48) becomes ~0.984 after the 5256 -> 3504 scale --
   near-square, as intended; a SANE-produced PNM of the same strip for a
-  direct subject-shape comparison is not on disk. **PENDING: one hardware
-  confirmation run (dual2400 f1)** before the delivered SANE image is claimed
-  hardware-verified.
+  direct subject-shape comparison is not on disk. **HARDWARE-CONFIRMED
+  2026-09-12 (Test 63, dual2400 f1):** the delivered SANE PNM is 3504 x 3560,
+  the raw transport is byte-identical to Test 61 (5256 raw width, FEEDL 6543,
+  447 chunks, 225,545,472 raw bytes, normal semantic PARK), coverage verifies
+  (margins 0.74/0.87 mm, aperture 36.05 mm along), the delivered window is
+  near-square (37.1 x 36.05 mm across x along) with aligned colour planes
+  (residual R/B shift 0/0) -- the proportion defect is fixed on hardware for
+  this profile/frame. Milestone image eye-acceptance is Christian's step; the
+  other dual profiles are not generalised from this one run.
 
   **Proposed minimal hardware confirmation (dual2400 f1) -- runs only after
   Christian's explicit go; NOT part of the offline work.** Follows the repo's

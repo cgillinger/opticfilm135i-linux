@@ -4508,3 +4508,56 @@ production images is the operator's step. The other dual profiles are NOT
 claimed verified. Next code task: the calibration-cache B1 item (ordinary
 scans without --force-calibration). Files in
 plustek-135i-analys/sane-l1-20260911{,-r2,-r3,-dual}/.
+
+### Test 63: SANE dual2400 f1 — corrected image proportion on hardware
+
+2026-09-12, colour negative, glassless six-frame strip holder, one fresh
+load (strip seated straight). The single hardware confirmation of the
+dual2400 anisotropy fix (delivered sensor axis scaled 5256 -> 3504 px host-
+side; docs/sane-port.md). Code under test: repo HEAD a97fffa (the fix
+committed as 26a4f8f); `libsane-genesys.so.1.4.0` relinked clean from the
+current symlinked sources, 0 warnings, sha256 3f7f466e96ee1477...; the
+scanimage probe resolves that same .so (LD_LIBRARY_PATH ->
+sane-backends/backend/.libs). Offline gate before the run: the six SANE
+integration tests (tests/test_sane_open_params.py) 6 PASS / 0 SKIP against
+this build. Command per the hardware plan, low debug (SANE_DEBUG_GENESYS=4,
+never the image-dumping level): `scanimage -d genesys:libusb:001:007 --mode
+Color --resolution 2400 --frame 1 --force-calibration --format pnm`.
+
+**Transport — all figures exactly as predicted (Test 61's dual2400 band):**
+- delivered PNM header 3504 x 3560 px (NOT 5256 wide);
+- raw sensor width 5256 ("scan session dpi2400: 5256 x 3560 px delivered
+  from 7152 raw lines");
+- FEEDL 6543, line register 7152;
+- full transfer: 447 chunks of 504576 B = 225,545,472 raw bytes ("scan pass
+  complete, 225545472 raw bytes read"); 74,845,440 B to the frontend
+  (= 3504*3560*6);
+- POSITION 205 polls / 1435 ms, within the 4842 ms budget;
+- semantic PARK normal ("parked, 2 waits", park poll ended 0xf8);
+- normal `of135i eject` from confirmed post-PARK (reg 0x01 = 0x22).
+
+**Delivered image (offline analysis of the PNM):**
+- aperture coverage VERIFIED at 2400 dpi, margins lead 0.74 / trail 0.87 mm,
+  aperture along-span 3407 px = 36.05 mm (a full 35 mm frame);
+- proportion CORRECTED: the delivered window is 3504 px across = 37.1 mm at
+  the corrected 2400 dpi, vs 36.05 mm along -> near-square, physically right
+  (before the fix the same window read as 5256 px = 55.6 mm across, stretched
+  1.5x);
+- colour-plane alignment: residual R/B shift vs G = 0/0 lines (the core's
+  ComponentShiftLines node works); no colour-plane offset;
+- raw data healthy: 0 % at max, 0 % at floor (unclipped);
+- no visible banding or streaks in the rendered positive.
+
+The full overscan window is preserved (not forced to 3:2); absolute colour
+was NOT judged (out of scope; the preview's green cast is the to_positive
+inversion, not a defect). Positive preview
+(plustek-135i-analys/sane-dual2400-20260912/dual2400-f1-positive.jpg) sent to
+Christian for the milestone eye-acceptance step; the analysis session
+inspected it and saw natural (un-stretched) subject proportions.
+
+VERDICT: TRANSPORT and DELIVERED GEOMETRY (width 3504, coverage, proportion)
+HARDWARE-CONFIRMED for **SANE dual2400 frame 1 only**. Not generalised to the
+other dual profiles or any open item. Milestone image acceptance = Christian's
+eye (pending his verdict at the time of writing). Files in
+plustek-135i-analys/sane-dual2400-20260912/ (dual2400-f1-sane.pnm, scan.log,
+dual2400-f1-positive.jpg).
