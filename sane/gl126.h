@@ -144,9 +144,9 @@ void read_image_chunk_usb(Genesys_Device* dev, std::uint8_t* data, std::size_t s
     alternates IR (even) and visible (odd) lines. Called by the core's
     build_image_pipeline() right after the USB source node for GL126;
     pushes, when the session asks for it (ScanSession::gl126_keep_parity),
-    a node that keeps every second line, and for the IR pass the crop
-    that puts it on the visible image's row grid. No-op for the plain
-    profile. */
+    a node that keeps every second line. No-op for the plain profile. The
+    IR pass is colour-aligned by the core's own ComponentShiftLines node
+    like the visible image (Test 70). */
 void push_dual_light_nodes(const ScanSession& session, ImagePipelineStack& pipeline);
 
 } // namespace gl126

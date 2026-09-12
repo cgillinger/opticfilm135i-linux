@@ -722,22 +722,25 @@ ScanSession CommandSetGl126::calculate_scan_session(const Genesys_Device* dev,
     session.params.brightness_adjustment = dev->settings.brightness;
     session.params.exposure_lperiod = dev->settings.exposure_lperiod;
     /* No pixel stagger (the sensor is a single line per colour); the colour
-       line shift is NOT ignored for the visible image: compute_session()
-       takes it from the model's ld_shift and build_image_pipeline() inserts
-       the ComponentShiftLines node. The IR pass has one line per position
-       (R = G = B), so shifting it would only smear every dust speck across
-       the shift: it is cropped instead (push_dual_light_nodes). */
+       line shift is NOT ignored, for the infrared image either:
+       compute_session() takes it from the model's ld_shift and
+       build_image_pipeline() inserts the ComponentShiftLines node. Hook 8
+       first assumed the IR pass had one line per position (R = G = B) and
+       cropped it instead of shifting; the first full-width IR image
+       (Test 70, 2026-09-12) showed the three channels of an IR line
+       staggered by exactly the colour shift (R 12 IR lines before G, B 12
+       after at 3600 dpi -- the three CCD rows each see the IR light from
+       their own position), every dust speck a triplet in the channel mean.
+       So the IR image is aligned like the visible one; the delivered line
+       count is unchanged (the crop was the shift's width). */
     session.params.flags = ScanFlag::IGNORE_STAGGER_OFFSET;
-    if (ir) {
-        session.params.flags |= ScanFlag::IGNORE_COLOR_OFFSET;
-    }
 
     compute_session(dev, session, sensor);
     if (pinned) {
-        unsigned expect_shift = ir ? 0 : geo.shift_lines;
+        unsigned expect_shift = geo.shift_lines;
         if (session.max_color_shift_lines != expect_shift ||
             session.output_line_count != geo.delivered_lines + expect_shift ||
-            (ir && session.color_shift_lines_g * 2 != geo.shift_lines))
+            session.color_shift_lines_g * 2 != geo.shift_lines)
         {
             /* The model's ld_shift, the motor's base_ydpi and the profile's
                geometry must agree, or the wire count would differ from the
@@ -758,7 +761,6 @@ ScanSession CommandSetGl126::calculate_scan_session(const Genesys_Device* dev,
         session.output_total_bytes_raw =
             static_cast<std::size_t>(session.output_line_bytes_raw) * geo.read_lines;
         session.gl126_keep_parity = geo.dual ? (ir ? 0u : 1u) : 2u;
-        session.gl126_crop_lines = (geo.dual && ir) ? geo.shift_lines / 2 : 0u;
         // one image request = one captured chunk; the last one is the
         // remainder when the line count is not a multiple of the chunk
         session.buffer_size_read = profile->chunk_len;
@@ -1157,10 +1159,13 @@ void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*se
     RunResult setup;
     run_phase_program(dev, *profile, "scan_setup", setup, &values);
     std::size_t expected = dev->session.output_total_bytes_raw;
-    /* The tail the core's pipeline will not pull (the IR crop at the far
-       end, Test 68); end_scan reads it before PARK so the wire sees every
-       chunk, as the driver reads them. 0 for the visible profiles. */
-    std::size_t tail = unconsumed_tail_bytes(geo.read_lines, dev->session.gl126_crop_lines,
+    /* The tail the core's pipeline will not pull (Test 68: the IR crop at
+       the far end left the last chunk unrequested); end_scan reads it
+       before PARK so the wire sees every chunk, as the driver reads them.
+       Since Test 70 every profile ends in the colour-shift tail, which the
+       core does read, so this is 0 for all of them -- kept as the safety
+       net for any node that stops short of the wire's end. */
+    std::size_t tail = unconsumed_tail_bytes(geo.read_lines, 0u,
                                              dev->session.output_line_bytes_raw,
                                              profile->chunk_len);
     if (!pass.arm(expected, tail)) {
@@ -1362,16 +1367,9 @@ void push_dual_light_nodes(const ScanSession& session, ImagePipelineStack& pipel
         return;   // the plain profile: every line is the image
     }
     pipeline.push_node<ImagePipelineNodeGl126KeepParity>(session.gl126_keep_parity);
-    if (session.gl126_crop_lines > 0) {
-        std::size_t crop = session.gl126_crop_lines;
-        std::size_t height = pipeline.get_output_height();
-        if (height < 2 * crop) {
-            throw SaneException(SANE_STATUS_INVAL, "gl126: IR image of %zu lines cannot be "
-                                "cropped by %zu at each end", height, crop);
-        }
-        pipeline.push_node<ImagePipelineNodeExtract>(0, crop, pipeline.get_output_width(),
-                                                     height - 2 * crop);
-    }
+    /* No IR crop here any more (Test 70): the core's ComponentShiftLines
+       node aligns the infrared channels like the visible ones and takes
+       the same number of lines off the ends as the crop did. */
 }
 
 void read_image_chunk_usb(Genesys_Device* dev, std::uint8_t* data, std::size_t size)

@@ -4845,3 +4845,55 @@ VERDICT: transport PASS (drain fix confirmed); image FAIL (core Extract
 bug) → fixed offline, needs ONE more ir3600 run on build 13ce427c... after a
 new go. Files: profiles-20260912/ir3600-f1.pnm (the one-third image, kept as
 evidence), ir3600.log, ir3600-test68-failed.log.
+
+### Test 70: SANE ir3600 f1 on the Extract fix — full width; the IR channels are staggered
+
+2026-09-12 17:02, same strip, one fresh load, build sha256 13ce427c... (commit
+f0cd3e2), no `--force-calibration`, debug 4, device string 001:014. Command as
+Test 68. Exit 0 after 51.5 s, PNM 5184 x 5336 16-bit RGB.
+
+Transport, again to the ledger: offset 0x010a/0x0109/0x010a, gain
+0x2c/0x21/0x27, shading 15552 pairs, FEEDL 6538, POSITION 1432 ms of 4842 ms,
+669 chunks pulled + the 670th drained ("draining the 497664 raw bytes ..."),
+"scan pass complete, 333434880 raw bytes read", PARK normal (0xf8, 3.7 s).
+Normal `of135i eject` from post-PARK.
+
+Image: FULL WIDTH now (0.00 % zero bytes in every channel; column profile
+shows the aperture between the two plastic edges; aperture rows 111..5221,
+margins 0.78/0.80 mm; no saturation to speak of). The core Extract fix is
+hardware-confirmed. Dust and a fibre stand out, the pictorial image is faint
+as IR expects.
+
+NEW FINDING: every dust speck appears three times in the channel mean. The
+three channels of an IR line differ in level (medians R 55612, G 40261,
+B 49467) and in POSITION: a 2-D cross-correlation on a dust-rich 1000x1000
+patch (2-D high-pass, then shift search) puts R 12 IR lines before G and B
+12 after — exactly the model's colour line shift (ld_shift 24/12/0 at the
+3600 base, in IR-line units). Single channels show no ghost. Hook 8's
+premise for the IR pass — one reading per position, R = G = B, hence "crop,
+don't shift" (decision 3) — was wrong: the three CCD rows each see the IR
+light from their own position. The driver's `image.split_ir()` (mean of the
+unaligned channels) has the same triple ghost: autocorrelation of the
+2026-09-10 driver IR image (dual-20260910/f3600ir-ir.overscan.tiff) along
+the strip peaks at 12 rows like the SANE mean does, while a single SANE
+channel is flat. A driver-side item, not changed here.
+
+Fix (offline, same day): the IR session no longer sets IGNORE_COLOR_OFFSET
+and the Extract crop is removed; the core's ComponentShiftLines aligns the
+infrared like the visible image and takes the same 24 lines off the ends
+the crop did — delivered 5184 x 5336 unchanged, row grid unchanged
+(output row k = G line k+12). The core then reads the IR wire to its end,
+so no profile has an unconsumed tail any more (the drain stays as the
+safety net; the session probe reports tail 0 and 670 pulls for ir3600).
+The `pull` probe checks content per channel for every same-width profile
+(delivered row k, channel c == raw line k+shift_c, or 2(k+shift_c)+parity
+for dual): all six profiles exact, no zero bytes. Backend rebuilt clean
+(sha256 1062ed01...); the ScanSession field gl126_crop_lines is gone
+from the integration patch.
+
+VERDICT: transport PASS (drain + Extract fixes confirmed); image content
+FAIL on channel alignment → fixed offline; ONE more ir3600 run for the
+acceptance, on the new build, after a new go. Files: profiles-20260912/
+ir3600-f1.pnm (this run), ir3600-f1-test69-onethird.pnm, ir3600.log,
+ir3600-test69.log, ir3600-test68-failed.log. Renders (channel mean,
+stretched) in ~/Bilder/opticfilm-granskning/profiles-20260912/ir3600-f1-*.

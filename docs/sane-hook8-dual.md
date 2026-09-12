@@ -79,7 +79,8 @@ The same phase sequence as the plain scan, with these differences
 - **PARK:** `park_semantic()` with the profile's own two 0x8b payloads.
 - **Host side:** `image.split_ir()` takes the odd lines as the visible
   image and the even ones as a single-channel IR image (mean of R, G,
-  B); `align_channels` shifts and crops the visible image by
+  B — unaligned, see section 3: the IR channels are staggered like the
+  visible ones); `align_channels` shifts and crops the visible image by
   2·round(24·dpi/7200) rows and crops the IR image by the same amount
   so both stay on one row grid; `--ir` writes the IR as a separate file
   and dust removal is a CLI step.
@@ -102,14 +103,22 @@ state machine expects before PARK) follows it. The model's ld_shift
 after the USB source node: `push_dual_light_nodes()` inserts a
 keep-one-line-in-two node (`ImagePipelineNodeGl126KeepParity`, height =
 source / 2, row k = source row 2k + parity) — odd lines for the visible
-image, even for the infrared — and, for the infrared, an `Extract` crop
-of shift/2 rows at each end. The core's own `ComponentShiftLines` node
-then re-aligns the visible image's channels exactly as for the plain
-frame. For the infrared session `IGNORE_COLOR_OFFSET` is set: one line
-per position, R = G = B, and a shift would only smear every dust speck
-across the shift distance. `sane_get_parameters` reports the pipeline's
-output, so the visible and the infrared image of one resolution have the
-same width and the same height (table above, "delivered lines").
+image, even for the infrared. The core's own `ComponentShiftLines` node
+then re-aligns the channels exactly as for the plain frame — **for the
+infrared too** (revised 2026-09-12, Test 70). The original design set
+`IGNORE_COLOR_OFFSET` for the infrared session and cropped shift/2 rows at
+each end instead, on the assumption that an IR line has one reading per
+position (R = G = B). The first full-width IR image showed otherwise: the
+three channels of an IR line are staggered by exactly the colour shift
+(R 12 IR lines before G, B 12 after, at 3600 dpi — each of the three CCD
+rows sees the IR light from its own position, with its own IR
+sensitivity), so the channel mean showed every dust speck three times.
+Aligning takes the same number of lines off the ends as the crop did, so
+the delivered geometry is unchanged. `sane_get_parameters` reports the
+pipeline's output, so the visible and the infrared image of one
+resolution have the same width and the same height (table above,
+"delivered lines"). The driver's `image.split_ir()` (mean of the three
+unaligned channels) carries the same triple ghost — a driver-side item.
 
 **Infrared as a scan method:** `ScanMethod::TRANSPARENCY_INFRARED`
 (`--source "Transparency Adapter Infrared"`) is added to the model and
@@ -205,8 +214,9 @@ post-PARK, the verified route.
    bulk read — would hide the raw stream from the pipeline's debug
    dumps and the state machine's byte count.
 3. **Infrared is a separate scan method** (`TRANSPARENCY_INFRARED`), the
-   same dual pass delivering the even lines, cropped to the visible
-   image's row grid, with the colour shift disabled for it. Dust removal
+   same dual pass delivering the even lines, colour-aligned like the
+   visible image (revised 2026-09-12: the crop-instead-of-shift rested on
+   R = G = B, which Test 70 measured false — section 3). Dust removal
    stays in the frontend (decision 5 of docs/sane-port.md). Two passes
    for colour + infrared, as gl843.
 4. **At 3600 dpi the colour scan stays the plain profile** (3762 px, the

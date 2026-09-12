@@ -176,9 +176,19 @@ int main(int argc, char** argv)
             std::size_t rows = pipeline.get_output_height();
             std::size_t raw_row_bytes = sess.output_line_bytes_raw;
             std::size_t zero_bytes = 0;      // pattern bytes are never 0
-            std::size_t ir_row_mismatch = 0; // ir3600: delivered row k == raw row 2*(k+crop)
-            bool ir_exact = (sess.gl126_keep_parity == 0 && sess.max_color_shift_lines == 0 &&
-                             pipeline.get_output_row_bytes() == raw_row_bytes);
+            /* Content, per channel: delivered row k, channel c must be the
+               raw line the colour shift and the parity select --
+                 plain: raw row k + shift_c
+                 dual:  raw row 2*(k + shift_c) + parity
+               (shift_c = the session's colour_shift_lines for that channel;
+               RGB161616: channel c of pixel p is bytes p*6 + c*2 .. +2).
+               Only when the delivered width is the raw width (dpi2400's
+               ScaleRows resamples the row; only the zero check applies). */
+            bool exact = (pipeline.get_output_row_bytes() == raw_row_bytes);
+            std::size_t row_mismatch = 0;
+            unsigned shifts[3] = {sess.color_shift_lines_r, sess.color_shift_lines_g,
+                                  sess.color_shift_lines_b};
+            unsigned parity = sess.gl126_keep_parity;
             for (std::size_t i = 0; i < rows; ++i) {
                 if (!pipeline.get_next_row_data(row.data())) {
                     break;
@@ -186,25 +196,33 @@ int main(int argc, char** argv)
                 for (std::uint8_t b : row) {
                     if (b == 0) ++zero_bytes;
                 }
-                if (ir_exact) {
-                    std::size_t raw_row = 2 * (i + sess.gl126_crop_lines);
-                    std::size_t base = raw_row * raw_row_bytes;
-                    for (std::size_t j = 0; j < raw_row_bytes; ++j) {
-                        if (row[j] != CountingInterface::pattern(base + j)) {
-                            ++ir_row_mismatch;
-                            break;
+                if (exact) {
+                    bool bad = false;
+                    for (unsigned c = 0; c < 3 && !bad; ++c) {
+                        std::size_t raw_row = (parity > 1) ? (i + shifts[c])
+                                                           : 2 * (i + shifts[c]) + parity;
+                        std::size_t base = raw_row * raw_row_bytes;
+                        for (std::size_t p = 0; p < raw_row_bytes / 6 && !bad; ++p) {
+                            for (std::size_t b = 0; b < 2; ++b) {
+                                std::size_t j = p * 6 + c * 2 + b;
+                                if (row[j] != CountingInterface::pattern(base + j)) {
+                                    bad = true;
+                                    break;
+                                }
+                            }
                         }
                     }
+                    if (bad) ++row_mismatch;
                 }
             }
             std::size_t tail = gl126::unconsumed_tail_bytes(
-                sess.optical_line_count, sess.gl126_crop_lines,
-                sess.output_line_bytes_raw, sess.buffer_size_read);
+                sess.optical_line_count, 0u, sess.output_line_bytes_raw,
+                sess.buffer_size_read);
             std::printf(" pulls=%zu pulled=%zu expected=%zu tail=%zu zero_bytes=%zu "
-                        "ir_exact=%d ir_row_mismatch=%zu",
+                        "exact=%d row_mismatch=%zu",
                         counting->pulls, counting->bytes,
                         static_cast<std::size_t>(sess.output_total_bytes_raw), tail,
-                        zero_bytes, ir_exact ? 1 : 0, ir_row_mismatch);
+                        zero_bytes, exact ? 1 : 0, row_mismatch);
         }
         std::printf("\n");
     } catch (const SaneException& e) {

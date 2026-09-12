@@ -320,6 +320,24 @@ profile) and, for ir3600, each delivered row byte-equal to raw row
 2·(k+12). With the bug put back the probe reports two thirds of the
 delivered bytes zero and every IR row mismatched; with the fix, none.
 
+### 9.3 The IR channels are staggered like the visible ones (Test 70)
+
+The full-width IR image (Test 70) showed every dust speck as a triplet
+in the channel mean: a 2-D cross-correlation on a dust-rich patch put R
+12 IR lines before G and B 12 after — the model's ld_shift, in IR lines.
+Hook 8's R = G = B assumption (docs/sane-hook8-dual.md §3, decision 3)
+was wrong: the three CCD rows each see the IR light from their own
+position. The IR session therefore no longer sets `IGNORE_COLOR_OFFSET`
+and the Extract crop is gone; the core's `ComponentShiftLines` aligns
+the infrared like the visible image, taking the same 24 lines off the
+ends the crop did (delivered 5184×5336 unchanged). Consequences: the
+core now reads the IR wire to its end, so no profile has an unconsumed
+tail (the drain of §9.1 stays as the safety net, tail 0), and the core
+Extract fix of §9.2 has no GL126 user left (kept in the patch as an
+upstream bug fix). The `pull` probe checks content per channel for every
+same-width profile: delivered row k, channel c == the raw line the shift
+and parity select (plain k + shift_c; dual 2·(k + shift_c) + parity).
+
 ## 10. Frame selection (2026-09-08, offline)
 
 Decision 5 pinned frame 1 for the first run. The driver's `scan

@@ -58,7 +58,9 @@ with nothing to re-sync. The eventual merge request takes copies.
   fix to the core itself, `image_pipeline.cpp`: `ImagePipelineNodeExtract`
   copied `depth / 8` bytes per pixel, which for a 3-channel 16-bit format
   is one third of the row (Test 69; docs/sane-hook5-frame.md §9.2) — an
-  upstream bug, a candidate for its own upstream submission.
+  upstream bug, a candidate for its own upstream submission. Since the IR
+  image is colour-aligned instead of cropped (Test 70, §9.3) GL126 no longer
+  uses the Extract node; the fix is kept because it is right.
 
   **Built and linked**, 2026-09-06 on B5 and 2026-09-07 on the reference
   host: `libgenesys_la-gl126.o` and `libgenesys_la-gl126_tables.o` are in

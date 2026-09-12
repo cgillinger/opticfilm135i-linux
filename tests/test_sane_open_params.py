@@ -186,7 +186,7 @@ def test_ir_pins_dual_geometry():
     r = _run(probe, 3600, "gray", "none", "ir", 1)
     assert not r["throw"], r.get("msg")
     assert r["pixels"] == 5184, r         # IR dual width
-    assert r["max_shift"] == 0, r         # IR is cropped, not shifted
+    assert r["max_shift"] == 24, r        # IR is colour-aligned like the visible image (Test 70)
     return True
 
 
@@ -239,8 +239,12 @@ PULL_LEDGER = {
     (2400, "visible"): (447,  225545472,   0),
     (3600, "visible"): (233,  120963348,   0),
     (7200, "visible"): (2678, 1351254528,  0),
-    (3600, "ir"):      (670,  333434880,   497664),
+    (3600, "ir"):      (670,  333434880,   0),
 }
+# Test 68 left ir3600 with a 497664 B tail (the far-end IR crop); since
+# Test 70 the IR image is colour-aligned like the visible ones, the core
+# reads to the wire's end, and no profile has a tail. The drain stays as
+# the safety net (test_sane_ops.py).
 
 
 def test_pipeline_pull_plus_tail_equals_wire():
@@ -268,18 +272,14 @@ def test_pipeline_pull_plus_tail_equals_wire():
         # of 2026-09-12 delivered one third of each row: the core's Extract
         # node copied depth/8 = 2 bytes per RGB16 pixel instead of 6)
         assert kv["zero_bytes"] == 0, (dpi, method, kv)
-        if method == "ir":
-            assert kv["ir_exact"] == 1, kv
-            assert kv["ir_row_mismatch"] == 0, kv   # row k == raw row 2*(k+12), byte for byte
-        if tail == 0:
-            assert kv["pulls"] == chunks, (dpi, method, kv)
-        else:
-            # ir3600: 669 pulled by the pipeline, the 670th by end_scan
-            assert kv["pulls"] == chunks - 1, (dpi, method, kv)
-            assert kv["pulled"] == 332937216, kv     # Test 68's exact figure
+        # content per channel: delivered row k / channel c is the raw line the
+        # colour shift and parity select (dpi2400 is resampled -> not exact)
+        assert kv["exact"] == (0 if dpi == 2400 else 1), (dpi, method, kv)
+        assert kv["row_mismatch"] == 0, (dpi, method, kv)
+        assert kv["pulls"] == chunks, (dpi, method, kv)
     print("test_pipeline_pull_plus_tail_equals_wire OK "
-          "(5 visible profiles pull every chunk; ir3600 pulls 669 of 670, tail 497664; "
-          "no zero byte in any delivered row; IR rows byte-equal to raw rows 2*(k+12))")
+          "(all six profiles pull every chunk, no tail; no zero byte in any delivered row; "
+          "every channel of every delivered row byte-equal to its shifted raw line)")
     return True
 
 

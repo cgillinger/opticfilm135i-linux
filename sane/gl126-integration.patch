@@ -551,7 +551,7 @@ index 542d4ff..b21e534 100644
          reg.init_reg(0x5e, value & 0xff);
      } else {
 diff --git a/backend/genesys/settings.h b/backend/genesys/settings.h
-index 5713912..fa00b0d 100644
+index 5713912..785d777 100644
 --- a/backend/genesys/settings.h
 +++ b/backend/genesys/settings.h
 @@ -64,6 +64,10 @@ struct Genesys_Settings
@@ -565,16 +565,14 @@ index 5713912..fa00b0d 100644
      // exposure time sent to scanner (i.e. LPERIOD)
      int exposure_lperiod = 0;
  
-@@ -247,6 +251,13 @@ struct ScanSession {
+@@ -247,6 +251,11 @@ struct ScanSession {
      // thinner than the CCD element). Computed according to stagger_y.
      unsigned num_staggered_lines = 0;
  
 +    // GL126 (OpticFilm 135i) dual-light stream: 0 keep the even (IR) lines,
-+    // 1 keep the odd (visible) lines, 2 keep every line (the plain profile);
-+    // gl126_crop_lines rows are cut at each end of the IR image so it sits on
-+    // the visible image's row grid (gl126.cpp, docs/sane-hook8-dual.md).
++    // 1 keep the odd (visible) lines, 2 keep every line (the plain profile)
++    // (gl126.cpp, docs/sane-hook8-dual.md).
 +    unsigned gl126_keep_parity = 2;
-+    unsigned gl126_crop_lines = 0;
 +
      // the number of lines that color channels shift due to different physical positions of
      // different color channels.

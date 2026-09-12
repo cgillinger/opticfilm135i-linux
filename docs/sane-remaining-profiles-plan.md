@@ -28,8 +28,12 @@ any profile → **no blocker**; the profile runs may be planned.
   tail). Re-run (Test 69, build 4dafc253...): the drain is hardware-confirmed,
   but the delivered IR image was one third wide — a second, upstream core bug
   (ImagePipelineNodeExtract's bytes per pixel; docs/sane-hook5-frame.md §9.2),
-  fixed via the integration patch the same day. **The IR re-run must use build
-  sha256 `13ce427c...`** (verify before the run) and needs a new explicit go.
+  fixed via the integration patch the same day. Third run (Test 70, build
+  13ce427c...): full width, but the IR channels are staggered by the colour
+  shift (hook 8's R = G = B assumption was wrong; docs/sane-hook5-frame.md
+  §9.3) — the IR is now colour-aligned like the visible image, delivered
+  geometry unchanged. **The IR acceptance run must use build sha256
+  `1062ed01...`** (verify before the run) and needs a new explicit go.
   Everything else in this plan is unchanged.
 
 ## Fixed build for all runs
@@ -138,7 +142,8 @@ scanimage -d "$DEV" --source "Transparency Adapter Infrared" --mode Color \
 - Open B1 requirement: one owner-approved IR image (IR/visible separation and
   IR geometry) at 3600 dpi.
 - Existing evidence: implemented (hook 8) + offline wire-equal; probe delivers
-  5184×5336, max_shift 0 (IR is cropped, not colour-shifted). NOT hardware-run
+  5184×5336, max_shift 24 like the visible dual profiles (since Test 70; the
+  first design cropped instead). Transport hardware-run Tests 69–70; image pending
   in SANE yet.
 - Bounded run: one frame-1 IR scan on its own load.
 - Checks: PNM 5184×5336; raw transfer 333,434,880 B; calibration hooks ran;
@@ -146,7 +151,8 @@ scanimage -d "$DEV" --source "Transparency Adapter Infrared" --mode Color \
   file** (it assumes visible light). Assess the IR image *content* (dust and
   scratches stand out; the pictorial image is faint/absent, as IR expects) and
   *geometry* (aperture present, whole frame). IR is delivered as 3-channel with
-  R=G=B (the IR pass broadcast into RGB slots).
+  the three CCD rows' IR readings, colour-aligned (NOT R = G = B: they differ in
+  level and, unaligned, in position — Test 70). Judge one channel or the mean.
 - File to judge: `ir3600-f1.pnm` rendered as a gray image (documented: take one
   channel, or the mean; rotate `rot90(3)` to upright) in
   `~/Bilder/opticfilm-granskning/`.
