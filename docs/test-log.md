@@ -4920,8 +4920,12 @@ B 49416 — the three CCD rows' IR sensitivities). Session's look at the
 1000x1000 centre crop: single dust specks, no triplets, no banding.
 
 VERDICT: transport PASS; image PASS on the session's checks (full frame,
-aligned, no ghost). Owner's eye verdict — pending. Files:
-profiles-20260912/ir3600-f1.pnm (this run), ir3600-f1-test70-staggered.pnm,
+aligned, no ghost). Owner's eye verdict (same evening): "without streaks
+and cleaner than the earlier ones"; the alignment itself he leaves to the
+measurement (channel shifts 0/0, autocorrelation flat); "well positioned
+image" as well — ir3600 ACCEPTED
+for B1. All four remaining profiles are now hardware-verified and accepted.
+Files: profiles-20260912/ir3600-f1.pnm (this run), ir3600-f1-test70-staggered.pnm,
 ir3600.log, ir3600-test70.log. Renders in
 ~/Bilder/opticfilm-granskning/profiles-20260912/ir3600-f1-*.
 
@@ -4959,3 +4963,23 @@ Release: version 0.1.2 (of135i/__init__.py, pyproject.toml), README badge
 and status, docs/release-notes-v0.1.2.md, ir-analysis.md corrected, ROADMAP
 note. Hardware verification of the driver's --ir product on the new
 version: pending (one frame-1 IR scan; the release notes carry the result).
+
+### Test 73: driver v0.1.2 `--ir` on hardware — the release gate
+
+2026-09-12 17:55, same strip, one fresh load, driver at the v0.1.2 commit
+(e5d2110). `scan --frame 1 --dpi 3600 --ir -o py-ir/f1.tiff`, 1 min 31 s,
+exit 0. Transport normal: gain 44/33/39 and offset 0x010a/0x0109/0x010a as
+every earlier driver run, FEEDL 6538, 670 chunks, three benign poll
+timeouts (the 9c/ad family) and 16 cr mismatches (inside the usual band),
+coverage VERIFIED (margins 0.91 / 0.62 mm), products f1.tiff and f1-ir.tiff
+5184 x 5120 aperture-registered, overscan frames beside them. Normal
+`of135i eject` afterwards.
+
+IR product: the strip-axis autocorrelation of f1-ir.overscan.tiff is flat
+(0.63 / 0.60 / 0.61 / 0.61 at 6 / 12 / 18 / 24 lines); the 2026-09-10
+product of the same profile, made with the unaligned mean, has the 12-line
+peak (0.80 / 0.83 / 0.80 / 0.81). Review render (session): single dust
+specks, no triplets. Files: plustek-135i-analys/profiles-20260912/py-ir/,
+renders ~/Bilder/opticfilm-granskning/profiles-20260912/py-v012-f1-ir-*.png.
+
+VERDICT: PASS — v0.1.2 hardware-verified; tag and release follow.

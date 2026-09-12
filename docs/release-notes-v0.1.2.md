@@ -42,7 +42,12 @@ line comes out as a single speck at the G position.
 
 - Offline against the vendor's own IR capture: channel stagger −12 / +12
   before, the averaged image's 12-line autocorrelation peak gone after.
-- Hardware: HARDWARE_VERIFICATION_TBD
+- Hardware (2026-09-12, the developer's unit, Test 73): one `scan --frame 1
+  --dpi 3600 --ir` with v0.1.2 — normal transport, aperture coverage verified
+  (margins 0.91 / 0.62 mm), calibration as every earlier run; the `-ir.tiff`
+  has no 12-line ghost (strip-axis autocorrelation 0.60 at 12 lines against
+  0.63 / 0.61 at 6 / 18, where the 2026-09-10 product made with the old code
+  shows 0.83 against 0.80 / 0.80). Single specks in the review crop.
 
 ## Everything else
 
