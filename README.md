@@ -7,12 +7,34 @@
 
 **Unofficial, community-built Linux driver for the Plustek OpticFilm 135i**
 (USB `07b3:1436`, Genesys Logic GL126) — a 35 mm film scanner with motorized
-batch feeding that officially supports only Windows and macOS. This project
-makes it scan **natively on Linux**: no VM, no vendor driver, no SANE backend
-required (yet).
+batch feeding that officially supports only Windows and macOS.
 
-Keywords: *Plustek OpticFilm 135i Linux driver, film scanner Linux, 35mm
-negative scanner Linux, SANE OpticFilm 135i, GL126, pyusb scanner driver*.
+### Does the Plustek OpticFilm 135i work on Linux?
+
+Yes, on the developer's test scanner. This is an experimental native Linux
+driver for the OpticFilm 135i (USB `07b3:1436`, GL126), **under active
+development**. On that unit it scans without Windows, a virtual machine, or the
+manufacturer's driver. It has so far been developed and hardware-tested by one
+person on a **single scanner unit** in a limited Linux environment, so
+compatibility with other OpticFilm 135i units and other Linux setups is **not
+yet broadly verified** — additional hardware testing is welcome, and results on
+other units are not yet known.
+
+The project has two parts, at different stages:
+
+- **Python / pyusb command-line driver — released (v0.1.1), working on the
+  test unit.** Scans to raw 16-bit TIFF/PNM at all five resolutions
+  (600 / 1200 / 2400 / 3600 / 7200 dpi), with an infrared dust/scratch channel,
+  whole-strip batch scanning, and a resumable bulk-digitisation workflow.
+- **SANE backend — in progress (separate status).** Lets standard SANE
+  frontends (`scanimage`, digiKam, …) drive the scanner directly. It builds and
+  links against sane-backends; some profiles have run on the unit and others are
+  implemented and pending hardware checks. Its verification is tracked
+  independently of the CLI driver's — see the roadmap.
+
+**Jump to:** [Install](#install) · [Usage](#usage--the-normal-workflow) ·
+[What works today](#what-works-today) ·
+[Known limitations](#development-status) · [SANE status &amp; roadmap](#roadmap)
 
 ## Project status
 
@@ -26,7 +48,17 @@ functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md]
 - **M3 — Robustness and honest limits** ✅ (every acceptance-matrix row met;
   the residual-dark_b fix is hardware-verified — A10/Test 36 — positioning
   verified, cross-unit a documented limitation)
-- **M4 — SANE backend** — in progress: builds and links against sane-backends; calibration, positioning, the scan pass and park all run on the unit, and `scanimage` delivers a full 3600 dpi colour frame equal to the driver's within its run-to-run band (hardware-checked 2026-09-08); frame selection (`--frame 1..4`) positions correctly on hardware (Test 53). The sensor's colour-line offset found in Test 53 is now corrected in the backend and hardware-verified (Test 54: residual 0 rows, 3762 × 5113 delivered); the human eye check of that image is the remaining acceptance step. The other resolutions and infrared are implemented in the backend offline (wire-equal to the driver, hardware runs pending); packaging remains
+- **M4 — SANE backend** — in progress (verified separately from the CLI
+  driver, and not every profile is at the same stage): it builds and links
+  against sane-backends, enumerates the scanner, and runs calibration,
+  positioning, the scan pass and park on the unit through `scanimage`. On
+  hardware so far, the **plain 3600 dpi** profile scans frames 1–6 (transport
+  and aperture coverage) and the **2400 dpi** profile scans frame 1 with its
+  corrected image proportion (accepted by eye for geometry only, not colour).
+  The other profiles (infrared, 600 / 1200 / 7200 dpi) are implemented and
+  offline-verified against the CLI driver, with one hardware run each still to
+  come. Ordinary scanning no longer needs `--force-calibration`. Packaging and
+  a SANE-frontend pass remain. Per-profile detail: **[docs/ROADMAP.md](docs/ROADMAP.md)**
 
 See **[docs/ROADMAP.md](docs/ROADMAP.md)** for the acceptance matrix,
 frozen scope, and exactly what remains before the driver is "complete".
@@ -82,21 +114,20 @@ step for wider distribution.
 
 ## Development status
 
-**Status: v0.1.1 released. The standalone CLI driver is complete —
-magazine loading, single-frame and whole-strip batch scanning, all five
-resolutions, IR and dust removal, and eject. The SANE backend builds,
-opens the scanner and scans any of the four frames at 3600 dpi in colour
-(positioning verified on hardware for frames 1, 2 and 4). The colour-line
-alignment the driver does was missing from the backend (Test 53) and is
-now in place and hardware-verified (Test 54); the human eye check of the
-backend's image is the remaining acceptance step. The other resolutions
-and infrared are implemented and verified offline against the driver,
-their hardware runs are still to come; packaging too.** Scan, calibration, IR and dust removal are stable and
-hardware-verified, per frame and across a 4-frame strip in one
-invocation, frame for frame against the vendor application's output of
-the same strip (2026-09-05). Complete does not mean polished: this is
-early software, verified on the one unit that exists, and these are the
-rough edges you should know about:
+**Status: v0.1.1 released (the CLI driver).** The standalone Python/pyusb
+command-line driver reached its defined milestone — magazine loading,
+single-frame and whole-strip batch scanning, all five resolutions, IR and dust
+removal, and eject — with scan, calibration, IR and dust removal
+hardware-verified per frame and across a 4-frame strip in one invocation,
+frame for frame against the vendor application's output of the same strip
+(2026-09-05). "Complete" here means that functional milestone is met **within
+its frozen scope on the one test unit** — it is **not** broad field testing or
+proof of compatibility with other scanners or Linux systems. The **SANE
+backend is a separate, in-progress effort** with its own status (see Project
+status above and [docs/ROADMAP.md](docs/ROADMAP.md)); do not read the CLI
+driver's hardware verification as the backend's. This is early software,
+verified on the single unit that exists, and these are the rough edges you
+should know about:
 
 - **Eject depends on how the magazine was loaded.** Load with
   `tools/load_magazine.py` (the vendor's insert flow) and `eject` /
