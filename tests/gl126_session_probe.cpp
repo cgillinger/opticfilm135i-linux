@@ -101,9 +101,21 @@ int main(int argc, char** argv)
             sanei_genesys_find_sensor(&dev, dpi, channels, s.scan_method);
         gl126::CommandSetGl126 cmd;
         ScanSession sess = cmd.calculate_scan_session(&dev, sensor, s);
-        std::printf("OK channels=%u lines=%u pixels=%u max_shift=%u output_lines=%u\n",
+        /* The delivered width the frontend sees is the pipeline's output
+           width -- what calculate_scan_parameters() reports as
+           pixels_per_line. build_image_pipeline only constructs nodes here
+           (no device I/O until a row is pulled), so it is safe offline and
+           is the authoritative check that the host ScaleRows resamples the
+           anisotropic dpi2400 raw width (pixels) to the delivered width
+           (requested_pixels). */
+        auto pipeline = build_image_pipeline(dev, sess, 0, false);
+        unsigned delivered = static_cast<unsigned>(pipeline.get_output_width());
+        std::printf("OK channels=%u lines=%u pixels=%u max_shift=%u output_lines=%u "
+                    "requested=%u delivered=%u raw_line_bytes=%u\n",
                     sess.params.channels, sess.params.lines, sess.params.pixels,
-                    sess.max_color_shift_lines, sess.output_line_count);
+                    sess.max_color_shift_lines, sess.output_line_count,
+                    sess.params.get_requested_pixels(), delivered,
+                    static_cast<unsigned>(sess.output_line_bytes_raw));
     } catch (const SaneException& e) {
         std::printf("THROW %s\n", e.what());
     }

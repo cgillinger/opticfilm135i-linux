@@ -534,7 +534,11 @@ std::vector<std::uint8_t> shading_table2_dual(const std::uint8_t* white, std::si
                      lines_per_chunk. */
 struct FrameGeometry {
     bool dual = false;
-    unsigned width = 0;
+    unsigned width = 0;             // raw px read off the wire (profile.image_width)
+    unsigned delivered_width = 0;   // px delivered to the frontend after the host
+                                    // ScaleRows: == width for every profile but the
+                                    // anisotropic dpi2400 (3600 across / 2400 along),
+                                    // where it is 3504 so the delivered pixels are square
     unsigned wire_lines = 0;
     unsigned read_lines = 0;
     unsigned image_lines = 0;

@@ -1013,6 +1013,7 @@ FrameGeometry frame_geometry(const Profile& profile, unsigned frame)
     FrameGeometry g;
     g.dual = profile.lines_per_chunk != 0;   // the plain profile carries no chunk plan
     g.width = profile.image_width;
+    g.delivered_width = profile.delivered_width;
     g.wire_lines = fg.line_register;
     g.read_lines = fg.read_lines;
     g.image_lines = g.dual ? fg.read_lines / 2 : fg.read_lines;
@@ -1031,6 +1032,16 @@ FrameGeometry frame_geometry(const Profile& profile, unsigned frame)
             << " ledger invariant failed: delivered_lines " << g.delivered_lines
             << " + shift_lines " << g.shift_lines << " != image_lines " << g.image_lines
             << " (frames[] wiring or table generation is wrong). Nothing was written.";
+        throw std::invalid_argument(oss.str());
+    }
+    // The delivered width is a host-side down-scale of the raw sensor width
+    // (only dpi2400 differs from width); a zero or an up-scale would mean the
+    // generated table is wrong. Pure computation, before any use.
+    if (g.delivered_width == 0 || g.delivered_width > g.width) {
+        std::ostringstream oss;
+        oss << "gl126_ops::frame_geometry: profile '" << profile.name << "' has bad "
+            << "delivered_width " << g.delivered_width << " for raw width " << g.width
+            << " (table generation is wrong). Nothing was written.";
         throw std::invalid_argument(oss.str());
     }
     return g;

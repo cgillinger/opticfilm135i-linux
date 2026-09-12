@@ -190,6 +190,43 @@ def test_ir_pins_dual_geometry():
     return True
 
 
+def test_dpi2400_delivers_square_width_raw_unchanged():
+    """The dual2400 anisotropy fix (docs/sane-port.md): the 2400 dpi
+    profile reads the sensor at 3600 dpi across (raw width 5256) but the
+    transport advances at 2400 dpi, so square-pixel viewers stretched the
+    delivered image 1.5x. The backend now delivers the sensor axis scaled
+    to 5256*2400/3600 = 3504 px via the core's ImagePipelineNodeScaleRows,
+    while the RAW read path is untouched:
+      - params.pixels (the raw window) stays 5256, and output_line_bytes_
+        raw stays 5256*3*2 -- the USB byte/chunk bookkeeping is unchanged;
+      - requested_pixels and the pipeline's output width are 3504 -- what
+        the frontend receives and sane_get_parameters reports.
+    Only dpi2400 changes; every other profile delivers its raw width."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip()
+    r = _run(probe, 2400, "color", "none", "visible", 1)
+    assert not r["throw"], r.get("msg")
+    assert r["pixels"] == 5256, r                 # RAW window unchanged
+    assert r["raw_line_bytes"] == 5256 * 3 * 2, r  # RAW byte accounting unchanged
+    assert r["requested"] == 3504, r              # scaled sensor axis
+    assert r["delivered"] == 3504, r              # pipeline (frontend) width
+    # Every isotropic profile delivers its raw width -- no scaling node, no
+    # change from before the fix.
+    for dpi, method, filt, mode, raw_w in (
+            (3600, "visible", "none", "color", 3762),
+            (600,  "visible", "none", "color", 876),
+            (1200, "visible", "none", "color", 1752),
+            (7200, "visible", "none", "color", 10512),
+            (3600, "ir",      "none", "gray",  5184)):
+        r = _run(probe, dpi, mode, filt, method, 1)
+        assert not r["throw"], (dpi, r.get("msg"))
+        assert r["pixels"] == raw_w, (dpi, r)
+        assert r["requested"] == raw_w, (dpi, r)
+        assert r["delivered"] == raw_w, (dpi, r)
+    return True
+
+
 def main():
     tests = [
         test_option_init_gray_default_does_not_throw,
@@ -197,6 +234,7 @@ def main():
         test_host_side_gray_pins_like_color,
         test_unsupported_single_channel_gray_is_tolerant_not_pinned,
         test_ir_pins_dual_geometry,
+        test_dpi2400_delivers_square_width_raw_unchanged,
     ]
     passed = skipped = 0
     for t in tests:

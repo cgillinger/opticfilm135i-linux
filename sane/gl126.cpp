@@ -696,8 +696,20 @@ ScanSession CommandSetGl126::calculate_scan_session(const Genesys_Device* dev,
            The A+C ledger (frames[]) makes the geometry frame-dependent
            since Test 58/61 -- frame_geometry() now takes the frame. */
         geo = frame_geometry(*profile, frame);
+        /* The RAW read window is geo.width (the full sensor width the wire
+           delivers): params.pixels drives compute_session's output_line_
+           bytes_raw, the USB read size and the chunk bookkeeping, all of
+           which must stay byte-identical to the captured transfer. The
+           DELIVERED width is geo.delivered_width (== geo.width for every
+           profile but the anisotropic dpi2400, where it is 3504): setting
+           requested_pixels to it makes the core's own final pipeline node
+           push an ImagePipelineNodeScaleRows(delivered_width) -- the
+           existing host row scaling -- so the frontend receives square
+           pixels while nothing on the raw path changes. sane_get_parameters
+           reports pipeline.get_output_width(), i.e. delivered_width.
+           (docs/sane-port.md, the dual2400 anisotropy fix.) */
         session.params.pixels = geo.width;
-        session.params.requested_pixels = geo.width;
+        session.params.requested_pixels = geo.delivered_width;
         session.params.lines = geo.delivered_lines;
         session.params.startx = 0;
         session.params.starty = 0;

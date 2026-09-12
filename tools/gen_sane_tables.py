@@ -1019,7 +1019,17 @@ def emit() -> tuple[str, str]:
     h.append("struct Profile {")
     h.append("    const char* name;")
     h.append("    unsigned dpi;")
-    h.append("    unsigned image_width;      /* px per line, RGB16LE */")
+    h.append("    unsigned image_width;      /* px per line as READ off the wire, RGB16LE */")
+    h.append("    unsigned delivered_width;  /* px per line DELIVERED to the frontend:")
+    h.append("                                  == image_width for every profile but the")
+    h.append("                                  anisotropic dpi2400 (3600 across / 2400 along),")
+    h.append("                                  where the sensor axis is scaled to")
+    h.append("                                  round(image_width * along_dpi / across_dpi) = 3504")
+    h.append("                                  so the delivered pixels are square. The RAW read")
+    h.append("                                  path (chunk_len, chunk_count, byte budget) is")
+    h.append("                                  sized from image_width and is UNCHANGED; the")
+    h.append("                                  core's ImagePipelineNodeScaleRows resamples the")
+    h.append("                                  host image from image_width to this. */")
     h.append("    unsigned chunk_len;        /* bytes per image bulk-read */")
     h.append("    unsigned lines_per_chunk;")
     h.append("    unsigned shading_lines;")
@@ -1278,8 +1288,22 @@ def emit() -> tuple[str, str]:
         c.extend(program_entries)
         c.append("};\n")
 
+        # Delivered width: data-driven from the profile's per-axis sampling
+        # (image.sampling_resolution). Only dpi2400 is anisotropic (3600
+        # across, 2400 along); scaling the across axis to the along dpi makes
+        # the delivered pixels square. Every isotropic profile keeps its raw
+        # width. Consistency: the ratio must divide the width cleanly here
+        # (5256 * 2400 / 3600 == 3504, exact), or the generator refuses.
+        image_width = getattr(mod, "IMAGE_WIDTH", 0)
+        across_dpi, along_dpi = _image.sampling_resolution(dpi)
+        delivered_num = image_width * along_dpi
+        if delivered_num % across_dpi != 0:
+            raise SystemExit(
+                f"{key}: delivered width {image_width}*{along_dpi}/{across_dpi} is "
+                f"not integral; refuse to emit a lossy scale ratio")
+        delivered_width = delivered_num // across_dpi
         profile_entries.append(
-            f'    {{"{key}", {dpi}, {getattr(mod, "IMAGE_WIDTH", 0)}, '
+            f'    {{"{key}", {dpi}, {image_width}, {delivered_width}, '
             f'{getattr(mod, "IMAGE_CHUNK_LEN", 0)}, '
             f'{getattr(mod, "LINES_PER_CHUNK", 0)}, '
             f'{getattr(mod, "SHADING_LINES", 0)}, '

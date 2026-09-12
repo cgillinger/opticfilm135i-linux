@@ -175,7 +175,17 @@ struct FrameGeom {
 struct Profile {
     const char* name;
     unsigned dpi;
-    unsigned image_width;      /* px per line, RGB16LE */
+    unsigned image_width;      /* px per line as READ off the wire, RGB16LE */
+    unsigned delivered_width;  /* px per line DELIVERED to the frontend:
+                                  == image_width for every profile but the
+                                  anisotropic dpi2400 (3600 across / 2400 along),
+                                  where the sensor axis is scaled to
+                                  round(image_width * along_dpi / across_dpi) = 3504
+                                  so the delivered pixels are square. The RAW read
+                                  path (chunk_len, chunk_count, byte budget) is
+                                  sized from image_width and is UNCHANGED; the
+                                  core's ImagePipelineNodeScaleRows resamples the
+                                  host image from image_width to this. */
     unsigned chunk_len;        /* bytes per image bulk-read */
     unsigned lines_per_chunk;
     unsigned shading_lines;
