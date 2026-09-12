@@ -4949,7 +4949,11 @@ before the per-pixel mean; the CLI passes its dpi and crops both images by
 align_shift as before, which removes exactly the wrapped edge rows. The
 mean is accumulated in float32 per channel (integer sums < 2**24 are
 exact, so bit-identical to the float64 mean at a third of the memory).
-Geometry, registration and every other output unchanged.
+Geometry and visible/IR registration unchanged; the visible data before
+dust removal is untouched. The IR product changes (single specks), so the
+IR-based dust removal and the cleaned negative/preview can differ from the
+old code's output (correction 2026-09-12: the entry first said "every
+other output unchanged", which overstated it).
 
 Verification, offline: on 04-image.raw the averaged IR image's
 autocorrelation along the strip drops from a 12-line peak (0.826 against

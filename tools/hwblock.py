@@ -460,9 +460,20 @@ def _save_scan(out_dir: Path, tag: str, raw: bytes, width: int, dpi: int, scanne
     16-bit TIFF + the IR channel as <tag>-ir.tiff, same as the CLI) and
     the per-scan .diag.json sidecar, and return the visible image.
     The raw buffer is the concatenation of these two channels; keeping
-    them as TIFFs keeps the data inspectable without the driver."""
-    visible, ir = image.split_ir(raw, width=width)
+    them as TIFFs keeps the data inspectable without the driver.
+
+    `dpi` is the resolution the scan was made at: split_ir aligns the IR
+    channels by align_shift(dpi) lines (8 at 2400, 12 at 3600) and the
+    IR image is cropped by the same amount as align_channels crops the
+    visible one, so the two TIFFs share one pixel grid and the rolled
+    edge rows never reach the file -- the CLI's _finish_dual_scan does
+    exactly this. (Before 2026-09-12 the tool used split_ir's 3600
+    default for the 2400 dpi step and wrote the IR image uncropped.)"""
+    visible, ir = image.split_ir(raw, width=width, dpi=dpi)
     visible = image.align_channels(visible, dpi=dpi)
+    shift = image.align_shift(dpi)
+    if shift:
+        ir = ir[shift:-shift]
     image.write_tiff16(visible, str(out_dir / f"{tag}.tiff"), dpi=dpi)
     image.write_tiff16(np.stack([ir, ir, ir], axis=-1),
                        str(out_dir / f"{tag}-ir.tiff"), dpi=dpi)

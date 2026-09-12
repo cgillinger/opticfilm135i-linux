@@ -244,6 +244,99 @@ def test_main_repeat_too_low_rejected():
     print("test_main_repeat_too_low_rejected OK")
 
 
+# --------------------------------------------------------------- _save_scan
+
+
+def _read_tiff16_pixels(path, shape):
+    """The 16-bit pixels of a write_tiff16 file: the writer puts the
+    row-major RGB16LE data right after its 8-byte header."""
+    buf = Path(path).read_bytes()[8:8 + int(np.prod(shape)) * 2]
+    return np.frombuffer(buf, dtype="<u2").reshape(shape)
+
+
+def _synthetic_dual_raw(dpi: int, n_pos: int = 120, width: int = 32):
+    """A synthetic dual-light raw buffer (alternating IR / visible lines,
+    RGB16LE) at `dpi` with ONE dust speck at strip position r, recorded
+    the way the sensor records it: the three CCD rows are staggered by
+    align_shift(dpi) lines in the IR pass exactly as in the visible pass
+    (R lags G, B leads G). The IR line's R channel additionally carries a
+    sentinel in its first `shift` rows -- those are the rows np.roll
+    wraps to the far end, so they must never appear in an exported IR
+    image. Returns (raw bytes, width, r, shift, sentinel)."""
+    from of135i import image
+    shift = image.align_shift(dpi)
+    rng = np.random.default_rng(20260912 + dpi)
+    r, col = n_pos // 2, width // 2
+    ir = np.full((n_pos, width, 3), 40000, dtype=np.uint16)
+    ir[r + shift, col, 0] = 1000     # R lags G
+    ir[r, col, 1] = 1000             # G
+    ir[r - shift, col, 2] = 1000     # B leads G
+    sentinel = 12345
+    ir[:shift, :, 0] = sentinel      # wraps to the last rows under roll(-shift)
+    vis = rng.integers(20000, 30000, size=(n_pos, width, 3), dtype=np.uint16)
+    vis[r + shift, col, 0] = 500
+    vis[r, col, 1] = 500
+    vis[r - shift, col, 2] = 500
+    raw = np.empty((2 * n_pos, width, 3), dtype="<u2")
+    raw[0::2] = ir
+    raw[1::2] = vis
+    return raw.tobytes(), width, r, shift, sentinel
+
+
+class _FakeScanner:
+    last_diag = {"note": "synthetic"}
+
+
+def test_save_scan_exports_aligned_registered_ir():
+    """Regression (2026-09-12): _save_scan passed no dpi to split_ir, so
+    the tool's 2400 dpi step aligned the IR channels by the 3600 default
+    (12 lines instead of 8) and wrote the IR image uncropped -- a
+    different line count and pixel grid from the visible TIFF. Now, at
+    2400 as at 3600 dpi: one dust speck in the exported IR image at the
+    same row and column as in the visible image, both TIFFs
+    n_pos - 2*shift lines tall, and none of np.roll's wrapped edge rows
+    (the sentinel) in the IR file."""
+    import tempfile
+    from of135i import image
+    for dpi in (2400, 3600):
+        raw, W, r, shift, sentinel = _synthetic_dual_raw(dpi)
+        assert shift == {2400: 8, 3600: 12}[dpi]
+        n_pos = len(raw) // (2 * W * 3 * 2)
+        with tempfile.TemporaryDirectory() as d:
+            out_dir = Path(d)
+            visible = hwblock._save_scan(out_dir, "t", raw, W, dpi, _FakeScanner())
+            n_lines = n_pos - 2 * shift
+            assert visible.shape == (n_lines, W, 3), (dpi, visible.shape)
+            got_vis = _read_tiff16_pixels(out_dir / "t.tiff", (n_lines, W, 3))
+            got_ir = _read_tiff16_pixels(out_dir / "t-ir.tiff", (n_lines, W, 3))
+            assert np.array_equal(got_vis, visible), dpi
+            assert (out_dir / "t.diag.json").exists()
+            ir = got_ir[..., 0]
+            assert np.array_equal(got_ir[..., 1], ir) and np.array_equal(got_ir[..., 2], ir)
+            # Registration: the speck sits at row r - shift after the crop,
+            # in the same place in both images, and only there.
+            col = W // 2
+            dark_ir = np.argwhere(ir < 40000)
+            assert dark_ir.tolist() == [[r - shift, col]], (dpi, dark_ir.tolist())
+            assert ir[r - shift, col] == 1000, (dpi, ir[r - shift, col])   # all three copies collapsed
+            dark_vis = np.argwhere((got_vis == 500).all(axis=-1))
+            assert dark_vis.tolist() == [[r - shift, col]], (dpi, dark_vis.tolist())
+            # The wrapped edge rows (sentinel in R) are cropped away: the
+            # exported IR image contains no value derived from them.
+            assert not np.any(ir == sentinel) and not np.any(ir == round((sentinel + 2 * 40000) / 3)), dpi
+            # And it equals the CLI's construction of the same product.
+            _, ir_ref = image.split_ir(raw, width=W, dpi=dpi)
+            assert np.array_equal(ir, ir_ref[shift:-shift]), dpi
+            # Contrast with the pre-fix behaviour at 2400 dpi: the 3600
+            # default gives three partial specks (the 8-line copies do
+            # not collapse under a 12-line roll).
+            if dpi == 2400:
+                _, ir_wrong = image.split_ir(raw, width=W, dpi=3600)
+                assert len(np.argwhere(ir_wrong[12:-12] < 40000)) == 3
+    print("test_save_scan_exports_aligned_registered_ir OK (2400 dpi shift 8, 3600 dpi shift 12: "
+          "one speck, same grid, no wrapped rows)")
+
+
 def main() -> int:
     tests = [
         test_film_rows_and_image_stats,
@@ -262,6 +355,7 @@ def main() -> int:
         test_park_wait_summary_and_finding,
         test_cold_block_is_retired_and_touches_nothing,
         test_main_repeat_too_low_rejected,
+        test_save_scan_exports_aligned_registered_ir,
     ]
     for t in tests:
         t()
