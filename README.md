@@ -430,7 +430,7 @@ interoperability constants and our own code.
 - [x] udev rule for rootless operation
 - [x] Loader sensor and button event reading
 - [x] ICC-tagged output (`--positive` TIFFs carry an sRGB profile; raw negatives are untagged linear data)
-- [x] Baseline-conformant TIFF resolution tags (the file states its own dpi, so physical size survives)
+- [x] Baseline-conformant TIFF resolution tags (the file states its own dpi, so physical size survives; the 2400 dpi profile is anisotropic — 3600 across, 2400 along — and the TIFF carries per-axis X/Y resolution that follows the image's orientation)
 - [ ] SANE genesys backend support for GL126 (upstream goal) — plan and hook mapping in [`docs/sane-port.md`](docs/sane-port.md); register tables generated from the driver's own tables and the command set in `sane/`; calibration, positioning (frames 1–4), the scan pass and park run on hardware through `scanimage` (2026-09-08); colour-line alignment hardware-verified (Test 54), eye-check acceptance pending; other resolutions and infrared implemented offline (hardware runs pending); packaging open
 
 ## Status & disclaimer
