@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 #include <ios>
 #include <sstream>
 
@@ -1166,15 +1167,46 @@ const char* park_decision_name(ParkDecision d)
     return "?";
 }
 
-bool ScanPass::arm(std::size_t bytes_expected)
+bool ScanPass::arm(std::size_t bytes_expected, std::size_t tail_bytes)
 {
     if (state_ != ScanPassState::Idle && state_ != ScanPassState::Parked) {
+        return false;
+    }
+    if (tail_bytes > bytes_expected) {
         return false;
     }
     state_ = ScanPassState::Armed;
     expected_ = bytes_expected;
     read_ = 0;
+    tail_ = tail_bytes;
     return true;
+}
+
+bool ScanPass::drain_pending() const
+{
+    return state_ == ScanPassState::Streaming && tail_ > 0 && read_ < expected_ &&
+           expected_ - read_ == tail_;
+}
+
+std::size_t unconsumed_tail_bytes(unsigned read_lines, unsigned crop_lines,
+                                  std::size_t raw_line_bytes, std::size_t chunk_len)
+{
+    if (crop_lines == 0) {
+        return 0;
+    }
+    if (raw_line_bytes == 0 || chunk_len == 0 || chunk_len % raw_line_bytes != 0) {
+        throw std::invalid_argument("unconsumed_tail_bytes: chunk length is not a whole "
+                                    "number of raw lines");
+    }
+    if (2u * crop_lines >= read_lines) {
+        throw std::invalid_argument("unconsumed_tail_bytes: crop larger than the pass");
+    }
+    std::size_t total = raw_line_bytes * read_lines;
+    std::size_t needed_lines = read_lines - 2u * crop_lines;
+    std::size_t lines_per_chunk = chunk_len / raw_line_bytes;
+    std::size_t chunks_needed = (needed_lines + lines_per_chunk - 1) / lines_per_chunk;
+    std::size_t pulled = std::min(total, chunks_needed * chunk_len);
+    return total - pulled;
 }
 
 bool ScanPass::chunk_begin(bool* first)

@@ -1157,7 +1157,13 @@ void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*se
     RunResult setup;
     run_phase_program(dev, *profile, "scan_setup", setup, &values);
     std::size_t expected = dev->session.output_total_bytes_raw;
-    if (!pass.arm(expected)) {
+    /* The tail the core's pipeline will not pull (the IR crop at the far
+       end, Test 68); end_scan reads it before PARK so the wire sees every
+       chunk, as the driver reads them. 0 for the visible profiles. */
+    std::size_t tail = unconsumed_tail_bytes(geo.read_lines, dev->session.gl126_crop_lines,
+                                             dev->session.output_line_bytes_raw,
+                                             profile->chunk_len);
+    if (!pass.arm(expected, tail)) {
         // Unreachable after the check above; kept so the state machine, not
         // this function, is the authority.
         throw SaneException(SANE_STATUS_INVAL, "gl126: scan pass could not be armed (%s)",
@@ -1167,6 +1173,28 @@ void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*se
     DBG(DBG_info, "gl126: scan pass started (%s), line register %u, %u raw lines to read, %zu "
         "raw bytes expected; the image follows chunk by chunk\n", profile->name, lines,
         geo.read_lines, expected);
+    if (tail > 0) {
+        DBG(DBG_info, "gl126: the pipeline leaves the last %zu raw bytes (%zu chunk(s)) "
+            "unrequested; end_scan drains them before PARK\n", tail,
+            (tail + profile->chunk_len - 1) / profile->chunk_len);
+    }
+}
+
+/* Test 68: read the raw tail the pipeline never requested, through the same
+   per-chunk sequence as every other chunk, so the pass reaches Complete
+   before the PARK decision. Only from drain_pending() (Streaming, short by
+   exactly the armed tail); a chunk failure marks the pass Failed and throws
+   as it does mid-image. */
+static void drain_scan_tail(Genesys_Device* dev, ScanPass& pass, std::size_t chunk_len)
+{
+    DBG(DBG_info, "gl126: draining the %zu raw bytes the pipeline did not request, then "
+        "PARK\n", pass.bytes_expected() - pass.bytes_read());
+    std::vector<std::uint8_t> buf(chunk_len);
+    while (pass.state() == ScanPassState::Streaming) {
+        std::size_t remaining = pass.bytes_expected() - pass.bytes_read();
+        std::size_t n = std::min(chunk_len, remaining);
+        read_image_chunk_usb(dev, buf.data(), n);
+    }
 }
 
 /* Hook 7: PARK, as the driver's park_semantic(): the vendor's teardown
@@ -1186,6 +1214,17 @@ void CommandSetGl126::end_scan(Genesys_Device* dev, Genesys_Register_Set* /*regs
        never been parked from). The state machine decides; every refusal
        writes nothing. */
     auto it = scan_pass().find(dev);
+    if (it != scan_pass().end() && it->second.drain_pending()) {
+        bool ir_tail = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
+        const Profile* tail_profile = find_profile(dev->settings.xres, ir_tail);
+        if (tail_profile == nullptr) {
+            it->second.fail();
+            throw SaneException(SANE_STATUS_INVAL, "gl126: no captured profile for %u dpi "
+                                "while draining the scan tail; nothing written",
+                                dev->settings.xres);
+        }
+        drain_scan_tail(dev, it->second, tail_profile->chunk_len);
+    }
     ParkDecision decision = (it == scan_pass().end()) ? ParkDecision::NoPass
                                                       : it->second.park_decision();
     switch (decision) {

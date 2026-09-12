@@ -15,7 +15,17 @@
    backend.
 
    Usage:
-     session <dpi> <color|gray> <none|red|green|blue> <visible|ir> [frame]
+     session <dpi> <color|gray> <none|red|green|blue> <visible|ir> [frame] [pull]
+
+   With the trailing word `pull` (Test 68's gap): the probe gives the device
+   a counting mock interface, builds the REAL image pipeline and pulls every
+   delivered row through it, exactly as genesys_read_ordered_data does on
+   hardware, and appends
+     pulls=<chunk reads> pulled=<raw bytes> expected=<raw total> tail=<bytes>
+   where tail is what the backend arms the pass with (unconsumed_tail_bytes).
+   The core stops pulling once the last delivered line is produced, so for
+   ir3600 pulled < expected (the far-end crop): pulled + tail == expected is
+   the invariant the drain in end_scan relies on.
 
    Prints one line:
      OK channels=<n> lines=<n> pixels=<n> max_shift=<n> output_lines=<n>
@@ -28,12 +38,34 @@
 #include "low.h"
 #include "gl126.h"
 #include "error.h"
+#include "test_scanner_interface.h"
+#include "gl126_ops.h"
+
+#include <memory>
+#include <vector>
 
 #include <cstdio>
 #include <cstring>
 #include <string>
 
 using namespace genesys;
+
+namespace {
+/* The mock interface with a counted bulk_read_data: what build_image_pipeline's
+   USB source calls per chunk. Data content is irrelevant to the pull count. */
+class CountingInterface : public TestScannerInterface {
+public:
+    using TestScannerInterface::TestScannerInterface;
+    std::size_t pulls = 0;
+    std::size_t bytes = 0;
+    void bulk_read_data(std::uint8_t addr, std::uint8_t* data, std::size_t size) override
+    {
+        ++pulls;
+        bytes += size;
+        TestScannerInterface::bulk_read_data(addr, data, size);
+    }
+};
+} // namespace
 
 int main(int argc, char** argv)
 {
@@ -45,7 +77,9 @@ int main(int argc, char** argv)
     }
     unsigned dpi = static_cast<unsigned>(std::stoul(argv[1]));
     std::string mode = argv[2], filter = argv[3], method = argv[4];
-    unsigned frame = (argc > 5) ? static_cast<unsigned>(std::stoul(argv[5])) : 1;
+    unsigned frame = (argc > 5 && std::string(argv[5]) != "pull")
+        ? static_cast<unsigned>(std::stoul(argv[5])) : 1;
+    bool pull = (argc > 5 && std::string(argv[argc - 1]) == "pull");
 
     // The tables sane_init() builds (genesys.cpp), so find_sensor and the
     // model list are populated.
@@ -71,6 +105,13 @@ int main(int argc, char** argv)
     Genesys_Device dev;
     dev.model = model;
     sanei_genesys_init_structs(&dev);
+    CountingInterface* counting = nullptr;
+    if (pull) {
+        auto iface = std::unique_ptr<CountingInterface>(
+            new CountingInterface(&dev, 0x07b3, 0x1436, 0x0100));
+        counting = iface.get();
+        dev.interface = std::move(iface);
+    }
 
     Genesys_Settings s;
     s.scan_method = (method == "ir") ? ScanMethod::TRANSPARENCY_INFRARED
@@ -111,11 +152,30 @@ int main(int argc, char** argv)
         auto pipeline = build_image_pipeline(dev, sess, 0, false);
         unsigned delivered = static_cast<unsigned>(pipeline.get_output_width());
         std::printf("OK channels=%u lines=%u pixels=%u max_shift=%u output_lines=%u "
-                    "requested=%u delivered=%u raw_line_bytes=%u\n",
+                    "requested=%u delivered=%u raw_line_bytes=%u",
                     sess.params.channels, sess.params.lines, sess.params.pixels,
                     sess.max_color_shift_lines, sess.output_line_count,
                     sess.params.get_requested_pixels(), delivered,
                     static_cast<unsigned>(sess.output_line_bytes_raw));
+        if (pull && counting != nullptr) {
+            /* genesys_read_ordered_data pulls params.lines rows of the
+               pipeline's output; the source node reads a chunk whenever its
+               buffer runs dry. Count what reaches the (mock) wire. */
+            std::vector<std::uint8_t> row(pipeline.get_output_row_bytes());
+            std::size_t rows = pipeline.get_output_height();
+            for (std::size_t i = 0; i < rows; ++i) {
+                if (!pipeline.get_next_row_data(row.data())) {
+                    break;
+                }
+            }
+            std::size_t tail = gl126::unconsumed_tail_bytes(
+                sess.optical_line_count, sess.gl126_crop_lines,
+                sess.output_line_bytes_raw, sess.buffer_size_read);
+            std::printf(" pulls=%zu pulled=%zu expected=%zu tail=%zu",
+                        counting->pulls, counting->bytes,
+                        static_cast<std::size_t>(sess.output_total_bytes_raw), tail);
+        }
+        std::printf("\n");
     } catch (const SaneException& e) {
         std::printf("THROW %s\n", e.what());
     }

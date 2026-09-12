@@ -4632,3 +4632,166 @@ note is updated. Not generalised beyond this: the fix is a GL126-scoped conjunct
 (other ASICs unchanged, offline-verified). Files in
 plustek-135i-analys/cache-20260912/ (cache-A.pnm, cache-B.pnm, scanA.log,
 scanB.log).
+
+### Test 65: SANE dpi600 f1 — first of the four remaining profiles on hardware
+
+2026-09-12 14:47, colour negative (same strip as Test 64), glassless six-frame
+strip holder, one fresh load (power-cycle → `of135i status && of135i load` in
+the operator's terminal). Code under test: repo HEAD 46e4cd4 (no `sane/`
+change since 3086eda); libsane-genesys sha256 36d26634... (the build the plan
+in docs/sane-remaining-profiles-plan.md was derived on, checked before the
+run). No `--force-calibration`, SANE_DEBUG_GENESYS=4, uninstalled backend via
+LD_LIBRARY_PATH + SANE_CONFIG_DIR, fresh device string 001:008.
+
+Command: `scanimage -d genesys:libusb:001:008 --source "Transparency Adapter"
+--mode Color --resolution 600 --frame 1 --format pnm -o dpi600-f1.pnm`.
+Wall time 16.6 s, exit 0.
+
+Against the plan's ledger, every figure hit exactly: delivered PNM 876 x 927
+16-bit; FEEDL 6519; line register 1862; 9,786,672 raw bytes read ("scan pass
+complete"); calibration hooks all ran (offset 0x010a/0x0109/0x010a, gain
+0x2c/0x21/0x27 after one measurement, shading tables 1A/1B/2A/2B written and
+verified, W1/W2 satisfied on the first poll); POSITION 1432 ms of a 4842 ms
+budget; semantic PARK normal (wait ended 0xf8, 3.8 s, "parked (2 waits
+recorded)"). Motor sound: nothing abnormal reported by the operator. Normal
+`of135i eject` from post-PARK (reg 0x01 = 0x22 at eject start).
+
+Image: coverage VERIFIED at 600 dpi (leading 0.55 mm, trailing 2.53 mm — the
+600-profile's coarse chunk quantum, as the ledger predicted), one aperture,
+no saturation (max 32445), channel stagger residual 0/0 lines (R and B against
+G by gradient cross-correlation), square proportions. Visual (session): a
+complete, upright frame of a real subject, both aperture edges inside the
+image, a sliver of frame 2 at the trailing edge (that is the 2.5 mm margin),
+no banding or streaks, no colour fringing. The known to_positive green cast on
+this film is the preview's, not the data's (app layer).
+
+Review files (documented transforms in the README beside them):
+~/Bilder/opticfilm-granskning/profiles-20260912/dpi600-f1-{positive,raw-negative,wb-diag}.png.
+Raw + log: plustek-135i-analys/profiles-20260912/dpi600-f1.pnm, dpi600.log.
+
+VERDICT: transport PASS on all acceptance checks. Owner's eye verdict
+(2026-09-12, same afternoon): the whole frame is present in all three review
+renders (raw negative, white-balance diagnostic, positive), including a little
+of the next frame at the trailing edge; the positive is a real positive of the
+whole frame. Colour still off ("as if a yellow filter were applied") — the
+known preview/app-layer cast, outside the eye rule's geometry/integrity scope.
+dpi600 ACCEPTED for B1.
+
+### Test 66: SANE dpi1200 f1 — second remaining profile on hardware
+
+2026-09-12 14:53, same strip, one fresh load (power-cycle → `status && load`
+in the operator's terminal), same build (46e4cd4 / sha 36d26634...), no
+`--force-calibration`, debug 4, device string 001:009.
+
+Command: `scanimage -d genesys:libusb:001:009 --source "Transparency Adapter"
+--mode Color --resolution 1200 --frame 1 --format pnm -o dpi1200-f1.pnm`.
+Wall time 23.0 s, exit 0.
+
+Ledger hit exactly: delivered 1752 x 1792 16-bit; FEEDL 6555; line register
+3600; 37,843,200 raw bytes read; calibration ran (offset 0x010a/0x0109/0x010a,
+gain 0x2c/0x21/0x27, shading 1A/1B/2A/2B at 5256 pairs); POSITION 1439 ms of
+4842 ms; semantic PARK normal (0xf8, 3.8 s). Normal `of135i eject` from
+post-PARK (reg 0x01 = 0x22). Motor sound: nothing abnormal reported.
+
+Image: coverage VERIFIED at 1200 dpi (leading 0.72 mm, trailing 1.17 mm), no
+saturation (max 34844), stagger residual 0/0. Review renders (positive, raw
+negative) in ~/Bilder/opticfilm-granskning/profiles-20260912/ (README states
+the transforms). Raw + log in plustek-135i-analys/profiles-20260912/.
+
+VERDICT: transport PASS. Owner's eye verdict (same afternoon): same as
+dpi600 — whole frame, real positive, the known colour cast — "but better
+positioning" (the frame sits more centrally in the image; the margins are
+0.72/1.17 mm vs 600's coarse 0.55/2.53 mm quantum). dpi1200 ACCEPTED for B1.
+
+### Test 67: SANE dpi7200 f1 — third remaining profile on hardware (the heavy one)
+
+2026-09-12 15:01, same strip, same build (46e4cd4 / sha 36d26634...), no
+`--force-calibration`, debug 4, device string 001:010. Start state: loaded via
+`of135i load --double-jog` from cold (see the note below), reg 0x01 = 0x22.
+
+Command: `scanimage -d genesys:libusb:001:010 --source "Transparency Adapter"
+--mode Color --resolution 7200 --frame 1 --format pnm -o dpi7200-f1.pnm`.
+Wall time 2 min 53 s (scan pass 2 min 39 s), exit 0, PNM 672,599,849 B.
+
+Ledger hit exactly: delivered 10512 x 10664 16-bit; FEEDL 6539; line register
+21424; 1,351,254,528 raw bytes read; calibration ran (offset 0x010a/0x0109/
+0x010a, gain 0x2c/0x21/0x26 — B one code below the other runs today, inside
+the ±1 band; shading 1A/1B/2A/2B at 31536 pairs); POSITION 1437 ms of 4842 ms;
+semantic PARK normal (0xf8, 3.7 s). Normal `of135i eject` from post-PARK
+(reg 0x01 = 0x22). Motor sound: nothing abnormal reported.
+
+Image (analysed under `systemd-run --scope -p MemoryMax=3G`, memmap + chunked
+uint16, no whole-image float copy): coverage VERIFIED at 7200 dpi (leading
+0.65 mm, trailing 0.80 mm), no saturation (max 42799), stagger residual R 0 /
+B 1 line against G (1 line at 7200 dpi = 3.5 µm, measurement noise; max_shift
+48 was applied). Review renders in ~/Bilder/opticfilm-granskning/
+profiles-20260912/: 8x8-block-mean whole frame (positive + raw negative) and a
+full-resolution 1000x1000 centre crop (positive + raw); README states the
+transforms. Session's look: whole frame upright, both aperture edges inside,
+no banding; the centre crop shows film grain resolved cleanly with no colour
+fringing. Raw + log in plustek-135i-analys/profiles-20260912/.
+
+Note on the start state (operator log): after Test 66's eject the operator ran
+`status && load` once more WITHOUT a power-cycle — jog f855, reinsert, load
+dc55 went through (n=1 data point: load straight after eject works) — which
+of course locked the magazine; then power-cycled and ran `load --double-jog`
+from cold: cold_init with the known Test 45 poll deviations (15 s timeout at
+0x4855, settle 0x32=0x1d), jog, reinsert, second jog, reinsert, load dc55.
+Test 67 then scanned from that loaded state. Owner's requirement recorded:
+"power-cycled with the magazine locked" must become a supported driver
+operation (release/eject), not a recipe.
+
+VERDICT: transport PASS. Owner's eye verdict (same afternoon): "looks good;
+slightly tight crop at the right edge, or the picture sits skewed". Explained:
+both aperture edges are inside the image with 0.65/0.80 mm margin (coverage
+verified), so nothing was cut by the transport — the picture area on the film
+sits close to (and slightly rotated against) the aperture, the same strip
+placement seen in Test 58. dpi7200 ACCEPTED for B1.
+
+### Test 68: SANE ir3600 f1 — FAILED on the last chunk (backend bug, not hardware)
+
+2026-09-12 15:08, same strip, one fresh load (power-cycle → `status && load`),
+same build (46e4cd4 / sha 36d26634...), no `--force-calibration`, debug 4,
+device string 001:011.
+
+Command: `scanimage -d genesys:libusb:001:011 --source "Transparency Adapter
+Infrared" --mode Color --resolution 3600 --frame 1 --format pnm -o
+ir3600-f1.pnm`. Exit 9 after 47.6 s, no file written.
+
+What ran to the ledger: offset 0x010a/0x0109/0x010a, gain 0x2c/0x21/0x27,
+shading 1A/1B/2A/2B at 15552 pairs, FEEDL 6538, POSITION 1432 ms of 4842 ms,
+scan pass started with line register 10720 / 333,434,880 raw bytes expected,
+669 chunks of 497664 B read at the normal rate.
+
+Failure: the core called end_scan after it had delivered all 165,970,944
+output bytes, but the backend had read only 669 of 670 chunks
+(332,937,216 of 333,434,880 raw bytes) → ScanPass state AbortedPass → end_scan
+refused PARK by design ("PARK is only defined after a complete pass"), nothing
+written; sane_cancel's move_back_home refused as designed. Cause (confirmed in
+the code, not a hardware event): the IR pipeline crops `gl126_crop_lines` (12)
+at EACH end via ImagePipelineNodeExtract; the core stops pulling once the last
+delivered line is produced, so the trailing 24 raw lines (12 IR lines × parity
+2) are never requested — exactly the last 16-line chunk stays unread. The
+visible profiles are unaffected (their colour-shift tail makes the core read to
+the end: Tests 62–67 all "scan pass complete"). The offline op-test asserted
+670 chunks by driving read_image_chunk directly, not through the core's pull —
+that is the test gap. The Python driver reads every chunk and crops host-side.
+
+State left: transport at the end of the pass, not parked; the device FIFO holds
+one unread chunk. Exit per the state machine: POWER-CYCLE, no eject from this
+state; the magazine is then locked → `load --double-jog` → eject.
+
+Fix (offline, same day, docs/sane-hook5-frame.md §9.1): begin_scan arms the
+pass with the tail the pipeline is known to leave (unconsumed_tail_bytes: 0
+for every visible profile, one chunk for ir3600); end_scan drains exactly that
+much through the normal chunk sequence when, and only when, the shortfall
+equals it, then decides PARK as before; any other shortfall stays
+AbortedPass. The gap in the tests is closed by the session probe's `pull` mode
+(the real pipeline on a counting mock interface): it reproduces Test 68
+offline — ir3600 pulls 669 of 670, 332,937,216 bytes, tail 497,664 — and shows
+the five visible profiles pull every chunk (19/75/447/233/2678, the same
+counts Tests 62–67 read on hardware). Backend rebuilt clean (sha256
+4dafc253...). Re-run of ir3600 needs a new go on the new build.
+
+VERDICT: FAIL (backend). Raw + log in plustek-135i-analys/profiles-20260912/
+(ir3600.log only).

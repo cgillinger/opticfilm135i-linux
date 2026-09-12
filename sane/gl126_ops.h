@@ -672,7 +672,18 @@ void read_image_chunk(Wire& wire, std::uint8_t* data, std::size_t len, bool firs
         Idle --arm()--> Armed --chunk_begin()--> Streaming --chunk_done()
         (bytes >= expected)--> Complete --parked()--> Parked --arm()--> Armed
         any state --fail()--> Failed (terminal; a new sane_open resets it,
-        gated by the hardware check that reg 0x01 reads idle) */
+        gated by the hardware check that reg 0x01 reads idle)
+
+    The tail (Test 68, 2026-09-12): the core's pipeline pulls raw chunks only
+    until it has produced the last DELIVERED line. For the IR profile that
+    line comes before the end of the wire -- the crop at the far end (12 IR
+    lines = 24 raw lines) is never requested, so exactly the last 16-line
+    chunk stays unread and end_scan found the pass Streaming, one chunk
+    short, and refused PARK. The driver reads every chunk. So a pass is
+    armed with the tail the pipeline is known to leave (unconsumed_tail_
+    bytes(), 0 for the visible profiles), and end_scan drains exactly that
+    much (drain_pending()) before deciding; any other shortfall is still an
+    aborted pass. */
 enum class ScanPassState : std::uint8_t { Idle, Armed, Streaming, Complete, Parked, Failed };
 const char* scan_pass_state_name(ScanPassState s);
 
@@ -694,7 +705,14 @@ public:
     /** begin_scan succeeded: Idle/Parked -> Armed with the raw byte total the
         pass must deliver. Returns false (state unchanged) from any other
         state -- the caller refuses the scan. */
-    bool arm(std::size_t bytes_expected);
+    bool arm(std::size_t bytes_expected, std::size_t tail_bytes = 0);
+    /** The raw bytes at the end of the pass the pipeline will not request
+        (set at arm); end_scan reads them itself before PARK. */
+    std::size_t tail_bytes() const { return tail_; }
+    /** True when the pass is Streaming and the shortfall is exactly the
+        armed tail (> 0): end_scan may read the remaining chunks to reach
+        Complete. False for every other shortfall -- that is an abort. */
+    bool drain_pending() const;
     /** A chunk read is about to start. Armed -> Streaming and *first = true
         (the wIndex-8 descriptor); Streaming stays with *first = false.
         Returns false from any other state -- the caller refuses the read. */
@@ -714,7 +732,20 @@ private:
     ScanPassState state_ = ScanPassState::Idle;
     std::size_t expected_ = 0;
     std::size_t read_ = 0;
+    std::size_t tail_ = 0;
 };
+
+/** Raw bytes at the end of a scan pass that the core's image pipeline never
+    pulls off the wire, so end_scan must read them itself before PARK
+    (Test 68). The pipeline requests whole chunks of `chunk_len` until it has
+    produced the last delivered line; with an IR crop of `crop_lines` at each
+    end the last 2 * crop_lines raw lines (KeepParity: two raw lines per kept
+    line) are never needed. 0 when crop_lines is 0 (the pipeline consumes
+    every line: the colour-shift tail is read, Tests 62-67). Pure
+    arithmetic; throws std::invalid_argument on a chunk length that is not a
+    whole number of raw lines or a crop larger than the pass. */
+std::size_t unconsumed_tail_bytes(unsigned read_lines, unsigned crop_lines,
+                                  std::size_t raw_line_bytes, std::size_t chunk_len);
 
 } // namespace gl126
 } // namespace genesys

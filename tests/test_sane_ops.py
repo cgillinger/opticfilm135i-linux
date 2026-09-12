@@ -1680,6 +1680,93 @@ def test_scan_pass_aborted_never_parks():
           "cancel before the first chunk, no pass: none reaches PARK, none retries)")
 
 
+IR_CHUNK = 497664
+IR_RAW_TOTAL = 5184 * 3 * 2 * 10720   # ir3600 frame 1: 333 434 880 raw bytes, 670 chunks
+IR_N_CHUNKS = IR_RAW_TOTAL // IR_CHUNK
+
+
+def test_unconsumed_tail_bytes():
+    """Test 68's arithmetic: the raw bytes the core's pipeline leaves
+    unrequested. ir3600 (10720 raw lines, crop 12 IR lines each end, 31104 B
+    lines, 16-line chunks): the last 24 raw lines are never needed, so the
+    670th chunk is the tail. Every visible profile (crop 0) has none. A
+    chunk that is not whole lines, or a crop that swallows the pass, is
+    refused."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_unconsumed_tail_bytes SKIPPED (no g++)")
+        return "skipped"
+
+    def tail(*a):
+        r = subprocess.run([str(probe), "tail", *map(str, a)], capture_output=True, text=True)
+        assert r.returncode == 0, (a, r.stdout, r.stderr)
+        return r.stdout.strip()
+
+    assert tail(10720, 12, 31104, IR_CHUNK) == f"tail={IR_CHUNK}"
+    # whole chunks only: 16..31 unneeded raw lines free one chunk, 32 two,
+    # fewer than 16 none (the last chunk still carries a needed line)
+    assert tail(10720, 8, 31104, IR_CHUNK) == f"tail={IR_CHUNK}"       # 16 lines
+    assert tail(10720, 9, 31104, IR_CHUNK) == f"tail={IR_CHUNK}"       # 18 lines
+    assert tail(10720, 16, 31104, IR_CHUNK) == f"tail={2 * IR_CHUNK}"  # 32 lines
+    assert tail(10720, 7, 31104, IR_CHUNK) == "tail=0"                 # 14 lines: chunk 670 still needed
+    for lines, lb, cl in ((5137, 22572, 519156), (1862, 5256, 515088), (3600, 10512, 504576),
+                          (7152, 31536, 504576), (21424, 63072, 504576)):
+        assert tail(lines, 0, lb, cl) == "tail=0", (lines, lb, cl)
+    assert tail(10720, 12, 31104, IR_CHUNK + 1).startswith("ERROR")
+    assert tail(10720, 5360, 31104, IR_CHUNK).startswith("ERROR")
+    print("test_unconsumed_tail_bytes OK (ir3600 tail = 1 chunk; visible profiles 0; "
+          "bad chunk/crop refused)")
+
+
+def test_scan_pass_drains_exact_tail_then_parks():
+    """Test 68's shape through the state machine: a pass armed with a
+    one-chunk tail, 669 chunks read by the pipeline, then end_scan: the
+    shortfall equals the tail -> drain reads the 670th -> Complete -> PARK
+    runs. Any other shortfall (668 chunks: the frontend cancelled; or the
+    pass armed without a tail, as every visible profile is) drains nothing
+    and is the aborted pass it always was. A tail larger than the pass is
+    refused at arm."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_scan_pass_drains_exact_tail_then_parks SKIPPED (no g++)")
+        return "skipped"
+
+    def run(*events):
+        r = subprocess.run([str(probe), "scanpass", str(IR_RAW_TOTAL), *events],
+                           capture_output=True, text=True)
+        assert r.returncode == 0, (r.stdout, r.stderr)
+        return _lines(r.stdout)
+
+    n = IR_N_CHUNKS - 1
+    out = run("armtail", str(IR_CHUNK), *(["chunk", str(IR_CHUNK)] * n),
+              "drain", str(IR_CHUNK), "park", "park", "arm")
+    assert out[0] == f"armtail ok=1 tail={IR_CHUNK} state=Armed read=0", out[0]
+    assert out[n] == f"chunk ok=1 first=0 state=Streaming read={n * IR_CHUNK}", out[n]
+    assert out[n + 1] == f"drain pending=1 chunks=1 state=Complete read={IR_RAW_TOTAL}", out[n + 1]
+    assert out[n + 2].startswith("park decision=Run state=Parked"), out[n + 2]
+    assert out[n + 3].startswith("park decision=AlreadyParked"), out[n + 3]
+    assert out[n + 4] == "arm ok=1 state=Armed read=0", out[n + 4]
+    # two chunks short: not the tail -> nothing drained, aborted as before
+    out = run("armtail", str(IR_CHUNK), *(["chunk", str(IR_CHUNK)] * (n - 1)),
+              "drain", str(IR_CHUNK), "park")
+    assert out[n] == f"drain pending=0 chunks=0 state=Streaming read={(n - 1) * IR_CHUNK}", out[n]
+    assert out[n + 1] == f"park decision=AbortedPass state=Failed read={(n - 1) * IR_CHUNK}", out[n + 1]
+    # no tail armed (a visible profile), one chunk short: still an abort
+    out = run("arm", *(["chunk", str(IR_CHUNK)] * n), "drain", str(IR_CHUNK), "park")
+    assert out[n + 1] == f"drain pending=0 chunks=0 state=Streaming read={n * IR_CHUNK}", out[n + 1]
+    assert out[n + 2].startswith("park decision=AbortedPass state=Failed"), out[n + 2]
+    # drain from Armed (nothing read) or after Complete: never pending
+    out = run("armtail", str(IR_CHUNK), "drain", str(IR_CHUNK), "park")
+    assert out[1] == "drain pending=0 chunks=0 state=Armed read=0", out[1]
+    assert out[2].startswith("park decision=AbortedPass"), out[2]
+    # a tail larger than the pass cannot be armed
+    out = run("armtail", str(IR_RAW_TOTAL + 1), "park")
+    assert out[0] == f"armtail ok=0 tail=0 state=Idle read=0", out[0]
+    assert out[1].startswith("park decision=NoPass"), out[1]
+    print("test_scan_pass_drains_exact_tail_then_parks OK (669 + drained 670th -> Parked; "
+          "668, no-tail, Armed: aborted; oversize tail refused)")
+
+
 def test_scan_pass_park_failure_is_terminal():
     """PARK started from Complete and did not reach its completion wait
     (Test 52 attempt 1's shape): the pass is Failed, the core's next
@@ -2049,6 +2136,8 @@ def main() -> int:
         test_scan_pass_complete_then_park,
         test_scan_pass_aborted_never_parks,
         test_scan_pass_park_failure_is_terminal,
+        test_unconsumed_tail_bytes,
+        test_scan_pass_drains_exact_tail_then_parks,
         test_dual_programs_match_python_replayer,
         test_dual_park_programs_match_park_semantic,
         test_dual_image_chunks,

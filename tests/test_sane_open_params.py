@@ -227,6 +227,53 @@ def test_dpi2400_delivers_square_width_raw_unchanged():
     return True
 
 
+# Test 68 (2026-09-12): the wire chunk count per profile (the ledger, also
+# tests/test_sane_ops.py test_frame_geometry_all_profiles) and what the
+# core's pipeline actually pulls before it has produced the last delivered
+# line. ir3600 crops 12 IR lines at the far end, so the last chunk is never
+# requested -- the hardware run stopped one chunk short and refused PARK.
+PULL_LEDGER = {
+    # (dpi, method): (wire chunks, raw bytes, expected tail bytes)
+    (600, "visible"):  (19,   9786672,     0),
+    (1200, "visible"): (75,   37843200,    0),
+    (2400, "visible"): (447,  225545472,   0),
+    (3600, "visible"): (233,  120963348,   0),
+    (7200, "visible"): (2678, 1351254528,  0),
+    (3600, "ir"):      (670,  333434880,   497664),
+}
+
+
+def test_pipeline_pull_plus_tail_equals_wire():
+    """The core's pipeline, built for real and pulled row by row through a
+    counting mock interface, must read every raw chunk the ledger says the
+    wire carries -- or leave EXACTLY the tail the backend arms the pass with
+    (unconsumed_tail_bytes), which end_scan then drains before PARK. This is
+    the gap Test 68 fell through: the op-tests counted 670 ir3600 chunks by
+    driving the chunk reader directly; the core pulled 669."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip()
+    for (dpi, method), (chunks, raw_total, tail) in PULL_LEDGER.items():
+        cmd = [probe, str(dpi), "color", "none", method, "1", "pull"]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        assert r.returncode == 0, (dpi, method, r.stdout, r.stderr)
+        line = r.stdout.strip().splitlines()[-1]
+        assert line.startswith("OK"), (dpi, method, line)
+        kv = {k: int(v) for k, v in (p.split("=", 1) for p in line.split()[1:])}
+        assert kv["expected"] == raw_total, (dpi, method, kv)
+        assert kv["tail"] == tail, (dpi, method, kv)
+        assert kv["pulled"] + kv["tail"] == kv["expected"], (dpi, method, kv)
+        if tail == 0:
+            assert kv["pulls"] == chunks, (dpi, method, kv)
+        else:
+            # ir3600: 669 pulled by the pipeline, the 670th by end_scan
+            assert kv["pulls"] == chunks - 1, (dpi, method, kv)
+            assert kv["pulled"] == 332937216, kv     # Test 68's exact figure
+    print("test_pipeline_pull_plus_tail_equals_wire OK "
+          "(5 visible profiles pull every chunk; ir3600 pulls 669 of 670, tail 497664)")
+    return True
+
+
 def main():
     tests = [
         test_option_init_gray_default_does_not_throw,
@@ -235,6 +282,7 @@ def main():
         test_unsupported_single_channel_gray_is_tolerant_not_pinned,
         test_ir_pins_dual_geometry,
         test_dpi2400_delivers_square_width_raw_unchanged,
+        test_pipeline_pull_plus_tail_equals_wire,
     ]
     passed = skipped = 0
     for t in tests:

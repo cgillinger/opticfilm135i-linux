@@ -264,6 +264,42 @@ cancel after 12 chunks, a cancel before the first chunk and a failed
 `sane_start` never reach PARK and never retry; a PARK failure is
 terminal. 31/31 op tests, backend build clean.
 
+### 9.1 The tail the pipeline never pulls (Test 68, 2026-09-12)
+
+The first ir3600 run through the backend stopped one chunk short: the
+core's `genesys_read_ordered_data` stops pulling raw chunks once the
+pipeline has produced the last DELIVERED line, and the IR pipeline crops
+12 IR lines (24 raw lines) at the far end, so the 670th 16-line chunk was
+never requested. `end_scan` found the pass Streaming, 332,937,216 of
+333,434,880 bytes read, and refused PARK exactly as designed — nothing
+written, power cycle. The visible profiles are unaffected: their
+colour-shift tail makes the core read to the end (Tests 62–67). The
+driver reads every chunk and crops host-side.
+
+Rule added, wire-faithful to the driver (every chunk read, then PARK):
+
+- `begin_scan` arms the pass with the tail the pipeline is known to leave
+  (`unconsumed_tail_bytes()` in `gl126_ops.h`: pure arithmetic on
+  read_lines, crop, raw line bytes and chunk length; 0 when there is no
+  crop).
+- `end_scan` first asks `drain_pending()` — Streaming **and** the
+  shortfall is exactly the armed tail — and only then reads the remaining
+  chunk(s) through `read_image_chunk_usb` (same descriptor/ack/bulk
+  sequence, data discarded), which takes the pass to Complete; then the
+  PARK decision as before. Any other shortfall is still **AbortedPass**.
+  A chunk failure during the drain marks Failed and throws as it does
+  mid-image.
+
+Why the op-tests did not catch it: they counted 670 ir3600 chunks by
+driving `read_image_chunk()` directly, not through the core's pull. The
+gap is closed by `tests/gl126_session_probe.cpp`'s `pull` mode
+(`test_sane_open_params.py::test_pipeline_pull_plus_tail_equals_wire`):
+the real `build_image_pipeline` on a counting mock interface, every
+delivered row pulled; for each profile `pulled + tail == wire total`, the
+five visible profiles pull every chunk, ir3600 pulls 669 and arms 497664.
+Plus `test_unconsumed_tail_bytes` and
+`test_scan_pass_drains_exact_tail_then_parks` in `test_sane_ops.py`.
+
 ## 10. Frame selection (2026-09-08, offline)
 
 Decision 5 pinned frame 1 for the first run. The driver's `scan

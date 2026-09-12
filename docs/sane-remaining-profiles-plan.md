@@ -18,6 +18,18 @@ be **app-layer only** (preview transforms; the raw negative is a healthy C-41
 orange mask, unclipped). No unresolved fault makes raw delivery unreliable for
 any profile → **no blocker**; the profile runs may be planned.
 
+## Status 2026-09-12 (hardware, Tests 65–68)
+
+- dpi600 (Test 65), dpi1200 (Test 66), dpi7200 (Test 67): transport PASS on
+  every ledger figure, coverage VERIFIED, owner's eye verdict ACCEPTED.
+- ir3600 (Test 68): FAILED one chunk short — a backend bug (the core's
+  pipeline never requests the far-end IR crop's chunk; docs/sane-hook5-frame.md
+  §9.1), not hardware. Fixed offline the same day (end_scan drains the armed
+  tail); the build below is therefore superseded — **the IR re-run must use the
+  new build** (`libsane-genesys.so.1.4.0` sha256 `4dafc253...` after the fix,
+  verify before the run) and needs a new explicit go. Everything else in this
+  plan is unchanged.
+
 ## Fixed build for all runs
 
 - **Code revision:** repo HEAD `ab0cb19` (no `sane/` source change since the

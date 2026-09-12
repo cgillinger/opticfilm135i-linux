@@ -161,6 +161,7 @@
 
 #include "../sane/gl126_ops.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -170,6 +171,7 @@
 #include <iostream>
 #include <map>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -1197,6 +1199,29 @@ int cmd_scanpass(int argc, char** argv)
         if (ev == "arm") {
             bool ok = pass.arm(expected);
             std::cout << "arm ok=" << (ok ? 1 : 0);
+        } else if (ev == "armtail") {
+            // arm with a tail the pipeline is known to leave (Test 68)
+            if (i + 1 >= argc) { std::cerr << "armtail needs <bytes>\n"; return 2; }
+            std::size_t t = static_cast<std::size_t>(std::stoull(argv[++i]));
+            bool ok = pass.arm(expected, t);
+            std::cout << "armtail ok=" << (ok ? 1 : 0) << " tail=" << pass.tail_bytes();
+        } else if (ev == "drain") {
+            // end_scan's first step: read the remaining chunks only when the
+            // shortfall is exactly the armed tail; otherwise nothing is read
+            if (i + 1 >= argc) { std::cerr << "drain needs <chunk_len>\n"; return 2; }
+            std::size_t clen = static_cast<std::size_t>(std::stoull(argv[++i]));
+            bool pending = pass.drain_pending();
+            std::size_t chunks = 0;
+            if (pending) {
+                while (pass.state() == ScanPassState::Streaming) {
+                    std::size_t rem = pass.bytes_expected() - pass.bytes_read();
+                    bool first = false;
+                    if (!pass.chunk_begin(&first)) break;
+                    pass.chunk_done(std::min(clen, rem));
+                    ++chunks;
+                }
+            }
+            std::cout << "drain pending=" << (pending ? 1 : 0) << " chunks=" << chunks;
         } else if (ev == "chunk") {
             if (i + 1 >= argc) { std::cerr << "chunk needs <bytes>\n"; return 2; }
             std::size_t n = static_cast<std::size_t>(std::stoull(argv[++i]));
@@ -1230,6 +1255,26 @@ int cmd_scanpass(int argc, char** argv)
     return 0;
 }
 
+/* tail <read_lines> <crop_lines> <raw_line_bytes> <chunk_len> -- the raw
+   bytes the core's pipeline leaves unrequested (unconsumed_tail_bytes). */
+int cmd_tail(int argc, char** argv)
+{
+    if (argc != 6) {
+        std::cerr << "usage: probe tail <read_lines> <crop_lines> <raw_line_bytes> <chunk_len>\n";
+        return 2;
+    }
+    try {
+        std::size_t t = unconsumed_tail_bytes(static_cast<unsigned>(std::stoul(argv[2])),
+                                              static_cast<unsigned>(std::stoul(argv[3])),
+                                              static_cast<std::size_t>(std::stoull(argv[4])),
+                                              static_cast<std::size_t>(std::stoull(argv[5])));
+        std::cout << "tail=" << t << "\n";
+    } catch (const std::invalid_argument& e) {
+        std::cout << "ERROR " << e.what() << "\n";
+    }
+    return 0;
+}
+
 int cmd_position_timeout(int argc, char** argv)
 {
     if (argc != 3) {
@@ -1248,7 +1293,7 @@ int main(int argc, char** argv)
     static const char* usage_line =
         "run|program_info|offset|residual|gain|percentile|warmup|"
         "shading_table|shading_table2|upload_len|"
-        "image_chunks|feedl|position_timeout|scanpass ...\n";
+        "image_chunks|feedl|position_timeout|scanpass|tail ...\n";
     if (argc < 2) {
         std::cerr << "usage: " << argv[0] << " " << usage_line;
         return 2;
@@ -1256,6 +1301,7 @@ int main(int argc, char** argv)
     std::string mode = argv[1];
     try {
         if (mode == "run") return cmd_run(argc, argv);
+        if (mode == "tail") return cmd_tail(argc, argv);
         if (mode == "program_info") return cmd_program_info(argc, argv);
         if (mode == "offset") return cmd_offset(argc, argv);
         if (mode == "residual") return cmd_residual(argc, argv);
