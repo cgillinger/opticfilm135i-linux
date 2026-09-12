@@ -2,7 +2,7 @@
 
 ![License: GPL-2.0-or-later](https://img.shields.io/badge/License-GPL--2.0--or--later-blue.svg)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
-![Release: v0.1.1](https://img.shields.io/badge/Release-v0.1.1-blue.svg)
+![Release: v0.1.2](https://img.shields.io/badge/Release-v0.1.2-blue.svg)
 ![Status: CLI driver complete, SANE backend in progress](https://img.shields.io/badge/Status-CLI%20driver%20complete%2C%20SANE%20backend%20in%20progress-green.svg)
 
 **Unofficial, community-built Linux driver for the Plustek OpticFilm 135i**
@@ -22,7 +22,7 @@ other units are not yet known.
 
 The project has two parts, at different stages:
 
-- **Python / pyusb command-line driver — released (v0.1.1), working on the
+- **Python / pyusb command-line driver — released (v0.1.2), working on the
   test unit.** Scans to raw 16-bit TIFF/PNM at all five resolutions
   (600 / 1200 / 2400 / 3600 / 7200 dpi), with an infrared dust/scratch channel,
   whole-strip batch scanning, and a resumable bulk-digitisation workflow.
@@ -114,7 +114,7 @@ step for wider distribution.
 
 ## Development status
 
-**Status: v0.1.1 released (the CLI driver).** The standalone Python/pyusb
+**Status: v0.1.2 released (the CLI driver).** The standalone Python/pyusb
 command-line driver reached its defined milestone — magazine loading,
 single-frame and whole-strip batch scanning, all five resolutions, IR and dust
 removal, and eject — with scan, calibration, IR and dust removal
@@ -300,6 +300,9 @@ sidecar — and the command exits non-zero. On dual-light scans (`--ir`,
 other resolutions) coverage is measured on the visible frame and the
 IR channel is cropped to the same lines, so the two stay exactly
 registered; `<stem>-ir.overscan.tiff` preserves the full IR frame.
+The IR channel is colour-line aligned like the visible image (the three
+CCD rows are staggered under IR light too; since v0.1.2 — before that
+every dust speck appeared three times in the IR image).
 (Hardware-verified on every profile: plain 3600 in Tests 57–60, the
 five dual profiles in Test 61, including measured sub-line IR-to-
 visible registration.)

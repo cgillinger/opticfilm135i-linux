@@ -4897,3 +4897,65 @@ acceptance, on the new build, after a new go. Files: profiles-20260912/
 ir3600-f1.pnm (this run), ir3600-f1-test69-onethird.pnm, ir3600.log,
 ir3600-test69.log, ir3600-test68-failed.log. Renders (channel mean,
 stretched) in ~/Bilder/opticfilm-granskning/profiles-20260912/ir3600-f1-*.
+
+### Test 71: SANE ir3600 f1 on the colour-aligned build — acceptance run
+
+2026-09-12 17:25, same strip, one fresh load, build sha256 1062ed01...
+(commit 9f7a43c), no `--force-calibration`, debug 4, device string 001:015.
+Command as Test 68. Exit 0 after 51.5 s, PNM 5184 x 5336 16-bit RGB.
+
+Transport to the ledger: offset 0x010a/0x0109/0x010a, gain 0x2c/0x21/0x27,
+FEEDL 6538, POSITION 1438 ms of 4842 ms, ALL 670 chunks pulled by the
+pipeline (no drain line — the colour-shift tail makes the core read to the
+end, as predicted by the probe), "scan pass complete, 333434880 raw bytes
+read", PARK normal (0xf8, 3.7 s). Normal `of135i eject` from post-PARK.
+
+Image: full width, no zero bytes, aperture rows 127..5229 (margins
+0.90/0.75 mm), no saturation. Channel alignment: the same 2-D
+cross-correlation that gave R -12 / B +12 on Test 70 gives 0 / 0. The
+autocorrelation of the channel mean along the strip is flat (0.632 / 0.605 /
+0.612 / 0.61 at 6/12/18/24 rows, no peak at 12 — Test 70's mean had 0.821
+at 12 against 0.769/0.76). Channel medians unchanged (R 55566, G 40234,
+B 49416 — the three CCD rows' IR sensitivities). Session's look at the
+1000x1000 centre crop: single dust specks, no triplets, no banding.
+
+VERDICT: transport PASS; image PASS on the session's checks (full frame,
+aligned, no ghost). Owner's eye verdict — pending. Files:
+profiles-20260912/ir3600-f1.pnm (this run), ir3600-f1-test70-staggered.pnm,
+ir3600.log, ir3600-test70.log. Renders in
+~/Bilder/opticfilm-granskning/profiles-20260912/ir3600-f1-*.
+
+### Test 72 (offline): the driver's IR channel alignment — v0.1.2
+
+2026-09-12, no hardware. Follow-up of Test 70's finding for the Python
+driver: `image.split_ir()` averaged the three IR channels unaligned.
+
+Ground truth first: on the vendor's own IR capture (cal-data/ir/04-image.raw,
+10544 lines) a 2-D cross-correlation on dust puts the IR lines' R 12 lines
+before G and B 12 after, in three separate patches — identical to the
+visible lines' stagger in the same file. The channel LEVELS there are
+near-equal (means 33864/33982/33927, mean |R-G| 849), which is what
+ir-analysis.md's "R ≈ G ≈ B" described; the positions are not equal. So
+the stagger is the sensor's, present in the vendor's data, the driver's
+and the backend's alike.
+
+Fix: split_ir(raw, width, dpi) rolls R by -align_shift(dpi) and B by
++align_shift(dpi) (the roll align_channels applies to the visible image)
+before the per-pixel mean; the CLI passes its dpi and crops both images by
+align_shift as before, which removes exactly the wrapped edge rows. The
+mean is accumulated in float32 per channel (integer sums < 2**24 are
+exact, so bit-identical to the float64 mean at a third of the memory).
+Geometry, registration and every other output unchanged.
+
+Verification, offline: on 04-image.raw the averaged IR image's
+autocorrelation along the strip drops from a 12-line peak (0.826 against
+0.758/0.749 at 6/18) to flat (0.59 at 6/12/18/24); IR mean 34073 (ground-
+truth expectation ~33925, within the test's 5 %). Synthetic regression test
+tests/test_ir.py::test_split_ir_aligns_ir_channels: a speck at G row r with
+its R copy at r+shift and B copy at r-shift collapses to ONE speck at r,
+for 3600/600/7200 dpi (shift 12/2/24); visible half untouched.
+
+Release: version 0.1.2 (of135i/__init__.py, pyproject.toml), README badge
+and status, docs/release-notes-v0.1.2.md, ir-analysis.md corrected, ROADMAP
+note. Hardware verification of the driver's --ir product on the new
+version: pending (one frame-1 IR scan; the release notes carry the result).

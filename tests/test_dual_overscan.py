@@ -401,7 +401,7 @@ def test_dual_isotropic_profiles_square_and_pixels_unchanged():
                 assert x == dpi and y == dpi, (dpi, p, x, y)
             # Recompute the expected oriented visible/IR products and compare
             # pixels, byte for byte.
-            visible, ir = image.split_ir(raw, width=W)
+            visible, ir = image.split_ir(raw, width=W, dpi=dpi)
             shift = round(24 * dpi / 7200)
             visible = image.align_channels(visible, dpi=dpi)
             if shift:

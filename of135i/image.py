@@ -234,24 +234,36 @@ def to_positive(arr, gamma: float = 2.2):
 # ----------------------------------------------------------------- IR split
 
 
-def split_ir(raw: bytes, width: int = 5184) -> tuple[np.ndarray, np.ndarray]:
+def split_ir(raw: bytes, width: int = 5184, dpi: int = 3600) -> tuple[np.ndarray, np.ndarray]:
     """De-interleave an IR-enabled scan's raw buffer into (visible, ir).
 
     The IR-enabled scan mode (--ir; see device.py's Scanner.scan(ir=True)
     and ../cal-data/ir/ir-analysis.md) captures visible and IR light on
     ALTERNATING physical lines at the raw sensor width (5184 px, not the
     3762 the plain visible-only scan windows to): even line index (0, 2,
-    4, ...) = IR pass (R, G, B samples near-identical -- the raw pipe
-    broadcasts one photodiode reading into all three channel slots),
-    odd line index (1, 3, 5, ...) = visible pass (normal RGB negative,
-    clear R/G/B separation).
+    4, ...) = IR pass, odd line index (1, 3, 5, ...) = visible pass
+    (normal RGB negative, clear R/G/B separation).
+
+    The IR pass is NOT one reading per position: the three CCD rows each
+    see the IR light from their own position, so an IR line's R, G and B
+    are staggered along the strip by the same colour line shift as the
+    visible image (R lags G and B leads G by align_shift(dpi) lines --
+    measured -12/+12 at 3600 dpi on the vendor's own capture and on the
+    driver's, 2026-09-12). Their LEVELS are near-equal (that is what the
+    earlier "R = G = B" note described); their positions are not. Up to
+    v0.1.1 the three channels were averaged unaligned, which turned every
+    dust speck into a triplet in the IR image (and a wider dust mask).
+    Since v0.1.2 the R and B channels are rolled into register with G
+    (the same roll align_channels applies to the visible image) before
+    the mean; the wrapped edge rows are the align_shift(dpi) rows at
+    each end, which the caller crops off both images alike (cli.py).
 
     `raw` is the same pixel-interleaved RGB16LE buffer assemble() takes
     (this calls assemble() itself). Returns (visible, ir):
-      visible: (lines // 2, width, 3) uint16 -- the odd lines, unchanged.
-      ir: (lines // 2, width) uint16 -- the even lines, reduced to a
-        single channel (round of the per-pixel R/G/B mean; the three
-        channels already carry the same broadcast value up to noise).
+      visible: (lines // 2, width, 3) uint16 -- the odd lines, unchanged
+        (the caller aligns and crops them with align_channels).
+      ir: (lines // 2, width) uint16 -- the even lines, channels aligned,
+        reduced to a single channel (round of the per-pixel mean).
     """
     arr = assemble(raw, width)
     n_lines = arr.shape[0]
@@ -260,7 +272,17 @@ def split_ir(raw: bytes, width: int = 5184) -> tuple[np.ndarray, np.ndarray]:
         arr = arr[: n_lines - 1]
     ir_rgb = arr[0::2]        # even lines: IR pass
     visible = arr[1::2]       # odd lines: visible pass
-    ir = np.rint(ir_rgb.astype(np.float64).mean(axis=2)).astype(np.uint16)
+    shift = align_shift(dpi)
+    # Same roll as align_channels (R -shift, B +shift), no crop here.
+    # Accumulate in float32 one channel at a time: integer sums below
+    # 2**24 are exact, so this equals the float64 mean bit for bit at a
+    # third of the memory.
+    acc = np.roll(ir_rgb[..., 0], -shift, axis=0).astype(np.float32) if shift else \
+        ir_rgb[..., 0].astype(np.float32)
+    acc += ir_rgb[..., 1]
+    acc += np.roll(ir_rgb[..., 2], +shift, axis=0) if shift else ir_rgb[..., 2]
+    acc /= 3.0
+    ir = np.rint(acc).astype(np.uint16)
     return visible, ir
 
 

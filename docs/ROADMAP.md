@@ -126,7 +126,11 @@ series is required for these merely because this plan was written.
    produces the fault.
 2. ~~Release packaging~~ — **done:** tagged **v0.1.0** on 45305a4; README
    install + usage confirmed complete and current. **v0.1.1** (d24cc81)
-   follows with the post-release digitize fixes (Test 40).
+   follows with the post-release digitize fixes (Test 40). **v0.1.2**
+   (2026-09-12) is a bug-fix release: the IR channel is colour-line
+   aligned before averaging (the three CCD rows are staggered under IR
+   light too; every dust speck was a triplet before) —
+   docs/release-notes-v0.1.2.md, Test 72.
 
 Every acceptance-matrix row is met and A is packaged. **Milestone A is
 complete.**

@@ -122,6 +122,44 @@ def test_split_ir_against_capture():
     )
 
 
+def test_split_ir_aligns_ir_channels():
+    """v0.1.2: an IR line's R, G, B are the three CCD rows' own readings,
+    staggered along the strip like the visible channels (R lags G, B
+    leads G by align_shift(dpi) lines; measured -12/+12 at 3600 dpi on
+    the vendor capture, the driver's and the SANE backend's). Build a
+    synthetic dual-light buffer with one dust speck whose IR copies sit at
+    G row r, R row r+shift, B row r-shift and check that split_ir returns
+    ONE speck at row r (all three copies collapsed) instead of the triplet
+    the unaligned mean gave; the visible half must come back untouched;
+    and the shift must follow dpi (600 dpi: 2 lines)."""
+    for dpi, shift in ((3600, 12), (600, 2), (7200, 24)):
+        W, n_pos = 64, 200
+        rng = np.random.default_rng(20260912)
+        ir = np.full((n_pos, W, 3), 40000, dtype=np.uint16)
+        vis = rng.integers(1000, 30000, size=(n_pos, W, 3), dtype=np.uint16)
+        r = n_pos // 2
+        col = W // 2
+        ir[r + shift, col, 0] = 1000    # R lags G by `shift`
+        ir[r, col, 1] = 1000            # G
+        ir[r - shift, col, 2] = 1000    # B leads G by `shift`
+        raw = np.empty((2 * n_pos, W, 3), dtype="<u2")
+        raw[0::2] = ir
+        raw[1::2] = vis
+        visible, ir_out = image.split_ir(raw.tobytes(), width=W, dpi=dpi)
+        assert np.array_equal(visible, vis), "visible half must be untouched"
+        assert ir_out.shape == (n_pos, W) and ir_out.dtype == np.uint16
+        column = ir_out[:, col].astype(np.int64)
+        dark = np.where(column < 40000)[0]
+        assert list(dark) == [r], (dpi, shift, list(dark))     # one speck, at G
+        assert column[r] == 1000, column[r]                     # all three copies collapsed
+        # the wrapped edge rows are exactly the align_shift rows at each end
+        assert shift == image.align_shift(dpi)
+    # And the old behaviour for contrast: an unaligned mean gives three
+    # partial specks (r-shift, r, r+shift), which is what v0.1.1 wrote.
+    print("test_split_ir_aligns_ir_channels OK (3600/600/7200 dpi: one speck at the G row, "
+          "visible untouched)")
+
+
 # -------------------------------------------------------------- MOCK UsbIo
 #
 # Structurally identical to tests/test_calibrate.py's _FakeDev/MockUsbIo
@@ -522,6 +560,7 @@ def test_cal_capture_offon_identical_write_stream_dual():
 def main() -> int:
     tests = [
         test_split_ir_against_capture,
+        test_split_ir_aligns_ir_channels,
         test_scan_sequence_matches_trace_ir,
         test_dust_removal_synthetic,
         test_cal_capture_offon_identical_write_stream_dual,

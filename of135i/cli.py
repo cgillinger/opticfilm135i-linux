@@ -471,7 +471,7 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
     """
     import numpy as _np
 
-    visible, ir = image.split_ir(raw, width=width)
+    visible, ir = image.split_ir(raw, width=width, dpi=args.dpi)
 
     # Channel alignment BEFORE dust removal: the staggered R/G/B lines
     # give every dust speck a colored halo wider than its dark core;
@@ -482,7 +482,9 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
     # one visible raw line, so the visible array has the nominal line
     # density (measured on the 600/1200/2400 dpi captures: 2/4/8 lines,
     # docs/protocol-notes.md pass 18; the earlier code halved it). Crop
-    # `ir` identically to keep the two images on the same pixel grid.
+    # `ir` identically to keep the two images on the same pixel grid
+    # (split_ir has already rolled the IR channels into register; its
+    # wrapped edge rows are exactly the rows cropped here).
     _shift = round(24 * args.dpi / 7200)
     visible = image.align_channels(visible, dpi=args.dpi)
     if _shift:
@@ -661,7 +663,7 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
     coverage = None
     if dual:
         from . import aperture_crop
-        visible, ir = image.split_ir(raw, width=width)
+        visible, ir = image.split_ir(raw, width=width, dpi=args.dpi)
         _shift = round(24 * args.dpi / 7200)
         visible = image.align_channels(visible, dpi=args.dpi)
         if _shift:

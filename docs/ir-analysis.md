@@ -9,10 +9,17 @@ Last-Updated: 2026-08-30
 Line period = **5184 px × 3 channels (RGB, pixel-interleaved) = 15552
 u16 samples = 31104 bytes/line**. Lines **alternate** line-by-line:
 
-- **even line index (0, 2, 4, …) = IR pass**: R, G, B samples are
-  (near-)identical to each other — the raw pipe broadcasts the single
-  IR photodiode reading into all three channel slots. Image is bright
-  and almost flat except for small dark specks (dust/scratches).
+- **even line index (0, 2, 4, …) = IR pass**: R, G, B channel LEVELS
+  are near-identical (means 33864 / 33982 / 33927). Image is bright and
+  almost flat except for small dark specks (dust/scratches).
+  **Correction 2026-09-12:** the three samples are NOT one reading
+  broadcast into three slots — they are the three CCD rows' own IR
+  readings, staggered along the strip by the colour line shift exactly
+  like the visible pass (2-D cross-correlation on dust in this very
+  file: R −12 lines, B +12 lines against G, in three separate patches;
+  the same on the driver's and the SANE backend's captures). Averaging
+  them unaligned triples every dust speck; the driver aligns them since
+  v0.1.2 (`image.split_ir`), the SANE backend since Test 70.
 - **odd line index (1, 3, 5, …) = visible pass**: normal RGB negative
   image, R/G/B clearly separated (orange-mask-like channel offset).
 
@@ -95,8 +102,9 @@ captured bytes).
   | even (IR) | 33864 | 33983 | 33928 | 24623 | 24561 | 24666 |
   | odd (visible) | 13963 | 6989 | 5576 | 11893 | 5190 | 3680 |
 
-  Even lines: R≈G≈B (IR broadcast into all 3 slots). Odd lines: clear
-  R>G>B separation typical of a color negative under visible light.
+  Even lines: R≈G≈B in level (not in position — see the correction in
+  the summary). Odd lines: clear R>G>B separation typical of a color
+  negative under visible light.
 
 ## Byte-count confirmation
 

@@ -2,6 +2,6 @@
 
 from .usbio import UsbIo
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = ["UsbIo", "__version__"]
