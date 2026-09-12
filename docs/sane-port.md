@@ -545,6 +545,32 @@ Prerequisite: the shared lock above, implemented and checked.
   FEEDL 6543, coverage verified, normal PARK) — the exact case that used to
   fail. Ordinary scanning without `--force-calibration` now works on the
   device; the flag is no longer required (it still works).
+- **Preview mirror between renderings — explained 2026-09-12, no code bug.**
+  The Test-63 dual2400 preview is a horizontal mirror of the 2026-09-11 SANE
+  previews of the same frame. Traced to exactly the mirror step: the 09-11
+  review images were rendered `rot90(3)` only; Test 63 used `rot90(3)[:, ::-1]`
+  — the driver's canonical `--positive` (vendor `HorizontalMirror=1`, added in
+  Test 37/46 and vendor-validated in N3/Test 58). Confirmed by rendering the
+  Test-63 SANE raw both ways: the no-flip render matches the 09-11 order
+  exactly. SANE delivers ONE consistent raw negative; orientation is the app's
+  job, so this is a throwaway-preview-script inconsistency, not a SANE-delivery
+  or shared-Python defect — and per this mission's rule, raw/shared code is NOT
+  changed to compensate for a preview script. Canonical rendering for future
+  review images is the driver's `--positive` (with the flip). Residual: a one-
+  off owner confirmation of the true left–right from the original/memory (no
+  new scan). Not a B1 blocker (B1 delivers the raw; the frontend orients).
+- **Yellow-green preview cast — explained 2026-09-12, raw healthy, no code
+  bug.** The saved raw negative is a proper C-41 orange mask (R base p99.8
+  ~24500 vs G/B ~11000; span R 1.21 / G,B 0.87; 0 % clipped). `to_positive`'s
+  per-channel linear stretch leaves the positive blue-deficient (medians R
+  49513 / G 51799 / B 30067) → green. A principled per-channel median white-
+  balance (factors ~0.88/0.85/1.46) recovers fully neutral colour, which proves
+  the raw is sound and the cast is the deliberately raw-faithful `to_positive`
+  convenience — NOT a backend channel-handling or calibration fault. No vendor
+  scan of this strip exists, so absolute colour is not compared (limitation).
+  Not a B1 blocker (raw RGB16 delivery is correct; colour interpretation is the
+  application's job). Any tone/colour change to `to_positive` is Christian's
+  separate decision, out of this mission's scope.
 - **Lateral (across-strip) overscan.** The plain path delivers the fixed
   aperture width (3762 px) with overscan only ALONG the strip
   (leading/trailing); the across-strip width is not overscanned. A small

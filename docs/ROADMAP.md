@@ -258,24 +258,21 @@ is documented as separately unverified, pending a physical slide.
   open rows.
 - **A — own driver:** ✅ **complete.** All acceptance criteria met and
   packaged: tagged **v0.1.0** (45305a4), README install/usage confirmed.
-- **B1 — SANE, in progress** (since 2026-09-06): register tables
-  generated, backend builds against sane-backends, model enumerates,
-  `sane_open` initialises the unit exactly as the driver does (Test 43).
-  Calibration, positioning, scan pass and park verified on hardware
-  (Tests 48–52): `scanimage` delivers frame 1 at 3600 dpi in colour,
-  equal to the driver's output within its run-to-run band. Frame
-  selection (`--frame 1..4`) positions correctly on hardware (Test 53).
-  The backend's image carried the sensor's colour-line offset
-  uncorrected (Test 53); corrected through the core's own channel-shift
-  node, host side, wire unchanged, verified offline and then on hardware
-  (Test 54: residual 0 rows, 3762 × 5113 delivered, waits and wire as
-  Test 52). **Image acceptance:** Christian's eye check of the Test 54
-  image is the open step — no backend image is accepted until he has
-  said so.
-  The other resolutions and infrared (hook 8, docs/sane-hook8-dual.md)
-  are implemented offline and wire-equal to the driver; their hardware
-  runs and eye checks are next. Still to do for B1 after that: install/
-  packaging (docs/sane-port.md). **B2** not started.
+- **B1 — SANE, in progress** (since 2026-09-06): all six profiles are
+  implemented and offline-verified (register tables generated from the
+  driver's own tables, wire-equal op tests, geometry ledger). Hooks 1–8 are
+  built; `sane_open`/calibration/positioning/scan/park run through
+  `scanimage`. The calibration-cache item is fixed and hardware-confirmed
+  (Test 64) — ordinary scans need no `--force-calibration`. Hardware SANE
+  coverage so far: **plain3600** frames 1–6 (transport + coverage, Test 62)
+  and **dpi2400** frame 1 (transport + coverage + corrected proportion, eye-
+  accepted for geometry, Tests 62/63). The other four profiles (ir3600,
+  dpi600, dpi1200, dpi7200) are offline-only — one SANE hardware run + eye
+  approval each is the remaining verification. The two Test-63 image findings
+  (mirror, colour cast) are investigated and app-layer, not B1 blockers (see
+  the dpi2400 bullet below). Per-profile detail is in the **SANE profile
+  matrix**, and the remaining work in the **B1/B2 finite plan**, both below.
+  **B2** not started.
 - **C — full-length holder, in progress:** the strip holder's six
   apertures are measured and the driver reaches and scans all six
   positions on hardware — transport, scan and PARK verified across
@@ -316,11 +313,27 @@ is documented as separately unverified, pending a physical slide.
     verified, proportion near-square 37.1×36.05 mm, channel shift 0/0,
     normal PARK) and EYE-ACCEPTED for the geometry goal 2026-09-12
     (Christian + Astra; proportions natural, generous overscan). NOT
-    generalised to the other dual profiles. Two separate out-of-scope
-    findings recorded (Test 63): the preview is mirrored vs the older
-    previews (correct final orientation to be established), and a strong
-    yellow-green cast / low contrast whose source (render chain vs raw) is
-    unverified — both investigable from the saved files, no new hardware.
+    generalised to the other dual profiles. The two Test-63 findings are now
+    investigated offline (2026-09-12), both APP-LAYER, neither a B1 blocker:
+    * **Mirror — explained, no code bug.** The new preview differs from the
+      2026-09-11 previews by exactly the horizontal-mirror step: the 09-11
+      review images were rendered with `rot90(3)` only, the Test-63 preview
+      with `rot90(3)[:, ::-1]` — the driver's canonical `--positive` (vendor
+      HorizontalMirror=1, added in Test 37/46, vendor-validated in N3/Test 58).
+      SANE delivers ONE consistent raw negative; orientation is the app's job,
+      so this is a throwaway-preview-script inconsistency, not a SANE or shared-
+      code defect. The vendor-matching orientation is the flipped one (Test 63).
+      Residual: Christian confirms the real left–right from the original/memory
+      (no new scan) — a one-off user check, not backend work.
+    * **Yellow-green cast — preview only, raw healthy.** The raw negative is a
+      proper C-41 orange mask (R base p99.8 ~24500 vs G/B ~11000, unclipped);
+      `to_positive`'s per-channel linear stretch leaves the positive blue-
+      deficient → green. A principled per-channel median white-balance
+      (factors ~0.88/0.85/1.46) recovers fully neutral colour. So the cast is
+      the deliberately raw-faithful `to_positive` convenience, NOT a backend
+      channel/calibration fault; raw delivery is sound. No vendor scan of this
+      strip exists, so absolute colour is not compared (a stated limitation).
+      Any tone/colour work in `to_positive` remains Christian's separate call.
   - Calibration cache (ordinary scan without --force-calibration): FIXED
     offline 2026-09-12. A compatible Genesys calibration cache made
     genesys_start_scan skip calibration, and GL126's begin_scan (which needs
@@ -339,4 +352,91 @@ is documented as separately unverified, pending a physical slide.
   open observation, not a blocker.
 
 Milestone A is done; the A6 note records an observation from B1's
-bring-up, not a CLI regression. The next action is B1's next hook.
+bring-up, not a CLI regression. The next action is the remaining B1 hardware
+verification per the finite plan below.
+
+## SANE profile matrix (2026-09-12)
+
+SANE-only status. Do NOT read the Python driver's own hardware acceptance
+(Tests 55–61) into this table — the backend is a separate implementation.
+"Impl+offline" = tables generated + wire-equal op tests + geometry ledger.
+"SANE HW" = verified on the device THROUGH the SANE backend. Image acceptance
+is the owner's eye rule and is scoped to what was actually judged.
+
+| Profile   | Impl + offline | SANE HW verified | Frames (SANE HW) | Image acceptance (scope) | Concrete remaining for B1 |
+|-----------|----------------|------------------|------------------|--------------------------|---------------------------|
+| plain3600 | yes | transport + coverage (Test 62) | 1–6 | images seen; no formal eye-accept recorded | one correctly-rendered plain3600 SANE image, owner-approved |
+| dpi2400   | yes | transport + coverage + proportion (Tests 62/63) | 1 | EYE-ACCEPTED, geometry only (Test 63); colour is the app's job | none for geometry; frames 2–6 not required for B1 (one frame proves the profile) |
+| ir3600    | yes (hook 8, wire-equal) | no | none | none | one SANE HW run: IR/visible separation + host dust-removal, owner-approved |
+| dpi600    | yes | no | none | none | one SANE HW run, owner-approved |
+| dpi1200   | yes | no | none | none | one SANE HW run, owner-approved |
+| dpi7200   | yes | no | none | none | one SANE HW run, owner-approved |
+
+Notes: the calibration-cache fix (Test 64) and the safety model apply to all
+profiles. The mirror and colour-cast findings are app-layer (raw delivery is
+sound), so they do not gate any row. B1's image-acceptance rule is about
+geometry/integrity (whole frame, right proportions, no banding), not absolute
+colour or the positive's orientation, which are the frontend's/user's job.
+
+## B1 / B2 finite plan (2026-09-12)
+
+Only the work packages that remain for B1 (local backend) and B2 (submission).
+Lateral overscan and Layer 2 are NOT introduced here; no finding makes B1's
+promised scope require them. VueScan stays out of public docs.
+
+**WP-1 — Remaining-profile hardware verification (B1).**
+- Goal / acceptance: each claimed profile (ir3600, dpi600, dpi1200, dpi7200)
+  produces one SANE scan on the device that completes (calibration, transport,
+  PARK), delivers a whole frame with correct proportions, and is owner-
+  approved by eye; plus one owner-approved plain3600 SANE image for the record.
+- Evidence already enough: dpi2400 (Tests 62/63) needs nothing more for B1;
+  plain3600 transport/coverage (Test 62) stands — only the eye-approval image
+  remains.
+- Remaining offline: none (all six implemented and wire-equal).
+- Minimal hardware test: ONE session, ONE scan per remaining profile
+  (600/1200/7200 + IR3600 + one plain3600), no `--force-calibration`, low USB
+  debug, straight-seated strip, per docs/sane-lager1-hardware-plan.md order
+  and stop/recovery rules. NOT all six frames at every resolution — one frame
+  per profile proves the profile; frame coverage is already shown (plain 1–6,
+  the driver's own 1–6).
+- Stop condition: any profile that fails transport/geometry, or an image the
+  owner does not approve, stops WP-1 for that profile and is logged; no blind
+  retry.
+
+**WP-2 — Install & frontend (B1).**
+- Goal / acceptance: the backend installs as a normal genesys build (the `.so`
+  + `dll.conf`), enumerates, and performs load→scan→deliver via `scanimage`
+  AND one SANE frontend (digiKam, per the B1 definition), preserving the
+  safety model.
+- Evidence already enough: uninstalled runs via `LD_LIBRARY_PATH` +
+  `SANE_CONFIG_DIR` work (Tests 47–64).
+- Remaining offline: document the install steps and the `dll.conf`/config; dry-
+  run the frontend path where possible without hardware.
+- Minimal hardware test: one load→scan→deliver through the installed backend
+  and through digiKam (can pigg-back on WP-1's session).
+- Stop condition: an install/enumeration/safety deviation stops WP-2; logged.
+
+**WP-3 — SANE submission package, prepared only (B2).**
+- Goal / acceptance: a review-ready branch and evidence bundle exist LOCALLY /
+  in Christian's repo — nothing is sent. Contents, mapped to SANE's process
+  (`doc/backend-writing.txt`; the project's GitLab merge-request flow):
+  `doc/descriptions/genesys.desc` 135i entries `:untested → :good`;
+  `backend/genesys.conf.in` USB id; man-page chip list; `scanimage -T` and
+  `tstbackend` output; `nm` export check; a commit series against a current
+  sane-backends master; the integration expressed as real backend changes
+  (the current work lives as `sane/gl126-integration.patch` + symlinks — WP-3
+  converts it to committed files on a branch of a sane-backends clone).
+- Evidence already enough: the patch, the generated tables, the op/geometry
+  test suites, and Tests 62–64.
+- Remaining offline: assemble the branch and the evidence bundle; run
+  `scanimage -T`/`tstbackend`/`nm` locally; write the submission text.
+- Minimal hardware test: none beyond WP-1/WP-2 (submission needs their
+  results, not new runs).
+- Stop condition: **WP-3 stops at "prepared".** Actual submission — pushing to
+  any non-`cgillinger` repo, opening a merge request, or contacting the SANE
+  maintainers / sane-devel — is a SEPARATE step requiring Christian's explicit
+  instruction naming the action and recipient. It is NOT performed as part of
+  "prepare upstream" or "finish B2".
+
+Hardware proposals above are for review and Christian's explicit go; they are
+not executed here.
