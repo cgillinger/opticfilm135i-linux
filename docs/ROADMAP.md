@@ -378,6 +378,12 @@ sound), so they do not gate any row. B1's image-acceptance rule is about
 geometry/integrity (whole frame, right proportions, no banding), not absolute
 colour or the positive's orientation, which are the frontend's/user's job.
 
+The four remaining profiles (dpi600, dpi1200, dpi7200, ir3600) have an
+offline-prepared, per-profile hardware plan with derived geometry, exact
+commands and acceptance criteria — one frame-1 scan per profile, its own fresh
+load, no `--force-calibration`: **[docs/sane-remaining-profiles-plan.md](sane-remaining-profiles-plan.md)**
+(awaiting Christian's go before any hardware).
+
 ## B1 / B2 finite plan (2026-09-12)
 
 Only the work packages that remain for B1 (local backend) and B2 (submission).
