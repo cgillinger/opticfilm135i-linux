@@ -36,19 +36,25 @@ and IR products are unchanged.
 What this fix does and does not change in the outputs:
 
 - The **visible data before dust removal** — the raw negative as captured,
-  aligned and cropped — is not touched by this change. A `--no-clean` scan,
-  a non-IR scan, and the `.overscan` visible frame are exactly what the same
-  driver without this fix writes from the same raw buffer.
+  aligned and cropped — is not touched by this change. A `--no-clean` scan
+  and a non-IR scan are exactly what the same driver without this fix
+  writes from the same raw buffer.
 - The **`-ir.tiff`** product changes: single specks instead of triplets.
 - Consequently the **IR-based dust removal** (`remove_dust`, on by default
   with `--ir`) works from a different dust mask, so the automatically
   cleaned visible negative — and the `--positive` preview derived from it —
-  **can differ** from v0.1.1's output in the cleaned areas. Preserved
-  geometry does not mean identical image content.
+  **can differ** from v0.1.1's output in the cleaned areas. This includes
+  the `.overscan` visible frame: both `scan` and `digitize` write it after
+  the dust removal, so with `--ir` (and without `--no-clean`) it too
+  carries the cleaned data. Preserved geometry does not mean identical
+  image content.
 
-**Scans made with v0.1.1 or earlier.** Their visible product is not wrong;
-only their `-ir.tiff` (and the dust mask derived from it) carried the triple
-ghost. Whether such a scan can be corrected without rescanning depends on
+**Scans made with v0.1.1 or earlier.** The IR fix does not change the
+visible data before dust removal, so a `--no-clean` or non-IR scan from
+those versions is unaffected. Their `-ir.tiff` carried the triple ghost, and
+so did the dust mask derived from it: a visible negative (or preview) that
+was dust-cleaned with `--ir` may have been affected by the wider, wrong
+mask. Whether such a scan can be corrected without rescanning depends on
 what was kept: the alignment needs the three IR channel samples *separately*,
 which exist only in the original complete raw capture (the alternating-line
 buffer the driver reads from the device). An already averaged `-ir.tiff`
