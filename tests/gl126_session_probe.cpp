@@ -58,11 +58,22 @@ public:
     using TestScannerInterface::TestScannerInterface;
     std::size_t pulls = 0;
     std::size_t bytes = 0;
+    /* Every raw byte gets a value that is a function of its absolute
+       position in the pass and is never 0, so a node that drops, truncates
+       or zero-pads part of a row is visible in the delivered content
+       (the IR run of 2026-09-12 delivered one third of each row). */
+    static std::uint8_t pattern(std::size_t abs)
+    {
+        return static_cast<std::uint8_t>(((abs * 7 + 13) & 0xff) | 0x01);
+    }
     void bulk_read_data(std::uint8_t addr, std::uint8_t* data, std::size_t size) override
     {
+        (void) addr;
+        for (std::size_t i = 0; i < size; ++i) {
+            data[i] = pattern(bytes + i);
+        }
         ++pulls;
         bytes += size;
-        TestScannerInterface::bulk_read_data(addr, data, size);
     }
 };
 } // namespace
@@ -163,17 +174,37 @@ int main(int argc, char** argv)
                buffer runs dry. Count what reaches the (mock) wire. */
             std::vector<std::uint8_t> row(pipeline.get_output_row_bytes());
             std::size_t rows = pipeline.get_output_height();
+            std::size_t raw_row_bytes = sess.output_line_bytes_raw;
+            std::size_t zero_bytes = 0;      // pattern bytes are never 0
+            std::size_t ir_row_mismatch = 0; // ir3600: delivered row k == raw row 2*(k+crop)
+            bool ir_exact = (sess.gl126_keep_parity == 0 && sess.max_color_shift_lines == 0 &&
+                             pipeline.get_output_row_bytes() == raw_row_bytes);
             for (std::size_t i = 0; i < rows; ++i) {
                 if (!pipeline.get_next_row_data(row.data())) {
                     break;
+                }
+                for (std::uint8_t b : row) {
+                    if (b == 0) ++zero_bytes;
+                }
+                if (ir_exact) {
+                    std::size_t raw_row = 2 * (i + sess.gl126_crop_lines);
+                    std::size_t base = raw_row * raw_row_bytes;
+                    for (std::size_t j = 0; j < raw_row_bytes; ++j) {
+                        if (row[j] != CountingInterface::pattern(base + j)) {
+                            ++ir_row_mismatch;
+                            break;
+                        }
+                    }
                 }
             }
             std::size_t tail = gl126::unconsumed_tail_bytes(
                 sess.optical_line_count, sess.gl126_crop_lines,
                 sess.output_line_bytes_raw, sess.buffer_size_read);
-            std::printf(" pulls=%zu pulled=%zu expected=%zu tail=%zu",
+            std::printf(" pulls=%zu pulled=%zu expected=%zu tail=%zu zero_bytes=%zu "
+                        "ir_exact=%d ir_row_mismatch=%zu",
                         counting->pulls, counting->bytes,
-                        static_cast<std::size_t>(sess.output_total_bytes_raw), tail);
+                        static_cast<std::size_t>(sess.output_total_bytes_raw), tail,
+                        zero_bytes, ir_exact ? 1 : 0, ir_row_mismatch);
         }
         std::printf("\n");
     } catch (const SaneException& e) {

@@ -263,6 +263,14 @@ def test_pipeline_pull_plus_tail_equals_wire():
         assert kv["expected"] == raw_total, (dpi, method, kv)
         assert kv["tail"] == tail, (dpi, method, kv)
         assert kv["pulled"] + kv["tail"] == kv["expected"], (dpi, method, kv)
+        # content: the mock wire's byte pattern is never 0, so any zero byte
+        # in a delivered row is a node truncating/padding it (the IR re-run
+        # of 2026-09-12 delivered one third of each row: the core's Extract
+        # node copied depth/8 = 2 bytes per RGB16 pixel instead of 6)
+        assert kv["zero_bytes"] == 0, (dpi, method, kv)
+        if method == "ir":
+            assert kv["ir_exact"] == 1, kv
+            assert kv["ir_row_mismatch"] == 0, kv   # row k == raw row 2*(k+12), byte for byte
         if tail == 0:
             assert kv["pulls"] == chunks, (dpi, method, kv)
         else:
@@ -270,7 +278,8 @@ def test_pipeline_pull_plus_tail_equals_wire():
             assert kv["pulls"] == chunks - 1, (dpi, method, kv)
             assert kv["pulled"] == 332937216, kv     # Test 68's exact figure
     print("test_pipeline_pull_plus_tail_equals_wire OK "
-          "(5 visible profiles pull every chunk; ir3600 pulls 669 of 670, tail 497664)")
+          "(5 visible profiles pull every chunk; ir3600 pulls 669 of 670, tail 497664; "
+          "no zero byte in any delivered row; IR rows byte-equal to raw rows 2*(k+12))")
     return True
 
 

@@ -4795,3 +4795,53 @@ counts Tests 62–67 read on hardware). Backend rebuilt clean (sha256
 
 VERDICT: FAIL (backend). Raw + log in plustek-135i-analys/profiles-20260912/
 (ir3600.log only).
+
+### Test 69: SANE ir3600 f1 re-run on the drain fix — transport PASS, image one third wide (second core bug)
+
+2026-09-12 16:18, same strip, one fresh load, build sha256 4dafc253... (the
+drain fix, commit e28e3d3), no `--force-calibration`, debug 4, device string
+001:013.
+
+Command as Test 68. Exit 0 after 51.5 s, PNM 165,970,983 B = 5184 x 5336
+16-bit RGB. Ledger hit: offset 0x010a/0x0109/0x010a, gain 0x2d/0x21/0x27 (R
+one code above the other runs, inside the ±1 band), shading 15552 pairs,
+FEEDL 6538, POSITION 1432 ms of 4842 ms, scan pass with the new log line
+"the pipeline leaves the last 497664 raw bytes (1 chunk(s)) unrequested",
+669 chunks pulled by the pipeline, then "draining the 497664 raw bytes the
+pipeline did not request, then PARK" → "scan pass complete, 333434880 raw
+bytes read" → semantic PARK normal (0xf8, 3.7 s). Normal `of135i eject` from
+post-PARK. THE DRAIN FIX IS HARDWARE-CONFIRMED: the wire now carries every
+chunk and the pass parks, as the driver does.
+
+Image: WRONG. Every delivered row carries data in its first 1728 of 5184
+pixels (10368 of 31104 bytes) and zeros after — 66.7 % zero bytes in every
+channel, uniform over all rows; the strip axis is intact (aperture rows
+90..5209, margins 0.64/0.89 mm, dust and a fibre clearly visible in the lit
+band of the gray render). The driver's IR image of the same profile
+(dual-20260910/f3600ir-ir.overscan.tiff) is full width. So the loss is host
+side.
+
+Root cause (code, confirmed by the probe): the core's
+ImagePipelineNodeExtract — the IR crop node, the first user of Extract on a
+multi-channel format — copies `get_pixel_format_depth(format) / 8` bytes per
+pixel; for RGB161616 that depth is 16 PER CHANNEL, so it copied 2 bytes per
+pixel instead of 6 (one third of the row) and zero-padded the rest. An
+upstream bug in sane-backends, not GL126 code. Fix: `bpp =
+get_pixel_row_bytes(format, 1)` (image_pipeline.cpp, now in
+sane/gl126-integration.patch, 14 files). Backend rebuilt clean, sha256
+13ce427c...
+
+Why no offline test caught it: the session probe's `pull` mode counted
+chunks on a zero-filled mock wire. It now fills the wire with a position
+pattern that is never 0 and checks the delivered content: no zero byte in
+any delivered row of any profile, and for ir3600 every delivered row k
+byte-equal to raw row 2*(k+12). Proof the test bites: with the Extract bug
+put back, the probe reports zero_bytes=110,647,296 (exactly two thirds of
+the 165,970,944 delivered) and 5336/5336 IR rows mismatched; with the fix,
+0 and 0. Test 68's Python-side eye check of the IR file (gray render) was
+what found it — the transport figures alone were all green.
+
+VERDICT: transport PASS (drain fix confirmed); image FAIL (core Extract
+bug) → fixed offline, needs ONE more ir3600 run on build 13ce427c... after a
+new go. Files: profiles-20260912/ir3600-f1.pnm (the one-third image, kept as
+evidence), ir3600.log, ir3600-test68-failed.log.

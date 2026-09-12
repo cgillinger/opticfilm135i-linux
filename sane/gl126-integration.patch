@@ -431,6 +431,23 @@ index 87855fd..224805f 100644
      bool custom_gamma = false;
      SANE_Word exposure_time = 0;
  
+diff --git a/backend/genesys/image_pipeline.cpp b/backend/genesys/image_pipeline.cpp
+index 8dae0c5..61d7e5f 100644
+--- a/backend/genesys/image_pipeline.cpp
++++ b/backend/genesys/image_pipeline.cpp
+@@ -740,7 +740,11 @@ bool ImagePipelineNodeExtract::get_next_row_data(std::uint8_t* out_data)
+             set_raw_pixel_to_row(out_data, i + x_src_width, RawPixel{}, format);
+         }
+     } else {
+-        std::size_t bpp = get_pixel_format_depth(format) / 8;
++        // bytes per PIXEL: the format depth is per channel (RGB161616 = 16),
++        // so depth / 8 copied one third of a 3-channel row and zero-padded
++        // the rest (found by the GL126 IR crop, which is the first user of
++        // this node on a multi-channel format)
++        std::size_t bpp = get_pixel_row_bytes(format, 1);
+         if (x_src_width > 0) {
+             std::memcpy(out_data, cached_line_.data() + offset_x_ * bpp,
+                         x_src_width * bpp);
 diff --git a/backend/genesys/low.cpp b/backend/genesys/low.cpp
 index 3ffc24a..2b236e4 100644
 --- a/backend/genesys/low.cpp

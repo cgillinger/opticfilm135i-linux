@@ -300,6 +300,26 @@ five visible profiles pull every chunk, ir3600 pulls 669 and arms 497664.
 Plus `test_unconsumed_tail_bytes` and
 `test_scan_pass_drains_exact_tail_then_parks` in `test_sane_ops.py`.
 
+Hardware-confirmed 2026-09-12 (Test 69): 669 chunks pulled, one drained,
+"scan pass complete", PARK normal.
+
+### 9.2 The IR crop copied one third of each row (Test 69, 2026-09-12)
+
+The same run delivered rows with data in the first 1728 of 5184 pixels and
+zeros after. The core's `ImagePipelineNodeExtract` (the IR crop node)
+copies `get_pixel_format_depth(format) / 8` bytes per pixel, and that depth
+is per CHANNEL (RGB161616 = 16), so it copied 2 bytes per pixel instead
+of 6 — an upstream bug that nothing else in the core exercised (Extract had
+no multi-channel user). Fixed in `image_pipeline.cpp` via the integration
+patch: `bpp = get_pixel_row_bytes(format, 1)`. Worth an upstream fix on
+its own, separate from the GL126 backend.
+
+The `pull` probe now fills its mock wire with a never-zero position
+pattern and checks content: no zero byte in any delivered row (every
+profile) and, for ir3600, each delivered row byte-equal to raw row
+2·(k+12). With the bug put back the probe reports two thirds of the
+delivered bytes zero and every IR row mismatched; with the fix, none.
+
 ## 10. Frame selection (2026-09-08, offline)
 
 Decision 5 pinned frame 1 for the first run. The driver's `scan

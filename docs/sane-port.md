@@ -54,7 +54,11 @@ with nothing to re-sync. The eventual merge request takes copies.
   `ModelId::PLUSTEK_OPTICFILM_135I` in `enums.{h,cpp}`, the command-set
   factory and the 0x101 extended-register address in `low.cpp`, the model
   entry in `tables_model.cpp`, `Makefile.am`, `genesys.conf.in` and the
-  `.desc` entry (`:status :untested`).
+  `.desc` entry (`:status :untested`). Since 2026-09-12 it also carries one
+  fix to the core itself, `image_pipeline.cpp`: `ImagePipelineNodeExtract`
+  copied `depth / 8` bytes per pixel, which for a 3-channel 16-bit format
+  is one third of the row (Test 69; docs/sane-hook5-frame.md §9.2) — an
+  upstream bug, a candidate for its own upstream submission.
 
   **Built and linked**, 2026-09-06 on B5 and 2026-09-07 on the reference
   host: `libgenesys_la-gl126.o` and `libgenesys_la-gl126_tables.o` are in

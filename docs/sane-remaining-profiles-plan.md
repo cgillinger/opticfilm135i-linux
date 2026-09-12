@@ -25,10 +25,12 @@ any profile → **no blocker**; the profile runs may be planned.
 - ir3600 (Test 68): FAILED one chunk short — a backend bug (the core's
   pipeline never requests the far-end IR crop's chunk; docs/sane-hook5-frame.md
   §9.1), not hardware. Fixed offline the same day (end_scan drains the armed
-  tail); the build below is therefore superseded — **the IR re-run must use the
-  new build** (`libsane-genesys.so.1.4.0` sha256 `4dafc253...` after the fix,
-  verify before the run) and needs a new explicit go. Everything else in this
-  plan is unchanged.
+  tail). Re-run (Test 69, build 4dafc253...): the drain is hardware-confirmed,
+  but the delivered IR image was one third wide — a second, upstream core bug
+  (ImagePipelineNodeExtract's bytes per pixel; docs/sane-hook5-frame.md §9.2),
+  fixed via the integration patch the same day. **The IR re-run must use build
+  sha256 `13ce427c...`** (verify before the run) and needs a new explicit go.
+  Everything else in this plan is unchanged.
 
 ## Fixed build for all runs
 
