@@ -539,9 +539,12 @@ Prerequisite: the shared lock above, implemented and checked.
   gl126_calibration_cache_probe.cpp): with a compatible cache present, GL126
   still enters calibration; reverting the one-line gate makes the same case
   skip it (begin_scan then refuses) — the test discriminates. A GL124 model's
-  flow is unaffected. Ordinary scanning without the flag now performs the
-  calibration; **one hardware run remains** to confirm it on the device (see
-  the hardware-confirmation note below).
+  flow is unaffected. **HARDWARE-CONFIRMED 2026-09-12 (Test 64):** two
+  consecutive no-flag scans, the second with the compatible `.cal` cache
+  present, both calibrated (offset/gain/shading) and completed (3504x3560,
+  FEEDL 6543, coverage verified, normal PARK) — the exact case that used to
+  fail. Ordinary scanning without `--force-calibration` now works on the
+  device; the flag is no longer required (it still works).
 - **Lateral (across-strip) overscan.** The plain path delivers the fixed
   aperture width (3762 px) with overscan only ALONG the strip
   (leading/trailing); the across-strip width is not overscanned. A small

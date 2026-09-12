@@ -53,15 +53,17 @@ prove the RIGHT binary ran:
 - Listen: any scraping sound → cut power immediately.
 
 ## Mandatory scanimage flags in ALL runs
-- `--force-calibration` — makes the test deterministic. Genesys otherwise
-  tries to read and reuse its calibration cache; an old compatible entry
-  can make SANE skip exactly the calibration hooks GL126's `begin_scan()`
-  requires (it requires `CalStage::ShadingDone` from the SAME `sane_start`
-  — the vendor calibrates every frame) and stall before the motor. All
-  bring-up runs (hooks 2–7) used `--force-calibration` for the same reason.
-  That a finished backend must not REQUIRE this flag for every ordinary
-  scan is a separate open item — see `docs/sane-port.md`, "Risks and open
-  questions" — which does NOT block this test.
+- `--force-calibration` — **NO LONGER REQUIRED as of 2026-09-12 (Test 64).**
+  The calibration-cache item is fixed: GL126 now always calibrates, so an
+  ordinary scan without the flag performs the calibration GL126's
+  `begin_scan()` requires (`CalStage::ShadingDone` from the same
+  `sane_start`). Confirmed on hardware — two consecutive no-flag scans, the
+  second with the compatible `.cal` cache present, both calibrated and
+  completed (Test 64; the fix is `docs/sane-port.md`, "Calibration cache vs.
+  the per-frame contract"). The flag still works and forces a recalibration;
+  keep it only when a run must be deterministic regardless of the cache. All
+  bring-up runs (hooks 2–7) and Tests 62/63 used it — those historical
+  commands are kept verbatim as the record of how they were actually done.
 - `--mode Color` — see §0.6 (the coverage tool requires P6/RGB).
 
 ## Runs

@@ -4590,3 +4590,45 @@ scope (proportion only):
 Files in plustek-135i-analys/sane-dual2400-20260912/ (dual2400-f1-sane.pnm,
 scan.log, dual2400-f1-positive.jpg) and ~/Bilder/opticfilm-granskning/
 sane-dual2400-20260912/.
+
+### Test 64: SANE calibration cache — ordinary scan without --force-calibration
+
+2026-09-12, colour negative, glassless six-frame strip holder, one fresh load
+(strip seated straight). Hardware confirmation of the calibration-cache fix
+(commit d5e0826): GL126 now always calibrates, so a normal scan no longer needs
+`--force-calibration`. Code under test: repo HEAD d5e0826; libsane-genesys
+relinked clean from the symlinked sources (sha256 36d26634...); pre-run offline
+gate 255 tests green incl. tests/test_sane_calibration_cache.py (6). Low USB
+debug (SANE_DEBUG_GENESYS=4). Real HOME so the on-disk `.cal` cache behaves as
+in production.
+
+Two consecutive scans, SAME command, NO --force-calibration, no power-cycle
+between them:
+`scanimage -d genesys:libusb:001:008 --mode Color --resolution 2400 --frame 1
+--format pnm -o cache-{A,B}.pnm`.
+
+- Scan A (no cache file present): read found no `~/.sane/plustek-opticfilm-135i.cal`
+  ("Cannot open"), so it calibrated (offset; gain 0x2c/0x21/0x27; shading) and
+  the scan completed. At sane_close it WROTE the cache file (564 B) -- the
+  cross-process cache carrier.
+- Scan B (the regression case: the compatible `.cal` cache now present): the
+  file was read (no "Cannot open"), yet calibration STILL ran -- offset, the
+  SAME gain 0x2c/0x21/0x27 (a genuine fresh recalibration, not a reuse),
+  shading -- and the scan completed. No "restored", no
+  `SANE_STATUS_INVAL`, no "needs the calibration of the same sane_start". This
+  is exactly the situation that failed before the fix (compatible cache ->
+  calibration skipped -> begin_scan refuses).
+
+Both PNMs 3504 x 3560 (delivered), 5256 raw width, FEEDL 6543, line register
+7152, 447 chunks = 225,545,472 raw bytes, semantic PARK normal, POSITION within
+budget. cache-B coverage VERIFIED at 2400 dpi (margins 0.86/0.74 mm, real
+unclipped data). Normal `of135i eject` from post-PARK (reg 0x01 = 0x22).
+
+VERDICT: PASS. The calibration-cache fix is HARDWARE-CONFIRMED -- ordinary
+scanning without --force-calibration performs the required calibration, and a
+previously-saved compatible cache does not bypass it. `--force-calibration` is
+no longer required (it still works); the standing hardware plan's mandatory-flag
+note is updated. Not generalised beyond this: the fix is a GL126-scoped conjunct
+(other ASICs unchanged, offline-verified). Files in
+plustek-135i-analys/cache-20260912/ (cache-A.pnm, cache-B.pnm, scanA.log,
+scanB.log).

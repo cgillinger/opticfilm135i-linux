@@ -328,8 +328,10 @@ is documented as separately unverified, pending a physical slide.
     --force-calibration was required. The fix gates the cache restore off for
     GL126 only (every scan calibrates); begin_scan's guard and other ASICs are
     unchanged. Offline-verified by driving the real sane_open→sane_start flow
-    in test mode (tests/test_sane_calibration_cache.py). ONE hardware run
-    remains: two ordinary no-flag scans on one load (see docs/sane-port.md).
+    in test mode (tests/test_sane_calibration_cache.py), and HARDWARE-CONFIRMED
+    2026-09-12 (Test 64: two consecutive no-flag scans on one load, the second
+    with the compatible .cal cache present, both calibrated and completed).
+    --force-calibration is no longer required for an ordinary scan.
   - Slide holder: PENDING
 - **A6 note** (Test 44/46): the driver's eject stalled from a state only
   the backend's first `init()` produced; that `init()` now writes nothing.
