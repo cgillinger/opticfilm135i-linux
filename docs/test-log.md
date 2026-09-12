@@ -4548,16 +4548,45 @@ Color --resolution 2400 --frame 1 --force-calibration --format pnm`.
 - raw data healthy: 0 % at max, 0 % at floor (unclipped);
 - no visible banding or streaks in the rendered positive.
 
-The full overscan window is preserved (not forced to 3:2); absolute colour
-was NOT judged (out of scope; the preview's green cast is the to_positive
-inversion, not a defect). Positive preview
-(plustek-135i-analys/sane-dual2400-20260912/dual2400-f1-positive.jpg) sent to
-Christian for the milestone eye-acceptance step; the analysis session
-inspected it and saw natural (un-stretched) subject proportions.
+The full overscan window is preserved (not forced to 3:2). Absolute colour was
+NOT judged (out of scope). Preview
+(plustek-135i-analys/sane-dual2400-20260912/dual2400-f1-positive.jpg and a
+full-resolution PNG in ~/Bilder/opticfilm-granskning/sane-dual2400-20260912/)
+inspected by the analysis session (natural, un-stretched proportions).
+
+EYE ACCEPTANCE GRANTED 2026-09-12 (Christian + Astra): the proportion defect is
+fixed for this scoped geometry goal. Christian: proportions correct, generous
+overscan top and bottom; he says nothing about colour (deliberately, the frame
+is a bleached bright-yellow original). Astra compared the new PNG/JPEG against
+the earlier ruta-1.jpg and the wrong dual image, and checked the PNM + log:
+faces/bodies/buildings natural, the earlier squashing gone, form matches the
+plain3600 reference; the four frame edges are visible with margin (PNM margins
+0.739/0.872 mm confirmed); no clear recurring bands or continuous scanner
+streaks (small dots = dust/film defects); no red/cyan double contours (best
+channel match at 0-line shift for R and B, but the correlation is weak --
+support, not proof of perfect alignment); PNM is exactly 3504 x 3560 RGB16, log
+confirms full raw transfer and completed PARK.
 
 VERDICT: TRANSPORT and DELIVERED GEOMETRY (width 3504, coverage, proportion)
-HARDWARE-CONFIRMED for **SANE dual2400 frame 1 only**. Not generalised to the
-other dual profiles or any open item. Milestone image acceptance = Christian's
-eye (pending his verdict at the time of writing). Files in
-plustek-135i-analys/sane-dual2400-20260912/ (dual2400-f1-sane.pnm, scan.log,
-dual2400-f1-positive.jpg).
+HARDWARE-CONFIRMED and EYE-ACCEPTED for **SANE dual2400 frame 1 only**. Not
+generalised to the other dual profiles or any open item.
+
+Two SEPARATE findings, documented as own future items, OUTSIDE this test's
+scope (proportion only):
+1. **Preview orientation is mirrored** vs the older previews -- the left-right
+   order of the people is reversed. It does not affect proportions. The
+   correct final orientation must be established against the original or a
+   known feature in the scene. (The preview applies the vendor mirror +
+   rot90; whether that matches the intended final orientation for the SANE
+   path is unconfirmed.)
+2. **Strong yellow-green cast and low contrast.** Colour is out of scope and
+   NOT judged here. Correcting an earlier overstatement: it is NOT established
+   that the cast comes only from the preview -- the whole render chain
+   (to_positive + the raw negative) is unverified. The PNM reaches neither
+   digital minimum nor maximum (0 % clipped), but that does not prove correct
+   colour calibration. Investigate with the already-saved files; no new
+   hardware run is needed for either finding.
+
+Files in plustek-135i-analys/sane-dual2400-20260912/ (dual2400-f1-sane.pnm,
+scan.log, dual2400-f1-positive.jpg) and ~/Bilder/opticfilm-granskning/
+sane-dual2400-20260912/.

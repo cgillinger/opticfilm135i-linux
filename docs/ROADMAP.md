@@ -314,8 +314,13 @@ is documented as separately unverified, pending a physical slide.
     HARDWARE-CONFIRMED for SANE dual2400 frame 1 (Test 63: delivered PNM
     3504×3560, raw 5256/225,545,472 B unchanged, FEEDL 6543, coverage
     verified, proportion near-square 37.1×36.05 mm, channel shift 0/0,
-    normal PARK). Milestone image eye-acceptance is Christian's step. NOT
-    generalised to the other dual profiles.
+    normal PARK) and EYE-ACCEPTED for the geometry goal 2026-09-12
+    (Christian + Astra; proportions natural, generous overscan). NOT
+    generalised to the other dual profiles. Two separate out-of-scope
+    findings recorded (Test 63): the preview is mirrored vs the older
+    previews (correct final orientation to be established), and a strong
+    yellow-green cast / low contrast whose source (render chain vs raw) is
+    unverified — both investigable from the saved files, no new hardware.
   - Slide holder: PENDING
 - **A6 note** (Test 44/46): the driver's eject stalled from a state only
   the backend's first `init()` produced; that `init()` now writes nothing.
