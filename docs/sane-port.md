@@ -639,9 +639,12 @@ Prerequisite: the shared lock above, implemented and checked.
     strip in. VM disconnected (autoConnect).
   - *Command (no install):* `LD_LIBRARY_PATH=.../backend/.libs
     SANE_CONFIG_DIR=.../sane-config scanimage -d genesys:libusb:... --mode
-    Color --resolution 2400 --frame 1 --format pnm -o dual2400-f1-sane.pnm`
-    at low USB debug (level 255 hex-dumps the image and dominates the time --
-    never time-measure at 255). Take a fresh device string from `scanimage
+    Color --resolution 2400 --frame 1 --force-calibration --format pnm -o
+    dual2400-f1-sane.pnm` at low USB debug (level 255 hex-dumps the image and
+    dominates the time -- never time-measure at 255). `--force-calibration` is
+    mandatory: the calibration-cache B1 item is still open, so every hardware
+    run recalibrates rather than trust a cache (docs/sane-lager1-hardware-plan.md,
+    "Mandatory scanimage flags"). Take a fresh device string from `scanimage
     -L` (it re-enumerates on power-cycle).
   - *Expected results:* the PNM header reports **3504 x (delivered lines)**,
     not 5256 wide; the subject's internal shapes (a round object round, frame
@@ -649,11 +652,18 @@ Prerequisite: the shared lock above, implemented and checked.
     NOT by forcing the whole overscan window to 3:2; W3/Wait A/B, chunk
     count, full transfer and PARK identical to Test 61's dual2400 band (the
     transport must be unchanged, since the fix is host-side only).
-  - *Stop conditions:* any scraping or abnormal motor sound -> cut power
-    immediately; a delivered width other than 3504, or a transport figure
-    outside Test 61's band, is a FAIL -> stop, do not retry blindly,
-    power-cycle and report. Exit via `of135i eject` from post-PARK; a locked
-    magazine -> power-cycle -> `load --double-jog` -> eject.
+  - *Stop conditions:* any scraping or abnormal motor sound -> Christian cuts
+    power immediately; a delivered width other than 3504, or a transport
+    figure outside Test 61's band (wrong FEEDL/chunks/line register, short
+    transfer, POSITION over the hard timeout, unexpected eject, PARK error),
+    is a FAIL -> stop, no blind retry, no new motor sequence from an unknown
+    state. Recovery follows docs/sane-lager1-hardware-plan.md "Recovery after
+    an anomalous/failed pass" verbatim (power-cycle -> read-only state check
+    -> no further motor command until a documented known start state holds).
+    Normal exit is `of135i eject` ONLY from confirmed post-PARK.
+    `load --double-jog -> eject` is NOT a general or automatic recovery: it
+    applies only when its own documented precondition holds (power-cycled,
+    latched magazine in the well), per that plan's Recovery step 4.
 
 ## Delivery checklist (from the SANE requirements survey)
 
