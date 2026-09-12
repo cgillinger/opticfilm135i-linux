@@ -28,9 +28,11 @@ The project has two parts, at different stages:
   whole-strip batch scanning, and a resumable bulk-digitisation workflow.
 - **SANE backend — in progress (separate status).** Lets standard SANE
   frontends (`scanimage`, digiKam, …) drive the scanner directly. It builds and
-  links against sane-backends; some profiles have run on the unit and others are
-  implemented and pending hardware checks. Its verification is tracked
-  independently of the CLI driver's — see the roadmap.
+  links against sane-backends; every resolution profile and the infrared pass
+  have now run on the unit through `scanimage` and been accepted by eye
+  (2026-09-12). Install/packaging and a scan from inside a SANE frontend
+  remain. Its verification is tracked independently of the CLI driver's — see
+  the roadmap.
 
 **Jump to:** [Install](#install) · [Usage](#usage--the-normal-workflow) ·
 [What works today](#what-works-today) ·
@@ -44,7 +46,7 @@ is a **SANE backend** so the scanner also works in standard SANE frontends
 functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
 - **M1 — Protocol reverse-engineered** ✅
-- **M2 — Driver drives the hardware** ✅ (load, 1–4 batch, all DPI, IR + dust removal, eject)
+- **M2 — Driver drives the hardware** ✅ (load, whole-strip batch up to six frames, all DPI, IR + dust removal, eject)
 - **M3 — Robustness and honest limits** ✅ (every acceptance-matrix row met;
   the residual-dark_b fix is hardware-verified — A10/Test 36 — positioning
   verified, cross-unit a documented limitation)
@@ -52,13 +54,15 @@ functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md]
   driver, and not every profile is at the same stage): it builds and links
   against sane-backends, enumerates the scanner, and runs calibration,
   positioning, the scan pass and park on the unit through `scanimage`. On
-  hardware so far, the **plain 3600 dpi** profile scans frames 1–6 (transport
-  and aperture coverage) and the **2400 dpi** profile scans frame 1 with its
-  corrected image proportion (accepted by eye for geometry only, not colour).
-  The other profiles (infrared, 600 / 1200 / 7200 dpi) are implemented and
-  offline-verified against the CLI driver, with one hardware run each still to
-  come. Ordinary scanning no longer needs `--force-calibration`. Packaging and
-  a SANE-frontend pass remain. Per-profile detail: **[docs/ROADMAP.md](docs/ROADMAP.md)**
+  hardware, the **plain 3600 dpi** profile scans frames 1–6 (transport and
+  aperture coverage), and **2400, 600, 1200, 7200 dpi and the infrared pass**
+  each scan frame 1 with the delivered geometry accepted by eye (geometry and
+  integrity only, not colour — Tests 62–71, 2026-09-12). The infrared runs
+  found and fixed three real bugs on the way (a chunk the pipeline never
+  requested, a core crop node copying a third of each row, and the IR
+  channels' colour-line stagger). Ordinary scanning needs no
+  `--force-calibration`. Packaging and a scan from inside a SANE frontend
+  remain. Per-profile detail: **[docs/ROADMAP.md](docs/ROADMAP.md)**
 
 See **[docs/ROADMAP.md](docs/ROADMAP.md)** for the acceptance matrix,
 frozen scope, and exactly what remains before the driver is "complete".
@@ -114,13 +118,16 @@ step for wider distribution.
 
 ## Development status
 
-**Status: v0.1.2 released (the CLI driver).** The standalone Python/pyusb
+**Status: v0.1.2 released (the CLI driver;
+[release notes](docs/release-notes-v0.1.2.md)).** The standalone Python/pyusb
 command-line driver reached its defined milestone — magazine loading,
 single-frame and whole-strip batch scanning, all five resolutions, IR and dust
 removal, and eject — with scan, calibration, IR and dust removal
 hardware-verified per frame and across a 4-frame strip in one invocation,
 frame for frame against the vendor application's output of the same strip
-(2026-09-05). "Complete" here means that functional milestone is met **within
+(2026-09-05), and six-frame strips since 2026-09-10 (Tests 59–60). v0.1.2
+(2026-09-12) fixes the infrared channel's colour-line alignment: before it,
+every dust speck appeared three times in the IR image. "Complete" here means that functional milestone is met **within
 its frozen scope on the one test unit** — it is **not** broad field testing or
 proof of compatibility with other scanners or Linux systems. The **SANE
 backend is a separate, in-progress effort** with its own status (see Project
@@ -453,7 +460,7 @@ interoperability constants and our own code.
 - [x] IR channel capture (`--ir`): separate visible + IR output, dual-light calibration
 - [x] IR-based automatic dust/scratch removal (multi-scale inpainting, on by default with `--ir`)
 - [x] Resolution profiles: all five DPIs (600/1200/2400/3600/7200) hardware-verified
-- [x] Whole-strip batch scanning (`--frames 1-4`)
+- [x] Whole-strip batch scanning (`--frames 1-4`, `--frames 1-6` for a full-length strip)
 - [x] Eject from a loaded magazine, before or after scanning
 - [x] Magazine loading through the driver (the vendor's insert flow replayed whole; latched 3/3, 2026-09-05)
 - [x] Per-frame positioning wait scaled with the move length (frame 4 of a batch was scanned mid-move before; fixed and verified against the vendor's output, 2026-09-05)
@@ -465,7 +472,7 @@ interoperability constants and our own code.
 - [x] Loader sensor and button event reading
 - [x] ICC-tagged output (`--positive` TIFFs carry an sRGB profile; raw negatives are untagged linear data)
 - [x] Baseline-conformant TIFF resolution tags (the file states its own dpi, so physical size survives; the 2400 dpi profile is anisotropic — 3600 across, 2400 along — and the TIFF carries per-axis X/Y resolution that follows the image's orientation)
-- [ ] SANE genesys backend support for GL126 (upstream goal) — plan and hook mapping in [`docs/sane-port.md`](docs/sane-port.md); register tables generated from the driver's own tables and the command set in `sane/`; calibration, positioning (frames 1–4), the scan pass and park run on hardware through `scanimage` (2026-09-08); colour-line alignment hardware-verified (Test 54), eye-check acceptance pending; other resolutions and infrared implemented offline (hardware runs pending); packaging open
+- [ ] SANE genesys backend support for GL126 (upstream goal) — plan and hook mapping in [`docs/sane-port.md`](docs/sane-port.md); register tables generated from the driver's own tables and the command set in `sane/`; calibration, positioning (frames 1–6), the scan pass and park run on hardware through `scanimage`; all five resolutions and the infrared pass hardware-run and eye-accepted for geometry (Tests 62–71, 2026-09-12); install/packaging and a SANE-frontend scan open
 
 ## Status & disclaimer
 

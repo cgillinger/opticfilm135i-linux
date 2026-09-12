@@ -268,11 +268,16 @@ is documented as separately unverified, pending a physical slide.
   built; `sane_open`/calibration/positioning/scan/park run through
   `scanimage`. The calibration-cache item is fixed and hardware-confirmed
   (Test 64) — ordinary scans need no `--force-calibration`. Hardware SANE
-  coverage so far: **plain3600** frames 1–6 (transport + coverage, Test 62)
-  and **dpi2400** frame 1 (transport + coverage + corrected proportion, eye-
-  accepted for geometry, Tests 62/63). The other four profiles (ir3600,
-  dpi600, dpi1200, dpi7200) are offline-only — one SANE hardware run + eye
-  approval each is the remaining verification. The two Test-63 image findings
+  coverage: **plain3600** frames 1–6 (transport + coverage, Test 62),
+  **dpi2400** frame 1 (transport + coverage + corrected proportion, eye-
+  accepted for geometry, Tests 62/63), and — 2026-09-12 — **dpi600, dpi1200,
+  dpi7200 and ir3600** frame 1 each, transport to the ledger, coverage
+  verified, eye-accepted (Tests 65–67, 71). The infrared profile took four
+  runs and fixed three real bugs (Tests 68–70: an unrequested last chunk, the
+  core's Extract node copying a third of each row, and the IR channels'
+  colour-line stagger — the last also fixed in the CLI driver, v0.1.2). The
+  remaining B1 work is WP-2 (install/packaging + a SANE-frontend scan). The
+  two Test-63 image findings
   (mirror, colour cast) are investigated and app-layer, not B1 blockers (see
   the dpi2400 bullet below). Per-profile detail is in the **SANE profile
   matrix**, and the remaining work in the **B1/B2 finite plan**, both below.
@@ -369,12 +374,12 @@ is the owner's eye rule and is scoped to what was actually judged.
 
 | Profile   | Impl + offline | SANE HW verified | Frames (SANE HW) | Image acceptance (scope) | Concrete remaining for B1 |
 |-----------|----------------|------------------|------------------|--------------------------|---------------------------|
-| plain3600 | yes | transport + coverage (Test 62) | 1–6 | images seen; no formal eye-accept recorded | one correctly-rendered plain3600 SANE image, owner-approved |
+| plain3600 | yes | transport + coverage (Test 62) | 1–6 | images seen; no formal eye-accept recorded | one correctly-rendered plain3600 SANE image, owner-approved (the delivery path is the one Tests 65–71 accepted) |
 | dpi2400   | yes | transport + coverage + proportion (Tests 62/63) | 1 | EYE-ACCEPTED, geometry only (Test 63); colour is the app's job | none for geometry; frames 2–6 not required for B1 (one frame proves the profile) |
-| ir3600    | yes (hook 8, wire-equal) | no | none | none | one SANE HW run: IR/visible separation + host dust-removal, owner-approved |
-| dpi600    | yes | no | none | none | one SANE HW run, owner-approved |
-| dpi1200   | yes | no | none | none | one SANE HW run, owner-approved |
-| dpi7200   | yes | no | none | none | one SANE HW run, owner-approved |
+| ir3600    | yes | transport + full-width, colour-aligned IR (Tests 68–71) | 1 | EYE-ACCEPTED (Test 71: cleaner, no streaks, well positioned; alignment by measurement) | none |
+| dpi600    | yes | transport + coverage (Test 65) | 1 | EYE-ACCEPTED, geometry (Test 65) | none |
+| dpi1200   | yes | transport + coverage (Test 66) | 1 | EYE-ACCEPTED, geometry (Test 66) | none |
+| dpi7200   | yes | transport + coverage (Test 67) | 1 | EYE-ACCEPTED, geometry (Test 67) | none |
 
 Notes: the calibration-cache fix (Test 64) and the safety model apply to all
 profiles. The mirror and colour-cast findings are app-layer (raw delivery is
@@ -382,11 +387,10 @@ sound), so they do not gate any row. B1's image-acceptance rule is about
 geometry/integrity (whole frame, right proportions, no banding), not absolute
 colour or the positive's orientation, which are the frontend's/user's job.
 
-The four remaining profiles (dpi600, dpi1200, dpi7200, ir3600) have an
-offline-prepared, per-profile hardware plan with derived geometry, exact
-commands and acceptance criteria — one frame-1 scan per profile, its own fresh
-load, no `--force-calibration`: **[docs/sane-remaining-profiles-plan.md](sane-remaining-profiles-plan.md)**
-(awaiting Christian's go before any hardware).
+The four profiles' hardware plan, ledger and per-run status (Tests 65–71,
+2026-09-12) are in **[docs/sane-remaining-profiles-plan.md](sane-remaining-profiles-plan.md)**;
+all four are done. Not read into this table: the plain3600 row's formal
+eye-accept, still to be recorded.
 
 ## B1 / B2 finite plan (2026-09-12)
 
