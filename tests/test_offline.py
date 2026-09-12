@@ -237,6 +237,100 @@ def test_axis_dpi_rotation_parity():
     print("test_axis_dpi_rotation_parity OK")
 
 
+def _small_dual_raw(dpi, vis_lines, aperture, W=8, clipped=False):
+    """Small-width alternating IR/visible raw for the digitize metadata
+    test (mirrors tests/test_dual_overscan._small_dual_raw): bright
+    aperture between aperture=(a, b) visible-line indices, an asymmetric
+    across-width ramp, small W (the coverage detector reads only the
+    central width band)."""
+    a, b = aperture
+    col = np.full(vis_lines, 800, dtype=np.uint16)
+    col[max(0, a):b] = 40000
+    if clipped:
+        col[:b] = 40000
+    wire = vis_lines * 2
+    inter = np.empty(wire, dtype=np.uint16)
+    inter[0::2] = col
+    inter[1::2] = col
+    ramp = np.linspace(1.0, 0.6, W)
+    img = (inter[:, None].astype(np.float64) * ramp[None, :]).astype(np.uint16)
+    return np.repeat(img[:, :, None], 3, axis=2).astype("<u2").tobytes(), W
+
+
+def _xy_res(path):
+    from PIL import Image
+    im = Image.open(path)
+    return int(im.tag_v2[282]), int(im.tag_v2[283])
+
+
+def test_digitize_dual_metadata_axes_follow_each_flow():
+    """The real _finish_digitize_frame export, read back from disk.
+    digitize keeps three separate flows with different rotation:
+      - MAIN negative and the IR channel are only --rotate'd (never the
+        --positive mirror), so both follow cli._axis_dpi(args, False) and
+        share axes;
+      - the positive PREVIEW carries the vendor mirror+rot90(,3), so it
+        follows cli._axis_dpi(args, True).
+    At 2400 dpi (anisotropic) the axes must differ from a naive square
+    tag; at an isotropic dpi they are square. Checked for --positive off
+    and on and every 90 deg rotation, plus the failed-coverage overscan
+    (only the overscan frames are written, still orientation-correct)."""
+    import argparse
+    import os
+    from of135i import cli
+    raw2400, W = _small_dual_raw(2400, 3200, (300, 3000))
+    for positive in (False, True):
+        for rotate in (0, 90, 180, 270):
+            args = argparse.Namespace(dpi=2400, ir=True, no_clean=True,
+                                      rotate=rotate, positive=positive)
+            want_main = cli._axis_dpi(args, False)      # main/IR: --rotate only
+            want_prev = cli._axis_dpi(args, True)        # preview: +mirror/rot90
+            with tempfile.TemporaryDirectory() as d:
+                out = os.path.join(d, "f1.tiff")
+                main, irf, prev, cleaned, cov = cli._finish_digitize_frame(
+                    args, raw2400, W, out, dual=True)
+                assert cov is not None and cov.verified, (positive, rotate,
+                                                           cov.reason if cov else None)
+                assert _xy_res(main) == want_main, (positive, rotate)
+                assert irf is not None and _xy_res(irf) == want_main, (
+                    "IR follows the main negative's axes", positive, rotate)
+                assert _xy_res(cli._overscan_raw_path(out)) == want_main, (positive, rotate)
+                ir_over = os.path.join(d, "f1-ir.overscan.tiff")
+                assert _xy_res(ir_over) == want_main, (positive, rotate)
+                if positive:
+                    assert prev is not None and _xy_res(prev) == want_prev, (rotate,)
+                else:
+                    assert prev is None
+
+    # Failed coverage: only overscan frames, still orientation-correct.
+    clip, _ = _small_dual_raw(2400, 3200, (0, 3000), clipped=True)
+    args = argparse.Namespace(dpi=2400, ir=True, no_clean=True, rotate=90, positive=False)
+    want_main = cli._axis_dpi(args, False)
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "f1.tiff")
+        main, irf, prev, cleaned, cov = cli._finish_digitize_frame(
+            args, clip, W, out, dual=True)
+        assert cov is not None and not cov.verified
+        assert main is None and not os.path.exists(out)
+        assert _xy_res(cli._overscan_raw_path(out)) == want_main
+        assert _xy_res(os.path.join(d, "f1-ir.overscan.tiff")) == want_main
+
+    # Isotropic dpi: main, IR and preview are all square.
+    dpi = 600
+    lpm = dpi / 25.4
+    raw600, W6 = _small_dual_raw(dpi, int(round(40 * lpm)),
+                                 (int(round(4 * lpm)), int(round(34 * lpm))))
+    args = argparse.Namespace(dpi=dpi, ir=True, no_clean=True, rotate=90, positive=True)
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "f1.tiff")
+        main, irf, prev, cleaned, cov = cli._finish_digitize_frame(
+            args, raw600, W6, out, dual=True)
+        assert cov is not None and cov.verified, cov.reason if cov else None
+        for p in (main, irf, prev):
+            assert _xy_res(p) == (dpi, dpi), p
+    print("test_digitize_dual_metadata_axes_follow_each_flow OK")
+
+
 # ------------------------------------------------ digitize staging (Test 35)
 
 
@@ -959,6 +1053,7 @@ def main() -> int:
         test_tiff_resolution_tags,
         test_tiff_anisotropic_resolution,
         test_axis_dpi_rotation_parity,
+        test_digitize_dual_metadata_axes_follow_each_flow,
         test_pnm_roundtrip_via_pillow,
         test_digitize_layout_and_paths,
         test_digitize_manifest_roundtrip_and_torn_line,

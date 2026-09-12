@@ -268,6 +268,166 @@ def test_validate_overscan_covers_dual():
     print("test_validate_overscan_covers_dual OK")
 
 
+# ------------------------------------------ TIFF DPI metadata (per-axis)
+#
+# The 2400 dpi dual profile is anisotropic: 3600 dpi across the sensor,
+# 2400 dpi along the transport (image.sampling_resolution). The TIFF's
+# XResolution/YResolution must follow the delivered image's ACTUAL axes
+# after the orientation transform. _finish_dual_scan orients the IR
+# channel IDENTICALLY to the visible one (the --positive mirror+rot90 and
+# --rotate go through _orient_pair for both), so both must carry the same
+# (x, y) dpi -- the dual-path IR metadata bug stamped the IR with
+# _axis_dpi(..., False) while its pixels were rotated like the visible.
+
+
+def _small_dual_raw(dpi, vis_lines, aperture, W=8, clipped=False):
+    """A small-WIDTH alternating IR/visible raw for the metadata tests:
+    an asymmetric scene with distinguishable axes -- a bright aperture
+    between aperture=(a, b) in visible-line indices, dark plastic outside,
+    and a brightness ramp DOWN the width so a 90 deg turn is visible in
+    the pixels too. Small W keeps the arrays tiny (the coverage detector
+    only reads the central width band, so width does not affect the
+    verdict). `clipped` runs the aperture off the leading end."""
+    a, b = aperture
+    col = np.full(vis_lines, 800, dtype=np.uint16)
+    col[max(0, a):b] = 40000
+    if clipped:
+        col[:b] = 40000
+    wire = vis_lines * 2
+    inter = np.empty(wire, dtype=np.uint16)
+    inter[0::2] = col  # IR lines (even)
+    inter[1::2] = col  # visible lines (odd)
+    ramp = np.linspace(1.0, 0.6, W)  # asymmetric across the width
+    img = (inter[:, None].astype(np.float64) * ramp[None, :]).astype(np.uint16)
+    arr = np.repeat(img[:, :, None], 3, axis=2).astype("<u2")
+    return arr.tobytes(), W
+
+
+def _meta_args(out, dpi, positive, rotate, ir=True):
+    import types
+    return types.SimpleNamespace(
+        dpi=dpi, overscan=holder.OVERSCAN_MM, positive=positive, rotate=rotate,
+        no_clean=True, ir=ir, output=out, frames=None)
+
+
+def _xy_res(path):
+    from PIL import Image
+    im = Image.open(path)
+    return int(im.tag_v2[282]), int(im.tag_v2[283])
+
+
+def test_dual_ir_and_visible_share_dpi_axes_2400():
+    """The real _finish_dual_scan export, read back from disk: at 2400 dpi
+    the visible and IR products (and their overscan frames) carry the SAME
+    per-axis dpi, matching cli._axis_dpi(args, args.positive), for
+    positive off/on and every 90 deg rotation. This is the dual-path IR
+    metadata regression (the IR frame used to claim the un-rotated axes)."""
+    import os
+    from of135i import cli
+    dpi = 2400
+    # ~3200 visible lines (~33.9 mm along) with a ~28.6 mm aperture: above
+    # the detector's real-aperture minimum, margins well over min_margin.
+    raw, W = _small_dual_raw(dpi, 3200, (300, 3000))
+    for positive in (False, True):
+        for rotate in (0, 90, 180, 270):
+            args = _meta_args("f.tiff", dpi, positive, rotate)
+            want = cli._axis_dpi(args, args.positive)
+            with tempfile.TemporaryDirectory() as d:
+                out = os.path.join(d, "f1.tiff")
+                args.output = out
+                cov = cli._finish_dual_scan(args, raw, W, out, write_ir=True)
+                assert cov is not None and cov.verified, (
+                    positive, rotate, cov.reason if cov else None)
+                vis = _xy_res(out)
+                ir = _xy_res(os.path.join(d, "f1-ir.tiff"))
+                vis_over = _xy_res(cli._overscan_raw_path(out))
+                ir_over = _xy_res(os.path.join(d, "f1-ir.overscan.tiff"))
+                assert vis == want, (positive, rotate, vis, want)
+                assert ir == want, ("IR must match visible axes",
+                                    positive, rotate, ir, want)
+                assert vis_over == want and ir_over == want, (
+                    positive, rotate, vis_over, ir_over, want)
+    print("test_dual_ir_and_visible_share_dpi_axes_2400 OK")
+
+
+def test_dual_overscan_metadata_on_coverage_failure_2400():
+    """Even when coverage FAILS (no products written), the preserved
+    visible and IR overscan frames still carry matching, orientation-
+    correct per-axis dpi -- the metadata fix reaches the overscan writer
+    (the required 'overscan export at a failed coverage check' case)."""
+    import os
+    from of135i import cli
+    dpi = 2400
+    raw, W = _small_dual_raw(dpi, 3200, (0, 3000), clipped=True)
+    for positive in (False, True):
+        args = _meta_args("f.tiff", dpi, positive, rotate=90)
+        want = cli._axis_dpi(args, args.positive)
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "f1.tiff")
+            args.output = out
+            cov = cli._finish_dual_scan(args, raw, W, out, write_ir=True)
+            assert cov is not None and not cov.verified, positive
+            assert not os.path.exists(out), "no product on failure"
+            vis_over = _xy_res(cli._overscan_raw_path(out))
+            ir_over = _xy_res(os.path.join(d, "f1-ir.overscan.tiff"))
+            assert vis_over == want and ir_over == want, (
+                positive, vis_over, ir_over, want)
+    print("test_dual_overscan_metadata_on_coverage_failure_2400 OK")
+
+
+def test_dual_isotropic_profiles_square_and_pixels_unchanged():
+    """Isotropic dual profiles (600/1200/7200) keep X == Y == dpi and the
+    metadata fix leaves pixels and dimensions untouched: the read-back
+    visible and IR products equal the independently oriented+cropped
+    arrays (proof the change is metadata-only)."""
+    import os
+    from PIL import Image
+    from of135i import aperture_crop, cli, image
+    for dpi in (600, 1200, 7200):
+        # ~30 mm aperture in a ~40 mm window at each dpi.
+        lpm = dpi / 25.4
+        vis_lines = int(round(40 * lpm))
+        a = int(round(4 * lpm))
+        b = int(round(34 * lpm))
+        raw, W = _small_dual_raw(dpi, vis_lines, (a, b))
+        args = _meta_args("f.tiff", dpi, positive=False, rotate=90)
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "f1.tiff")
+            args.output = out
+            cov = cli._finish_dual_scan(args, raw, W, out, write_ir=True)
+            assert cov is not None and cov.verified, (dpi, cov.reason if cov else None)
+            for p in (out, os.path.join(d, "f1-ir.tiff")):
+                x, y = _xy_res(p)
+                assert x == dpi and y == dpi, (dpi, p, x, y)
+            # Recompute the expected oriented visible/IR products and compare
+            # pixels, byte for byte.
+            visible, ir = image.split_ir(raw, width=W)
+            shift = round(24 * dpi / 7200)
+            visible = image.align_channels(visible, dpi=dpi)
+            if shift:
+                ir = ir[shift:-shift]
+            c = aperture_crop.measure_coverage(visible, dpi=dpi)
+            vis_c = aperture_crop.crop_to_aperture(visible, c, dpi=dpi)
+            ir_c = aperture_crop.crop_to_aperture(ir, c, dpi=dpi)
+            k = args.rotate // 90
+            exp_vis = np.ascontiguousarray(np.rot90(vis_c, k=k))
+            exp_ir = np.ascontiguousarray(np.rot90(ir_c, k=k))
+            exp_ir_rgb = np.repeat(exp_ir[:, :, None], 3, axis=2)
+            # Read back the 16-bit pixels straight from the TIFF (PIL opens a
+            # 16-bit RGB TIFF as 8-bit): the writer puts pixel data right
+            # after the 8-byte header, row-major RGB16LE.
+            def _pixels(path, shape):
+                buf = Path(path).read_bytes()[8:8 + int(np.prod(shape)) * 2]
+                return np.frombuffer(buf, dtype="<u2").reshape(shape)
+            got_vis = _pixels(out, exp_vis.shape)
+            got_ir = _pixels(os.path.join(d, "f1-ir.tiff"), exp_ir_rgb.shape)
+            assert np.array_equal(got_vis, exp_vis), dpi
+            assert np.array_equal(got_ir, exp_ir_rgb), dpi
+            # Dimensions match what a square-pixel viewer expects (X == Y).
+            assert Image.open(out).size == (exp_vis.shape[1], exp_vis.shape[0]), dpi
+    print("test_dual_isotropic_profiles_square_and_pixels_unchanged OK")
+
+
 def main():
     tests = [
         test_dual_ledger_every_profile_and_frame,
@@ -277,6 +437,9 @@ def main():
         test_cli_dual_verified_writes_registered_pair,
         test_cli_dual_failure_writes_no_products,
         test_validate_overscan_covers_dual,
+        test_dual_ir_and_visible_share_dpi_axes_2400,
+        test_dual_overscan_metadata_on_coverage_failure_2400,
+        test_dual_isotropic_profiles_square_and_pixels_unchanged,
     ]
     for t in tests:
         t()

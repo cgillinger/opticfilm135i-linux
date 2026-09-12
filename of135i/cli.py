@@ -512,7 +512,17 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
         return vis, irr
 
     def _write_ir_file(arr, path):
-        image.write_tiff16(_np.stack([arr, arr, arr], axis=-1), path, dpi=_axis_dpi(args, False))
+        # The IR channel is oriented IDENTICALLY to the visible image by
+        # _orient_pair (the --positive rot90(,3) mirror and --rotate are
+        # applied to both), so its delivered axes match the visible ones
+        # -- stamp the SAME per-axis dpi (args.positive), not _axis_dpi(
+        # ..., False). Anything else made a --positive 2400 dpi IR frame
+        # claim the un-rotated (across, along) while its pixels were turned
+        # like the visible frame (the dual-path metadata bug). This differs
+        # from digitize, where the IR is only --rotate'd (positive=False is
+        # correct there).
+        image.write_tiff16(_np.stack([arr, arr, arr], axis=-1), path,
+                           dpi=_axis_dpi(args, args.positive))
 
     # Preserve the full overscan frame(s) regardless of the verdict
     # (raw-data principle), oriented like the products.
