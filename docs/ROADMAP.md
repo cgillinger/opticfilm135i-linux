@@ -321,6 +321,15 @@ is documented as separately unverified, pending a physical slide.
     previews (correct final orientation to be established), and a strong
     yellow-green cast / low contrast whose source (render chain vs raw) is
     unverified — both investigable from the saved files, no new hardware.
+  - Calibration cache (ordinary scan without --force-calibration): FIXED
+    offline 2026-09-12. A compatible Genesys calibration cache made
+    genesys_start_scan skip calibration, and GL126's begin_scan (which needs
+    this sane_start's own ShadingDone) then refused the scan — the reason
+    --force-calibration was required. The fix gates the cache restore off for
+    GL126 only (every scan calibrates); begin_scan's guard and other ASICs are
+    unchanged. Offline-verified by driving the real sane_open→sane_start flow
+    in test mode (tests/test_sane_calibration_cache.py). ONE hardware run
+    remains: two ordinary no-flag scans on one load (see docs/sane-port.md).
   - Slide holder: PENDING
 - **A6 note** (Test 44/46): the driver's eject stalled from a state only
   the backend's first `init()` produced; that `init()` now writes nothing.

@@ -73,7 +73,7 @@ index 02cfc43..8813651 100644
  
  
 diff --git a/backend/genesys/genesys.cpp b/backend/genesys/genesys.cpp
-index d7ec422..df106ac 100644
+index d7ec422..eb04edf 100644
 --- a/backend/genesys/genesys.cpp
 +++ b/backend/genesys/genesys.cpp
 @@ -38,6 +38,13 @@
@@ -173,7 +173,26 @@ index d7ec422..df106ac 100644
      {
          scanner_move_to_ta(*dev);
      }
-@@ -4039,8 +4077,11 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -4017,7 +4055,17 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+     dev->cmd_set->send_gamma_table(dev, sensor);
+ 
+   /* try to use cached calibration first */
+-  if (!genesys_restore_calibration (dev, sensor))
++  // GL126 (OpticFilm 135i): the vendor recalibrates for every scan, and the
++  // backend's begin_scan requires THIS sane_start's own offset->gain->shading
++  // hooks to have run (CalStage::ShadingDone, gl126.cpp). A restored
++  // calibration cache would skip genesys_scanner_calibration, leaving that
++  // stage unset, and begin_scan would then refuse the scan -- which is exactly
++  // why --force-calibration had to be passed. So GL126 never reuses a cache to
++  // bypass calibration: every scan calibrates, whether or not a compatible
++  // cache exists. Other ASICs keep the cache behaviour unchanged.
++  bool restored = dev->model->asic_type != AsicType::GL126 &&
++                  genesys_restore_calibration(dev, sensor);
++  if (!restored)
+     {
+         // calibration : sheetfed scanners can't calibrate before each scan.
+         // also don't run calibration for those scanners where all passes are disabled
+@@ -4039,8 +4087,11 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
          dev->cmd_set->move_back_home(dev, true);
      }
  
@@ -187,7 +206,7 @@ index d7ec422..df106ac 100644
      {
          scanner_move_to_ta(*dev);
      }
-@@ -4059,9 +4100,12 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -4059,9 +4110,12 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
      {
          genesys_send_shading_coefficient(dev, sensor);
      }
@@ -202,7 +221,7 @@ index d7ec422..df106ac 100644
  
      // start effective scan
      dev->cmd_set->begin_scan(dev, sensor, &dev->reg, true);
-@@ -4070,6 +4114,13 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -4070,6 +4124,13 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
          dev->interface->test_checkpoint("start_scan");
          return;
      }
@@ -216,7 +235,7 @@ index d7ec422..df106ac 100644
  
    /*do we really need this? the valid data check should be sufficient -- pierre*/
    /* waits for head to reach scanning position */
-@@ -4283,6 +4334,7 @@ static Genesys_Settings calculate_scan_settings(Genesys_Scanner* s)
+@@ -4283,6 +4344,7 @@ static Genesys_Settings calculate_scan_settings(Genesys_Scanner* s)
      }
  
      settings.expiration_time = s->expiration_time;
@@ -224,7 +243,7 @@ index d7ec422..df106ac 100644
  
      settings.exposure_lperiod = s->exposure_time;
  
-@@ -4802,6 +4854,23 @@ static void init_options(Genesys_Scanner* s)
+@@ -4802,6 +4864,23 @@ static void init_options(Genesys_Scanner* s)
    s->opt[OPT_EXPIRATION_TIME].constraint.range = &expiration_range;
    s->expiration_time = 60;  // 60 minutes by default
  
@@ -248,7 +267,7 @@ index d7ec422..df106ac 100644
    /* Powersave time (turn lamp off) */
    s->opt[OPT_LAMP_OFF_TIME].name = "lamp-off-time";
    s->opt[OPT_LAMP_OFF_TIME].title = SANE_I18N ("Lamp off time");
-@@ -5457,6 +5526,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5457,6 +5536,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
          throw SaneException("could not find the device to open: %s", devicename);
      }
  
@@ -281,7 +300,7 @@ index d7ec422..df106ac 100644
      if (is_testing_mode()) {
          // during testing we need to initialize dev->model before test scanner interface is created
          // as that it needs to know what type of chip it needs to mimic.
-@@ -5473,6 +5568,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5473,6 +5578,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
          dev->interface->get_usb_device().open(dev->file_name.c_str());
      } else {
@@ -304,7 +323,7 @@ index d7ec422..df106ac 100644
          dev->interface = std::unique_ptr<ScannerInterfaceUsb>{new ScannerInterfaceUsb{dev}};
  
          dbg.vstatus("open device '%s'", dev->file_name.c_str());
-@@ -5523,6 +5634,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5523,6 +5644,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
      // some hardware capabilities are detected through sensors
      dev->cmd_set->update_hardware_sensors (s);
@@ -317,7 +336,7 @@ index d7ec422..df106ac 100644
  }
  
  SANE_GENESYS_API_LINKAGE
-@@ -5556,6 +5673,20 @@ sane_close_impl(SANE_Handle handle)
+@@ -5556,6 +5683,20 @@ sane_close_impl(SANE_Handle handle)
  
      auto* dev = it->dev;
  
@@ -338,7 +357,7 @@ index d7ec422..df106ac 100644
      // eject document for sheetfed scanners
      if (dev->model->is_sheetfed) {
          catch_all_exceptions(__func__, [&](){ dev->cmd_set->eject_document(dev); });
-@@ -5579,12 +5710,26 @@ sane_close_impl(SANE_Handle handle)
+@@ -5579,12 +5720,26 @@ sane_close_impl(SANE_Handle handle)
      dev->clear();
  
      // LAMP OFF : same register across all the ASICs */
@@ -369,7 +388,7 @@ index d7ec422..df106ac 100644
  
      // not freeing dev because it's in the dev list
      catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().close(); });
-@@ -5715,6 +5860,9 @@ static void get_option_value(Genesys_Scanner* s, int option, void* val)
+@@ -5715,6 +5870,9 @@ static void get_option_value(Genesys_Scanner* s, int option, void* val)
      case OPT_EXPIRATION_TIME:
          *reinterpret_cast<SANE_Word*>(val) = s->expiration_time;
          break;
@@ -379,7 +398,7 @@ index d7ec422..df106ac 100644
      case OPT_CUSTOM_GAMMA:
          *reinterpret_cast<SANE_Word*>(val) = s->custom_gamma;
          break;
-@@ -6012,6 +6160,12 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
+@@ -6012,6 +6170,12 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
              }
              break;
          }
@@ -723,6 +742,27 @@ index 09ca861..a8df6a0 100644
      sensor = Genesys_Sensor();
      sensor.sensor_id = SensorId::CCD_PLUSTEK_OPTICFILM_7300; // gl843
      sensor.full_resolution = 7200;
+diff --git a/backend/genesys/test_scanner_interface.cpp b/backend/genesys/test_scanner_interface.cpp
+index ef7cdbb..2a166f4 100644
+--- a/backend/genesys/test_scanner_interface.cpp
++++ b/backend/genesys/test_scanner_interface.cpp
+@@ -34,6 +34,16 @@ TestScannerInterface::TestScannerInterface(Genesys_Device* dev, std::uint16_t ve
+     // initialize status registers
+     if (dev_->model->asic_type == AsicType::GL124) {
+         write_register(0x101, 0x00);
++    } else if (dev_->model->asic_type == AsicType::GL126) {
++        // GL126 (OpticFilm 135i): its status address is 0x101 like GL124's
++        // (of135i/gl126-integration.patch, scanner_read_status), and its
++        // init()/offset_calibration read reg 0x01 directly (the idle-homed
++        // check). Seed both so the backend can be driven in test mode; 0x01 =
++        // 0x00 reads as "cold, never homed", which makes offset_calibration
++        // stop early (before the lamp-warmup loop) -- enough to observe that
++        // calibration was entered.
++        write_register(0x01, 0x00);
++        write_register(0x101, 0x00);
+     } else {
+         write_register(0x41, 0x00);
+     }
 diff --git a/doc/descriptions/genesys.desc b/doc/descriptions/genesys.desc
 index 43b0736..83414f8 100644
 --- a/doc/descriptions/genesys.desc

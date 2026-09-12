@@ -516,16 +516,32 @@ Prerequisite: the shared lock above, implemented and checked.
   returns by itself. `sane_close` must not rely on a later reopen.
 - **Position drift between DPIs** (~7.5 mm, open) — a homing fix in the
   Python driver first, then port.
-- **Calibration cache vs. the per-frame contract (decide before B1 is
-  declared done).** GL126's `begin_scan()` requires `CalStage::ShadingDone`
-  from the same `sane_start` — the vendor calibrates every frame — so a scan
-  that reuses a cached calibration would skip the very hooks the motor path
-  depends on and stall before the motor moves. Bring-up and the Lager 1
-  hardware plan force calibration with `--force-calibration`, which makes
-  those runs deterministic. A finished backend must not require the user to
-  know that flag for an ordinary scan to work: decide how GL126 opts out of
-  or invalidates the Genesys calibration cache so the "calibrate every frame"
-  contract holds automatically. Does not block the Lager 1 hardware test.
+- **Calibration cache vs. the per-frame contract — FIXED offline
+  2026-09-12.** GL126's `begin_scan()` requires `CalStage::ShadingDone` from
+  the same `sane_start` — the vendor calibrates every frame — so a scan that
+  reused a cached calibration skipped the very hooks the motor path depends on
+  and failed before the motor moved. That is why bring-up and the Lager 1
+  hardware plan had to pass `--force-calibration`. Root cause: the genesys core
+  runs `if (!genesys_restore_calibration(dev, sensor)) { genesys_scanner_
+  calibration(...); }` in `genesys_start_scan`; a compatible cache made restore
+  return true and the whole calibration block — which runs GL126's
+  offset→gain→shading hooks and sets `CalStage::ShadingDone` — was skipped.
+  Fix (of135i/gl126-integration.patch): gate the restore off for GL126 —
+  `bool restored = dev->model->asic_type != AsicType::GL126 &&
+  genesys_restore_calibration(dev, sensor);` — so GL126 calibrates on every
+  scan whether or not a compatible cache (or the on-disk calibration file)
+  exists. A pure GL126-scoped conjunct: other ASICs evaluate the original
+  expression unchanged. `begin_scan`'s `ShadingDone` guard is untouched (a scan
+  whose calibration did not run this `sane_start` is still refused, so a stale
+  stage cannot be reused), and explicit `--force-calibration` still works.
+  Verified offline by driving the real `sane_open`→`sane_start` flow in the
+  backend's test mode (tests/test_sane_calibration_cache.py +
+  gl126_calibration_cache_probe.cpp): with a compatible cache present, GL126
+  still enters calibration; reverting the one-line gate makes the same case
+  skip it (begin_scan then refuses) — the test discriminates. A GL124 model's
+  flow is unaffected. Ordinary scanning without the flag now performs the
+  calibration; **one hardware run remains** to confirm it on the device (see
+  the hardware-confirmation note below).
 - **Lateral (across-strip) overscan.** The plain path delivers the fixed
   aperture width (3762 px) with overscan only ALONG the strip
   (leading/trailing); the across-strip width is not overscanned. A small
@@ -670,6 +686,37 @@ Prerequisite: the shared lock above, implemented and checked.
     `load --double-jog -> eject` is NOT a general or automatic recovery: it
     applies only when its own documented precondition holds (power-cycled,
     latched magazine in the well), per that plan's Recovery step 4.
+
+  **Proposed minimal hardware confirmation (calibration cache, no
+  --force-calibration) -- runs only after review and Christian's explicit go;
+  NOT part of this offline work.** The offline tests prove the DECISION for
+  every relevant case (no cache / compatible cache / --force-calibration / two
+  consecutive scans / another model); hardware needs to confirm only that the
+  real motor + calibration actually complete an ORDINARY scan without the flag,
+  and that a scan with a previously-saved compatible cache present also
+  completes (the exact situation that used to fail). Two scans on one load
+  justify it: the first refreshes the on-disk cache, the second is the
+  cache-present run that previously stalled.
+  - *Preconditions:* same as above (power-cycled, `of135i status` 0x22,
+    straight load, VM disconnected). Do NOT delete the calibration file
+    between the two scans.
+  - *Commands (no install; note NO --force-calibration):*
+    `scanimage -d genesys:libusb:... --mode Color --resolution 2400 --frame 1
+    --format pnm -o cache-A.pnm` then, without power-cycling, the SAME command
+    to `cache-B.pnm`. Low USB debug (never level 255). A fresh device string
+    from `scanimage -L` after the power-cycle.
+  - *Expected results:* BOTH scans complete (no `SANE_STATUS_INVAL` from
+    begin_scan, no "needs the calibration of the same sane_start"); each run's
+    debug log shows the calibration hooks ran (offset/gain/shading), i.e. the
+    cache did not bypass them on scan B; delivered geometry and transport as in
+    Test 63 (dual2400: 3504x3560, FEEDL 6543, 447 chunks, normal PARK).
+  - *Stop conditions:* same as the dual2400 note above -- any scraping ->
+    Christian cuts power; an `INVAL`/begin_scan-calibration failure on scan B
+    means the cache still bypassed calibration (FAIL); no blind retry; recovery
+    per docs/sane-lager1-hardware-plan.md. Exit `of135i eject` from post-PARK.
+  - After this passes, drop `--force-calibration` from the standing hardware
+    plan's "Mandatory scanimage flags" (keep the historical Test 62/63 commands
+    that used it -- they record how those runs were actually done).
 
 ## Delivery checklist (from the SANE requirements survey)
 
