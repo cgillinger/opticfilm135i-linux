@@ -36,6 +36,10 @@
 #include <iostream>
 #include <string>
 
+using genesys::gl126::magazine_mark_clear;
+using genesys::gl126::magazine_mark_path;
+using genesys::gl126::magazine_mark_read;
+using genesys::gl126::magazine_mark_write;
 using genesys::gl126::process_lock_acquire;
 using genesys::gl126::process_lock_held;
 using genesys::gl126::process_lock_refs;
@@ -131,13 +135,56 @@ int do_release_unheld()
     return 0;
 }
 
+// ------------------------------------------------ the magazine mark (WP-4)
+//
+// docs/sane-wp4-magazine.md section 2.1: the "a release is pending" fact
+// that has to survive a process, because `scanimage` loads in two
+// invocations. Exercised here rather than through the built backend, so
+// the file format and the ignore/clear rules are covered without needing
+// a compiled sane-backends tree.
+
+int do_mark_path()
+{
+    std::cout << magazine_mark_path() << std::endl;
+    return 0;
+}
+
+int do_mark_write(const char* key)
+{
+    bool ok = magazine_mark_write(key);
+    std::cout << (ok ? "WROTE" : "FAILED") << std::endl;
+    return ok ? 0 : 1;
+}
+
+int do_mark_read()
+{
+    std::string key;
+    if (!magazine_mark_read(&key)) {
+        std::cout << "NONE" << std::endl;
+        return 1;
+    }
+    std::cout << "KEY " << key << std::endl;
+    return 0;
+}
+
+int do_mark_clear()
+{
+    magazine_mark_clear();
+    std::cout << "CLEARED" << std::endl;
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
+    if (argc == 3 && std::strcmp(argv[1], "mark-write") == 0) {
+        return do_mark_write(argv[2]);
+    }
     if (argc != 2) {
         std::cerr << "usage: " << argv[0]
-                   << " try|hold|nested|release-unheld" << std::endl;
+                   << " try|hold|nested|release-unheld|mark-path|"
+                      "mark-write <key>|mark-read|mark-clear" << std::endl;
         return 2;
     }
 
@@ -154,12 +201,22 @@ int main(int argc, char** argv)
         if (std::strcmp(argv[1], "release-unheld") == 0) {
             return do_release_unheld();
         }
+        if (std::strcmp(argv[1], "mark-path") == 0) {
+            return do_mark_path();
+        }
+        if (std::strcmp(argv[1], "mark-read") == 0) {
+            return do_mark_read();
+        }
+        if (std::strcmp(argv[1], "mark-clear") == 0) {
+            return do_mark_clear();
+        }
     } catch (const std::exception& e) {
         std::cerr << "ERROR " << e.what() << std::endl;
         return 2;
     }
 
     std::cerr << "usage: " << argv[0]
-               << " try|hold|nested|release-unheld" << std::endl;
+               << " try|hold|nested|release-unheld|mark-path|"
+                  "mark-write <key>|mark-read|mark-clear" << std::endl;
     return 2;
 }

@@ -107,6 +107,43 @@ bool process_lock_held();
     the test suite; not needed by ordinary callers. */
 int process_lock_refs();
 
+// ------------------------------------------------ the magazine mark (WP-4)
+
+/* docs/sane-wp4-magazine.md section 2.1. The magazine flow is two steps
+   with the OPERATOR in between: the "Load film" option releases the
+   magazine (the vendor's jog), the person takes it out and reseats it to
+   the stop, and the NEXT scan runs the load. Inside one frontend that
+   holds the device open (digiKam) the "released" fact can live in memory;
+   `scanimage` cannot -- each invocation is a new process -- and a load
+   without the jog before it, in the same power cycle, is precisely the
+   failure the project spent Tests 11b-15 on.
+
+   So the fact is also written next to the process lock, as
+   `<lock path>.magazine`, holding the device it applies to. It is never
+   trusted on its own: before a load the backend re-reads the hardware
+   (reg 0x01 idle-homed, the loader-sensor bit set, the device-open
+   register state), and a power cycle both re-enumerates the unit under a
+   new address and leaves reg 0x01 cold, so a stale mark cannot authorise
+   anything. The mark is a hint that survives a process, not a state. */
+
+/** Path of the magazine mark: the lock path plus ".magazine". */
+std::string magazine_mark_path();
+
+/** Record that `device_key` (the SANE device name, e.g.
+    "libusb:001:007" -- it carries the USB address, which a power cycle
+    changes) has had its magazine released and is waiting for the load.
+    Returns false if the file could not be written; a mark that cannot
+    be written is not fatal (the in-process record still works for a
+    frontend that stays open), so callers log and continue. */
+bool magazine_mark_write(const std::string& device_key);
+
+/** The device key of a pending mark, or false when there is none (or it
+    could not be read). */
+bool magazine_mark_read(std::string* device_key);
+
+/** Remove the mark. No-op when there is none. */
+void magazine_mark_clear();
+
 } // namespace gl126
 } // namespace genesys
 

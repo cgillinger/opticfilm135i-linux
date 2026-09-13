@@ -180,6 +180,14 @@ struct RunPolicy {
         15 s and 30 s respectively -- there is no per-op override here,
         so the hook picks one value for the whole program). */
     unsigned masked_timeout_ms = 5000;
+    /** Upper bound on ANY poll site's budget, including a per-op one
+        (0 = no bound). It can only ever SHORTEN a wait, never lengthen
+        one, and it exists for offline runs against a mock that never
+        answers: the magazine flow's cold start carries the driver's own
+        15 s and 30 s budgets, which a test would otherwise spend in real
+        wall-clock time at every one of its nineteen best-effort sites.
+        gl126.cpp sets it from $OF135I_SANE_POLL_CAP_MS. */
+    unsigned max_poll_timeout_ms = 0;
 };
 
 /** Execute one OpProgram against `wire`, appending to `out` (so a caller
@@ -229,6 +237,17 @@ struct RunPolicy {
                        section 3/4: POSITION's W3 (class F on reg 0x101)
                        and PARK's Wait A (reg 0x35 bit 0x40)/Wait B (the
                        PARK_COMPLETE status word).
+      Sleep         -> sleep_ms(op.dur_ms); NO transfer (docs/sane-wp4-
+                       magazine.md section 3: the Python replayer's
+                       pacing, which the magazine flow was hardware-
+                       verified with).
+      PollBestEffort-> loop: control_read(op's own request/value/index,
+                       ..., 2); (reply[0] & op.mask) == op.want -> done,
+                       recorded; on timeout ALSO done and recorded, with
+                       no throw -- the driver's own non-raising polls
+                       (usbio.poll_status_word, _eject_body's completion
+                       loop, device.py _poll_one's non-strict path).
+                       Budget: the op's own, else policy.poll_timeout_ms.
       ReadModifyWrite -> read register (op.index >> 8) via
                        control_read(op.request, op.value, op.index, ...,
                        2), UNLESS the immediately preceding op is a
@@ -280,6 +299,22 @@ void run_program(Wire& wire, const OpProgram& prog, RunResult& out,
                  const std::map<std::string, std::vector<std::uint8_t>>* bulk_values = nullptr);
 
 // ---------------------------------------------------------------- S5/S6
+
+// ------------------------------------------------------- magazine (WP-4)
+
+/** of135i/device.py's LOAD_STATUS_MASK: the magazine flow's completion
+    rule -- the finished state class AND the loader-sensor bit 0x08 in
+    its captured state, the busy bit clear and the never-observed 0x02
+    clear; only bit 0x04 is masked out (session-variable in every vendor
+    capture). Mirrored here so the value the generated programs carry has
+    a named counterpart the hooks and tests can refer to. */
+constexpr std::uint8_t kMagazineStatusMask = 0xFB;
+
+/** The magazine op program of that name (docs/sane-wp4-magazine.md
+    section 3): "cold_init", "open", "jog", "load" or "eject". Returns
+    nullptr for any other name. These hang off no profile -- the magazine
+    flow has no resolution. */
+const OpProgram* magazine_program(const char* name);
 
 /** The offset computation of docs/sane-hook2-offset.md section 5, per
     channel (R, G, B), ported from of135i/calibrate.py's offset_codes().

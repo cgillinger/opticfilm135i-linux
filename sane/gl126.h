@@ -149,6 +149,22 @@ void read_image_chunk_usb(Genesys_Device* dev, std::uint8_t* data, std::size_t s
     like the visible image (Test 70). */
 void push_dual_light_nodes(const ScanSession& session, ImagePipelineStack& pipeline);
 
+/** WP-4 (docs/sane-wp4-magazine.md): the magazine flow's two operator
+    actions and the one line of status text, called by the "load-film",
+    "eject-film" and "magazine" options genesys.cpp declares for GL126
+    (gl126-integration.patch).
+
+    The magazine cannot be loaded in one call: the vendor's insert flow
+    needs the operator to take it out and reseat it to the stop in the
+    middle, and SANE has no way to ask for that during sane_start. So
+    magazine_release() runs the release half (a cold unit's bring-up, the
+    vendor device-open table, the jog that frees the cassette) and the
+    LOAD runs from load_document() at the next sane_start, once the
+    hardware confirms the state the jog leaves behind. */
+void magazine_release(Genesys_Device* dev);
+void magazine_eject(Genesys_Device* dev);
+std::string magazine_state_text(const Genesys_Device* dev);
+
 } // namespace gl126
 } // namespace genesys
 

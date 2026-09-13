@@ -299,16 +299,17 @@ descriptor's title, description and range — which the patch provides.
 
 ## 7. Who does what: load, scan, eject
 
-**The magazine is not handled from digiKam, and cannot be — today.**
-Christian's decision of 2026-09-13: this division is what **B1** delivers,
-and it is a condition for **B2** that it goes away. A SANE backend that needs
-an external CLI to load film is not a SANE backend to the person installing
-it, so `load_document`/`eject_document` must be implemented and hardware-
-verified before anything is submitted upstream (ROADMAP, B2 and WP-4).
-`CommandSetGl126`
-declares `load_document()` and `eject_document()` but both call
-`not_brought_up()` and throw `SANE_STATUS_UNSUPPORTED` — they have never been
-driven from the C++ side. The working division is:
+**The magazine is handled from the command line — for now.** Christian's
+decision of 2026-09-13: this division is what **B1** delivers, and it is a
+condition for **B2** that it goes away. A SANE backend that needs an external
+CLI to load film is not a SANE backend to the person installing it.
+
+The backend can now do it itself — `load_document()`/`eject_document()` are
+implemented behind a `load-film` / `eject-film` / `magazine` option set
+(WP-4, `docs/sane-wp4-magazine.md`) — but **that code has never driven the
+motor.** Until `docs/sane-wp4-hardware-plan.md` has been run and accepted,
+the workflow below is the documented one, and the options should be left
+alone. The working division is:
 
 | step | who | command |
 |---|---|---|

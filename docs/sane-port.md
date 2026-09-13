@@ -235,7 +235,7 @@ registers from generated tables and does the same computation.
 | SCAN (slope tables, line count 0x25–0x27, execute, 223 chunk reads, drain) | `begin_scan()` + core `genesys_read_ordered_data` | Chunked reads are the core's job; our fixed chunk plan (LINES_PER_CHUNK × width × 6 B) becomes `ScanSession.output_line_bytes` etc. The trailing 180 576 B drain is chip-specific: do it in `end_scan()`. |
 | PARK | `end_scan()` | Includes the 0x8d end-of-access write. |
 | `eject()` (loaded-magazine jog, FEEDL 3090, loader slope tables) | `eject_document()` | Guards: loader sensor bit 0x08 on reg 0x101, cold state → `asic_boot(cold)` first. Exposed only through the sheetfed path or a backend option — see open questions. |
-| `tools/load_magazine.py` (ack sensor, mode 0x18 feed 0x1a22, mode 0x1c traverse 71490) | `load_document()` | Called by the core only for `is_sheetfed` models. |
+| `tools/load_magazine.py` (ack sensor, mode 0x18 feed 0x1a22, mode 0x1c traverse 71490) | `load_document()` | WP-4: implemented as the LOAD half of the two-step magazine protocol, reached from `genesys_start_scan` for GL126 as well as for `is_sheetfed` models. Offline-verified only — `docs/sane-wp4-magazine.md`. |
 | `home()` (mode 0x30, FEEDL=1) | `move_back_home()` | **Do not** use for the scan flow (it is the scan pass, pass 14). Only meaningful after `cold_init`. |
 | `is_magazine_present()` | `update_hardware_sensors()` / `load_document()` precheck | Reliable only before the base table is written. |
 

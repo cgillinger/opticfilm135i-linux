@@ -300,24 +300,103 @@ class OpEntry:
                           # | "PollMasked" | "ReadModifyWrite" (docs/sane-
                           # hook5-frame.md section 4/6, hooks 5-7: POSITION's
                           # completion poll, PARK's two waits and its three
-                          # read-modify-write sites)
+                          # read-modify-write sites) | "Sleep" |
+                          # "PollBestEffort" (docs/sane-wp4-magazine.md
+                          # section 3: the magazine flow's replayed pacing
+                          # and its non-raising polls)
     request: int          # bRequest; 0 for BulkIn/BulkOut
     value: int             # wValue
     index: int              # wIndex
     data: bytes            # Write/BulkOut: payload; else: captured reply (b"" for BulkIn)
     length: int             # Write/reads: byte length; BulkIn/BulkOut: bulk length
     dur_ms: int             # captured poll duration in ms (0 otherwise)
-    mask: int = 0           # PollMasked: poll mask; ReadModifyWrite: and_mask
-    want: int = 0           # PollMasked: target value; ReadModifyWrite: or_mask
+    mask: int = 0           # PollMasked/PollBestEffort: poll mask; ReadModifyWrite: and_mask
+    want: int = 0           # PollMasked/PollBestEffort: target value; ReadModifyWrite: or_mask
+    timeout_ms: int = 0     # PollMasked/PollBestEffort: this site's own budget
+                             # (0 = use the RunPolicy value)
 
 
-def decode_ops(phase) -> list[OpEntry]:
+#: of135i/device.py LOAD_STATUS_MASK -- the magazine flow's completion
+#: rule: state class AND loader-sensor bit 0x08, busy bit clear, the
+#: never-observed 0x02 clear; only 0x04 masked out (session-variable).
+MAGAZINE_STATUS_MASK = 0xFB
+#: of135i/device.py _poll_one's lenient status-word rule (upper nibble =
+#: state class) and its reg-0x32 rule (bits 3-4 are sensor state).
+_LENIENT_STATUS_MASK = 0xF0
+_LENIENT_REG32_MASK = 0xFF & ~0x18
+#: of135i/device.py _PACE_THRESHOLD / _PACE_CAP: the replayer sleeps the
+#: captured gap before an op when it exceeds the threshold, capped.
+_PACE_THRESHOLD = 0.05
+_PACE_CAP = 2.0
+#: The magazine phases whose motor completions the driver runs STRICTLY
+#: (device.py: jog_magazine()/load_magazine() pass strict_polls; the
+#: device-open phase does not).
+_MAGAZINE_STRICT_PHASES = ("jog", "load")
+#: The five programs of the magazine flow, in the order they run
+#: (docs/sane-wp4-magazine.md section 3). "open"/"jog"/"load" are decoded
+#: from tables_load's captured phases; "cold_init"/"eject" are built from
+#: of135i/device.py, which builds them itself.
+_MAGAZINE_PROGRAM_NAMES = ("cold_init", "open", "jog", "load", "eject")
+
+
+def _poll_timeout_ms(dur: float) -> int:
+    """device.py _poll_one's budget for one captured poll: three times
+    the captured duration, never below a second."""
+    return round(max(3.0 * dur, 1.0) * 1000)
+
+
+def _magazine_poll(phase, op, dur_ms: int) -> OpEntry:
+    """One magazine-phase `poll`, classified as docs/sane-wp4-magazine.md
+    section 3.2 describes (see decode_ops)."""
+    strict = (phase.name in _MAGAZINE_STRICT_PHASES and op.wv == WV_EXT_STATUS)
+    settled = op.resp[0] if op.resp else 0
+    timeout = _poll_timeout_ms(op.dur)
+    if strict:
+        return OpEntry("PollMasked", op.br, op.wv, op.wi, op.resp, op.length,
+                       dur_ms, mask=MAGAZINE_STATUS_MASK,
+                       want=settled & MAGAZINE_STATUS_MASK, timeout_ms=timeout)
+    if op.wv == WV_EXT_STATUS:
+        mask = _LENIENT_STATUS_MASK
+    elif op.wv == WV_STATUS and op.wi == 0x3222:
+        mask = _LENIENT_REG32_MASK
+    else:
+        mask = 0xFF
+    return OpEntry("PollBestEffort", op.br, op.wv, op.wi, op.resp, op.length,
+                   dur_ms, mask=mask, want=settled & mask, timeout_ms=timeout)
+
+
+def decode_ops(phase, magazine: bool = False) -> list[OpEntry]:
     """Reduce one `Phase` op stream to an ordered op-program, one `OpEntry`
     per captured transfer -- see the module docstring's "Op programs"
     section for the mapping rules. Raises ValueError on an op kind the
-    mapping does not cover."""
+    mapping does not cover.
+
+    ``magazine=True`` (docs/sane-wp4-magazine.md section 3.2) decodes the
+    OPEN/JOG/LOAD phases, which the Python driver runs with semantics the
+    calibration and scan phases never needed, and which were
+    hardware-verified in exactly that form (Tests 17-23, 7/7):
+
+      * the replayer's PACING is kept -- a `Sleep` op carrying
+        min(dt, 2 s) is emitted before every op whose captured gap
+        exceeds 50 ms (device.py _exec_ops). Hook 5 dropped the
+        pre-sleep for POSITION deliberately; that was a choice for a
+        rewritten PARK, not a rule for a flow verified with it.
+      * a status-word `poll` in JOG/LOAD is a MOTOR COMPLETION the
+        driver runs strictly -> `PollMasked` under LOAD_STATUS_MASK
+        (state class AND loader-sensor bit), fail-closed.
+      * every other `poll` -> `PollBestEffort` with the driver's own
+        leniency at that site (status word: state class; reg 0x32: bits
+        3-4 masked out, they are sensor state) -- logged and continued
+        on timeout, exactly as _poll_one does for a non-strict poll.
+      * each of those polls carries its OWN budget (three times the
+        captured duration, never below a second), because the captured
+        durations here span 4 ms to 1.6 s.
+    """
     entries: list[OpEntry] = []
     for i, op in enumerate(phase.ops):
+        if magazine and op.dt > _PACE_THRESHOLD:
+            entries.append(OpEntry("Sleep", 0, 0, 0, b"", 0,
+                                   round(min(op.dt, _PACE_CAP) * 1000)))
         if op.kind == "cw":
             entries.append(OpEntry("Write", op.br, op.wv, op.wi, op.data,
                                    len(op.data), 0))
@@ -335,7 +414,9 @@ def decode_ops(phase) -> list[OpEntry]:
                                        op.resp, op.length, 0))
         elif op.kind == "poll":
             dur_ms = round(op.dur * 1000)
-            if (op.wv == WV_EXT_STATUS and op.wi == WI_DATAENB
+            if magazine:
+                entries.append(_magazine_poll(phase, op, dur_ms))
+            elif (op.wv == WV_EXT_STATUS and op.wi == WI_DATAENB
                     and len(op.resp) >= 1 and (op.resp[0] & 0x01)):
                 entries.append(OpEntry("PollDataReady", op.br, op.wv, op.wi,
                                        op.resp, op.length, dur_ms))
@@ -369,6 +450,7 @@ def decode_ops(phase) -> list[OpEntry]:
 _KNOWN_OP_KINDS = frozenset((
     "Write", "AckRead", "Read", "PollDataReady", "PollClass",
     "BulkIn", "BulkOut", "BulkDone", "PollMasked", "ReadModifyWrite",
+    "Sleep", "PollBestEffort",
 ))
 
 
@@ -474,6 +556,46 @@ def validate_op_program(phase_name: str, entries: list[OpEntry]) -> None:
         if n_bo != 3:
             raise ValueError(
                 f"{phase_name}: expected exactly three BulkOut ops, got {n_bo}")
+    elif phase_name in _MAGAZINE_PROGRAM_NAMES:
+        # docs/sane-wp4-magazine.md section 3. Invariants that would be a
+        # real regression if they moved, not a recount of every op:
+        #   * no BulkIn anywhere -- the magazine flow reads no image data;
+        #   * every BulkOut carries its payload (the slope table is not
+        #     unit-specific calibration data, so nothing is injected) and
+        #     they come in pairs, because every motor move uploads the
+        #     slope table to BOTH scanner-RAM addresses (device.py:
+        #     without that a move runs against whatever curve is in RAM,
+        #     which stalled the mechanism once);
+        #   * the driver's fail-closed completions are exactly where it
+        #     puts them: four in the jog (feed, feed, eject, plus the
+        #     interstitial), two in the load (the engaging feed and the
+        #     traverse), none anywhere else -- the cold start and the
+        #     eject poll best-effort, as the driver does.
+        n_bulk_in = count("BulkIn")
+        if n_bulk_in != 0:
+            raise ValueError(
+                f"{phase_name}: expected no BulkIn op, got {n_bulk_in}")
+        n_bo = count("BulkOut")
+        if n_bo % 2 != 0:
+            raise ValueError(
+                f"{phase_name}: slope-table uploads come in pairs (both RAM "
+                f"addresses), got {n_bo} BulkOut ops")
+        missing = [i for i, e in enumerate(entries)
+                   if e.kind == "BulkOut" and not e.data]
+        if missing:
+            raise ValueError(
+                f"{phase_name}: BulkOut op(s) {missing} carry no payload; the "
+                f"magazine flow injects nothing")
+        want_masked = {"jog": 4, "load": 2}.get(phase_name, 0)
+        n_masked = count("PollMasked")
+        if n_masked != want_masked:
+            raise ValueError(
+                f"{phase_name}: expected exactly {want_masked} PollMasked "
+                f"op(s), got {n_masked}")
+        for e in entries:
+            if e.kind in ("PollMasked", "PollBestEffort") and e.timeout_ms <= 0:
+                raise ValueError(
+                    f"{phase_name}: a {e.kind} op carries no timeout budget")
     elif phase_name == "park":
         # docs/sane-hook5-frame.md section 2/4: 2 PollMasked (Wait A on
         # reg 0x35 bit 0x40, Wait B on the PARK_COMPLETE status word).
@@ -697,6 +819,250 @@ def build_park_program(phase) -> list[OpEntry]:
     return entries
 
 
+# --------------------------------------------------------- magazine (WP-4)
+
+# device.py/usbio.py wire constants the two hand-built magazine programs
+# need. Kept here, next to the code that emits them, rather than in the
+# C++: Python is the authority for every magazine transfer.
+_WV_AFE = 0x008B          # AFE/EEPROM control writes (usbio.end_access 0x8b)
+_WV_CHIP = 0x008A         # chip id / EEPROM reads
+_WV_END_ACCESS = 0x008C   # usbio.end_access default
+_WI_CHIP = 0x26FE
+_REG_WRITE_CHUNK = 64     # usbio._WRITE_CHUNK: 64 B = 32 (reg, val) pairs
+
+#: usbio.poll_status_word's budgets in cold_init (device.py): the ready
+#: wait and each homing move's completion.
+_COLD_READY_TIMEOUT_MS = 15000
+_COLD_MOVE_TIMEOUT_MS = 30000
+#: _cold_homing_round's settle loop: 30 rounds, 50 ms apart.
+_COLD_SETTLE_TIMEOUT_MS = 1500
+#: _eject_body's completion loop.
+_EJECT_TIMEOUT_MS = 10000
+
+
+def _w(entries: list[OpEntry], value: int, index: int, data: bytes,
+       request: int = REQ_WRITE) -> None:
+    entries.append(OpEntry("Write", request, value, index, bytes(data),
+                           len(data), 0))
+
+
+def _write_regs(entries: list[OpEntry], pairs) -> None:
+    """usbio.write_regs(): the flattened pairs in 64 B control writes."""
+    data = bytes(b for pair in pairs for b in pair)
+    for i in range(0, len(data), _REG_WRITE_CHUNK):
+        _w(entries, WV_REGS, 0, data[i:i + _REG_WRITE_CHUNK])
+
+
+def _read(entries: list[OpEntry], value: int, index: int, length: int,
+          request: int = REQ_WRITE) -> None:
+    entries.append(OpEntry("Read", request, value, index, b"", length, 0))
+
+
+def _read_reg(entries: list[OpEntry], reg: int) -> None:
+    """usbio.read_reg(): 0xc0/0x04/0x008e, wIndex (reg << 8) | 0x22."""
+    _read(entries, WV_STATUS, (reg << 8) | 0x22, 2)
+
+
+def _read_status_word(entries: list[OpEntry]) -> None:
+    """usbio.read_status_word(): reg 0x101 through the extended path."""
+    _read(entries, WV_EXT_STATUS, WI_DATAENB, 2)
+
+
+def _rmw(entries: list[OpEntry], reg: int, and_mask: int, or_mask: int) -> None:
+    entries.append(OpEntry("ReadModifyWrite", REQ_WRITE, WV_STATUS,
+                           (reg << 8) | 0x22, b"", 2, 0,
+                           mask=and_mask, want=or_mask))
+
+
+def _poll_best_effort(entries: list[OpEntry], value: int, index: int,
+                      mask: int, want: int, timeout_ms: int) -> None:
+    entries.append(OpEntry("PollBestEffort", REQ_WRITE, value, index, b"", 2, 0,
+                           mask=mask, want=want, timeout_ms=timeout_ms))
+
+
+def _end_access(entries: list[OpEntry], which: int, index: int) -> None:
+    """usbio.end_access(): 0x40/0x0c, wValue = which, no payload."""
+    _w(entries, which, index, b"", request=REQ_END_ACCESS)
+
+
+def _buf_write(entries: list[OpEntry], addr: int, payload: bytes) -> None:
+    """usbio.buf_write(): descriptor then the payload in 16 KiB bulk
+    chunks (every magazine payload is one 512 B slope table)."""
+    import struct
+    _w(entries, WV_BUF_DESC, 1, struct.pack("<II", addr, len(payload)))
+    for i in range(0, len(payload), 16384):
+        chunk = payload[i:i + 16384]
+        entries.append(OpEntry("BulkOut", 0, 0, 0, chunk, len(chunk), 0))
+
+
+def _cold_table_and_afe(entries: list[OpEntry]) -> None:
+    """device.py Scanner._cold_write_table_and_afe(), transfer for
+    transfer: the cold register table, the two end-of-access acks, the
+    AFE access enable, the EEPROM read sequence (logged, not consumed),
+    the AFE reset and the AFE base values."""
+    _write_regs(entries, tables_base.COLD_INIT_PAIRS)
+    _end_access(entries, _WV_END_ACCESS, 16)
+    _end_access(entries, _WV_END_ACCESS, 19)
+    _write_regs(entries, [(0x0B, 0x64)])
+    _write_regs(entries, [(0x13, 0x0F)])
+    _write_regs(entries, [(0x0B, 0x6C)])
+    _end_access(entries, _WV_AFE, 7)
+    _w(entries, _WV_AFE, 0x0009, bytes(4))
+    _read(entries, _WV_CHIP, 0x0010, 3)
+    _w(entries, _WV_AFE, 0x000B, bytes.fromhex("00000100"))
+    _read(entries, _WV_CHIP, 0x000F, 19)
+    _write_regs(entries, [(0x03, 0x10)])
+    _write_regs(entries, [(0x03, 0x00)])
+    for adr, val in tables_base.AFE_BASE_PAIRS:
+        _write_regs(entries, [(0x51, adr), (0x5D, 0x00), (0x5E, val)])
+
+
+def _cold_motor_move(entries: list[OpEntry], feedl: int, full_speed_regs: bool) -> None:
+    """device.py Scanner._cold_motor_move()."""
+    _write_regs(entries, [(0x09, 0x08)])
+    move_regs = [
+        (0x02, 0x18), (0xAE, 0x00), (0xAF, 0xFF),
+        (0x3D, 0x00), (0x3E, (feedl >> 8) & 0xFF), (0x3F, feedl & 0xFF),
+    ]
+    if full_speed_regs:
+        _write_regs(entries, list(tables_base.LOADER_SPEED_PAIRS) + move_regs)
+    else:
+        _write_regs(entries, move_regs)
+    for addr in (0x1000C000, 0x10010000):
+        _buf_write(entries, addr, tables_base.SLOPE_TABLE_LOADER)
+    _write_regs(entries, [(0x0F, 0x01)])
+    # poll_status_word(mask=0xffff, value=0xf855): the driver compares the
+    # whole word; PollBestEffort compares the status byte, so the constant
+    # 0x55 ack is not re-checked here (a strictly more permissive rule, and
+    # the ack byte is checked by read_reg()'s own handling everywhere else).
+    _poll_best_effort(entries, WV_EXT_STATUS, WI_DATAENB, 0xFF, 0xF8,
+                      _COLD_MOVE_TIMEOUT_MS)
+
+
+def _cold_homing_round(entries: list[OpEntry]) -> None:
+    """device.py Scanner._cold_homing_round()."""
+    _rmw(entries, 0x32, 0xFF & ~0x02, 0x00)
+    _read_status_word(entries)
+    _write_regs(entries, [(0x36, 0xFC)])
+    _write_regs(entries, [(0x33, 0x8E)])
+    _rmw(entries, 0x32, 0xFF, 0x02)
+    _read_status_word(entries)
+
+    _cold_motor_move(entries, 0x1A22, full_speed_regs=False)
+
+    _write_regs(entries, [(0x09, 0x00)])
+    _rmw(entries, 0x32, 0xFF, 0x00)
+    _rmw(entries, 0x35, 0xFF & ~0x40, 0x00)
+    _read_reg(entries, 0x32)
+    _poll_best_effort(entries, WV_EXT_STATUS, WI_DATAENB, 0xF0, 0xF0,
+                      _COLD_READY_TIMEOUT_MS)
+    _rmw(entries, 0x32, 0xFF & ~0x02, 0x00)
+    _read_status_word(entries)
+    _read_status_word(entries)
+
+    _cold_motor_move(entries, 0x1A22, full_speed_regs=True)
+    _cold_motor_move(entries, 0x0C12, full_speed_regs=False)
+
+    _write_regs(entries, [(0x09, 0x00)])
+    # The driver's settle loop reads 0x35 and 0x32 together, up to 30
+    # times 50 ms apart, and continues either way. Two best-effort polls
+    # with the same total budget are the same wire on the settled path
+    # (one read each) and the same "log and continue" on the unsettled
+    # one -- an op program cannot express "both in the same round".
+    _poll_best_effort(entries, WV_STATUS, (0x35 << 8) | 0x22, 0xFF, 0xBB,
+                      _COLD_SETTLE_TIMEOUT_MS)
+    _poll_best_effort(entries, WV_STATUS, (0x32 << 8) | 0x22, 0xFF, 0x1F,
+                      _COLD_SETTLE_TIMEOUT_MS)
+
+
+def build_cold_init_program() -> list[OpEntry]:
+    """The vendor cold-start sequence (docs/sane-wp4-magazine.md section
+    3.1), built from of135i/device.py's Scanner._cold_init_body() rather
+    than replayed from a captured phase -- the driver builds it the same
+    way, from the 01-init capture, and IT is the hardware-verified form
+    (the tables carry no `cold_init` phase to replay).
+
+    Deviations from the Python, all of them in the non-gating direction
+    and none of them a different transfer:
+
+      * the motor-completion and ready polls compare the STATUS BYTE,
+        where poll_status_word() compares the 16-bit word including the
+        constant 0x55 ack;
+      * the closing settle wait is two best-effort polls (reg 0x35, then
+        reg 0x32) instead of one loop reading both;
+      * the chip id and the two EEPROM reads are logged reads whose
+        replies nothing consumes -- exactly what the driver does with
+        them (it logs them and moves on).
+
+    Every poll here is best-effort, as in the driver: a cold start with a
+    LATCHED magazine shows a status-word timeout every time (Tests 45,
+    51) and still completes, and the standing requirement is precisely
+    that this case stay supported. What makes the sequence verified is
+    the reg 0x01 = 0x22 read the hook does afterwards, as cold_init()
+    does."""
+    entries: list[OpEntry] = []
+
+    # 1: GL chip handshake.
+    _read(entries, _WV_CHIP, _WI_CHIP, 1, request=REQ_END_ACCESS)
+    _w(entries, _WV_AFE, _WI_CHIP, b"", request=REQ_END_ACCESS)
+
+    # 2: status word, then wait for the ready class.
+    _read_status_word(entries)
+    _poll_best_effort(entries, WV_EXT_STATUS, WI_DATAENB, 0xF0, 0xF0,
+                      _COLD_READY_TIMEOUT_MS)
+
+    # 3-7: cold register table + AFE bring-up.
+    _cold_table_and_afe(entries)
+
+    # 8: interrupt/sensor setup (two read-modify-writes on reg 0x31).
+    _rmw(entries, 0x31, 0x7F, 0x00)
+    _rmw(entries, 0x31, 0xFF, 0x80)
+
+    # 9: three homing rounds, the table + AFE rewritten between them.
+    for round_n in range(1, 4):
+        _cold_homing_round(entries)
+        if round_n < 3:
+            _cold_table_and_afe(entries)
+
+    return entries
+
+
+def build_eject_program() -> list[OpEntry]:
+    """The eject move (docs/sane-wp4-magazine.md section 3.4), built from
+    of135i/device.py's Scanner._eject_body() -- the variant that freed
+    the magazine every time through the vendor software (the post-scan
+    variant stalled twice, 2026-09-02).
+
+    The program is the BODY only: eject()'s three read-only guards (the
+    start state, the loader-sensor bit, the 0x3b/0x3c base-table-state
+    refusal) stay in the hook, where a refusal costs no transfer at all.
+
+    Deviation: the completion wait compares the status byte under the
+    driver's own (value & 0x21) == 0x20 rule and is best-effort, which is
+    what _eject_body() does (it logs "status word stuck" and continues --
+    the engine-idle bit stays clear after an eject, observed on a
+    SUCCESSFUL eject 2026-09-02)."""
+    entries: list[OpEntry] = []
+    feedl = 3090
+
+    _write_regs(entries, [(0x33, 0x8E)])
+    _rmw(entries, 0x32, 0xFF, 0x02)
+    _write_regs(entries, [(0x09, 0x08)])
+    _write_regs(entries, (
+        [(0x1C, 0x00), (0x02, 0x18),
+         (0x3D, (feedl >> 16) & 0xFF), (0x3E, (feedl >> 8) & 0xFF), (0x3F, feedl & 0xFF)]
+        + [pair for pair in tables_base.LOADER_SPEED_PAIRS if pair[0] != 0x1C]
+        + [(0xAE, 0x00), (0xAF, 0xFF)]
+    ))
+    for addr in (0x1000C000, 0x10010000):
+        _buf_write(entries, addr, tables_base.SLOPE_TABLE_LOADER)
+    _write_regs(entries, [(0x0F, 0x01)])
+    _poll_best_effort(entries, WV_EXT_STATUS, WI_DATAENB, 0x21, 0x20,
+                      _EJECT_TIMEOUT_MS)
+    _write_regs(entries, [(0x09, 0x00)])
+    return entries
+
+
 def emit_op_program(key: str, phase_name: str, entries: list[OpEntry],
                     injections: list[tuple[str, int, int]],
                     bulk_injections: list[tuple[str, int, int]],
@@ -729,7 +1095,8 @@ def emit_op_program(key: str, phase_name: str, entries: list[OpEntry],
         data_expr = f"{data_name} + {off}" if e.data else "nullptr"
         c.append(f"    {{OpKind::{e.kind}, 0x{e.request:02x}, "
                  f"0x{e.value:04x}, 0x{e.index:04x}, {data_expr}, "
-                 f"{e.length}, {e.dur_ms}, 0x{e.mask:02x}, 0x{e.want:02x}}},")
+                 f"{e.length}, {e.dur_ms}, 0x{e.mask:02x}, 0x{e.want:02x}, "
+                 f"{e.timeout_ms}}},")
     c.append("};\n")
 
     if injections:
@@ -921,6 +1288,13 @@ def emit() -> tuple[str, str]:
     h.append("                       back (v & mask) | want as a 2-byte register batch,")
     h.append("                       no ack read (docs/sane-hook5-frame.md section 4:")
     h.append("                       PARK's three RMW registers, 4 sites) */")
+    h.append("    Sleep,          /* no transfer: wait dur_ms (docs/sane-wp4-magazine.md")
+    h.append("                       section 3) -- the Python replayer's pacing, which the")
+    h.append("                       magazine flow was hardware-verified WITH */")
+    h.append("    PollBestEffort, /* poll until (reply[0] & mask) == want, but a timeout")
+    h.append("                       LOGS and continues instead of failing closed -- the")
+    h.append("                       driver's own non-raising polls (cold start, eject")
+    h.append("                       completion, the load flow's state reads) */")
     h.append("};\n")
     h.append("/** One op-program transfer. `data` is the write payload (Write, and a")
     h.append(" *  BulkOut NOT covered by a bulk injection) or the captured reply")
@@ -942,10 +1316,16 @@ def emit() -> tuple[str, str]:
     h.append("    std::uint8_t mask;       /* PollMasked: poll mask; ReadModifyWrite: and_mask;")
     h.append("                                0 for every other kind (docs/sane-hook5-frame.md")
     h.append("                                section 4) */")
-    h.append("    std::uint8_t want;       /* PollMasked: target value; ReadModifyWrite: or_mask;")
-    h.append("                                0 for every other kind. ReadModifyWrite's target")
-    h.append("                                register is (index >> 8), the same encoding as")
-    h.append("                                its own read setup (index = (reg << 8) | 0x22) */")
+    h.append("    std::uint8_t want;       /* PollMasked/PollBestEffort: target value;")
+    h.append("                                ReadModifyWrite: or_mask; 0 for every other kind.")
+    h.append("                                ReadModifyWrite's target register is (index >> 8),")
+    h.append("                                the same encoding as its own read setup")
+    h.append("                                (index = (reg << 8) | 0x22) */")
+    h.append("    std::uint32_t timeout_ms;/* PollMasked/PollBestEffort: this site's OWN budget,")
+    h.append("                                mirroring what the Python driver allows it")
+    h.append("                                (device.py _poll_one: max(3x captured, 1 s);")
+    h.append("                                cold start: 15 s / 30 s). 0 = use the RunPolicy")
+    h.append("                                value, which is what every pre-WP-4 program has. */")
     h.append("};\n")
     h.append("/** A value the op-program runner must compute and patch into a")
     h.append(" *  Write op's payload before sending it (docs/sane-hook3-gain.md")
@@ -1346,6 +1726,42 @@ def emit() -> tuple[str, str]:
     h.append(f"constexpr std::size_t MAGAZINE_PHASE_COUNT = {len(load_entries)};\n")
     c.append(f"const Phase MAGAZINE_PHASES[{len(load_entries)}] = {{")
     c.extend(load_entries)
+    c.append("};\n")
+
+    # ---- magazine op programs (WP-4, docs/sane-wp4-magazine.md) --------
+    # The five programs the backend's magazine hooks run. Three are the
+    # captured phases decoded in "magazine" mode (replayed pacing, the
+    # driver's own strict/lenient poll split); two are built from
+    # of135i/device.py, which builds them itself rather than replaying a
+    # phase. No dpi, so they hang off nothing in PROFILES.
+    magazine_programs: list[str] = []
+    _mag_sources = {
+        "cold_init": build_cold_init_program,
+        "eject": build_eject_program,
+    }
+    _mag_phases = {phase.name: phase for phase in tables_load.PHASES}
+    for prog_name in _MAGAZINE_PROGRAM_NAMES:
+        if prog_name in _mag_sources:
+            entries = _mag_sources[prog_name]()
+        else:
+            entries = decode_ops(_mag_phases[prog_name], magazine=True)
+        validate_op_program(prog_name, entries)
+        ops_name, inj_name, inj_count, bulk_name, bulk_count = emit_op_program(
+            "magazine", prog_name, entries, [], [], c)
+        magazine_programs.append(
+            f'    {{"{prog_name}", {ops_name}, {len(entries)}, '
+            f'{inj_name}, {inj_count}, {bulk_name}, {bulk_count}}},')
+
+    h.append("/** The magazine flow's op programs (docs/sane-wp4-magazine.md),")
+    h.append(" *  in the order they run: cold_init (device.py's cold-start")
+    h.append(" *  sequence), open + jog (the vendor's app start, whose jog IS")
+    h.append(" *  the eject of a latched magazine), load (after the operator")
+    h.append(" *  reseated it) and eject. Looked up by name through")
+    h.append(" *  gl126_ops.h's magazine_program(). */")
+    h.append(f"extern const OpProgram MAGAZINE_PROGRAMS[{len(magazine_programs)}];")
+    h.append(f"constexpr std::size_t MAGAZINE_PROGRAM_COUNT = {len(magazine_programs)};\n")
+    c.append(f"const OpProgram MAGAZINE_PROGRAMS[{len(magazine_programs)}] = {{")
+    c.extend(magazine_programs)
     c.append("};\n")
 
     h.append("/** Every scan profile, indexed by PROFILE_COUNT. */")

@@ -260,6 +260,93 @@ def test_release_without_acquire_is_noop():
     print("test_release_without_acquire_is_noop OK")
 
 
+
+def test_magazine_mark_round_trip():
+    """docs/sane-wp4-magazine.md section 2.1: the "a release is pending"
+    fact, written next to the process lock so a SECOND process can see
+    it -- `scanimage` loads in two invocations (press Load film, reseat,
+    scan) and each one is a new process.
+
+    It is only ever a hint: the backend re-reads the hardware before the
+    load, and a power cycle both re-enumerates the unit under a new
+    address and leaves reg 0x01 cold. What this test pins is the file
+    itself -- where it lives, that it round-trips the device key, that a
+    foreign key comes back as written (so the caller can compare and
+    ignore it), and that clearing really removes it."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_magazine_mark_round_trip SKIPPED (no g++)")
+        return "skipped"
+
+    with tempfile.TemporaryDirectory() as td:
+        lock_path = str(Path(td) / "of135i.lock")
+        env = _probe_env(lock_path)
+
+        def run(*args):
+            return subprocess.run([probe, *args], capture_output=True,
+                                  text=True, env=env)
+
+        # The mark sits beside the lock, so one OF135I_LOCK_FILE setting
+        # moves both -- a test, or a second host user, cannot collide
+        # with the real one.
+        r = run("mark-path")
+        assert r.returncode == 0, r
+        mark_path = r.stdout.strip()
+        assert mark_path == lock_path + ".magazine", mark_path
+        assert not Path(mark_path).exists(), "no mark before anything is written"
+
+        # No mark: "NONE", non-zero exit -- this is the ordinary case on
+        # every scan that is not completing a load.
+        r = run("mark-read")
+        assert r.returncode == 1 and r.stdout.strip() == "NONE", r
+
+        r = run("mark-write", "libusb:001:007")
+        assert r.returncode == 0 and r.stdout.strip() == "WROTE", r
+        r = run("mark-read")
+        assert r.returncode == 0 and r.stdout.strip() == "KEY libusb:001:007", r
+
+        # Readable by a person: `cat` on it says what it is, like the
+        # lock file does, with the device key on its own line -- a SANE
+        # device name can contain spaces, so it is never a field in a
+        # space-delimited line.
+        lines = Path(mark_path).read_text().splitlines()
+        assert lines[0].startswith("released "), lines
+        assert lines[0].endswith("(sane genesys gl126)"), lines
+        assert lines[1] == "libusb:001:007", lines
+
+        # A key WITH spaces round-trips whole (the backend's own test mode
+        # names its device "test device:0x07b3:0x1436").
+        r = run("mark-write", "test device:0x07b3:0x1436")
+        assert r.returncode == 0, r
+        r = run("mark-read")
+        assert r.stdout.strip() == "KEY test device:0x07b3:0x1436", r
+        r = run("mark-write", "libusb:001:007")
+        assert r.returncode == 0, r
+
+        # Writing again replaces rather than appends: one unit, at most
+        # one magazine waiting.
+        r = run("mark-write", "libusb:001:009")
+        assert r.returncode == 0, r
+        r = run("mark-read")
+        assert r.stdout.strip() == "KEY libusb:001:009", r
+        assert Path(mark_path).read_text().count("released") == 1
+        assert Path(mark_path).read_text().splitlines()[1] == "libusb:001:009"
+
+        r = run("mark-clear")
+        assert r.returncode == 0, r
+        assert not Path(mark_path).exists()
+        r = run("mark-read")
+        assert r.returncode == 1 and r.stdout.strip() == "NONE", r
+
+        # A truncated or foreign file is "no mark", not a crash.
+        Path(mark_path).write_text("garbage\n")
+        r = run("mark-read")
+        assert r.returncode == 1 and r.stdout.strip() == "NONE", r
+
+    print("test_magazine_mark_round_trip OK "
+          "(path, round trip, replace, clear, malformed)")
+
+
 def main() -> int:
     tests = [
         test_driver_holding_lock_refuses_sane_open,
@@ -268,6 +355,7 @@ def main() -> int:
         test_read_only_lock_file_still_locks,
         test_failed_second_open_keeps_first_sessions_lock,
         test_release_without_acquire_is_noop,
+        test_magazine_mark_round_trip,
     ]
     passed = 0
     skipped = 0

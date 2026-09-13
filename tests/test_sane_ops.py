@@ -157,6 +157,12 @@ def _parse_probe_transfers(text: str) -> list[tuple]:
         parts = line.split()
         kind = parts[0]
         kv = dict(p.split("=", 1) for p in parts[1:])
+        if kind == "S":
+            # A Sleep op (docs/sane-wp4-magazine.md section 3) is not a
+            # transfer: the Python replayer sleeps too, and neither side
+            # puts anything on the wire. _parse_probe_sleeps() is what
+            # asserts on these.
+            continue
         if kind == "W":
             out.append(("W", int(kv["req"], 16), int(kv["val"], 16),
                        int(kv["idx"], 16), bytes.fromhex(kv["data"])))
@@ -169,6 +175,28 @@ def _parse_probe_transfers(text: str) -> list[tuple]:
             out.append(("BO", int(kv["len"]), kv["sha256"]))
         else:
             raise AssertionError(f"unrecognised probe transfer line: {line!r}")
+    return out
+
+
+def _parse_probe_sleeps(text: str) -> list[int]:
+    """The `S ms=<n>` lines of a probe `run` log, in order: the pacing a
+    magazine program replays (docs/sane-wp4-magazine.md section 3)."""
+    out: list[int] = []
+    for line in _lines(text):
+        if line.startswith("S "):
+            out.append(int(line.split("=", 1)[1]))
+    return out
+
+
+def _parse_program_info(text: str) -> list[dict]:
+    """The probe's `program_info` lines as dicts, in op order."""
+    out: list[dict] = []
+    for line in _lines(text):
+        parts = line.split()
+        assert parts[0] == "OP", line
+        d = dict(p.split("=", 1) for p in parts[2:])
+        d["index"] = int(parts[1])
+        out.append(d)
     return out
 
 
@@ -893,9 +921,9 @@ def test_shading_bulk_out_ops_carry_no_captured_data():
         r = subprocess.run([probe, "program_info", "plain3600", prog_name],
                            capture_output=True, text=True)
         assert r.returncode == 0, (prog_name, r.stdout, r.stderr)
-        for line in _lines(r.stdout):
-            if " kind=BulkOut " in line:
-                assert line.endswith("has_data=0"), (prog_name, line)
+        for op in _parse_program_info(r.stdout):
+            if op["kind"] == "BulkOut":
+                assert op["has_data"] == "0", (prog_name, op)
                 total_bulk_out += 1
     assert total_bulk_out > 0, (
         "expected at least one BulkOut op across the four shading programs")
@@ -2101,6 +2129,338 @@ def test_frame_geometry_all_profiles():
                     f"{entries[0]['read_lines']}->{entries[0]['delivered_lines']}")
     print(f"test_frame_geometry_all_profiles OK ({'; '.join(rows)})")
 
+
+# ============================================ WP-4: the magazine flow
+#
+# docs/sane-wp4-magazine.md section 5. Five programs, all of them the
+# Python driver's own transfers: "open"/"jog"/"load" decoded from the
+# captured phases in magazine mode (replayed pacing, the driver's
+# strict/lenient poll split), "cold_init"/"eject" built from
+# of135i/device.py, which builds them itself rather than replaying a
+# phase. This is the load flow -- the sequence that stalled the motor
+# once -- so the bar is the same as everywhere else in this file: the
+# C++ must put the SAME bytes on the wire, in the same order, as the
+# driver that is hardware-verified.
+
+MAGAZINE_PROGRAMS = ("cold_init", "open", "jog", "load", "eject")
+
+
+def _probe_program_info(probe: str, profile: str, phase: str) -> list[dict]:
+    r = subprocess.run([probe, "program_info", profile, phase],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, (profile, phase, r.stdout, r.stderr)
+    return _parse_program_info(r.stdout)
+
+
+class _MagWireDev:
+    """Device-level fake that records EVERY control transfer and bulk
+    write, and answers register reads from a FIXED script -- like
+    _ParkWireDev above, and for the same reason: the two hand-built
+    magazine programs (cold_init, eject) are compared to the driver
+    byte for byte, so both sides must read the same register values at
+    the same sites. Unlike FakeUsbDevice this does NOT model writes
+    changing registers; a read returns what the script says, always,
+    which is what makes the comparison deterministic."""
+
+    def __init__(self, regs: dict, status_word: int = 0xF855):
+        self.transfers: list[tuple] = []
+        self.regs = dict(regs)
+        self.status_word = status_word
+
+    def ctrl_transfer(self, bm, br, wv=0, wi=0, data_or_wlength=None, timeout=None):
+        if bm & 0x80:   # IN
+            length = int(data_or_wlength)
+            self.transfers.append(("R", br, wv, wi, length))
+            if wv == 0x018E and wi == 0x0122:      # status word (reg 0x101)
+                return bytes([self.status_word >> 8, self.status_word & 0xFF])
+            if wv in (0x008E, 0x018E):             # a register read
+                return bytes([self.regs.get(wi >> 8, 0x00), 0x55])
+            return bytes(length)                   # chip id / EEPROM blocks
+        data = bytes(data_or_wlength) if data_or_wlength is not None else b""
+        self.transfers.append(("W", br, wv, wi, data))
+        return len(data)
+
+    def write(self, endpoint, data, timeout=None):
+        data = bytes(data)
+        self.transfers.append(("BO", len(data), hashlib.sha256(data).hexdigest()))
+        return len(data)
+
+    def read(self, endpoint, size_or_buffer, timeout=None):
+        raise AssertionError("the magazine flow performs no bulk IN")
+
+
+def _rmw_script(info: list[dict], regs: dict) -> list[str]:
+    """One `rmw_read_at` directive per ReadModifyWrite op, giving it the
+    value THAT register reads on the Python side. Built from the probe's
+    own program_info rather than from a hard-coded op order, so it cannot
+    drift out of step with the program."""
+    script: list[str] = []
+    occ = 0
+    for op in info:
+        if op["kind"] != "ReadModifyWrite":
+            continue
+        reg = int(op["idx"], 16) >> 8
+        script.append(f"rmw_read_at {occ} {regs.get(reg, 0x00):02x}")
+        occ += 1
+    return script
+
+
+def _compare(name: str, py_transfers: list[tuple], cpp_transfers: list[tuple]) -> None:
+    assert py_transfers == cpp_transfers, (
+        f"{name}: python and C++ transfer logs differ\n"
+        f"python ({len(py_transfers)}): {py_transfers[:40]}\n"
+        f"cpp    ({len(cpp_transfers)}): {cpp_transfers[:40]}")
+
+
+def test_magazine_open_jog_load_match_python_replayer():
+    """docs/sane-wp4-magazine.md section 5.1: the three captured magazine
+    phases, run by the driver's own public methods over the same fake the
+    load-flow safety tests use, against the generated op programs."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_magazine_open_jog_load_match_python_replayer SKIPPED (no g++)")
+        return "skipped"
+
+    from test_safety import vendor_like_load_status
+
+    fake = FakeUsbDevice(reg01=0x22)
+    vendor_like_load_status(fake, jog=True)
+    scanner = Scanner(UsbIo(fake))
+
+    slices: dict[str, tuple[int, int]] = {}
+    orig_run_phase = scanner._run_phase
+
+    def wrapped(phase, *a, **kw):
+        start = len(fake.wire_log)
+        result = orig_run_phase(phase, *a, **kw)
+        slices[phase.name] = (start, len(fake.wire_log))
+        return result
+
+    scanner._run_phase = wrapped  # type: ignore[method-assign]
+
+    with fast_time():
+        scanner.initialize(prep=False)   # the vendor device-open phase
+        scanner.jog_magazine()           # the app-start jog
+        scanner.load_magazine()          # the engaging feed + traverse
+
+    total = 0
+    for name in ("open", "jog", "load"):
+        assert name in slices, (name, sorted(slices))
+        start, end = slices[name]
+        py_transfers = _python_transfers(fake.wire_log[start:end])
+
+        rc, out, err = _run_probe_program(probe, "magazine", name)
+        assert rc == 0, (name, out, err)
+        assert _lines(out)[-1].startswith("DONE"), (name, out)
+        _compare(name, py_transfers, _parse_probe_transfers(out))
+        total += len(py_transfers)
+
+    print(f"test_magazine_open_jog_load_match_python_replayer OK "
+          f"({total} transfers across 3 phases)")
+
+
+def test_magazine_pacing_matches_the_replayer():
+    """The `Sleep` ops carry exactly the pauses of135i/device.py's
+    _exec_ops() takes for the same phases: min(dt, 2 s) before every op
+    whose captured gap exceeds 50 ms. The load flow was hardware-verified
+    WITH that pacing (Tests 17-23, 7/7), so it is part of the sequence,
+    not decoration."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_magazine_pacing_matches_the_replayer SKIPPED (no g++)")
+        return "skipped"
+
+    from of135i import tables_load
+    from of135i.device import _PACE_THRESHOLD, _PACE_CAP
+
+    phases = {phase.name: phase for phase in tables_load.PHASES}
+    for name in ("open", "jog", "load"):
+        want = [round(min(op.dt, _PACE_CAP) * 1000)
+                for op in phases[name].ops if op.dt > _PACE_THRESHOLD]
+        rc, out, err = _run_probe_program(probe, "magazine", name)
+        assert rc == 0, (name, out, err)
+        got = _parse_probe_sleeps(out)
+        assert got == want, (name, got, want)
+
+    # The two hand-built programs replay no capture and so pace nothing:
+    # every wait in them is a real poll with its own budget.
+    for name in ("cold_init", "eject"):
+        rc, out, err = _run_probe_program(probe, "magazine", name)
+        assert rc == 0, (name, out, err)
+        assert _parse_probe_sleeps(out) == [], name
+
+    print("test_magazine_pacing_matches_the_replayer OK "
+          "(jog 4 pauses, load 5, open 0)")
+
+
+def test_cold_init_program_matches_the_driver():
+    """docs/sane-wp4-magazine.md section 3.1: the hand-built cold-start
+    program against of135i/device.py's Scanner._cold_init_body(), the
+    sequence it is ported from -- the same comparison
+    test_park_program_matches_park_semantic makes for PARK.
+
+    The body, not cold_init(): the guards around it (the start-state
+    read, the reg 0x01 = 0x22 verification afterwards) are the SANE
+    hook's job, where a refusal costs no transfer -- asserted separately
+    at the end of this test."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_cold_init_program_matches_the_driver SKIPPED (no g++)")
+        return "skipped"
+
+    # 0x35 = 0xbb and 0x32 = 0x1f are what the driver's settle loop waits
+    # for, so scripting them lets it break on its first round -- the
+    # settled path, which is the one the two best-effort polls model.
+    regs = {0x01: 0x00, 0x31: 0x77, 0x32: 0x1F, 0x35: 0xBB}
+    dev = _MagWireDev(regs, status_word=0xF855)
+    scanner = Scanner(UsbIo(dev))
+    with fast_time():
+        # Inside the driver's own guarded operation (the safety model
+        # refuses a write before the start state is read), then the log
+        # is cleared so only the BODY's transfers are compared -- the
+        # guard read is the hook's, not the program's.
+        with scanner._operation("cold_init", cold_ok=True):
+            dev.transfers.clear()
+            scanner._cold_init_body()
+    py_transfers = dev.transfers
+
+    info = _probe_program_info(probe, "magazine", "cold_init")
+    rc, out, err = _run_probe_program(probe, "magazine", "cold_init",
+                                      _rmw_script(info, regs))
+    assert rc == 0, (out, err)
+    assert _lines(out)[-1].startswith("DONE"), out
+    _compare("cold_init", py_transfers, _parse_probe_transfers(out))
+
+    # Nine motor moves (three homing rounds of three), each uploading the
+    # loader slope table to BOTH scanner-RAM addresses -- without that a
+    # move runs against whatever curve is left in RAM, which is what
+    # stalled the mechanism in 2026-09-02's eject.
+    bulk_outs = [t for t in py_transfers if t[0] == "BO"]
+    assert len(bulk_outs) == 18, len(bulk_outs)
+    assert len({t[2] for t in bulk_outs}) == 1, "the slope table must be one payload"
+
+    # And the guards cold_init() wraps the body in, which the hook keeps.
+    dev2 = _MagWireDev({0x01: 0x00}, status_word=0xF855)
+    scanner2 = Scanner(UsbIo(dev2))
+    with fast_time():
+        assert scanner2.check_start_state() is not None
+    assert dev2.transfers == [("R", 0x04, 0x008E, 0x0122, 2)], dev2.transfers
+
+    print(f"test_cold_init_program_matches_the_driver OK "
+          f"({len(py_transfers)} transfers, 9 motor moves)")
+
+
+def test_eject_program_matches_the_driver():
+    """docs/sane-wp4-magazine.md section 3.4: the hand-built eject
+    program against Scanner._eject_body() -- the variant that freed the
+    magazine every time through the vendor software."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_eject_program_matches_the_driver SKIPPED (no g++)")
+        return "skipped"
+
+    regs = {0x01: 0x22, 0x32: 0x95, 0x3B: 0x00, 0x3C: 0x00}
+    dev = _MagWireDev(regs, status_word=0xF855)
+    scanner = Scanner(UsbIo(dev))
+    # NOT under fast_time(): _eject_body()'s completion wait is a
+    # `while time.monotonic() < deadline` loop, and a clock that jumps
+    # 1000 s per call skips its body entirely -- the driver would issue
+    # no completion read at all, which is a property of the test clock,
+    # not of the driver. The fake settles that poll on its first read
+    # (status 0xf8: (0xf8 & 0x21) == 0x20), so real time costs nothing.
+    with scanner._operation("eject", cold_ok=True):
+        dev.transfers.clear()
+        scanner._eject_body()
+    py_transfers = dev.transfers
+    completion = [t for t in py_transfers
+                  if t[0] == "R" and t[2] == 0x018E and t[3] == 0x0122]
+    assert len(completion) == 1, ("the completion poll must settle at once", completion)
+
+    info = _probe_program_info(probe, "magazine", "eject")
+    rc, out, err = _run_probe_program(probe, "magazine", "eject",
+                                      _rmw_script(info, regs))
+    assert rc == 0, (out, err)
+    assert _lines(out)[-1].startswith("DONE"), out
+    _compare("eject", py_transfers, _parse_probe_transfers(out))
+
+    # FEEDL 3090 (the vendor's eject distance) reaches the wire as the
+    # 0x3d/0x3e/0x3f triple of the one move batch.
+    batch = [t for t in py_transfers if t[0] == "W" and t[2] == 0x0083 and len(t[4]) == 38]
+    assert len(batch) == 1, batch
+    pairs = dict(zip(batch[0][4][0::2], batch[0][4][1::2]))
+    assert (pairs[0x3D], pairs[0x3E], pairs[0x3F]) == (0x00, 0x0C, 0x12), pairs
+    print(f"test_eject_program_matches_the_driver OK ({len(py_transfers)} transfers)")
+
+
+def test_poll_best_effort_continues_on_timeout():
+    """A PollBestEffort that never settles does NOT fail the program: it
+    is recorded and the next op runs. This is what keeps a cold start
+    with a latched magazine -- a status-word timeout every time (Tests
+    45/51) -- a supported operation rather than a failed session, which
+    is exactly Christian's standing requirement."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_poll_best_effort_continues_on_timeout SKIPPED (no g++)")
+        return "skipped"
+
+    # The eject program's single best-effort site, fed a value that never
+    # satisfies (status & 0x21) == 0x20.
+    rc, out, err = _run_probe_program(probe, "magazine", "eject",
+                                      ["best_effort_at 0 0155"])
+    assert rc == 0, (out, err)
+    last = _lines(out)[-1]
+    assert last.startswith("DONE"), out
+    # The whole program ran: the closing motor-disable write is still there.
+    transfers = _parse_probe_transfers(out)
+    assert transfers[-1] == ("W", 0x04, 0x0083, 0x0000, bytes([0x09, 0x00])), transfers[-1]
+    # ... and it really did poll rather than give up at once.
+    polls = [t for t in transfers if t[0] == "R" and t[2] == 0x018E and t[3] == 0x0122]
+    assert len(polls) > 100, len(polls)
+
+    # By contrast a fail-closed PollMasked in the same flow (the load
+    # feed that did not engage -- Tests 48/49's 0xfc55) stops the program
+    # with nothing further sent.
+    rc, out, err = _run_probe_program(probe, "magazine", "load",
+                                      ["masked_poll_at 0 fc55"])
+    assert rc == 1, (out, err)
+    fail = _lines(out)[-1]
+    assert fail.startswith("FAIL PollTimeout"), out
+    print("test_poll_best_effort_continues_on_timeout OK "
+          f"({len(polls)} polls, then the program continued)")
+
+
+def test_magazine_programs_are_structurally_sound():
+    """Structural checks on all five, with no run_program() involved:
+    every BulkOut carries its payload (the magazine flow injects nothing
+    -- a slope table is not one unit's calibration data), no BulkIn
+    anywhere, every poll carries its own budget, and the fail-closed
+    completions sit exactly where the driver puts them."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_magazine_programs_are_structurally_sound SKIPPED (no g++)")
+        return "skipped"
+
+    want_masked = {"jog": 4, "load": 2, "open": 0, "cold_init": 0, "eject": 0}
+    for name in MAGAZINE_PROGRAMS:
+        info = _probe_program_info(probe, "magazine", name)
+        kinds = [op["kind"] for op in info]
+        assert "BulkIn" not in kinds, name
+        for op in info:
+            if op["kind"] == "BulkOut":
+                assert op["has_data"] == "1", (name, op)
+                assert int(op["len"]) == 512, (name, op)
+            if op["kind"] in ("PollMasked", "PollBestEffort"):
+                assert int(op["timeout_ms"]) > 0, (name, op)
+            if op["kind"] == "Sleep":
+                assert int(op["dur_ms"]) > 0, (name, op)
+        assert kinds.count("PollMasked") == want_masked[name], (name, kinds.count("PollMasked"))
+        assert kinds.count("BulkOut") % 2 == 0, name
+        # Every fail-closed completion uses the driver's own mask.
+        for op in info:
+            if op["kind"] == "PollMasked":
+                assert op["mask"] == "fb", (name, op)
+    print("test_magazine_programs_are_structurally_sound OK (5 programs)")
+
 def main() -> int:
     tests = [
         test_programs_match_python_replayer,
@@ -2143,6 +2503,12 @@ def main() -> int:
         test_dual_image_chunks,
         test_shading_table2_dual_reference_vectors,
         test_frame_geometry_all_profiles,
+        test_magazine_open_jog_load_match_python_replayer,
+        test_magazine_pacing_matches_the_replayer,
+        test_cold_init_program_matches_the_driver,
+        test_eject_program_matches_the_driver,
+        test_poll_best_effort_continues_on_timeout,
+        test_magazine_programs_are_structurally_sound,
     ]
     passed = 0
     skipped = 0

@@ -498,17 +498,26 @@ promised scope require them. VueScan stays out of public docs.
   `sane/gl126.cpp` (today they throw `SANE_STATUS_UNSUPPORTED`), and one full
   load → scan → eject cycle driven from a SANE frontend alone, no `of135i`
   command anywhere in it, with the safety model unchanged.
-- Remaining offline: the transfers exist (the Python loader's tables and the
-  op-program generator), so the work is the op programs, the hooks, and —
-  the real design question — **how the operator is prompted**. The vendor's
-  load flow requires taking the magazine out and re-seating it to the stop
-  mid-sequence, and SANE has no mechanism for a backend to ask for that
-  during `sane_start`. Options to weigh before any code: a sensor/button
-  option the frontend polls, a two-call protocol (an option that arms the
-  load, the scan completing it), or refusing with a status the frontend can
-  render. Nothing is decided.
-- Minimal hardware test: its own plan. This is the load flow — the project's
-  most delicate motor sequence, the one that caused the motor stall — driven
+- **Interaction model decided 2026-09-13 (Christian): the two-step
+  protocol.** The vendor's load flow requires taking the magazine out and
+  re-seating it to the stop mid-sequence, and SANE has no mechanism for a
+  backend to ask for that during `sane_start`. So a `load-film` button
+  option runs the release half (a cold unit's bring-up, the vendor
+  device-open table, the jog that frees the cassette), the operator
+  reseats, and the next `sane_start` runs the load before it calibrates.
+  An `eject-film` button and a read-only `magazine` status line complete
+  the set. Design and the alternatives not taken:
+  `docs/sane-wp4-magazine.md`.
+- **Offline half DONE 2026-09-13.** Five op programs (`cold_init`, `open`,
+  `jog`, `load`, `eject`), each proven to put exactly the Python driver's
+  transfers on the wire in the driver's order
+  (`tests/test_sane_ops.py`: 218 / 199 / 12 transfers); the hooks, the
+  state machine and the on-disk "a release is pending" mark that lets
+  `scanimage` load in two invocations (`tests/test_sane_magazine.py`,
+  `tests/test_sane_lock.py`). Nothing has driven the motor from C++.
+- Minimal hardware test: its own plan, `docs/sane-wp4-hardware-plan.md`,
+  **awaiting Christian's go**. This is the load flow — the project's most
+  delicate motor sequence, the one that caused the motor stall — driven
   from C++ for the first time. Not a piggy-back on another session.
 - Take together with: the standing requirement that "power-cycled + latched
   magazine" become a supported driver operation.

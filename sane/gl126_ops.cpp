@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <stdexcept>
 #include <ios>
 #include <sstream>
@@ -171,12 +172,19 @@ void record_read(RunResult& out, const Op& op, std::size_t idx,
     out.reads.push_back(rec);
 }
 
+// The op's OWN reply length, not a fixed two bytes: the magazine flow's
+// device-open phase reads a 3-byte and a 19/64-byte EEPROM block
+// (of135i/device.py _cold_write_table_and_afe, tables_load.OPEN), and a
+// short control read is a DIFFERENT transfer on the wire, which the
+// wire-equality test would (and did) catch. Only the first two bytes are
+// recorded -- a Read is provenance, and no reply here is consumed.
 void do_read(Wire& wire, const Op& op, std::size_t idx, RunResult& out)
 {
-    std::uint8_t reply[2] = {0, 0};
-    std::size_t len = op.len < 2 ? op.len : 2;
+    constexpr std::size_t kMaxRead = 64;
+    std::uint8_t reply[kMaxRead] = {0};
+    std::size_t len = op.len < kMaxRead ? op.len : kMaxRead;
     wire.control_read(op.request, op.value, op.index, reply, len);
-    record_read(out, op, idx, reply, len);
+    record_read(out, op, idx, reply, len < 2 ? len : 2);
 }
 
 void do_bulk_done(Wire& wire, const Op& op, std::size_t idx, RunResult& out)
@@ -184,6 +192,21 @@ void do_bulk_done(Wire& wire, const Op& op, std::size_t idx, RunResult& out)
     std::uint8_t reply = 0;
     wire.control_read(op.request, op.value, op.index, &reply, 1);
     record_read(out, op, idx, &reply, 1);
+}
+
+// A poll site's budget: its OWN, when the table gives it one, else the
+// RunPolicy's. Only the magazine programs carry per-op budgets
+// (docs/sane-wp4-magazine.md section 3): their captured poll durations
+// span 4 ms to 1.6 s, and the driver scales each site's timeout to its
+// own captured duration. Every pre-WP-4 op has timeout_ms == 0 and is
+// therefore governed by the policy exactly as before.
+unsigned poll_budget_ms(const Op& op, unsigned policy_ms, const RunPolicy& policy)
+{
+    unsigned budget = op.timeout_ms != 0 ? op.timeout_ms : policy_ms;
+    if (policy.max_poll_timeout_ms != 0 && budget > policy.max_poll_timeout_ms) {
+        budget = policy.max_poll_timeout_ms;
+    }
+    return budget;
 }
 
 void do_poll(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
@@ -210,7 +233,7 @@ void do_poll(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
         }
 
         unsigned elapsed = wire.now_ms() - start;
-        if (elapsed > policy.poll_timeout_ms) {
+        if (elapsed > poll_budget_ms(op, policy.poll_timeout_ms, policy)) {
             std::ostringstream oss;
             oss << "gl126_ops: PollDataReady at op " << idx << " (DATAENB, reg 0x101) "
                 << "timed out after " << elapsed << "ms: first 0x" << std::hex
@@ -340,7 +363,7 @@ void do_poll_class(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
         }
 
         unsigned elapsed = wire.now_ms() - start;
-        if (elapsed > policy.class_timeout_ms) {
+        if (elapsed > poll_budget_ms(op, policy.class_timeout_ms, policy)) {
             std::ostringstream oss;
             oss << "gl126_ops: PollClass at op " << idx << " (reg 0x100) "
                 << "timed out after " << elapsed << "ms: first 0x" << std::hex
@@ -377,7 +400,7 @@ void do_poll_masked(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
         }
 
         unsigned elapsed = wire.now_ms() - start;
-        if (elapsed > policy.masked_timeout_ms) {
+        if (elapsed > poll_budget_ms(op, policy.masked_timeout_ms, policy)) {
             std::ostringstream oss;
             oss << "gl126_ops: PollMasked at op " << idx << " (mask 0x" << std::hex
                 << static_cast<int>(op.mask) << " want 0x" << static_cast<int>(op.want)
@@ -388,6 +411,53 @@ void do_poll_masked(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
         }
         wire.sleep_ms(policy.poll_interval_ms);
     }
+}
+
+// docs/sane-wp4-magazine.md section 3: a poll the DRIVER does not fail
+// on. usbio.poll_status_word() and _eject_body()'s completion loop log a
+// warning and carry on with the last value read, and device.py's
+// _poll_one() does the same for every non-strict poll -- which is what
+// keeps a cold start with a LATCHED magazine (a status-word timeout every
+// time, Tests 45/51) a supported operation rather than a failed session.
+// Reproducing that faithfully means this poll never throws: it records
+// what it saw, like a settled one, and the program continues.
+void do_poll_best_effort(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
+                         const RunPolicy& policy)
+{
+    unsigned start = wire.now_ms();
+    std::uint8_t first = 0;
+    std::uint8_t last = 0;
+    unsigned polls = 0;
+
+    for (;;) {
+        std::uint8_t reply[2] = {0, 0};
+        wire.control_read(op.request, op.value, op.index, reply, 2);
+        ++polls;
+        if (polls == 1) {
+            first = reply[0];
+        }
+        last = reply[0];
+
+        unsigned elapsed = wire.now_ms() - start;
+        if ((reply[0] & op.mask) == op.want ||
+            elapsed > poll_budget_ms(op, policy.poll_timeout_ms, policy)) {
+            PollRecord rec{idx, first, last, polls, elapsed};
+            out.polls.push_back(rec);
+            return;
+        }
+        wire.sleep_ms(policy.poll_interval_ms);
+    }
+}
+
+// docs/sane-wp4-magazine.md section 3: the replayer's pacing. No
+// transfer; of135i/device.py _exec_ops sleeps min(dt, 2 s) before an op
+// whose captured gap exceeds 50 ms, and the magazine flow is verified
+// WITH those pauses in place (Tests 17-23).
+void do_sleep(Wire& wire, const Op& op)
+{
+    // Unconditional, even for a 0 ms op: sleep_ms() is this op's only
+    // observable action, and a fake Wire uses it to know the op ran.
+    wire.sleep_ms(op.dur_ms);
 }
 
 // docs/sane-hook5-frame.md section 4: no ack read -- park_semantic()'s
@@ -485,10 +555,31 @@ void run_program(Wire& wire, const OpProgram& prog, RunResult& out,
         case OpKind::ReadModifyWrite:
             do_read_modify_write(wire, prog, op, i, out);
             break;
+        case OpKind::Sleep:
+            do_sleep(wire, op);
+            break;
+        case OpKind::PollBestEffort:
+            do_poll_best_effort(wire, op, i, out, policy);
+            break;
         }
         // Reached only if op i did not throw: it is done.
         out.ops_done = i + 1;
     }
+}
+
+// ----------------------------------------------------------- magazine (WP-4)
+
+const OpProgram* magazine_program(const char* name)
+{
+    if (name == nullptr) {
+        return nullptr;
+    }
+    for (std::size_t i = 0; i < MAGAZINE_PROGRAM_COUNT; ++i) {
+        if (std::strcmp(MAGAZINE_PROGRAMS[i].name, name) == 0) {
+            return &MAGAZINE_PROGRAMS[i];
+        }
+    }
+    return nullptr;
 }
 
 // -------------------------------------------------------------------- S5/S6

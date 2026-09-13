@@ -71,6 +71,13 @@ enum class OpKind : std::uint8_t {
                        back (v & mask) | want as a 2-byte register batch,
                        no ack read (docs/sane-hook5-frame.md section 4:
                        PARK's three RMW registers, 4 sites) */
+    Sleep,          /* no transfer: wait dur_ms (docs/sane-wp4-magazine.md
+                       section 3) -- the Python replayer's pacing, which the
+                       magazine flow was hardware-verified WITH */
+    PollBestEffort, /* poll until (reply[0] & mask) == want, but a timeout
+                       LOGS and continues instead of failing closed -- the
+                       driver's own non-raising polls (cold start, eject
+                       completion, the load flow's state reads) */
 };
 
 /** One op-program transfer. `data` is the write payload (Write, and a
@@ -93,10 +100,16 @@ struct Op {
     std::uint8_t mask;       /* PollMasked: poll mask; ReadModifyWrite: and_mask;
                                 0 for every other kind (docs/sane-hook5-frame.md
                                 section 4) */
-    std::uint8_t want;       /* PollMasked: target value; ReadModifyWrite: or_mask;
-                                0 for every other kind. ReadModifyWrite's target
-                                register is (index >> 8), the same encoding as
-                                its own read setup (index = (reg << 8) | 0x22) */
+    std::uint8_t want;       /* PollMasked/PollBestEffort: target value;
+                                ReadModifyWrite: or_mask; 0 for every other kind.
+                                ReadModifyWrite's target register is (index >> 8),
+                                the same encoding as its own read setup
+                                (index = (reg << 8) | 0x22) */
+    std::uint32_t timeout_ms;/* PollMasked/PollBestEffort: this site's OWN budget,
+                                mirroring what the Python driver allows it
+                                (device.py _poll_one: max(3x captured, 1 s);
+                                cold start: 15 s / 30 s). 0 = use the RunPolicy
+                                value, which is what every pre-WP-4 program has. */
 };
 
 /** A value the op-program runner must compute and patch into a
@@ -259,6 +272,15 @@ constexpr std::size_t SLOPE_DPI7200_SCAN_LEN = 512;
 /** The magazine phases (OPEN / JOG / LOAD), in order. */
 extern const Phase MAGAZINE_PHASES[3];
 constexpr std::size_t MAGAZINE_PHASE_COUNT = 3;
+
+/** The magazine flow's op programs (docs/sane-wp4-magazine.md),
+ *  in the order they run: cold_init (device.py's cold-start
+ *  sequence), open + jog (the vendor's app start, whose jog IS
+ *  the eject of a latched magazine), load (after the operator
+ *  reseated it) and eject. Looked up by name through
+ *  gl126_ops.h's magazine_program(). */
+extern const OpProgram MAGAZINE_PROGRAMS[5];
+constexpr std::size_t MAGAZINE_PROGRAM_COUNT = 5;
 
 /** Every scan profile, indexed by PROFILE_COUNT. */
 extern const Profile PROFILES[6];

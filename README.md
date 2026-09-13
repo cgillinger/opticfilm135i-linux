@@ -34,8 +34,12 @@ The project has two parts, at different stages:
   pass run on the unit and accepted by eye. One thing it does not do yet:
   load or eject the magazine. That is `of135i load` / `of135i eject` at the
   command line, and making it work from a SANE frontend alone is a condition
-  before the backend is offered upstream. Its verification is tracked
-  independently of the CLI driver's — see the roadmap.
+  before the backend is offered upstream. The code for it exists — a
+  `Load film` / `Eject film` option pair, with the load completing on the
+  next scan because the operator has to reseat the magazine in between —
+  but it has not yet driven the motor, so the command-line workflow is
+  still the documented one. Its verification is tracked independently of
+  the CLI driver's — see the roadmap.
 
 **Jump to:** [Install](#install) · [Usage](#usage--the-normal-workflow) ·
 [What works today](#what-works-today) ·

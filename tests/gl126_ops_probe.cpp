@@ -35,6 +35,9 @@
          test_missing_bulk_injection_*.
 
      probe program_info <profile> <phase>
+         (<profile> may be "magazine": the WP-4 magazine flow's five
+         programs -- cold_init, open, jog, load, eject -- hang off no
+         profile, since they have no resolution. `run` takes it too.)
          Prints one "OP <i> kind=<OpKind> len=<n> has_data=<0|1>" line per
          op in the named OpProgram, in order -- no Wire, no run_program()
          involved. Used only to check the generator's own output (docs/
@@ -147,6 +150,16 @@
                                          "park" has two: Wait A, Wait B).
                                          Unscripted: settles on the first
                                          read, at the op's own `want`.
+     best_effort_at <occ> <hex4>[,<hex4>...] -- override the Nth
+                                         PollBestEffort site's reply
+                                         sequence (0-indexed occurrence).
+                                         Unscripted: settles on the first
+                                         read at the op's own `want`. A
+                                         sequence that never matches makes
+                                         the site time out, which for this
+                                         op kind is NOT a failure -- the
+                                         program continues (docs/sane-wp4-
+                                         magazine.md section 3).
      rmw_read_at <occurrence> <hex-byte> -- the register value the Nth
                                          ReadModifyWrite op's read
                                          returns (0-indexed occurrence).
@@ -370,6 +383,10 @@ struct Script {
     // by occurrence (0-based, in the order the program executes them).
     std::map<std::size_t, std::vector<std::array<std::uint8_t, 2>>> masked_poll_at;
     std::map<std::size_t, std::uint8_t> rmw_read_at;
+    // docs/sane-wp4-magazine.md section 3: the magazine programs carry
+    // many PollBestEffort sites (19 in cold_init alone), so these are
+    // occurrence-indexed like the PollMasked ones.
+    std::map<std::size_t, std::vector<std::array<std::uint8_t, 2>>> best_effort_at;
 };
 
 // Shared by "poll" and "class_poll": parse a comma-separated list of
@@ -458,6 +475,11 @@ Script parse_script(const std::string& path)
             std::string rest;
             iss >> occurrence >> rest;
             s.masked_poll_at[occurrence] = parse_poll_list(rest);
+        } else if (cmd == "best_effort_at") {
+            std::size_t occurrence = 0;
+            std::string rest;
+            iss >> occurrence >> rest;
+            s.best_effort_at[occurrence] = parse_poll_list(rest);
         } else if (cmd == "rmw_read_at") {
             std::size_t occurrence = 0;
             std::string hex;
@@ -618,6 +640,43 @@ public:
             }
             break;
         }
+        case OpKind::PollBestEffort: {
+            std::size_t occ = best_effort_occurrence_;
+            PollState& st = best_effort_state_[occ];
+            if (st.list.empty()) {
+                auto it = script_.best_effort_at.find(occ);
+                if (it != script_.best_effort_at.end() && !it->second.empty()) {
+                    st.list = it->second;
+                } else {
+                    // Default: settle on the very first read, at the op's
+                    // own `want` (matching its mask trivially).
+                    st.list.push_back({{op.want, 0x55}});
+                }
+            }
+            if (st.polls == 0) {
+                st.start_ms = clock_ms_;
+            }
+            ++st.polls;
+            std::size_t idx = st.idx < st.list.size() ? st.idx : st.list.size() - 1;
+            if (st.idx + 1 < st.list.size()) ++st.idx;
+            const std::array<std::uint8_t, 2>& v = st.list[idx];
+            if (len > 0) data[0] = v[0];
+            if (len > 1) data[1] = v[1];
+            log_read(request, value, index, len);
+            // gl126_ops.cpp do_poll_best_effort() leaves the site on a
+            // match OR on its budget running out -- it never throws --
+            // so the cursor has to follow both exits. The clock is the
+            // same one the runner reads (it only moves in sleep_ms), and
+            // the runner's own check happens right after this read, so
+            // the two agree exactly.
+            unsigned budget = op.timeout_ms != 0 ? op.timeout_ms
+                                                 : RunPolicy().poll_timeout_ms;
+            if ((v[0] & op.mask) == op.want || (clock_ms_ - st.start_ms) > budget) {
+                ++best_effort_occurrence_;
+                advance();
+            }
+            break;
+        }
         case OpKind::ReadModifyWrite: {
             std::size_t occ = rmw_occurrence_;
             std::uint8_t v = 0x00;
@@ -679,7 +738,20 @@ public:
         return n;
     }
 
-    void sleep_ms(unsigned ms) override { clock_ms_ += ms; }
+    void sleep_ms(unsigned ms) override
+    {
+        clock_ms_ += ms;
+        // A Sleep op's ONLY action is this call (gl126_ops.cpp do_sleep),
+        // so it is also how the cursor learns the op ran. A poll's own
+        // interval sleep happens while the cursor sits on the poll op, so
+        // the two never collide. Logged as its own "S" line, which the
+        // wire-equality test filters out (the Python side sleeps too, and
+        // a sleep is not a transfer) and the pacing test asserts on.
+        if (cursor_ < prog_.count && current().kind == OpKind::Sleep) {
+            std::cout << "S ms=" << ms << "\n";
+            advance();
+        }
+    }
     unsigned now_ms() override { return clock_ms_; }
 
 private:
@@ -716,9 +788,13 @@ private:
     struct PollState {
         std::vector<std::array<std::uint8_t, 2>> list;
         std::size_t idx = 0;
+        unsigned start_ms = 0;   // PollBestEffort: when this site began
+        unsigned polls = 0;
     };
     std::map<std::size_t, PollState> masked_poll_state_;
     std::size_t masked_poll_occurrence_ = 0;
+    std::map<std::size_t, PollState> best_effort_state_;
+    std::size_t best_effort_occurrence_ = 0;
     std::size_t rmw_occurrence_ = 0;
 };
 
@@ -735,12 +811,19 @@ const char* op_kind_name(OpKind k)
     case OpKind::BulkDone:       return "BulkDone";
     case OpKind::PollMasked:     return "PollMasked";
     case OpKind::ReadModifyWrite:return "ReadModifyWrite";
+    case OpKind::Sleep:          return "Sleep";
+    case OpKind::PollBestEffort: return "PollBestEffort";
     }
     return "Unknown";
 }
 
 const OpProgram* find_program(const std::string& profile, const std::string& phase)
 {
+    // The magazine flow (docs/sane-wp4-magazine.md) hangs off no profile:
+    // it has no resolution. "magazine" as the profile name reaches it.
+    if (profile == "magazine") {
+        return magazine_program(phase.c_str());
+    }
     for (std::size_t i = 0; i < PROFILE_COUNT; ++i) {
         if (profile != PROFILES[i].name) continue;
         const Profile& p = PROFILES[i];
@@ -838,9 +921,20 @@ int cmd_program_info(int argc, char** argv)
     }
     for (std::size_t i = 0; i < prog->count; ++i) {
         const Op& op = prog->ops[i];
+        // req/val/idx/mask/want/timeout let a test build a script for a
+        // program generically -- e.g. "give every ReadModifyWrite the
+        // value its own register reads on the Python side" -- instead of
+        // hard-coding the op order (docs/sane-wp4-magazine.md section 5).
         std::cout << "OP " << i << " kind=" << op_kind_name(op.kind)
                   << " len=" << op.len
-                  << " has_data=" << (op.data != nullptr ? 1 : 0) << "\n";
+                  << " has_data=" << (op.data != nullptr ? 1 : 0)
+                  << " req=" << hex2(op.request)
+                  << " val=" << hex4(op.value)
+                  << " idx=" << hex4(op.index)
+                  << " mask=" << hex2(op.mask)
+                  << " want=" << hex2(op.want)
+                  << " dur_ms=" << op.dur_ms
+                  << " timeout_ms=" << op.timeout_ms << "\n";
     }
     return 0;
 }

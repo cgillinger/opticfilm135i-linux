@@ -173,5 +173,70 @@ int process_lock_refs()
     return g_lock_refs;
 }
 
+// ------------------------------------------------ the magazine mark (WP-4)
+
+std::string magazine_mark_path()
+{
+    return process_lock_path() + ".magazine";
+}
+
+bool magazine_mark_write(const std::string& device_key)
+{
+    // Truncating, not appending: at most one magazine is ever waiting to
+    // be loaded -- there is one unit.
+    int fd = ::open(magazine_mark_path().c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0) {
+        return false;
+    }
+    // The device key goes on its OWN line: it is whatever string the SANE
+    // frontend uses to name the device, and it can contain spaces (the
+    // backend's own test mode produces "test device:0x07b3:0x1436"), so a
+    // space-delimited field would truncate it and silently look like a
+    // mark for some other device. First line stays human-readable, since
+    // `cat` on this file should say what it is.
+    std::string line = "released " + now_iso8601_utc() + " (sane genesys gl126)\n" +
+                       device_key + "\n";
+    ssize_t written = ::write(fd, line.data(), line.size());
+    ::close(fd);
+    return written == static_cast<ssize_t>(line.size());
+}
+
+bool magazine_mark_read(std::string* device_key)
+{
+    int fd = ::open(magazine_mark_path().c_str(), O_RDONLY);
+    if (fd < 0) {
+        return false;
+    }
+    char buf[256] = {0};
+    ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+    ::close(fd);
+    if (n <= 0) {
+        return false;
+    }
+    // Line 1: "released <timestamp> (sane genesys gl126)". Line 2: the
+    // device key, whole, spaces and all.
+    std::string text(buf, static_cast<std::size_t>(n));
+    std::size_t eol = text.find('\n');
+    if (eol == std::string::npos || text.compare(0, 8, "released") != 0) {
+        return false;
+    }
+    std::size_t key_end = text.find('\n', eol + 1);
+    std::string key = text.substr(eol + 1,
+                                  key_end == std::string::npos
+                                      ? std::string::npos : key_end - eol - 1);
+    if (key.empty()) {
+        return false;
+    }
+    if (device_key != nullptr) {
+        *device_key = key;
+    }
+    return true;
+}
+
+void magazine_mark_clear()
+{
+    ::unlink(magazine_mark_path().c_str());
+}
+
 } // namespace gl126
 } // namespace genesys

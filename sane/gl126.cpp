@@ -24,11 +24,13 @@
 #include "gl126_registers.h"
 #include "gl126_tables.h"
 #include "gl126_ops.h"
+#include "gl126_lock.h"
 #include "image_pipeline.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <array>
 #include <chrono>
 #include <functional>
@@ -180,7 +182,8 @@ const Profile* find_profile(unsigned dpi, bool ir)
 class UsbWire : public Wire
 {
 public:
-    explicit UsbWire(IUsbDevice& usb) : usb_(usb) {}
+    explicit UsbWire(Genesys_Device* dev)
+        : usb_(dev->interface->get_usb_device()), iface_(dev->interface.get()) {}
 
     void control_write(std::uint8_t request, std::uint16_t value, std::uint16_t index,
                        const std::uint8_t* data, std::size_t len) override
@@ -210,9 +213,16 @@ public:
         return n;
     }
 
+    /* Through the scanner interface, not std::this_thread: in this
+       backend a wait is the INTERFACE's business (ScannerInterfaceUsb
+       skips it in replay mode, the test interface skips it always), and
+       these are the only waits GL126 has -- the poll intervals, and the
+       magazine flow's replayed pacing. Sleeping behind the interface's
+       back made an offline run of the magazine programs take its real
+       wall-clock budget. */
     void sleep_ms(unsigned ms) override
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        iface_->sleep_us(ms * 1000);
     }
 
     unsigned now_ms() override
@@ -223,6 +233,7 @@ public:
 
 private:
     IUsbDevice& usb_;
+    ScannerInterface* iface_;
 };
 
 const OpProgram& find_program(const Profile& profile, const char* name)
@@ -248,7 +259,7 @@ void run_phase_program(Genesys_Device* dev, const Profile& profile, const char* 
 {
     DBG_HELPER_ARGS(dbg, "phase %s", name);
     const OpProgram& prog = find_program(profile, name);
-    UsbWire wire(dev->interface->get_usb_device());
+    UsbWire wire(dev);
     try {
         run_program(wire, prog, out, policy ? *policy : RunPolicy(), values, bulk_values);
     } catch (const OpsError& e) {
@@ -557,6 +568,394 @@ void run_shading_calibration(Genesys_Device* dev, const Profile& profile)
     log_dark_means("shading dark measurement", dark_buf);
     log_dark_means("shading white measurement", white_buf);
     cal_stage()[dev] = CalStage::ShadingDone;
+}
+
+/* ------------------------------------------------------ magazine (WP-4)
+
+   docs/sane-wp4-magazine.md. The vendor's insert flow needs the operator
+   to take the magazine out and reseat it to the stop IN THE MIDDLE of the
+   sequence, and SANE has no way for a backend to ask for that during
+   sane_start. The interaction model Christian chose (2026-09-13) is the
+   two-step protocol: the "Load film" option runs the release half (a cold
+   unit's bring-up, the vendor device-open table and the jog, which is
+   what ejects a latched cassette), the operator reseats the magazine, and
+   the NEXT sane_start runs the load before it calibrates.
+
+   Nothing here is a new motor sequence: the five programs are the Python
+   driver's own transfers, wire-equal to it under tests/test_sane_ops.py.
+   What lives here is the state machine, the preconditions, and the
+   refusals. */
+
+enum class MagazineState { Unknown, Released, Loaded, Ejected, Failed };
+
+const char* magazine_state_name(MagazineState s)
+{
+    switch (s) {
+    case MagazineState::Unknown:  return "unknown";
+    case MagazineState::Released: return "released";
+    case MagazineState::Loaded:   return "loaded";
+    case MagazineState::Ejected:  return "ejected";
+    case MagazineState::Failed:   return "failed";
+    }
+    return "unknown";
+}
+
+std::map<const Genesys_Device*, MagazineState>& magazine_state_map()
+{
+    static std::map<const Genesys_Device*, MagazineState> states;
+    return states;
+}
+
+MagazineState magazine_state_of(const Genesys_Device* dev)
+{
+    auto it = magazine_state_map().find(dev);
+    return it == magazine_state_map().end() ? MagazineState::Unknown : it->second;
+}
+
+/* Every transition goes through here, so a debug log of a magazine
+   session reads as the state machine of docs/sane-wp4-magazine.md
+   section 2.2 rather than as a pile of transfers. */
+void set_magazine_state(Genesys_Device* dev, MagazineState next)
+{
+    MagazineState prev = magazine_state_of(dev);
+    magazine_state_map()[dev] = next;
+    if (prev != next) {
+        DBG(DBG_info, "gl126: magazine %s -> %s\n",
+            magazine_state_name(prev), magazine_state_name(next));
+    }
+}
+
+/* The SANE device name ("libusb:001:007"): it carries the USB address,
+   which a power cycle changes, so a mark written before one can never be
+   mistaken for a mark written after it. */
+std::string magazine_device_key(const Genesys_Device* dev)
+{
+    return dev->file_name;
+}
+
+/* The loader sensor and the state class, from one read of reg 0x101 --
+   the same register and the same bit (0x08) the vendor's own config
+   names LoaderSensorReg, hardware-verified 2026-09-02 (0xe0 without a
+   magazine, 0xe8 with). It reports PRESENCE, not latching: nowhere in
+   this project does it mean the magazine is mechanically locked. */
+struct MagazineSensor {
+    std::uint8_t status;
+    bool present() const { return (status & 0x08) != 0; }
+    bool idle_class() const { return (status & 0xF0) == 0xF0; }
+};
+
+MagazineSensor read_magazine_sensor(Genesys_Device* dev)
+{
+    MagazineSensor s;
+    s.status = dev->interface->read_register(0x101);
+    return s;
+}
+
+/* Every magazine poll carries its own budget (gl126_tables.h: timeout_ms,
+   from the driver's own per-site timeouts), so these policy values only
+   ever apply to a program that forgot one -- which validate_op_program()
+   in the generator refuses to emit. */
+RunPolicy magazine_policy()
+{
+    RunPolicy policy;
+    policy.poll_timeout_ms = 30000;
+    policy.masked_timeout_ms = 30000;
+    /* $OF135I_SANE_POLL_CAP_MS caps every poll site's wait. It exists for
+       offline runs against a mock that never answers -- the cold-start
+       program carries the driver's own 15 s and 30 s budgets at nineteen
+       best-effort sites, which such a run would otherwise spend in real
+       time. It can only SHORTEN a wait: on hardware every one of these
+       polls settles in milliseconds, and a poll that gives up early is
+       either best-effort (logged, the program continues) or fail-closed
+       (the sequence stops with nothing further written) -- never a wait
+       that silently succeeds. Unset in normal use. */
+    const char* cap = std::getenv("OF135I_SANE_POLL_CAP_MS");
+    if (cap != nullptr && *cap != '\0') {
+        long v = std::strtol(cap, nullptr, 10);
+        if (v > 0) {
+            policy.max_poll_timeout_ms = static_cast<unsigned>(v);
+        }
+    }
+    return policy;
+}
+
+/** Run one magazine op program (gl126_ops.h magazine_program()). Same
+    fail-closed contract as run_phase_program(): the first failure ends
+    the program with nothing further written and no recovery attempted. */
+void run_magazine_program(Genesys_Device* dev, const char* name, RunResult& out)
+{
+    DBG_HELPER_ARGS(dbg, "magazine %s", name);
+    const OpProgram* prog = magazine_program(name);
+    if (prog == nullptr) {
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: no magazine program '%s' (docs/sane-wp4-magazine.md)",
+                            name);
+    }
+    UsbWire wire(dev);
+    try {
+        run_program(wire, *prog, out, magazine_policy(), nullptr, nullptr);
+    } catch (const OpsError& e) {
+        set_magazine_state(dev, MagazineState::Failed);
+        gl126::magazine_mark_clear();
+        const char* what = "I/O failure";
+        SANE_Status status = SANE_STATUS_IO_ERROR;
+        switch (e.failure) {
+            case OpsFailure::BadAck: what = "register write not acknowledged"; break;
+            case OpsFailure::PollTimeout:
+                status = SANE_STATUS_DEVICE_BUSY;
+                what = "a motor move did not complete";
+                break;
+            case OpsFailure::ShortBulk: what = "short bulk read"; break;
+            case OpsFailure::ShortBulkOut: what = "short bulk write"; break;
+            case OpsFailure::MissingInjection:
+            case OpsFailure::BadInjection:
+                status = SANE_STATUS_INVAL;
+                what = "a generated table is inconsistent";
+                break;
+        }
+        throw SaneException(status,
+                            "gl126: %s in the magazine %s sequence at op %zu (%s). Nothing "
+                            "further was written and no recovery was attempted: power-cycle "
+                            "the scanner, then press Load film.",
+                            what, name, e.op_index, e.what());
+    }
+    for (const PollRecord& p : out.polls) {
+        DBG(DBG_info, "gl126: magazine %s op %zu poll: first 0x%02x last 0x%02x, "
+            "%u polls, %u ms\n", name, p.op_index, p.first, p.last, p.polls, p.elapsed_ms);
+    }
+}
+
+/** The "Load film" button: the release half of the two-step protocol.
+
+    From a cold unit (reg 0x01 = 0x00) the vendor cold-start sequence runs
+    first and the unit must then read idle-homed, exactly as the driver's
+    cold_init() requires. Then the vendor device-open table and the jog --
+    feed, feed, eject. The jog IS the eject: it releases a latched
+    cassette, which is why pressing this twice (power cycle, press,
+    reseat, press, reseat, scan) is the supported way out of "power-cycled
+    with the magazine latched", the recipe Test 51 established. */
+void magazine_release_impl(Genesys_Device* dev)
+{
+    DBG_HELPER(dbg);
+    MagazineState state = magazine_state_of(dev);
+    if (state == MagazineState::Failed) {
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: the magazine sequence failed earlier in this session; "
+                            "the transport state is unknown. Power-cycle the scanner and "
+                            "open the scanner again. Nothing was written.");
+    }
+
+    std::uint8_t reg01 = check_start_state(dev);   // 0x22 or 0x00, else refuses
+    if (reg01 == 0x00) {
+        DBG(DBG_info, "gl126: reg 0x01 = 0x00 (cold, never homed) -- running the "
+            "vendor cold-start sequence first\n");
+        RunResult cold;
+        run_magazine_program(dev, "cold_init", cold);
+        std::uint8_t after = dev->interface->read_register(REG_0x01);
+        if (after != 0x22) {
+            set_magazine_state(dev, MagazineState::Failed);
+            throw SaneException(SANE_STATUS_IO_ERROR,
+                                "gl126: the cold-start sequence completed but reg 0x01 reads "
+                                "0x%02x, not the idle-homed 0x22. This is a new observation -- "
+                                "please record it. Nothing further was written; power-cycle "
+                                "the scanner.", after);
+        }
+    }
+
+    RunResult open_result, jog_result;
+    run_magazine_program(dev, "open", open_result);
+    run_magazine_program(dev, "jog", jog_result);
+
+    set_magazine_state(dev, MagazineState::Released);
+    if (!gl126::magazine_mark_write(magazine_device_key(dev))) {
+        // Not fatal: a frontend that keeps the device open (digiKam) has
+        // the in-process record. Only a second process (scanimage) needs
+        // the file, and it will simply report "no load is pending".
+        DBG(DBG_warn, "gl126: could not write the magazine mark at %s -- a load from a "
+            "separate process will not know a release is pending\n",
+            gl126::magazine_mark_path().c_str());
+    }
+    DBG(DBG_info, "gl126: magazine released. Take it fully out of the slot, push it back "
+        "in to the mechanical stop, then scan.\n");
+}
+
+/** The load half, run from sane_start before calibration -- but only when
+    a release is actually pending, and only after the hardware agrees.
+
+    The mark alone never authorises a motor move: a power cycle
+    re-enumerates the unit under a new address AND leaves reg 0x01 cold,
+    so a stale mark cannot reach the feed. */
+void magazine_load_if_pending(Genesys_Device* dev)
+{
+    DBG_HELPER(dbg);
+    MagazineState state = magazine_state_of(dev);
+    if (state == MagazineState::Failed) {
+        // Checked BEFORE the "is anything pending" question: a failed
+        // magazine sequence leaves the transport in a state nobody can
+        // name, and the failure already cleared the mark -- so asking
+        // about the mark first would let the scan through to calibrate
+        // on top of it.
+        gl126::magazine_mark_clear();
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: the magazine sequence failed earlier in this session, so "
+                            "the transport state is unknown and a scan is not started on top "
+                            "of it. Power-cycle the scanner. Nothing was written.");
+    }
+    bool pending = (state == MagazineState::Released);
+    std::string marked_key;
+    if (!pending && gl126::magazine_mark_read(&marked_key)) {
+        if (marked_key == magazine_device_key(dev)) {
+            pending = true;
+        } else {
+            // Another unit, or the same one under a pre-power-cycle
+            // address: not ours, and never will be.
+            DBG(DBG_info, "gl126: magazine mark names %s, this device is %s -- ignored\n",
+                marked_key.c_str(), magazine_device_key(dev).c_str());
+            gl126::magazine_mark_clear();
+        }
+    }
+    if (!pending) {
+        return;   // nothing read, nothing written
+    }
+
+    // Preconditions, reads only (docs/sane-wp4-magazine.md section 3.3).
+    std::uint8_t reg01 = dev->interface->read_register(REG_0x01);
+    MagazineSensor sensor = read_magazine_sensor(dev);
+    if (!sensor.present()) {
+        // The magazine is out of the slot: the operator is mid-reseat, or
+        // forgot. Keep the mark -- inserting it and scanning again is the
+        // whole fix -- and refuse without writing anything.
+        throw SaneException(SANE_STATUS_NO_DOCS,
+                            "gl126: no magazine in the slot (loader sensor clear). Push it "
+                            "back in to the mechanical stop and scan again. Nothing was "
+                            "written.");
+    }
+    std::uint8_t reg3b = dev->interface->read_register(0x3B);
+    std::uint8_t reg3c = dev->interface->read_register(0x3C);
+    if (reg01 != 0x22 || !sensor.idle_class() || reg3b != 0x00 || reg3c != 0x00) {
+        set_magazine_state(dev, MagazineState::Failed);
+        gl126::magazine_mark_clear();
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: the scanner is not in the state the jog leaves it in "
+                            "(reg 0x01 = 0x%02x, reg 0x101 = 0x%02x, regs 0x3b/0x3c = "
+                            "0x%02x/0x%02x; expected 0x22, the idle class with the loader "
+                            "sensor set, and 0x00/0x00). A load is not attempted from an "
+                            "unverified state. Power-cycle the scanner, then press Load "
+                            "film. Nothing was written.",
+                            reg01, sensor.status, reg3b, reg3c);
+    }
+
+    RunResult load_result;
+    try {
+        run_magazine_program(dev, "load", load_result);
+    } catch (const SaneException& e) {
+        if (e.status() == SANE_STATUS_DEVICE_BUSY) {
+            // The one failure an operator commonly causes themselves, and
+            // the driver's own wording for it (of135i/loadflow.py
+            // FEED_NOT_ENGAGED_MSG): the feed did not engage, 2/2 in
+            // Tests 48/49, because the magazine was not taken fully out
+            // and reseated. The session is failed exactly as before; only
+            // the explanation is human.
+            throw SaneException(SANE_STATUS_DEVICE_BUSY,
+                                "gl126: the load feed did not engage. This is almost always "
+                                "because the magazine was not taken FULLY OUT of the slot "
+                                "and pushed back in to the mechanical stop after Load film "
+                                "released it. The scanner is fine and nothing is stuck. "
+                                "Power-cycle it, press Load film, take the magazine fully "
+                                "out, push it back in to the stop, then scan.");
+        }
+        throw;
+    }
+
+    // The traverse's own completion was checked by the program; read the
+    // status word once more and require it still, exactly as the driver's
+    // load_magazine() does before it calls the magazine loaded.
+    MagazineSensor after = read_magazine_sensor(dev);
+    if ((after.status & kMagazineStatusMask) != (0xDC & kMagazineStatusMask)) {
+        set_magazine_state(dev, MagazineState::Failed);
+        gl126::magazine_mark_clear();
+        throw SaneException(SANE_STATUS_IO_ERROR,
+                            "gl126: the magazine load did not complete: reg 0x101 reads "
+                            "0x%02x, expected the vendor capture's completion 0xdc under "
+                            "mask 0x%02x. The transport state is unknown and the magazine "
+                            "may not be latched. Nothing further was written and no recovery "
+                            "was attempted; power-cycle the scanner.",
+                            after.status, kMagazineStatusMask);
+    }
+
+    set_magazine_state(dev, MagazineState::Loaded);
+    gl126::magazine_mark_clear();
+    DBG(DBG_info, "gl126: magazine loaded (reg 0x101 = 0x%02x)\n", after.status);
+}
+
+/** The "Eject film" button, and eject_document(). */
+void magazine_eject_impl(Genesys_Device* dev)
+{
+    DBG_HELPER(dbg);
+    MagazineState state = magazine_state_of(dev);
+    if (state == MagazineState::Failed) {
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: the magazine sequence failed earlier in this session. "
+                            "Power-cycle the scanner. Nothing was written.");
+    }
+    if (state == MagazineState::Released) {
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: the magazine is already loose -- the jog Load film ran "
+                            "IS the vendor's eject. Take it out of the slot. Nothing was "
+                            "written.");
+    }
+
+    // A scan pass that is armed or streaming owns the transport.
+    auto pass = scan_pass().find(dev);
+    if (pass != scan_pass().end() &&
+        (pass->second.state() == ScanPassState::Armed ||
+         pass->second.state() == ScanPassState::Streaming))
+    {
+        throw SaneException(SANE_STATUS_DEVICE_BUSY,
+                            "gl126: a scan pass is %s; the magazine is not ejected from "
+                            "under it. Nothing was written.",
+                            scan_pass_state_name(pass->second.state()));
+    }
+
+    std::uint8_t reg01 = check_start_state(dev);
+    if (reg01 == 0x00) {
+        // The driver runs cold_init() first here; this backend does not.
+        // On a cold unit the jog is the vendor's own release and is the
+        // one path verified from that state, so the operator is sent
+        // there instead of bringing up a second cold motor path.
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: the scanner is cold (reg 0x01 = 0x00, never homed). "
+                            "Press Load film -- its jog is the vendor's own release and "
+                            "frees the magazine. Nothing was written.");
+    }
+
+    MagazineSensor sensor = read_magazine_sensor(dev);
+    if (!sensor.present()) {
+        DBG(DBG_info, "gl126: no magazine detected (loader sensor clear) -- nothing to do\n");
+        set_magazine_state(dev, MagazineState::Ejected);
+        gl126::magazine_mark_clear();
+        return;
+    }
+
+    std::uint8_t reg3b = dev->interface->read_register(0x3B);
+    std::uint8_t reg3c = dev->interface->read_register(0x3C);
+    if (reg3b == 0xFF && reg3c == 0xFF) {
+        // The driver's UnejectableStateError: its eject stalled 2/2 from
+        // the base-table-only state (Test 44) and no vendor flow ejects
+        // from it. Two register reads, no write.
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: eject refused -- regs 0x3b/0x3c read 0xff/0xff (the "
+                            "scan-session base table with no scan phase after it). The "
+                            "driver's eject stalled from this state and no vendor flow "
+                            "ejects from it. Power-cycle the scanner, then press Load film. "
+                            "Nothing was written.");
+    }
+
+    RunResult eject_result;
+    run_magazine_program(dev, "eject", eject_result);
+    set_magazine_state(dev, MagazineState::Ejected);
+    gl126::magazine_mark_clear();
+    DBG(DBG_info, "gl126: magazine ejected\n");
 }
 
 /** A hook that has not been brought up against the hardware yet.
@@ -1291,19 +1690,21 @@ void CommandSetGl126::wait_for_motor_stop(Genesys_Device* /*dev*/) const
        hooks run explicitly. Nothing to do here. */
 }
 
-void CommandSetGl126::load_document(Genesys_Device* /*dev*/) const
+/* Called from genesys_start_scan, before calibration, for GL126 as well
+   as for sheet-fed models (gl126-integration.patch). It is the LOAD half
+   of the two-step magazine protocol and does nothing at all -- not even a
+   register read -- unless a release is actually pending
+   (docs/sane-wp4-magazine.md section 3.3). */
+void CommandSetGl126::load_document(Genesys_Device* dev) const
 {
     DBG_HELPER(dbg);
-    /* The magazine load is an interactive, three-move sequence the
-       operator drives (tools/load_magazine.py). It is not started from a
-       frontend callback. */
-    not_brought_up("load_document (magazine load)");
+    magazine_load_if_pending(dev);
 }
 
-void CommandSetGl126::eject_document(Genesys_Device* /*dev*/) const
+void CommandSetGl126::eject_document(Genesys_Device* dev) const
 {
     DBG_HELPER(dbg);
-    not_brought_up("eject_document");
+    magazine_eject_impl(dev);
 }
 
 void CommandSetGl126::detect_document_end(Genesys_Device* /*dev*/) const
@@ -1372,6 +1773,42 @@ void push_dual_light_nodes(const ScanSession& session, ImagePipelineStack& pipel
        the same number of lines off the ends as the crop did. */
 }
 
+/* The three entry points genesys.cpp's option handlers call
+   (gl126-integration.patch): the two buttons and the one line of text
+   that tells the operator where the magazine is believed to be. Declared
+   in gl126.h; the work is in the anonymous namespace above. */
+void magazine_release(Genesys_Device* dev)
+{
+    magazine_release_impl(dev);
+}
+
+void magazine_eject(Genesys_Device* dev)
+{
+    magazine_eject_impl(dev);
+}
+
+std::string magazine_state_text(const Genesys_Device* dev)
+{
+    switch (magazine_state_of(dev)) {
+    case MagazineState::Released:
+        return "released -- take the magazine fully out of the slot, push it back in "
+               "to the mechanical stop, then scan";
+    case MagazineState::Loaded:
+        return "loaded -- scan any frame, then press Eject film when you are done";
+    case MagazineState::Ejected:
+        return "ejected -- press Load film to load again";
+    case MagazineState::Failed:
+        return "failed -- power-cycle the scanner and open it again";
+    case MagazineState::Unknown:
+        break;
+    }
+    // Nothing has been driven from this session yet, so the honest answer
+    // names what to press. The loader sensor would say whether a magazine
+    // is in the slot, but reading it here would put a register read
+    // behind an option query, and it reports presence, not latching.
+    return "unknown -- press Load film to start (its jog also frees a latched magazine)";
+}
+
 void read_image_chunk_usb(Genesys_Device* dev, std::uint8_t* data, std::size_t size)
 {
     DBG_HELPER_ARGS(dbg, "%zu bytes", size);
@@ -1384,7 +1821,7 @@ void read_image_chunk_usb(Genesys_Device* dev, std::uint8_t* data, std::size_t s
                             it == scan_pass().end() ? "Idle"
                                                     : scan_pass_state_name(it->second.state()));
     }
-    UsbWire wire(dev->interface->get_usb_device());
+    UsbWire wire(dev);
     try {
         read_image_chunk(wire, data, size, first);
     } catch (const OpsError& e) {
