@@ -299,6 +299,60 @@ def test_release_from_cold_verifies_the_bring_up():
           "(cold path taken, verified, refused)")
 
 
+def test_a_usb_failure_mid_sequence_fails_the_session():
+    """The hole Astra's 2026-09-13 review found: only `OpsError` marked the
+    session failed, but a real USB failure arrives as a plain
+    `SaneException` from the device layer -- and so do the register reads
+    that follow a motor sequence. Such an exception used to leave the
+    magazine state Released and the pending-load mark on disk AFTER a real
+    failure, so the next scan would have driven the loader again.
+
+    Injected through genesys's own test checkpoint (a no-op on the USB
+    interface), thrown after the device-open program has written and
+    before the sequence is finished. Whatever the exception, the session
+    must end up failed and any pending load must be gone."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_a_usb_failure_mid_sequence_fails_the_session")
+
+    for scenario in ("release-usb-failure", "eject-usb-failure"):
+        r = _run(probe, "scenario", scenario)
+        status, msg = r["statuses"][0]
+        assert status == SANE_STATUS_IO_ERROR, (scenario, r["statuses"])
+        assert "injected" in msg, (scenario, msg)
+        assert r["text"].startswith("failed"), (scenario, r["text"])
+        assert r["mark"] == "absent", (scenario, r["mark"])
+    print("test_a_usb_failure_mid_sequence_fails_the_session OK "
+          "(release and eject: failed, mark dropped)")
+
+
+def test_an_impossible_scan_request_never_moves_the_magazine():
+    """The load half runs BEFORE calibration -- the core calls
+    load_document() first -- while the scan request used to be validated
+    inside offset_calibration(). With a release pending, an impossible
+    request would therefore have driven the loader and only then been
+    refused (Astra review 2026-09-13).
+
+    Now the same write-free validation runs first. The refusal must leave
+    the mark intact (the request is wrong, the magazine is not) and must
+    NOT fail the session -- nothing was written, so nothing is unknown."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_an_impossible_scan_request_never_moves_the_magazine")
+
+    r = _run(probe, "scenario", "load-mark-invalid-request")
+    status, msg = r["statuses"][0]
+    assert status == SANE_STATUS_INVAL, r["statuses"]
+    assert "outside 1-6" in msg, msg
+    assert "Nothing was written" in msg, msg
+    # A refusal, not a failure: the session stays usable and the pending
+    # load survives, so scanning a valid frame completes it.
+    assert not r["text"].startswith("failed"), r["text"]
+    assert r["mark"].startswith("present"), r["mark"]
+    print("test_an_impossible_scan_request_never_moves_the_magazine OK "
+          "(INVAL before any write, mark kept, session not failed)")
+
+
 def test_a_failed_sequence_is_terminal():
     """After a failure the transport state is unknown, so a second press
     refuses with zero transfers rather than driving the motor again from
@@ -511,6 +565,8 @@ def main() -> int:
         test_release_from_idle_runs_the_open_and_jog_programs,
         test_release_from_cold_verifies_the_bring_up,
         test_a_failed_sequence_is_terminal,
+        test_a_usb_failure_mid_sequence_fails_the_session,
+        test_an_impossible_scan_request_never_moves_the_magazine,
         test_eject_refuses_from_cold_and_sends_you_to_load_film,
         test_eject_with_no_magazine_does_nothing,
         test_eject_refuses_the_base_table_state,

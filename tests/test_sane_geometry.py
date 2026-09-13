@@ -193,13 +193,32 @@ GL126_H = REPO / "sane" / "gl126.h"
 PATCH = REPO / "sane" / "gl126-integration.patch"
 
 
+def _function_body(signature: str, end_marker: str = "\nvoid ") -> str:
+    """The source text of one gl126.cpp function, from its signature to
+    the next definition."""
+    src = GL126_CPP.read_text()
+    start = src.index(signature)
+    nxt = src.index(end_marker, start + len(signature))
+    return src[start:nxt]
+
+
 def _offset_calibration_body() -> str:
     """The source text of CommandSetGl126::offset_calibration (up to the
     next member definition) -- the FIRST GL126 hook that writes."""
-    src = GL126_CPP.read_text()
-    start = src.index("void CommandSetGl126::offset_calibration(")
-    nxt = src.index("\nvoid CommandSetGl126::", start + 10)
-    return src[start:nxt]
+    return _function_body("void CommandSetGl126::offset_calibration(",
+                          "\nvoid CommandSetGl126::")
+
+
+def _validate_scan_request_body() -> str:
+    """The source text of validate_scan_request() -- the write-free
+    refusal set both writing entry points share."""
+    return _function_body("const Profile* validate_scan_request(")
+
+
+def _magazine_load_body() -> str:
+    """The source text of magazine_load_if_pending() -- the load half,
+    which since WP-4 runs BEFORE calibration and moves the magazine."""
+    return _function_body("void magazine_load_if_pending(")
 
 
 def test_offset_calibration_preflight_precedes_any_io():
@@ -222,20 +241,31 @@ def test_offset_calibration_preflight_precedes_any_io():
     dev->interface->get_usb_device(), no testsuite precedent constructs a
     device+interface+hook, and the preflight is pure-and-first so
     zero-writes holds by construction. See the Astra report.)"""
-    body = _offset_calibration_body()
-    i_range = body.index("frame < 1 || frame > kFrameMax")
-    i_feedl = body.index("feedl_for_frame(frame")
-    i_geom = body.index("frame_geometry(*profile, frame)")
-    preflight_end = max(i_range, i_feedl, i_geom)
+    # The preflight itself now lives in validate_scan_request() (WP-4:
+    # the magazine's load half needs the SAME refusals, and it runs
+    # EARLIER than calibration -- see the companion test below). What
+    # this test pins is unchanged: the whole refusal set precedes the
+    # first device read and the first write, at the first hook that
+    # writes.
+    preflight = _validate_scan_request_body()
+    for needle in ("frame < 1 || frame > kFrameMax",
+                   "feedl_for_frame(frame",
+                   "frame_geometry(*profile, frame)"):
+        assert needle in preflight, (needle, "missing from validate_scan_request")
+    # And it is write-free by construction: no device I/O in its body.
+    for banned in ("interface->", "check_start_state", "write_table",
+                   "run_program", "run_phase_program"):
+        assert banned not in preflight, (banned, "validate_scan_request must not do I/O")
 
+    body = _offset_calibration_body()
+    i_validate = body.index("validate_scan_request(dev)")
     i_state = body.index("check_start_state(dev)")   # first device read
     i_write = body.index("write_table(dev, BASE_INIT")  # first device write
 
-    assert i_range < i_state, (i_range, i_state)
-    assert preflight_end < i_state, ("preflight must precede the state read",
-                                     preflight_end, i_state)
-    assert preflight_end < i_write, ("preflight must precede the first write",
-                                     preflight_end, i_write)
+    assert i_validate < i_state, ("preflight must precede the state read",
+                                  i_validate, i_state)
+    assert i_validate < i_write, ("preflight must precede the first write",
+                                  i_validate, i_write)
     assert i_state < i_write, (i_state, i_write)
 
     ops_h = GL126_OPS_H.read_text()
@@ -248,8 +278,39 @@ def test_offset_calibration_preflight_precedes_any_io():
             if "feedl_for_frame(" in line or "frame_geometry(" in line:
                 assert banned not in line, (line, banned)
     print("test_offset_calibration_preflight_precedes_any_io OK "
-          "(frame check + feedl_for_frame + frame_geometry precede the state "
-          "read and BASE_INIT; both are pure -- no device/wire param)")
+          "(validate_scan_request precedes the state read and BASE_INIT; "
+          "its own body does no I/O; feedl_for_frame/frame_geometry are pure)")
+
+
+def test_magazine_load_validates_the_request_before_moving_anything():
+    """WP-4 moved the first thing that touches the transport EARLIER than
+    calibration: the core calls load_document() before
+    genesys_scanner_calibration(), and the load half drives the loader
+    motor. The scan request's write-free refusals therefore have to run
+    there too -- otherwise an impossible request (a frame past the
+    holder's six apertures, an unsupported colour mode) would move the
+    magazine and only then be refused (Astra review 2026-09-13).
+
+    Source order, like the offset-calibration test above: once a load is
+    known to be pending, validate_scan_request() precedes the first
+    register read and the load program. The runtime proof that the
+    refusal actually happens, with the mark kept, is
+    tests/test_sane_magazine.py."""
+    body = _magazine_load_body()
+
+    i_pending = body.index("if (!pending) {")            # the early return
+    i_validate = body.index("validate_scan_request(dev)")
+    i_read = body.index("read_register(REG_0x01)")       # first device read
+    i_run = body.index('run_magazine_program(dev, "load"')  # the motor move
+
+    assert i_pending < i_validate, ("no validation when nothing is pending",
+                                    i_pending, i_validate)
+    assert i_validate < i_read, ("validation must precede the first read",
+                                 i_validate, i_read)
+    assert i_validate < i_run, ("validation must precede the load program",
+                                i_validate, i_run)
+    print("test_magazine_load_validates_the_request_before_moving_anything OK "
+          "(validate_scan_request precedes the first read and the load program)")
 
 
 def test_public_frame_option_constraint_is_1_to_6():
@@ -278,6 +339,7 @@ def main() -> int:
         test_frame_geom_safety_bounds,
         test_frame_bounds_enforced_before_any_write,
         test_offset_calibration_preflight_precedes_any_io,
+        test_magazine_load_validates_the_request_before_moving_anything,
         test_public_frame_option_constraint_is_1_to_6,
     ]
     passed = 0

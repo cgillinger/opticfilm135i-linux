@@ -515,6 +515,14 @@ promised scope require them. VueScan stays out of public docs.
   state machine and the on-disk "a release is pending" mark that lets
   `scanimage` load in two invocations (`tests/test_sane_magazine.py`,
   `tests/test_sane_lock.py`). Nothing has driven the motor from C++.
+- **Reviewed and corrected the same evening (Astra), before any hardware.**
+  Four real defects in the new safety model, all fixed and tested:
+  only `OpsError` failed the session (a plain USB exception left a pending
+  load armed); the load ran before the scan request was validated, so an
+  impossible request could move the magazine first; the offline poll cap
+  was honoured on real hardware; and "nothing is stuck" was said about
+  every load timeout instead of the one documented benign signature.
+  `docs/sane-wp4-magazine.md` §9.
 - Minimal hardware test: its own plan, `docs/sane-wp4-hardware-plan.md`,
   **awaiting Christian's go**. This is the load flow — the project's most
   delicate motor sequence, the one that caused the motor stall — driven

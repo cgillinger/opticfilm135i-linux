@@ -55,6 +55,23 @@ namespace {
 
 const char* const kMagazineOptions[] = { "load-film", "eject-film", "magazine" };
 
+/* Which test checkpoint, if any, should throw -- genesys's own injection
+   mechanism (a no-op on the USB interface, a callback here). It throws
+   the shape a real USB failure has: a plain SaneException out of the
+   device layer, NOT an OpsError. Before Astra's 2026-09-13 review that
+   was the hole -- such an exception left the magazine state Released and
+   the pending-load mark on disk after an actual failure. */
+std::string g_throw_at;
+
+void checkpoint_callback(const Genesys_Device&, TestScannerInterface&,
+                         const std::string& name)
+{
+    if (!g_throw_at.empty() && name == g_throw_at) {
+        throw SaneException(SANE_STATUS_IO_ERROR,
+                            "injected: invalid read, scanner unplugged?");
+    }
+}
+
 int find_opt(SANE_Handle h, const char* name)
 {
     for (int i = 1; ; ++i) {
@@ -218,7 +235,19 @@ int cmd_scenario(int argc, char** argv)
     }
     const std::string scenario = argv[2];
 
-    enable_testing_mode(0x07b3, 0x1436, 0x0000, nullptr);
+    if (scenario == "release-usb-failure") {
+        // After the COLD-START program, which is the one magazine program
+        // that runs to completion against the test interface (it carries
+        // no ack reads), so the injection really does land after nine
+        // motor moves' worth of writes.
+        g_throw_at = "gl126_magazine_after_cold_init";
+    } else if (scenario == "eject-usb-failure") {
+        g_throw_at = "gl126_magazine_after_eject";
+    }
+
+    enable_testing_mode(0x07b3, 0x1436, 0x0000,
+                        g_throw_at.empty() ? TestCheckpointCallback()
+                                           : TestCheckpointCallback(checkpoint_callback));
     SANE_Int version = 0;
     if (sane_init(&version, nullptr) != SANE_STATUS_GOOD) {
         std::fprintf(stderr, "sane_init failed\n");
@@ -297,6 +326,31 @@ int cmd_scenario(int argc, char** argv)
         seed(dev, 0x101, 0xF8);
         seed(dev, 0x3B, 0xFF);            // not the state the jog leaves
         seed(dev, 0x3C, 0xFF);
+        call_hook(dev, "load");
+    } else if (scenario == "release-usb-failure") {
+        // The cold-start program completes, then the wire fails. Not an
+        // OpsError: the guard, not run_magazine_program(), has to catch it.
+        seed(dev, 0x01, 0x00);
+        gl126::magazine_mark_write(dev->file_name);   // as if one were pending
+        call_hook(dev, "release");
+    } else if (scenario == "eject-usb-failure") {
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF8);
+        seed(dev, 0x3B, 0x00);
+        seed(dev, 0x3C, 0x00);
+        call_hook(dev, "eject");
+    } else if (scenario == "load-mark-invalid-request") {
+        // A pending load, a scanner in exactly the right state -- and a
+        // scan request that cannot be served. The magazine must NOT move
+        // before that is noticed. Frame 9 is past the holder's six
+        // apertures; the option's own constraint would refuse it, so it
+        // is set behind the option to model a frontend that does not.
+        gl126::magazine_mark_write(dev->file_name);
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF8);
+        seed(dev, 0x3B, 0x00);
+        seed(dev, 0x3C, 0x00);
+        dev->settings.frame = 9;
         call_hook(dev, "load");
     } else if (scenario == "load-after-failure") {
         // A release that failed leaves the transport in a state nobody

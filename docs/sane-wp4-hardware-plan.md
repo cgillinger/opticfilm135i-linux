@@ -27,7 +27,7 @@ deviation into a mystery.
    (`autoConnect` can steal the device at re-enumeration).
 2. No `of135i` process is running and no stale process lock is held:
    `cat /tmp/of135i-07b3-1436.lock` (absent or a dead pid).
-3. No stale magazine mark: `rm -f /tmp/of135i-07b3-1436.magazine`.
+3. No stale magazine mark: `rm -f /tmp/of135i-07b3-1436.lock.magazine`.
    A mark from an earlier session names a device address that no longer
    exists after a power cycle and would be ignored anyway, but starting
    from a clean state makes the log unambiguous.
@@ -44,8 +44,12 @@ deviation into a mystery.
 5. `SANE_DEBUG_GENESYS=8` for the runs below — enough to see every
    magazine transition and poll, low enough not to hex-dump an image
    (level 255 made a scan take 65 s instead of 18 s; never time with it).
-6. `OF135I_SANE_POLL_CAP_MS` must be UNSET. It only ever shortens a
-   wait, and every wait here is the driver's own.
+6. `OF135I_SANE_POLL_CAP_MS` is ignored on real hardware — the backend
+   reads it only when the scanner interface is a mock **and** the
+   library is in test mode (`sane/gl126.cpp`, `magazine_policy()`), so a
+   stray value in a shell profile cannot shorten a motor wait on the
+   unit. Nothing to do here; the gate is in the code, not in this plan
+   (Astra review 2026-09-13).
 
 Record in `docs/test-log.md` before starting: date, time, what is in the
 magazine, whether the scanner was power-cycled, and the backend's sha.
@@ -90,7 +94,7 @@ Expected on the wire, in the debug log:
   loader-sensor bit set (0xf8);
 - `magazine unknown -> released`;
 - the mark file exists and names this device:
-  `cat /tmp/of135i-07b3-1436.magazine`.
+  `cat /tmp/of135i-07b3-1436.lock.magazine`.
 
 Expected mechanically: **the magazine pops loose.** Sound: the jog is a
 verified transport (Tests 17–23, 45, 51); report anything unusual.
@@ -123,10 +127,16 @@ Expected, in order:
   calibration, POSITION (FEEDL 6562 for frame 1), 233 chunks,
   3762 × 5335, PARK.
 
-If the feed does not engage (0xfc instead of 0xf4), the message says so
-in plain words and names the cause: the magazine was not taken fully out
-and reseated. That is a **failed session** — power-cycle and start over
-at A1. It is benign and was seen 2/2 in Tests 48/49; it is not a defect.
+If the **engaging feed** does not complete (the documented 0xfc signature
+instead of 0xf4), the message says so in plain words and names the cause:
+the magazine was not taken fully out and reseated. That one is benign and
+was seen 2/2 in Tests 48/49. Any OTHER failure — the traverse's
+completion, a bad acknowledgement, a short bulk transfer, a USB error —
+gets no such reassurance, because "nothing is stuck" is a claim about
+that one known case and not about every timeout in the sequence.
+
+Either way the session is failed and **this attempt is over**: see §6.
+Do not retry from A1 without reading the log first.
 
 **A4 — eject.**
 
@@ -155,7 +165,7 @@ and the image is a real frame 1.
 
 ## 3. Run B — the same cycle from digiKam
 
-Power-cycle first. In digiKam's scanner dialog ("Specifika alternativ för
+**Only after run A completed and was reviewed.** Power-cycle first. In digiKam's scanner dialog ("Specifika alternativ för
 bildläsare" / Scanner Specific Options):
 
 1. **Load film** → magazine pops loose. Take it out, reseat to the stop.
@@ -176,6 +186,7 @@ that makes the `scanimage` case work, not this one.
 
 ## 4. Run C — the standing requirement: power-cycled with the magazine latched
 
+**Only after runs A and B completed and were reviewed.**
 Christian's standing requirement is that this be a supported operation.
 Today's recipe from the CLI is `of135i load --double-jog` (Test 51, n =
 2). In the backend it is **pressing Load film twice**:
@@ -216,13 +227,24 @@ Test 74's, that is a finding, not an acceptance question.
 
 ---
 
-## 6. Stop rules and recovery (existing rules, nothing new)
+## 6. Stop rules and recovery
 
-- **Any** fail-closed poll, unexpected status, or scraping sound: stop.
-  The backend writes nothing further and attempts no recovery.
-- Recovery is always the same: power-cycle → `of135i load` (or
-  `load --double-jog` if the magazine is latched) → `of135i eject`.
-  The Python driver remains the recovery tool; WP-4 does not replace it.
+**This is the first time C++ drives these motors, so a failure ends the
+approved attempt.** Not "power-cycle and try again": stop, bring the
+scanner to a safe state, read the log, and decide with Christian whether
+there is a second attempt and what changes first. The runs below are
+approved one at a time, not as a loop.
+
+- **Any** fail-closed poll, unexpected status, or scraping sound: stop
+  immediately. The backend writes nothing further and attempts no
+  recovery — that part is automatic and is the design.
+- Bringing the unit to a safe state is the only thing done without
+  further discussion: power-cycle → `of135i load` (or
+  `load --double-jog` if the magazine is latched) → `of135i eject`. The
+  Python driver remains the recovery tool; WP-4 does not replace it.
+- Then: preserve the debug log, the magazine mark file if it still
+  exists, and `of135i status`/`doctor` output, before any further motor
+  command. A deviation is evidence; a retry overwrites it.
 - Never run a magazine action from a session that already failed: the
   backend refuses, and that refusal is correct.
 - If a run leaves the magazine stuck: power-cycle; if still stuck,

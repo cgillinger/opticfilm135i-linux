@@ -1,7 +1,7 @@
 # WP-4 — magazine handling inside the SANE backend (design, offline)
 
 Status: **design decided 2026-09-13, implemented OFFLINE the same day,
-NOT hardware-run.** The two hooks (`load_document()`, `eject_document()`)
+reviewed and corrected the same evening (§9), NOT hardware-run.** The two hooks (`load_document()`, `eject_document()`)
 and the three new options exist in `sane/gl126.cpp` and the integration
 patch; every program is wire-equality-tested against the Python driver;
 nothing has moved the motor from C++ yet. The hardware plan is
@@ -96,7 +96,7 @@ agree before Stage B runs:
 
 1. **In-process:** a per-device record set by Stage A.
 2. **On disk:** `<lock path>.magazine` next to the process lock
-   (`/tmp/of135i-07b3-1436.magazine`, `$OF135I_LOCK_FILE` respected
+   (`/tmp/of135i-07b3-1436.lock.magazine`, `$OF135I_LOCK_FILE` respected
    like the lock), written by Stage A with the USB bus:address of the
    unit it jogged, read by a later process.
 
@@ -242,16 +242,26 @@ call site sheet-fed models use, gated to GL126 by the patch). Order:
 
 1. No mark (memory or disk) → return; nothing read, nothing written.
 2. Disk mark for another bus:address → ignored (deleted), return.
-3. Hardware check, reads only: reg 0x01 == 0x22; status word class F
+3. **The scan request is validated first**, on pure computation: the
+   profile, the frame bound, the travel ceiling, the ledger invariant
+   and the colour mode (`validate_scan_request()`). This hook runs
+   BEFORE calibration, which is where that validation used to live, so
+   without it an impossible request would move the magazine and only
+   then be refused (§9). A refusal here keeps the mark: the request is
+   wrong, the magazine is not.
+4. Hardware check, reads only: reg 0x01 == 0x22; status word class F
    with bit 0x08 set; regs 0x3b/0x3c == 0x00. A clear sensor bit →
    `SANE_STATUS_NO_DOCS` ("no magazine in the slot") with the mark
    kept, so the operator can insert it and scan again. Any other
    mismatch → `SANE_STATUS_INVAL`, mark deleted, state Failed.
-4. The `load` program. Its feed poll not reaching 0xf4 is the
-   "magazine was not reseated" case: the exception text is the
-   driver's `FEED_NOT_ENGAGED_MSG` in one paragraph (power-cycle, then
-   Load film again and reinsert to the stop when it pops out).
-5. A final status-word read must match the traverse target under the
+5. The `load` program. **Its FIRST completion** — the engaging feed —
+   not reaching 0xf4 is the "magazine was not reseated" case, and only
+   that one gets the driver's `FEED_NOT_ENGAGED_MSG` wording ("the
+   scanner is fine and nothing is stuck"). A failure at the traverse's
+   completion, or anywhere else, keeps the neutral message: that
+   reassurance is a claim about one documented benign signature, not
+   about every timeout in the sequence (§9).
+6. A final status-word read must match the traverse target under the
    mask (`load_completion_target()`'s rule) → Loaded, mark consumed.
 
 `sane_start` then continues into offset calibration, whose own S0
@@ -295,6 +305,13 @@ Marks cleared → Ejected.
   state record and its transitions, and three free functions the patch
   calls from the option handlers: `gl126::magazine_release(dev)`,
   `gl126::magazine_eject(dev)`, `gl126::magazine_state_text(dev)`.
+  Two pieces carry the safety model (§9): `MagazineFailGuard`, which owns
+  the outcome of a whole operation rather than leaving it to the
+  innermost handler, and `validate_scan_request()`, the write-free
+  refusal set shared with `offset_calibration()`. Three
+  `test_checkpoint()` calls mark the points where an offline test can
+  inject a failure; they are no-ops on the USB interface, and gl124,
+  gl841 and gl646 use the same mechanism.
   `UsbWire::sleep_ms()` now waits through the scanner interface
   (`sleep_us`) instead of `std::this_thread`: in this backend a wait is
   the interface's business — `ScannerInterfaceUsb` skips it in replay
@@ -415,3 +432,47 @@ tools, as always. `docs/sane-wp4-hardware-plan.md`.
    (`SANE_STATUS_NO_DOCS`, mark kept) rather than running the feed to
    find out.
 8. **`sane_cancel` does not eject**; the model stays non-sheet-fed.
+
+## 9. Review round, 2026-09-13 evening (Astra) — four corrections
+
+Found against HEAD f54ad13, all offline, all fixed before any hardware
+run. Recorded here because each one is a property of the safety model,
+not a tidy-up.
+
+1. **Only `OpsError` failed the session.** `run_magazine_program()`
+   marked the state Failed and dropped the pending load in its
+   `OpsError` handler — but a real USB failure arrives as a plain
+   `SaneException` from the device layer ("invalid read, scanner
+   unplugged?"), and so do the register reads that follow a motor
+   sequence. Those paths left the state Released and the mark on disk
+   after an actual failure, so the next scan would have driven the
+   loader again. Now a `MagazineFailGuard` owns the outcome of the whole
+   operation: armed at the point writes may begin, and on ANY exit other
+   than success it fails the session and clears the mark. Tested by
+   injecting a non-`OpsError` exception mid-sequence through genesys's
+   own test checkpoint (a no-op on the USB interface).
+2. **The load ran before the scan request was checked.** The core calls
+   `load_document()` before calibration, and the write-free validation
+   lived inside `offset_calibration()` — so an impossible request with a
+   release pending would move the magazine first. The validation is now
+   `validate_scan_request()`, called by both, and the load half runs it
+   before touching the device.
+3. **The poll cap was honoured on real hardware.**
+   `$OF135I_SANE_POLL_CAP_MS` was read unconditionally. A shorter wait is
+   not automatically a safer one — a best-effort poll that gives up early
+   continues to the next op, which on the unit could mean continuing
+   before a move has finished. It is now read only when the scanner
+   interface is a mock **and** the library is in test mode. A plan saying
+   "leave it unset" is not a code guarantee.
+4. **"Nothing is stuck" was said about every load timeout.** That
+   reassurance belongs to one documented signature — the engaging feed
+   failing to grip, seen 2/2 in Tests 48/49 — not to a traverse timeout
+   or a bulk failure. The hook now keys the message on which completion
+   failed, and the test suite pins the two completions' order and their
+   loader-sensor bit so the distinction cannot drift.
+
+Also corrected in `docs/sane-wp4-hardware-plan.md`: the mark's path
+(`<lock path>.magazine`, i.e. `/tmp/of135i-07b3-1436.lock.magazine`),
+and the stop rules — a failure ends the approved attempt and the log is
+read before any further motor command, rather than "power-cycle and
+start over".

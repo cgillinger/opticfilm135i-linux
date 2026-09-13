@@ -25,6 +25,7 @@
 #include "gl126_tables.h"
 #include "gl126_ops.h"
 #include "gl126_lock.h"
+#include "test_settings.h"
 #include "image_pipeline.h"
 
 #include <algorithm>
@@ -570,6 +571,61 @@ void run_shading_calibration(Genesys_Device* dev, const Profile& profile)
     cal_stage()[dev] = CalStage::ShadingDone;
 }
 
+/** Everything about a scan REQUEST that can be refused without touching
+    the device: the profile, the frame bound, the travel ceiling, the
+    ledger invariant and the colour mode. Pure computation on the
+    frontend's settings and the frozen geometry -- no device, no wire --
+    so a valid request changes nothing and an invalid one throws before
+    the first register read, let alone the first write. Returns the
+    profile the caller needs anyway.
+
+    Two callers, deliberately:
+      * offset_calibration(), the first hook in a sane_start that writes
+        (Astra reviews 2026-09-10 and 2026-09-11, which is why this
+        validation exists at all);
+      * load_document(), which since WP-4 runs EARLIER than calibration
+        -- the core calls it first -- and MOVES THE MAGAZINE. Without
+        the same check there, an invalid scan request with a release
+        pending would drive the loader and only then be refused (Astra
+        review 2026-09-13). It is pure computation, so running it twice
+        in one sane_start costs nothing and cannot diverge. */
+const Profile* validate_scan_request(Genesys_Device* dev)
+{
+    bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
+    const Profile* profile = find_profile(dev->settings.xres, ir);
+    if (profile == nullptr) {
+        throw SaneException(SANE_STATUS_INVAL, "gl126: no captured profile for %u dpi%s. "
+                            "Nothing was written.",
+                            dev->settings.xres, ir ? " with IR" : "");
+    }
+    unsigned frame = dev->settings.frame;
+    if (frame < 1 || frame > kFrameMax) {
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: frame %u is outside 1-%u (the six-aperture strip "
+                            "holder). Nothing was written.", frame, kFrameMax);
+    }
+    (void) feedl_for_frame(frame, *profile);   // FEEDL + end_hwdpi <= travel ceiling
+    (void) frame_geometry(*profile, frame);    // ledger consistency invariant
+
+    // The visible pass is always the vendor's 3-channel RGB16 capture. Colour,
+    // IR, and host-side gray (HOST_SIDE_GRAY: colour filter NONE, scanned RGB
+    // and reduced on the host) are captures we perform; a single-channel gray
+    // scan with a colour filter (RED/GREEN/BLUE) is not. calculate_scan_session
+    // leaves that request tolerant so option-init parameter queries do not
+    // fail, which makes THIS the real guard.
+    bool host_side_gray = has_flag(dev->model->flags, ModelFlag::HOST_SIDE_GRAY) &&
+                          dev->settings.get_channels() == 1 &&
+                          dev->settings.color_filter == ColorFilter::NONE;
+    if (!(ir || dev->settings.get_channels() == 3 || host_side_gray)) {
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: the visible pass is always the vendor's 3-channel RGB16 "
+                            "capture; a single-channel gray scan is not supported. Use Color, "
+                            "or Gray with colour filter None (host-side gray). Nothing was "
+                            "written.");
+    }
+    return profile;
+}
+
 /* ------------------------------------------------------ magazine (WP-4)
 
    docs/sane-wp4-magazine.md. The vendor's insert flow needs the operator
@@ -651,24 +707,80 @@ MagazineSensor read_magazine_sensor(Genesys_Device* dev)
     return s;
 }
 
+/** Once a magazine operation may have written, ANY way out other than
+    success leaves the transport in a state nobody can name -- so the
+    session is failed and a pending load is invalidated, whatever the
+    exception was.
+
+    Not just OpsError: a real USB failure comes out of IUsbDevice as a
+    plain SaneException ("invalid read, scanner unplugged?"), the
+    register reads that follow a motor sequence throw the same way, and
+    neither went through run_magazine_program()'s handler. Before WP-4's
+    review those paths left the state Released and the mark on disk after
+    an actual failure, so the next scan would have driven the loader
+    again (Astra review 2026-09-13).
+
+    `arm()` is called at the point writes may begin, never before: a
+    refusal that reaches no wire -- a bad frame number, a magazine that
+    is not in the slot -- is not a failure and must not make the session
+    terminal. */
+class MagazineFailGuard {
+public:
+    explicit MagazineFailGuard(Genesys_Device* dev) : dev_(dev) {}
+
+    ~MagazineFailGuard()
+    {
+        if (!armed_ || done_) {
+            return;
+        }
+        // This runs during stack unwinding, where an escaping exception
+        // would terminate the process. Book-keeping and one unlink() --
+        // neither is allowed to become the failure.
+        try {
+            set_magazine_state(dev_, MagazineState::Failed);
+            gl126::magazine_mark_clear();
+        } catch (...) {
+        }
+    }
+
+    MagazineFailGuard(const MagazineFailGuard&) = delete;
+    MagazineFailGuard& operator=(const MagazineFailGuard&) = delete;
+
+    void arm() { armed_ = true; }
+    void succeeded() { done_ = true; }
+
+private:
+    Genesys_Device* dev_;
+    bool armed_ = false;
+    bool done_ = false;
+};
+
 /* Every magazine poll carries its own budget (gl126_tables.h: timeout_ms,
    from the driver's own per-site timeouts), so these policy values only
    ever apply to a program that forgot one -- which validate_op_program()
    in the generator refuses to emit. */
-RunPolicy magazine_policy()
+RunPolicy magazine_policy(Genesys_Device* dev)
 {
     RunPolicy policy;
     policy.poll_timeout_ms = 30000;
     policy.masked_timeout_ms = 30000;
-    /* $OF135I_SANE_POLL_CAP_MS caps every poll site's wait. It exists for
-       offline runs against a mock that never answers -- the cold-start
-       program carries the driver's own 15 s and 30 s budgets at nineteen
-       best-effort sites, which such a run would otherwise spend in real
-       time. It can only SHORTEN a wait: on hardware every one of these
-       polls settles in milliseconds, and a poll that gives up early is
-       either best-effort (logged, the program continues) or fail-closed
-       (the sequence stops with nothing further written) -- never a wait
-       that silently succeeds. Unset in normal use. */
+    /* $OF135I_SANE_POLL_CAP_MS caps every poll site's wait, and is read
+       ONLY when the wire is a mock -- the backend's test mode, where the
+       device answers nothing and the cold-start program would otherwise
+       spend the driver's real 15 s and 30 s budgets at nineteen
+       best-effort sites.
+
+       Gated on the interface, not on the environment: a shorter wait is
+       NOT automatically a safer one. A best-effort poll that gives up
+       early continues to the next op, which on real hardware could mean
+       continuing before a motor move has finished -- so an environment
+       variable must not be able to shorten a wait on the real unit, no
+       matter what a plan or a shell profile says (Astra review
+       2026-09-13). is_mock() is the device's own answer, and
+       is_testing_mode() is a second, independent condition. */
+    if (!dev->interface->is_mock() || !is_testing_mode()) {
+        return policy;
+    }
     const char* cap = std::getenv("OF135I_SANE_POLL_CAP_MS");
     if (cap != nullptr && *cap != '\0') {
         long v = std::strtol(cap, nullptr, 10);
@@ -682,7 +794,25 @@ RunPolicy magazine_policy()
 /** Run one magazine op program (gl126_ops.h magazine_program()). Same
     fail-closed contract as run_phase_program(): the first failure ends
     the program with nothing further written and no recovery attempted. */
-void run_magazine_program(Genesys_Device* dev, const char* name, RunResult& out)
+/** The op index of a program's Nth PollMasked site, or SIZE_MAX. The load
+    hook uses it to tell the engaging feed's completion apart from the
+    traverse's, which need different words for the operator. */
+std::size_t masked_poll_op_index(const OpProgram& prog, unsigned nth)
+{
+    unsigned seen = 0;
+    for (std::size_t i = 0; i < prog.count; ++i) {
+        if (prog.ops[i].kind == OpKind::PollMasked) {
+            if (seen == nth) {
+                return i;
+            }
+            ++seen;
+        }
+    }
+    return static_cast<std::size_t>(-1);
+}
+
+void run_magazine_program(Genesys_Device* dev, const char* name, RunResult& out,
+                          std::size_t* failed_op = nullptr)
 {
     DBG_HELPER_ARGS(dbg, "magazine %s", name);
     const OpProgram* prog = magazine_program(name);
@@ -693,10 +823,14 @@ void run_magazine_program(Genesys_Device* dev, const char* name, RunResult& out)
     }
     UsbWire wire(dev);
     try {
-        run_program(wire, *prog, out, magazine_policy(), nullptr, nullptr);
+        run_program(wire, *prog, out, magazine_policy(dev), nullptr, nullptr);
     } catch (const OpsError& e) {
-        set_magazine_state(dev, MagazineState::Failed);
-        gl126::magazine_mark_clear();
+        /* The session state is the MagazineFailGuard's business (it also
+           covers the exceptions that never reach this handler); here only
+           the message is built. */
+        if (failed_op != nullptr) {
+            *failed_op = e.op_index;
+        }
         const char* what = "I/O failure";
         SANE_Status status = SANE_STATUS_IO_ERROR;
         switch (e.failure) {
@@ -746,14 +880,20 @@ void magazine_release_impl(Genesys_Device* dev)
     }
 
     std::uint8_t reg01 = check_start_state(dev);   // 0x22 or 0x00, else refuses
+
+    // From here on anything may have been written, so any way out other
+    // than success fails the session and invalidates a pending load.
+    MagazineFailGuard guard(dev);
+    guard.arm();
+
     if (reg01 == 0x00) {
         DBG(DBG_info, "gl126: reg 0x01 = 0x00 (cold, never homed) -- running the "
             "vendor cold-start sequence first\n");
         RunResult cold;
         run_magazine_program(dev, "cold_init", cold);
+        dev->interface->test_checkpoint("gl126_magazine_after_cold_init");
         std::uint8_t after = dev->interface->read_register(REG_0x01);
         if (after != 0x22) {
-            set_magazine_state(dev, MagazineState::Failed);
             throw SaneException(SANE_STATUS_IO_ERROR,
                                 "gl126: the cold-start sequence completed but reg 0x01 reads "
                                 "0x%02x, not the idle-homed 0x22. This is a new observation -- "
@@ -762,10 +902,20 @@ void magazine_release_impl(Genesys_Device* dev)
         }
     }
 
-    RunResult open_result, jog_result;
+    RunResult open_result;
     run_magazine_program(dev, "open", open_result);
+    /* genesys's own injection point (a no-op on the USB interface, a
+       callback in test mode). Placed where writes have certainly
+       happened and the sequence is not finished, so an offline test can
+       throw a NON-OpsError exception exactly there and prove the guard
+       above fails the session and drops a pending load -- the hole
+       Astra's 2026-09-13 review found. */
+    dev->interface->test_checkpoint("gl126_magazine_after_open");
+
+    RunResult jog_result;
     run_magazine_program(dev, "jog", jog_result);
 
+    guard.succeeded();
     set_magazine_state(dev, MagazineState::Released);
     if (!gl126::magazine_mark_write(magazine_device_key(dev))) {
         // Not fatal: a frontend that keeps the device open (digiKam) has
@@ -818,6 +968,14 @@ void magazine_load_if_pending(Genesys_Device* dev)
         return;   // nothing read, nothing written
     }
 
+    // A load is pending, so this call is about to MOVE THE MAGAZINE --
+    // and it runs BEFORE calibration, which is where the scan request
+    // used to be validated. Refuse an impossible request here, on pure
+    // computation, so it can never drive the loader and only then be
+    // told the frame number was out of range (Astra review 2026-09-13).
+    // The mark stays: the request is wrong, the magazine is not.
+    (void) validate_scan_request(dev);
+
     // Preconditions, reads only (docs/sane-wp4-magazine.md section 3.3).
     std::uint8_t reg01 = dev->interface->read_register(REG_0x01);
     MagazineSensor sensor = read_magazine_sensor(dev);
@@ -845,17 +1003,29 @@ void magazine_load_if_pending(Genesys_Device* dev)
                             reg01, sensor.status, reg3b, reg3c);
     }
 
+    MagazineFailGuard guard(dev);
+    guard.arm();
+
     RunResult load_result;
+    std::size_t failed_op = static_cast<std::size_t>(-1);
     try {
-        run_magazine_program(dev, "load", load_result);
+        run_magazine_program(dev, "load", load_result, &failed_op);
     } catch (const SaneException& e) {
-        if (e.status() == SANE_STATUS_DEVICE_BUSY) {
-            // The one failure an operator commonly causes themselves, and
-            // the driver's own wording for it (of135i/loadflow.py
-            // FEED_NOT_ENGAGED_MSG): the feed did not engage, 2/2 in
-            // Tests 48/49, because the magazine was not taken fully out
-            // and reseated. The session is failed exactly as before; only
-            // the explanation is human.
+        const OpProgram* prog = magazine_program("load");
+        std::size_t feed_poll = prog != nullptr
+            ? masked_poll_op_index(*prog, 0) : static_cast<std::size_t>(-1);
+        if (e.status() == SANE_STATUS_DEVICE_BUSY && failed_op == feed_poll) {
+            // THE ENGAGING FEED specifically, and nothing else: the one
+            // failure an operator commonly causes themselves, in the
+            // driver's own words (of135i/loadflow.py
+            // FEED_NOT_ENGAGED_MSG). Seen 2/2 in Tests 48/49 with the
+            // benign 0xfc signature. The session is failed exactly as
+            // before; only the explanation is human.
+            //
+            // The traverse's completion, or any other op, gets NO such
+            // reassurance: "nothing is stuck" is a claim about a known
+            // benign case, not about every timeout in the sequence
+            // (Astra review 2026-09-13).
             throw SaneException(SANE_STATUS_DEVICE_BUSY,
                                 "gl126: the load feed did not engage. This is almost always "
                                 "because the magazine was not taken FULLY OUT of the slot "
@@ -867,13 +1037,13 @@ void magazine_load_if_pending(Genesys_Device* dev)
         throw;
     }
 
+    dev->interface->test_checkpoint("gl126_magazine_after_load");
+
     // The traverse's own completion was checked by the program; read the
     // status word once more and require it still, exactly as the driver's
     // load_magazine() does before it calls the magazine loaded.
     MagazineSensor after = read_magazine_sensor(dev);
     if ((after.status & kMagazineStatusMask) != (0xDC & kMagazineStatusMask)) {
-        set_magazine_state(dev, MagazineState::Failed);
-        gl126::magazine_mark_clear();
         throw SaneException(SANE_STATUS_IO_ERROR,
                             "gl126: the magazine load did not complete: reg 0x101 reads "
                             "0x%02x, expected the vendor capture's completion 0xdc under "
@@ -883,6 +1053,7 @@ void magazine_load_if_pending(Genesys_Device* dev)
                             after.status, kMagazineStatusMask);
     }
 
+    guard.succeeded();
     set_magazine_state(dev, MagazineState::Loaded);
     gl126::magazine_mark_clear();
     DBG(DBG_info, "gl126: magazine loaded (reg 0x101 = 0x%02x)\n", after.status);
@@ -951,8 +1122,14 @@ void magazine_eject_impl(Genesys_Device* dev)
                             "Nothing was written.");
     }
 
+    MagazineFailGuard guard(dev);
+    guard.arm();
+
     RunResult eject_result;
     run_magazine_program(dev, "eject", eject_result);
+    dev->interface->test_checkpoint("gl126_magazine_after_eject");
+
+    guard.succeeded();
     set_magazine_state(dev, MagazineState::Ejected);
     gl126::magazine_mark_clear();
     DBG(DBG_info, "gl126: magazine ejected\n");
@@ -1250,53 +1427,9 @@ void CommandSetGl126::offset_calibration(Genesys_Device* dev,
 {
     DBG_HELPER(dbg);
 
-    // Geometry preflight (before ANY device I/O -- read or write). This is
-    // the first hook that writes; without it, offset/gain/shading would
-    // calibrate and write to the wire before begin_scan's own FEEDL check
-    // ever ran, so an out-of-range frame or a window that drives past the
-    // proven travel ceiling would only be caught after real writes. Run
-    // the SAME validation production runs (begin_scan): the 1-kFrameMax
-    // frame bound, then feedl_for_frame() (frame bound again + FEEDL and
-    // end_hwdpi against the travel ceiling) and frame_geometry() (the
-    // ledger invariant). All three are pure computation on the frozen
-    // frames[] ledger -- no device, no wire -- so a valid frame changes
-    // nothing on the wire and an invalid one throws HERE, before
-    // check_start_state's read and before BASE_INIT's first write (Astra
-    // review 2026-09-10; docs/holder-position-design.md).
-    bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
-    const Profile* profile = find_profile(dev->settings.xres, ir);
-    if (profile == nullptr) {
-        throw SaneException(SANE_STATUS_INVAL, "gl126: no captured profile for %u dpi%s",
-                            dev->settings.xres, ir ? " with IR" : "");
-    }
-    unsigned frame = dev->settings.frame;
-    if (frame < 1 || frame > kFrameMax) {
-        throw SaneException(SANE_STATUS_INVAL,
-                            "gl126: frame %u is outside 1-%u (the six-aperture strip "
-                            "holder). Nothing was written.", frame, kFrameMax);
-    }
-    (void) feedl_for_frame(frame, *profile);   // FEEDL + end_hwdpi <= travel ceiling
-    (void) frame_geometry(*profile, frame);    // ledger consistency invariant
-
-    // The visible pass is always the vendor's 3-channel RGB16 capture. Colour,
-    // IR, and host-side gray (HOST_SIDE_GRAY: colour filter NONE, scanned RGB
-    // and reduced on the host) are captures we perform; a single-channel gray
-    // scan with a colour filter (RED/GREEN/BLUE) is not. calculate_scan_session
-    // leaves that request tolerant so option-init parameter queries do not
-    // fail, which makes THIS the real guard: refuse it here, before the first
-    // write, so calibration never runs for a mode we cannot deliver. Pure
-    // computation on the frontend's settings -- no device, no wire (Astra
-    // review 2026-09-11).
-    bool host_side_gray = has_flag(dev->model->flags, ModelFlag::HOST_SIDE_GRAY) &&
-                          dev->settings.get_channels() == 1 &&
-                          dev->settings.color_filter == ColorFilter::NONE;
-    if (!(ir || dev->settings.get_channels() == 3 || host_side_gray)) {
-        throw SaneException(SANE_STATUS_INVAL,
-                            "gl126: the visible pass is always the vendor's 3-channel RGB16 "
-                            "capture; a single-channel gray scan is not supported. Use Color, "
-                            "or Gray with colour filter None (host-side gray). Nothing was "
-                            "written.");
-    }
+    // Everything this scan request can be refused for, refused before any
+    // device I/O at all (validate_scan_request(), above).
+    const Profile* profile = validate_scan_request(dev);
 
     // S0: only the idle-homed state is accepted. A cold unit (0x00) is
     // brought up by the magazine load flow, which is not a hook.
@@ -1309,7 +1442,8 @@ void CommandSetGl126::offset_calibration(Genesys_Device* dev,
                             "Nothing was written.", state);
     }
 
-    DBG(DBG_info, "gl126: offset calibration, profile %s frame %u\n", profile->name, frame);
+    DBG(DBG_info, "gl126: offset calibration, profile %s frame %u\n", profile->name,
+        dev->settings.frame);
 
     // S1: base table + AFE base values, as the driver's initialize() writes
     // them (verified byte-exact on hardware, Test 43).

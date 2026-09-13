@@ -2459,7 +2459,24 @@ def test_magazine_programs_are_structurally_sound():
         for op in info:
             if op["kind"] == "PollMasked":
                 assert op["mask"] == "fb", (name, op)
-    print("test_magazine_programs_are_structurally_sound OK (5 programs)")
+
+    # The load program's two completions, in order and distinguishable:
+    # the engaging feed wants the done class with the loader-sensor bit
+    # CLEAR (the cassette was pulled past the sensor, captured 0xf4 under
+    # the mask), the traverse wants it SET again (captured 0xdc -> 0xd8).
+    # gl126.cpp's load hook keys its operator message on WHICH of the two
+    # failed -- "the feed did not engage, nothing is stuck" is a claim
+    # about the first one only -- so the order and the sensor bit are
+    # pinned here rather than left implicit (Astra review 2026-09-13).
+    load_info = _probe_program_info(probe, "magazine", "load")
+    load_polls = [op for op in load_info if op["kind"] == "PollMasked"]
+    assert len(load_polls) == 2, load_polls
+    assert int(load_polls[0]["want"], 16) == 0xF0, load_polls[0]
+    assert int(load_polls[1]["want"], 16) == 0xD8, load_polls[1]
+    assert int(load_polls[0]["want"], 16) & 0x08 == 0, "feed: sensor bit clear"
+    assert int(load_polls[1]["want"], 16) & 0x08 != 0, "traverse: sensor bit set"
+    print("test_magazine_programs_are_structurally_sound OK "
+          "(5 programs; the load's feed and traverse completions distinguishable)")
 
 def main() -> int:
     tests = [
