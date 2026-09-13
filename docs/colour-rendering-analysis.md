@@ -1,7 +1,11 @@
 # The colour cast in our preview positives — what is measured, and what is not
 
-Status: **observations only. The cause is NOT established, and no colour
-change has been implemented.** An earlier revision of this document
+Status: **RESOLVED 2026-09-13, as far as our code is concerned, and no
+colour change has been implemented.** The vendor's own software renders
+the same strip *more* strongly yellow than we do, and a different stock
+renders neutrally through the vendor's unchanged settings. The cast
+belongs to that first strip, not to anyone's rendering code (§8).
+An earlier revision of this document
 (2026-09-13, commit `0aab922`) claimed the cast was caused by the orange
 mask never being removed. **That claim was wrong** and is retracted in
 §5, which explains why. What survives is a set of measurements, kept here
@@ -19,16 +23,21 @@ has reported it on the accepted production set (Test 58/N3, 2026-09-10)
 and again on the WP-4 frame of 2026-09-13.
 
 Measured on frame 1 of 2026-09-13 (`wp4-f1.tiff`), as channel means on an
-8-bit scale, against the vendor's own rendering of a different strip:
+8-bit scale. The last two rows are the vendor's own software rendering
+**the same strip**, obtained the same evening (§8):
 
-| renderer | R − G | B − G |
-|---|---|---|
-| `of135i.image.to_positive()` | −26.0 | −66.9 |
-| an ad-hoc linear-inversion preview (§4) | −14.0 | −93.6 |
-| Plustek QuickScan, JPEG path, other strip | −0.8 | −11.8 |
+| renderer | R − G | B − G | median B |
+|---|---|---|---|
+| `of135i.image.to_positive()` | −26.0 | −66.9 | 98 |
+| an ad-hoc linear-inversion preview (§4) | −14.0 | −93.6 | 76 |
+| Plustek QuickScan, JPEG, same strip | −0.9 | −115.4 | 22 |
+| Plustek QuickScan, TIFF, same strip | −1.3 | −111.3 | 20 |
+| Plustek QuickScan, JPEG, *different* strip (2026-08-29) | −1.0 | −11.7 | 149 |
 
-Blue is deficient in both of our renderings. Low blue is yellow. The
-symptom is real and it is in our output.
+Blue is deficient in our renderings. Low blue is yellow. The symptom is
+real and it is in our output. **It is also, and more strongly, in the
+vendor's output for this strip** — which changes what the symptom means.
+See §8.
 
 ## 2. What `to_positive()` actually does
 
@@ -153,10 +162,94 @@ None of this is scheduled; it is what a real diagnosis would need.
 2. **A known-good reference rendering of the same raw file** — darktable's
    negadoctor, or another established negative pipeline — to separate
    "our renderer is wrong" from "this negative is like that".
-3. **A vendor rendering of the same strip.** Attempted 2026-09-13 and it
-   failed: QuickScan's 48-bit TIFF path clipped blue to zero across
-   30–79 % of every frame (measured independently twice). Its JPEG path
-   is the one that works for negatives. Not retried; it needs hardware.
+3. ~~**A vendor rendering of the same strip.**~~ **Obtained 2026-09-13.**
+   It does not support the idea that our renderer is at fault; see §8.
 
-Until at least one of those exists, the honest position is that we have a
-symptom, a precise description of it, and no cause.
+Items 1 and 3 are now answered: a second strip of a different stock
+(Kodak Gold 200) renders neutrally through the vendor path, and the
+vendor rendering of the original strip exists. Item 2 is the only one
+left, and it is no longer needed to exonerate our code — it would only
+characterise the first strip more precisely.
+
+## 8. The vendor reference, and what it settles
+
+Obtained 2026-09-13, after two failed attempts. It took three runs of the
+same six-frame strip through Plustek QuickScan on the same evening,
+changing exactly one output setting at a time, because the first two
+attempts were misread.
+
+**What was run.** 48-bit TIFF, then 24-bit TIFF, then 24-bit JPEG. Bit
+depth and container were each held constant while the other changed. All
+three carried identical capture settings, verified afterwards against the
+application's saved `Pref.ini` rather than against anyone's memory of
+what was clicked: negative mode, 3600 dpi, auto-exposure **off**, scratch
+removal off, the non-IR ICC profile applied.
+
+**The result: the output path makes no difference.** Per frame, blue's
+channel mean moves by less than half a level between the 24-bit TIFF and
+the 24-bit JPEG, and B − G moves by less than 5 parts in 170. The two
+files are visually indistinguishable. Every output variable was held
+constant in turn and the cast followed none of them.
+
+**A measurement trap, recorded because it nearly cost a wrong
+conclusion.** The *fraction of pixels at exactly zero* is not comparable
+across containers. Frame 2 reads 53 % zeros as TIFF and 20 % as JPEG with
+an identical channel mean, because the JPEG's DCT lifts clipped zeros to
+small positive values. That statistic was the discriminator used through
+most of the investigation and it is container-dependent. Channel means
+and B − G are the figures that hold.
+
+**What the reference actually says.** The vendor's own software renders
+this strip with blue at a median of 22 on an 8-bit scale, against our 98.
+Its B − G is about −160 averaged over the six frames, against our −66.9.
+**Our renderer does not exaggerate the blue deficit; it understates it,
+by a wide margin.** The images bear the numbers out on inspection: the
+vendor's version is close to monochrome yellow-green, ours retains colour
+in clothing and in the flowers.
+
+**What it does not say.** Both renderings descend from the same raw
+capture on the same scanner, so a deficiency in the scanner's blue
+channel would appear in both. Two facts argue against that being the
+explanation, without closing it:
+
+- The gain codes for this strip are R 46 / G 32 / B 39, identical to
+  every run since Test 58. Test 60 established that these are measured
+  before the film and are film-independent, so the capture front end is
+  behaving exactly as it did when neutral results were produced.
+- A different strip, scanned on this scanner through this software on
+  2026-08-29, renders neutrally (B − G −11.7, median blue 149).
+
+**That last question was then settled, the same evening.** A four-frame
+strip of Kodak Gold 200 was scanned through the **unchanged** vendor
+settings, verified against `Pref.ini` beforehand, and it renders
+neutrally:
+
+| set | B − G across frames | median blue |
+|---|---|---|
+| strip 1, the six-frame strip | −115 to −172 | 20 |
+| strip 2, Kodak Gold 200 | −6.6 to −32.0 | 136–150 |
+| a third strip, 2026-08-29 | −11.7 | 149 |
+
+Same software, same scanner, same evening, nothing touched between runs.
+The vendor path works and the settings are not the fault. It also
+disposes of the leading hypothesis about auto-exposure, which was off for
+this run too.
+
+**Conclusion.** The cast is not produced by our rendering code, and it is
+not produced by the vendor's settings. It belongs to the first strip
+itself — an unusually dense or aged negative, a stock the chosen film
+profile does not suit, or both. Our renderer handles that material
+*better* than the vendor's does, which is the opposite of what was
+suspected when this document was opened.
+
+**What this closes.** The colour question has been open since Test 58
+(N3, 2026-09-10), where the eye acceptance passed but the verdict on
+colour was parked pending a vendor comparison of the same strip. That
+comparison now exists, and the verdict is that no colour change is
+warranted on this evidence. The driver keeps delivering linear raw data
+and `to_positive()` stays as it is.
+
+**Provenance.** The vendor renderings are archived outside this
+repository, per the standing rule that conclusions may travel but vendor
+files may not. The measurements above were taken independently on the
+Linux host and in the Windows VM, by different code paths, and agree.

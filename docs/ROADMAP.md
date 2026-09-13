@@ -675,10 +675,52 @@ normalises per channel, so the mask is removed by construction and a
 constant error in measuring it would cancel anyway. See
 `docs/colour-rendering-analysis.md` §5.
 
-The cast itself is real and measured (`to_positive()` on frame 1:
-R − G = −26.0, B − G = −66.9 against the vendor's −0.8 / −11.8), but it
-has **no established cause**, and no colour change should be implemented
-until it does. What a diagnosis would need is listed in §7 of that
-document: a second strip of a different stock, a known-good reference
-rendering of the same raw file, or a working vendor rendering of this
-strip (attempted and failed — the 48-bit path clips blue).
+The cast itself is real and measured, but it has **no established
+cause**, and no colour change should be implemented until it does.
+
+**The vendor rendering of this strip was obtained on 2026-09-13** (Test
+80) and it removes our code from suspicion rather than implicating it:
+the vendor's own software renders the same strip at B − G ≈ −160 and a
+median blue of 22, against our −66.9 and 98. Our renderer understates the
+blue deficit; it does not exaggerate it. Bit depth and container were
+each excluded by holding one constant while changing the other. What
+remains open is whether the cast belongs to this negative or to the
+exposure setting used for it, which a single scan of a different stock
+through unchanged vendor settings separates.
+
+**The physical Eject button works while the vendor's software is
+running** (observed 2026-09-13). That is a data point about where the
+button lives, not just a convenience: QuickScan polls the interrupt
+endpoint continuously — the same endpoint whose 0x48 event triggers its
+automatic load — so the button is almost certainly reported there and
+acted on by the application, not by the firmware. Consequences:
+
+- **Our SANE backend cannot do this**, and the reason is structural: the
+  genesys USB abstraction has no interrupt transfer at all. This is
+  already recorded as limitation 5 of the submission package. The SANE-
+  shaped answer is the standard one — expose button and sensor as
+  read-only sensor options and let `scanbd` poll them — which needs the
+  endpoint read to exist somewhere first.
+- **The Python driver already reads that endpoint** (it drains EP 0x83
+  during the load flow, Test 20), so it is the natural home for a
+  button watcher, matching the optional user-service design line that
+  has been sketched but not decided.
+- **Reinserting the magazine auto-loads it** under the vendor's software
+  (observed 2026-09-13): the operator pulls the magazine out and pushes
+  it back to the stop, and the load runs with no button pressed. This is
+  the operator-side confirmation of the mechanism `docs/sane-wp4-
+  magazine.md` describes from the captures — the 0x48 insert event on the
+  same endpoint triggers the vendor's LOAD directly, which is precisely
+  why our two-step protocol exists: SANE has no background thread, so we
+  run LOAD at the next call instead. Same endpoint, same reason.
+- **That measurement has now been made** (Test 81, 2026-09-13). A press
+  delivers **one byte, 0x48, on EP 0x83**, and the vendor's application
+  reacts 0.6 s later with control writes that appear nowhere else in the
+  capture; the magazine then drives out and the button's light goes from
+  blue to orange. The interrupt precedes every command, so the press
+  itself is what is reported. **Seven events across three captures, all
+  0x48**, whether caused by a press or by an insert: the notification
+  carries no event type, and the vendor's application discriminates by
+  reading registers afterwards. A watcher must do the same. It must also
+  re-arm quickly — the application re-submits its interrupt read 0.7–1.8 s
+  after each completion, and anything inside that window is invisible.

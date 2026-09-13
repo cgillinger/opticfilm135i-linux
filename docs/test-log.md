@@ -5485,3 +5485,160 @@ is done.
 
 Nothing dead remains in the cold start. What is left is 17.0 s of real
 waiting, almost all of it the nine homing moves.
+
+---
+
+### Test 80: the vendor reference of the current strip — three runs, one conclusion
+
+**2026-09-13, evening. Windows VM, Plustek QuickScan. No Linux-side
+scanner traffic; the device stayed attached to the guest throughout.**
+
+**Purpose.** `docs/colour-rendering-analysis.md` §7 listed "a vendor
+rendering of the same strip" as one of three things that would settle
+whether the yellow cast in our preview positives belongs to our code.
+Two earlier attempts had produced files with blue crushed to zero and
+were treated as vendor-path failures rather than as results.
+
+**What was run.** The same six-frame strip, three times, changing exactly
+one output setting per run and nothing else:
+
+| run | depth | container | outcome |
+|---|---|---|---|
+| 1 | 48-bit | TIFF | blue at zero across 30–79 % of each frame |
+| 2 | 24-bit | TIFF | same rendering |
+| 3 | 24-bit | JPEG | same rendering |
+
+Capture settings were verified **after the fact** against the
+application's saved `Pref.ini`, not against recollection: negative mode,
+3600 dpi, auto-exposure off, scratch removal off, non-IR ICC profile
+applied. They were identical across all three runs.
+
+**Result.** The output path makes no difference. Between runs 2 and 3,
+blue's channel mean moves by under half a level per frame and B − G by
+under 5 parts in 170; the images are visually indistinguishable. Both bit
+depth and container are excluded as causes.
+
+**The figure that matters.** On frame 1, the vendor renders blue at a
+median of 22 on an 8-bit scale against our `to_positive()`'s 98, and
+B − G of −115 against our −67. Averaged over the six frames the vendor
+sits near −160. **Our renderer understates the blue deficit relative to
+the vendor's; it does not exaggerate it.** A strip scanned through the
+same software on the same scanner on 2026-08-29 renders neutrally
+(B − G −11.7, median blue 149), so this is not a property of the vendor
+path in general.
+
+**Supporting measurement from our own side.** The gain codes recorded in
+our WP-4 scan of this strip are R 0x2e / G 0x20 / B 0x27 — 46/32/39, the
+same values as every run since Test 58. Test 60 established that these
+are measured off the surface ahead of the film and are film-independent,
+so the capture front end was behaving identically.
+
+**Two errors made during this work, both corrected before any conclusion
+was recorded.**
+
+1. *The container hypothesis.* After run 2, the difference between the
+   failing September TIFFs and the neutral August JPEGs was attributed to
+   the container. Those two sets differ in **two** variables at once,
+   format and strip, and only the strip was actually controlled. The
+   confound was noticed and stated at the time, and the conclusion was
+   drawn and relayed anyway. Run 3 is what produced the first same-strip
+   pair, and it disproved it.
+2. *The zero-fraction statistic.* "Percentage of pixels at exactly zero"
+   was the discriminator used through most of the evening, and it is
+   **not comparable across containers**: frame 2 reads 53 % zeros as TIFF
+   and 20 % as JPEG at an identical channel mean, because the JPEG's DCT
+   lifts clipped zeros off the floor. Channel means and B − G are the
+   figures that survive a format change.
+
+**Verification.** All figures were measured independently on the Linux
+host and inside the VM, by different code paths, and agree. The six JPEGs
+were copied out with SHA256 sums verified against the source, 6/6.
+
+**Conclusion.** The cast is not produced by our rendering code, and item 3
+of `colour-rendering-analysis.md` §7 is answered. What remains open is
+whether it belongs to this negative or to the exposure settings used for
+it. One scan of a different strip through unchanged vendor settings
+separates those two.
+
+**Vendor files** (renderings, ICC profiles, `Pref.ini` contents) are
+archived outside this repository and are never published.
+
+---
+
+### Test 81: the physical Eject button — where it lives, captured in one press
+
+**2026-09-13, evening. usbmon capture on the Linux host while the vendor's
+software drove the device from the Windows VM. No Linux-side scanner
+traffic: the host only listened.**
+
+**Purpose.** Christian observed that the scanner's physical Eject button
+works while QuickScan is running, and asked whether that could be
+recorded. The button has never been captured, and without knowing what a
+press produces on the wire, nothing can be built on it.
+
+**Method.** `usbmon` loaded, `tcpdump -i usbmon1` started with the device
+idle and the vendor's software running, one button press, capture
+stopped. 20.5 s total, 148 kB — small enough that the event cannot hide.
+The capture is archived in the private analysis area.
+
+**Result — the causal chain, with times relative to capture start:**
+
+| t | event |
+|---|---|
+| 9.659 s | one interrupt transfer on **EP 0x83**, one byte, value **0x48** |
+| 10.237 s | the application issues two control writes that appear **nowhere earlier** in the capture, plus two reads at a register it had not read |
+| 11 s → | the idle poll loop drops from ~130 packets/s to ~25 |
+
+Christian confirmed the physical outcome: **the magazine was driven out
+and the button's light changed from blue to orange**, which matches the
+documented latched/loose states.
+
+**What this establishes.** The interrupt arrives **before** any command
+the application sends, so it cannot be the magazine's movement being
+reported — the magazine had not moved yet. The press itself is delivered
+on the interrupt endpoint, and the vendor's *application* then commands
+the eject. The firmware does not do it autonomously.
+
+That settles the design question:
+
+- **Our SANE backend structurally cannot do this.** The genesys USB
+  abstraction has no interrupt transfer at all. This is already
+  limitation 5 of the WP-3 package, and it is now the reason the button
+  cannot be a backend feature rather than a guess that it might not be.
+- **The Python driver already reads EP 0x83** (it drains it during the
+  load flow, Test 20), so a button watcher belongs there, matching the
+  optional user-service design line.
+- The SANE-shaped route remains read-only sensor options polled by
+  `scanbd`, which needs the endpoint read to exist somewhere first.
+
+**That open question was then closed, in the same session.** Two further
+captures were taken while Christian repeated a cycle of *press Eject →
+pull the magazine out → push it back to the stop* several times over,
+with pauses so the events separate in time. Result across all three
+captures, **seven events, without exception**:
+
+> every interrupt on EP 0x83 is the single byte **0x48**, whatever caused
+> it — a button press or a magazine insert.
+
+So 0x48 is a bare "state changed, come and look" notification. It carries
+no event type, and the vendor's application discriminates by reading
+registers afterwards: a read of 0x22 via wValue 0x018e follows every
+event, returning the familiar two-byte status word. **A button watcher
+must therefore poll registers after the notification; the notification
+alone cannot tell a press from an insert.**
+
+**One practical consequence for any watcher we build.** The endpoint is
+not continuously armed. The application re-submits its interrupt read
+0.7–1.8 s after each completion, and an event falling inside that window
+cannot be seen. A watcher that re-arms slowly will silently drop presses.
+
+**Provenance.** Three captures, archived in the private analysis area.
+The host only listened; no command was sent to the device from Linux.
+
+**Related observation, same evening.** Pulling the magazine out and
+pushing it back to the stop **auto-loads it** under the vendor's
+software, with no button pressed. That is the operator-side confirmation
+of the mechanism `docs/sane-wp4-magazine.md` describes from the captures:
+the insert event on this same endpoint triggers the vendor's LOAD
+directly. It is precisely why our two-step protocol exists — SANE has no
+background thread, so we run LOAD at the next call instead.
