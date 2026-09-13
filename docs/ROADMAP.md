@@ -565,7 +565,17 @@ promised scope require them. VueScan stays out of public docs.
 - Stop condition: any deviation stops WP-4; no blind retry, no recovery
   experiments.
 
-**WP-3 — SANE submission package, prepared only (B2).**
+**WP-3 — SANE submission package, prepared only (B2). PREPARED
+2026-09-13 — see `docs/sane-wp3-submission.md`.** A four-commit series on
+branch `wp3-gl126-submission`, based on sane-backends `1d47d7c`, with the
+GL126 files as REAL files rather than the development symlinks: it builds
+clean from the branch alone (zero warnings), exports the same 107 gl126
+symbols as the development build, and passes the three backend-dependent
+offline suites (33 tests) run against it. The SANE checklist items that
+apply to a new ASIC in an existing backend are done, including a licence
+header the two generated files were missing. **Nothing has been sent, and
+B2 is not complete**; what remains before anything could be is §7 of that
+document.
 - Goal / acceptance: a review-ready branch and evidence bundle exist LOCALLY /
   in Christian's repo — nothing is sent. Contents, mapped to SANE's process
   (`doc/backend-writing.txt`; the project's GitLab merge-request flow):
