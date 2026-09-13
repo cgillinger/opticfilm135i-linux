@@ -5098,3 +5098,78 @@ CLI). plain3600 now has its recorded eye acceptance for geometry and
 integrity. What this does NOT close: B1 as a whole — whether `of135i
 load`/`eject` alongside the SANE scan satisfies "load, scan a frame,
 deliver" is Christian's decision (docs/sane-wp2-hardware-plan.md §9).
+
+### Test 75: WP-4 — the backend loads and ejects the magazine by itself (run A)
+
+2026-09-13, 17:00–17:04, mintuu. The first time C++ has driven these
+motors. Backend `c2f185274406b189` installed normally
+(`/usr/lib64/sane/libsane-genesys.so.1 -> libsane-genesys-gl126.so.1.4.0`,
+config path `/etc/sane.d`, `verify` exit 0, device
+`genesys:libusb:001:007`). Christian power-cycled first; the colour
+negative is the strip used in earlier sessions, loose in the slot (his
+confirmation — the loader sensor reports presence, never latching).
+Debug level 8. Logs and the image in
+`plustek-135i-analys/wp4-20260913/`; preview in
+`~/Bilder/opticfilm-granskning/wp4-20260913/`.
+
+**Run A of docs/sane-wp4-hardware-plan.md, complete.** The load, the scan
+and the eject were all driven by `scanimage`; no `of135i` command took
+part in the cycle. (`of135i status`/`doctor` were run before, between and
+after for the record — read-only, and the plan permits them.)
+
+- **A1 `--load-film`, from cold (reg 0x01 = 0x00).** The cold-start
+  program ran its nine motor moves, then the device-open table and the
+  jog. ~40 s, exit 0. Every motor completion went busy → done: 0xd9 →
+  0xf8 in 1.0–1.9 s, the reg 0x35 settle poll 0xbb on its first read.
+  The jog's four completions read **0xf8 on the FIRST poll, 4–8 ms** —
+  the captured value. `magazine unknown -> released`; the mark file was
+  written naming `libusb:001:007`. Magazine came loose; Christian
+  reports nothing abnormal in any of the three motor steps.
+- **The cold start's opening ready poll never settled: 0x48, 1935 polls,
+  15001 ms, gave up, sequence continued.** This is the documented
+  cold-start behaviour (the 0x4855 timeout of Tests 45/51) and it is the
+  first hardware confirmation that `PollBestEffort` was the right call:
+  a fail-closed poll there would have failed the cold start every time,
+  which is exactly the "power-cycled + latched magazine" case the
+  standing requirement is about.
+- **A2** Christian took the magazine fully out and reseated it to the
+  stop.
+- **A3 `--frame 1 --mode Color --resolution 3600`.** `load_document`
+  found the pending mark, re-read the hardware and ran the LOAD: the
+  **engaging feed completed 0xf4 on the first poll** (done class, loader
+  sensor CLEAR — the cassette pulled past the sensor) and the
+  **traverse 0xdd → 0xdc in 4 polls / 28 ms**. `magazine loaded (reg
+  0x101 = 0xdc)`, mark consumed. Then the already-verified pass:
+  positioning to frame 1 at **FEEDL 6562** (budget 4842 ms), scan pass
+  line register 5367 / 5359 raw lines, **120 963 348 raw bytes read,
+  exactly the expected count**, then PARK — Wait A 0xfb first poll, Wait
+  B 0x81 → 0xe8 in 3775 ms, "parked (2 waits recorded)". Exit 0, no
+  warning in the log beyond the generic genesys banner.
+- **A4 `--eject-film`.** Completion 0xc9 → 0xe8 in 937 ms, `magazine
+  ejected`, exit 0. Christian: "Eject fungerade."
+- **A5, the open observation — the prediction did NOT hold.** The
+  backend cannot drain the interrupt endpoint (the genesys USB
+  abstraction has no interrupt transfer), so a backend-driven load was
+  expected to leave EP 0x83 in the EOVERFLOW state until the next power
+  cycle. It did not: `doctor` afterwards read the endpoint normally and
+  reported a sensor event. n = 1; the limitation stands as documented,
+  but it did not materialise here.
+
+**Image (working-image check, not the production eye rule — the image
+path is unchanged from Test 74).** `wp4-f1.tiff`, measured: 3762 × 5335,
+3 channels, **16 bit/channel** (`low_byte_nonzero` 0.9960, so genuine
+16-bit and not 8-bit upscaled), 0.0000 % clipped high, 0.0000 % clipped
+low. A real frame: six people at a waterfront, whole frame with both
+aperture edges present, no banding. Colour is not assessed here and
+remains parked on the vendor comparison.
+
+**What this closes.** WP-4's acceptance criteria 1, 2, 3 and 6: a full
+load → scan → eject cycle driven from a SANE frontend alone, a real
+frame, normal sound, and every magazine transition matching the state
+machine with no poll failing closed. **What it does not close:** run B
+(the same cycle from digiKam, plus a second frame on the same load) and
+run C (power-cycled with the magazine latched, two presses of Load film).
+Each is approved separately. B2 also still needs WP-3.
+
+Physical state at the end: magazine ejected and loose, still in the slot;
+unit at reg 0x01 = 0x22.

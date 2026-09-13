@@ -523,8 +523,21 @@ promised scope require them. VueScan stays out of public docs.
   was honoured on real hardware; and "nothing is stuck" was said about
   every load timeout instead of the one documented benign signature.
   `docs/sane-wp4-magazine.md` §9.
-- Minimal hardware test: its own plan, `docs/sane-wp4-hardware-plan.md`,
-  **awaiting Christian's go**. This is the load flow — the project's most
+- **RUN A DONE ON HARDWARE 2026-09-13 (Test 75).** A full load → scan →
+  eject cycle driven from `scanimage` alone, no `of135i` command in it:
+  release from cold (nine motor moves, the jog's four completions 0xf8 on
+  the first poll), the operator's reseat, then the LOAD — engaging feed
+  0xf4 first poll, traverse 0xdc — followed by the already-verified pass
+  (FEEDL 6562, 120 963 348 raw bytes, PARK) and the eject. A real frame 1,
+  3762 × 5335, 16 bit/channel, nothing clipped, no banding; sound normal.
+  The cold start's opening ready poll timed out at 15 s and the sequence
+  continued, which is the first hardware confirmation that the
+  best-effort poll policy was right. Acceptance criteria 1, 2, 3 and 6
+  met.
+- Remaining: **run B** (the same cycle from digiKam, plus a second frame
+  on the same load) and **run C** (power-cycled with the magazine
+  latched, two presses of Load film) — each approved separately.
+- Minimal hardware test plan: `docs/sane-wp4-hardware-plan.md`. This is the load flow — the project's most
   delicate motor sequence, the one that caused the motor stall — driven
   from C++ for the first time. Not a piggy-back on another session.
 - Take together with: the standing requirement that "power-cycled + latched
