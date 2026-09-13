@@ -98,6 +98,25 @@ installed_name() {
 
 is_ours() { case "$1" in libsane-genesys-gl126.so.*) return 0 ;; *) return 1 ;; esac; }
 
+# The config directory compiled into the library (sanei_config's DEFAULT_DIRS,
+# "./:<sysconfdir>/sane.d"). It MUST match where genesys.conf actually lives.
+# scanimage can paper over a wrong one -- libsane.so.1 sits in the global
+# symbol scope there and interposes its own sanei_config_open -- but a
+# frontend that loads SANE through a dlopen'd plugin with RTLD_LOCAL (digiKam
+# via its Qt scanner plugin) gets the library's own path and finds no config
+# at all: "Couldn't access configuration file 'genesys.conf'". Found the hard
+# way 2026-09-13.
+built_config_dirs() {
+    strings -a "$1" 2>/dev/null | grep -E '^\.:(/[^:]+)+/sane\.d$' | head -1
+}
+
+# Where genesys.conf lives, as the library would have to see it (no staging
+# prefix: the compiled-in path is absolute and knows nothing about ROOT).
+system_config_dir() {
+    local c="${CONF#$ROOT}"
+    dirname "$c"
+}
+
 # Distribution libraries present in the backend dir (ours excluded).
 distro_libs() {
     local dir="$1" f base
@@ -127,6 +146,12 @@ cmd_status() {
     if b="$(built_lib 2>/dev/null)"; then
         echo "built library  : $b"
         echo "                 sha256 $(sha256sum "$b" | cut -c1-16)...  $(nm -C "$b" 2>/dev/null | grep -c gl126 || true) gl126 symbols"
+        local cfg; cfg="$(built_config_dirs "$b")"
+        if [ "$cfg" = ".:$(system_config_dir)" ]; then
+            echo "                 config path $cfg (matches $(system_config_dir))"
+        else
+            echo "                 config path ${cfg:-unknown} -- MISMATCH, expected .:$(system_config_dir)"
+        fi
     else
         echo "built library  : NOT BUILT"
         b=""
@@ -186,6 +211,24 @@ cmd_install() {
     # (grep -q would SIGPIPE nm, and pipefail would turn that into a failure)
     [ "$(nm -C "$src" | grep -c gl126 || true)" -gt 0 ] \
         || die "the built library carries no gl126 symbols"
+    local cfgdirs want_cfg
+    cfgdirs="$(built_config_dirs "$src")"
+    want_cfg=".:$(system_config_dir)"
+    if [ -z "$cfgdirs" ]; then
+        echo "sane_install: warning: could not read the config path compiled into" >&2
+        echo "              $src -- skipping that check" >&2
+    elif [ "$cfgdirs" != "$want_cfg" ]; then
+        die "the built library looks for its config in '$cfgdirs', but genesys.conf
+    lives in '$(system_config_dir)'. scanimage would still work (libsane
+    interposes its own path), but a frontend that loads SANE through a
+    dlopen'd plugin -- digiKam does -- would fail with \"Couldn't access
+    configuration file 'genesys.conf'\".
+    Rebuild with the right sysconfdir, then install again:
+        cd $CLONE && ./configure --sysconfdir=$(dirname "$(system_config_dir)") \\
+            BACKENDS=genesys --disable-locking --without-gphoto2 --without-v4l
+        make -C sanei clean && make -j8 -C sanei
+        make -C backend clean && make -j8 -C backend libsane-genesys.la"
+    fi
     [ -w "$dir" ] || die "$dir is not writable"
     [ -L "$link" ] || die "$link is not a symlink -- refusing to touch it"
     [ -f "$CONF" ] || die "$CONF does not exist -- is sane-backends installed?"

@@ -1,8 +1,15 @@
 # WP-2 — install & frontend: minimal hardware plan
 
 Written offline 2026-09-13 at HEAD `aed052a` (+ the WP-2 offline commit).
-**Do not run until Christian approves it.** It closes three things and
-nothing else:
+
+> **RUN AND PASSED 2026-09-13 — see `docs/test-log.md`, Test 74.** All three
+> goals below were met, on the second install: the first build carried
+> `/usr/local/etc/sane.d` as its compiled config path (no `--sysconfdir=/etc`),
+> which `scanimage` hid through symbol interposition and digiKam did not.
+> Rebuilt, reinstalled, and both scans then ran on one load. The plan text is
+> kept as written, as the record of what was approved beforehand.
+
+It closes three things and nothing else:
 
 1. the backend, **installed normally** (no `LD_LIBRARY_PATH`, no private
    `SANE_CONFIG_DIR`), is the library `scanimage` and digiKam actually load;

@@ -61,10 +61,11 @@ usb 0x07b3 0x0c3b
 """
 
 
-def _fake_clone(tmp: Path):
+def _fake_clone(tmp: Path, config_dirs: str = ".:/etc/sane.d"):
     """A sane-backends checkout shaped like the real one: the nine gl126
     sources under backend/genesys, and a built library carrying a gl126
-    symbol (the installer refuses a build without one)."""
+    symbol (the installer refuses a build without one) and the
+    sanei_config DEFAULT_DIRS string the installer checks."""
     clone = tmp / "sane-backends"
     (clone / "backend" / "genesys").mkdir(parents=True)
     (clone / "backend" / ".libs").mkdir(parents=True)
@@ -74,7 +75,8 @@ def _fake_clone(tmp: Path):
         (clone / "backend" / "genesys" / name).write_text(f"/* {name} */\n")
     lib = clone / "backend" / ".libs" / DISTRO_SO
     src = tmp / "stub.c"
-    src.write_text("int gl126_stub_symbol(void) { return 126; }\n")
+    src.write_text("int gl126_stub_symbol(void) { return 126; }\n"
+                   f'const char sane_config_default_dirs[] = "{config_dirs}";\n')
     r = subprocess.run(["gcc", "-shared", "-fPIC", "-o", str(lib), str(src)],
                        capture_output=True, text=True)
     return clone, (lib if r.returncode == 0 else None)
@@ -113,9 +115,12 @@ def _fingerprint(root: Path) -> list[str]:
 class _Staged:
     """A fresh fake root + fake clone per test."""
 
+    def __init__(self, config_dirs: str = ".:/etc/sane.d"):
+        self.config_dirs = config_dirs
+
     def __enter__(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="of135i-install-"))
-        self.clone, lib = _fake_clone(self.tmp)
+        self.clone, lib = _fake_clone(self.tmp, self.config_dirs)
         self.have_cc = lib is not None
         self.root = _fake_root(self.tmp)
         self.sane = self.root / "usr" / "lib64" / "sane"
@@ -224,6 +229,36 @@ def test_install_refuses_an_incomplete_clone():
         assert "gl126_ops.cpp" in r.stderr, f"unhelpful error: {r.stderr}"
         assert s.link_target() == DISTRO_SO, "a refused install still repointed the link"
         print("test_install_refuses_an_incomplete_clone OK")
+
+
+def test_install_refuses_a_library_built_for_the_wrong_config_dir():
+    """The defect that reached hardware on 2026-09-13: the clone was
+    configured without --sysconfdir=/etc, so the library looked for
+    genesys.conf in /usr/local/etc/sane.d. scanimage still worked (libsane
+    is in the global symbol scope and interposes its own sanei_config), but
+    digiKam -- which loads SANE through a dlopen'd Qt plugin with
+    RTLD_LOCAL -- got the library's own path and found no config at all.
+    The installer must catch this before anything is changed."""
+    with _Staged(config_dirs=".:/usr/local/etc/sane.d") as s:
+        if s.skip():
+            return "skipped"
+        before = _fingerprint(s.root)
+        r = s.run("install")
+        assert r.returncode != 0, "install accepted a library with the wrong config path"
+        assert "/usr/local/etc/sane.d" in r.stderr and "sysconfdir" in r.stderr, \
+            f"unhelpful error: {r.stderr}"
+        assert _fingerprint(s.root) == before, "a refused install changed the tree"
+        print("test_install_refuses_a_library_built_for_the_wrong_config_dir OK")
+
+
+def test_status_flags_a_wrong_config_dir():
+    with _Staged(config_dirs=".:/usr/local/etc/sane.d") as s:
+        if s.skip():
+            return "skipped"
+        r = s.run("status")
+        assert r.returncode == 0
+        assert "MISMATCH" in r.stdout, r.stdout
+        print("test_status_flags_a_wrong_config_dir OK")
 
 
 def test_install_rolls_back_a_failure_after_the_symlink_changed():
@@ -476,6 +511,8 @@ def main() -> int:
         test_install_adds_the_usb_id_between_markers,
         test_install_is_idempotent,
         test_install_refuses_an_incomplete_clone,
+        test_install_refuses_a_library_built_for_the_wrong_config_dir,
+        test_status_flags_a_wrong_config_dir,
         test_install_rolls_back_a_failure_after_the_symlink_changed,
         test_uninstall_restores_the_tree_byte_for_byte,
         test_uninstall_follows_a_package_update_to_the_new_library,

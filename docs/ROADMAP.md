@@ -374,7 +374,7 @@ is the owner's eye rule and is scoped to what was actually judged.
 
 | Profile   | Impl + offline | SANE HW verified | Frames (SANE HW) | Image acceptance (scope) | Concrete remaining for B1 |
 |-----------|----------------|------------------|------------------|--------------------------|---------------------------|
-| plain3600 | yes | transport + coverage (Test 62) | 1–6 | images seen; no formal eye-accept recorded | one correctly-rendered plain3600 SANE image, owner-approved — planned as WP-2's digiKam scan (docs/sane-wp2-hardware-plan.md §5–6) |
+| plain3600 | yes | transport + coverage (Tests 62, 74) | 1–6 | EYE-ACCEPTED for geometry/integrity (Test 74, via digiKam); colour explicitly not judged, and it is the app's job | none |
 | dpi2400   | yes | transport + coverage + proportion (Tests 62/63) | 1 | EYE-ACCEPTED, geometry only (Test 63); colour is the app's job | none for geometry; frames 2–6 not required for B1 (one frame proves the profile) |
 | ir3600    | yes | transport + full-width, colour-aligned IR (Tests 68–71) | 1 | EYE-ACCEPTED (Test 71: cleaner, no streaks, well positioned; alignment by measurement) | none |
 | dpi600    | yes | transport + coverage (Test 65) | 1 | EYE-ACCEPTED, geometry (Test 65) | none |
@@ -439,11 +439,16 @@ promised scope require them. VueScan stays out of public docs.
   notes had wrong: the symlink list in `sane-port.md` was missing `gl126_ops`
   and `gl126_lock` (fixed), and a preview in digiKam is a **full 600 dpi scan**,
   not a cheap one.
-- Minimal hardware test: **[docs/sane-wp2-hardware-plan.md](sane-wp2-hardware-plan.md)**
-  — install, prove which library is loaded, one plain3600 frame-1 scan through
-  the installed `scanimage` and one from digiKam on the same load, eject, and
-  the owner's eye acceptance of the digiKam image (which also fills the
-  plain3600 row above). Awaiting Christian's approval; not run.
+- Minimal hardware test: **DONE 2026-09-13 (Test 74)** per
+  **[docs/sane-wp2-hardware-plan.md](sane-wp2-hardware-plan.md)**. Installed,
+  the loaded library proved at the `dlopen` level for both frontends, one
+  plain3600 frame-1 scan through the installed `scanimage` and one from
+  digiKam on the same load (identical geometry, full transfer, normal PARK),
+  eject from the CLI, and the owner's eye acceptance for geometry/integrity —
+  which fills the plain3600 row above. One real install defect was found on
+  the device and fixed the same session: the library had been built without
+  `--sysconfdir=/etc`, which `scanimage` hid through symbol interposition but
+  digiKam (a `dlopen`ed plugin, `RTLD_LOCAL`) did not.
 - Open for decision (**not decided**): B1 says the workflow is "load, scan a
   frame, deliver". GL126's `load_document`/`eject_document` are **not
   implemented**, so the magazine is handled by `of135i load` / `of135i eject`

@@ -107,8 +107,27 @@ cd /path/to/sane-backends
 git checkout -b gl126-opticfilm135i 1d47d7c
 patch -p1 < /path/to/opticfilm135i-linux/sane/gl126-integration.patch
 ./autogen.sh
-./configure BACKENDS=genesys --disable-locking --without-gphoto2 --without-v4l
+./configure --sysconfdir=/etc BACKENDS=genesys --disable-locking \
+            --without-gphoto2 --without-v4l
 make -j8 -C backend libsane-genesys.la
+```
+
+**`--sysconfdir=/etc` is not optional, and getting it wrong is nearly
+invisible.** It sets the sanei_config search path compiled into the library
+(`.:/etc/sane.d`). Without it the default prefix applies and the library
+looks in `/usr/local/etc/sane.d`, where nothing is installed —
+yet `scanimage` still works, because there `libsane.so.1` is in the global
+symbol scope and interposes its own `sanei_config_open`. A frontend that
+loads SANE through a `dlopen`ed plugin with `RTLD_LOCAL` gets no
+interposition and fails with *Couldn't access configuration file
+'genesys.conf'*. That is exactly what happened to digiKam on 2026-09-13
+(Test 74). `tools/sane_install.sh` now refuses to install a library whose
+compiled path does not match, and `status` prints it. If you change
+configure flags, note that automake does **not** rebuild on that alone:
+
+```
+make -C sanei clean && make -j8 -C sanei
+make -C backend clean && make -j8 -C backend libsane-genesys.la
 ```
 
 `BACKENDS=genesys` builds only what we install. `--disable-locking` concerns
@@ -375,8 +394,13 @@ the PNG test in `tests/test_aperture_crop.py` was described as if it proved
 bit-depth preservation, which it does not (it is 8-bit by construction; its
 subject is the coverage verdict).
 
-Left for hardware (`docs/sane-wp2-hardware-plan.md`): the system install
-itself, `verify` naming `/usr/lib64/sane/libsane-genesys.so.1`, one plain3600
-frame-1 scan through the installed `scanimage`, one through digiKam with the
-loaded library proved at the `dlopen` level and the saved file's bit depth
-probed, and Christian's eye acceptance of the digiKam image.
+**Done on hardware 2026-09-13 (Test 74).** Installed normally; `verify` exit
+0 naming `/usr/lib64/sane/libsane-genesys.so.1`; one plain3600 frame-1 scan
+through the installed `scanimage` (FEEDL 6562, 233 chunks, full transfer,
+PARK, coverage 0.455/0.956 mm) and one from digiKam on the same load
+(identical geometry, coverage 0.486/0.935 mm), with the serving library
+proved from `/proc/<pid>/maps`; digiKam's saved PNG probed at 3762 × 5335, 3
+channels, 16 bits per channel, `low_byte_nonzero` 0.996; eject from the CLI;
+and Christian's eye acceptance for geometry and integrity (colour explicitly
+not judged). The one defect this found — the missing `--sysconfdir=/etc` —
+is fixed and guarded above.

@@ -4987,3 +4987,114 @@ specks, no triplets. Files: plustek-135i-analys/profiles-20260912/py-ir/,
 renders ~/Bilder/opticfilm-granskning/profiles-20260912/py-v012-f1-ir-*.png.
 
 VERDICT: PASS — v0.1.2 hardware-verified; tag and release follow.
+
+### Test 74: WP-2 — the installed backend, `scanimage` and digiKam (plain3600 f1)
+
+2026-09-13, colour negative, the same six-frame strip as Tests 65–71, frame 1.
+Closes WP-2's hardware part: the backend **installed normally** (no
+`LD_LIBRARY_PATH`, no private `SANE_CONFIG_DIR`), one scan through the
+installed `scanimage`, one from inside digiKam on the same load, eject.
+Plan: docs/sane-wp2-hardware-plan.md. Install path: docs/sane-install.md.
+
+**A real install defect, found on the device and fixed mid-session.** The
+first install (build `1062ed01`) enumerated fine under `scanimage` but
+digiKam listed only the webcam. Its log named the cause:
+
+    [genesys] probe_genesys_devices(): Critical error: Couldn't access
+              configuration file 'genesys.conf'
+    [genesys] sane_genesys_init: got error: Access to resource has been denied
+
+Root cause: the clone had been configured without `--sysconfdir=/etc`, so
+the library carried `.:/usr/local/etc/sane.d` as its sanei_config search
+path. `scanimage` papered over it — there `libsane.so.1` sits in the global
+symbol scope and interposes its own `sanei_config_open` with `/etc/sane.d`.
+digiKam loads SANE through a `dlopen`ed Qt plugin with `RTLD_LOCAL`, gets no
+interposition, and the backend's own (wrong) path applies. Reproduced
+offline with a 12-line `dlopen(RTLD_LOCAL)` probe — no scanner involved —
+before and after the fix: `status 11` → `status 0`. Rebuilt with
+`--sysconfdir=/etc` (`make -C sanei clean` too; automake does not rebuild on
+a flag change), sha256 `a380f60d`, 612 gl126 symbols, 0 warnings; installer
+now refuses a build whose compiled config path does not match where
+genesys.conf lives (`tests/test_sane_install.py`).
+
+**Install (2026-09-13 12:02).** `/usr/lib64/sane/libsane-genesys.so.1 ->
+libsane-genesys-gl126.so.1.4.0`, identical to the build, config path
+`.:/etc/sane.d`; distribution library and its `.so` link untouched; USB id
+appended to `/etc/sane.d/genesys.conf` between markers; dll.conf untouched.
+`verify` exit 0: dlopen line named `/usr/lib64/sane/libsane-genesys.so.1`,
+device `genesys:libusb:001:006`.
+
+**Scan A — installed `scanimage`, no `--force-calibration`.** Offset
+010a/0109/010a, gain 0x2d/0x20/0x27. Scan session 3762 × 5335 delivered from
+5359 raw lines, FEEDL 6562 (budget 4842 ms), POSITION 206 polls / 1439 ms,
+line register 5367, 120 963 348 raw bytes expected = 233 × 519 156 exactly,
+120 421 620 B to the frontend (= the 3762 × 5335 × 3 × 2 file). Semantic
+PARK, 2 waits, no errors. Coverage VERIFIED at 3600 dpi: leading 0.455 mm,
+trailing 0.956 mm.
+
+**Scan B — digiKam 9.1.0 (KSaneCore 26.08), same load, no power cycle.**
+Settings in the Swedish UI: *Bildläsarkälla* Genomlysningsadapter,
+*Bildläsarläge* Färg, *Upplösning* 3600, *Frame* 1 on the
+"Specifika alternativ för bildläsare" tab. Bit depth is not offered — the
+model exposes a single value (16). Backend actually serving the scan proved
+at the `dlopen` level, not from `ldd`: `/proc/43140/maps` carried
+`/usr/lib64/sane/libsane-genesys-gl126.so.1.4.0`, sha256 `a380f60d`, and no
+distribution `libsane-genesys.so.1.4.0` at all. Geometry identical to scan A
+(FEEDL 6562, POSITION 1443 ms, line register 5367, 5359 raw lines, 3762 ×
+5335 delivered), PARK normal. Saved as PNG to
+~/Bilder/opticfilm-granskning/digiKam20260913/image1.png.
+
+**The saved file, probed (tools/image_probe.py, not Pillow — Pillow
+truncates 16-bit RGB to 8):** PNG 3762 × 5335, 3 channels, **16 bits per
+channel**, `low_byte_nonzero` 0.9960 over the first 256 lines. So digiKam
+preserved the full depth; a lossless format alone would not have shown that.
+Coverage on the digiKam file: VERIFIED, 0.486 / 0.935 mm.
+
+**Raw integrity, measured on scan A's PNM (not inferred):**
+
+| channel | p0.1 / p50 / p99.9 | density span | clipped low / high |
+|---|---|---|---|
+| R | 458 / 7123 / 36818 | 1.91 | 0.000 % / 0.000 % |
+| G | 565 / 2633 / 14158 | 1.40 | 0.000 % / 0.000 % |
+| B | 512 / 6022 / 9672 | 1.28 | 0.000 % / 0.000 % |
+
+Nothing clipped at either end. R spans 1.91 density units against G's 1.40
+and B's 1.28, which is what makes a per-channel linear stretch push green in
+the `to_positive` preview. Colour rendition itself was NOT assessed here.
+
+**Colour-line registration, measured:** cross-correlating row means over a
+central band gives a residual shift of **0 lines** for R↔G (corr 0.990) and
+**0 lines** for B↔G (corr 0.963). Not an eye judgement.
+
+**Coverage along the strip vs. lateral coverage — kept separate.** Along the
+transport: verified, margins above, both ends captured. Laterally the window
+is the sensor's fixed 3762 px = 26.54 mm: a column profile shows a flat dark
+holder edge of ~340 px ≈ 2.4 mm at one side (mean 699, sd 11) and **no
+holder edge at all at the other** (first columns mean 3969, sd 66), leaving
+~24.1 mm of film for a 24 mm frame. The frame fits, with no lateral margin
+on that side. This is the already-parked lateral-overscan item, not a new
+finding, and nothing was changed for it.
+
+**Eye acceptance (Christian, 2026-09-13), scoped:** geometry and integrity
+ACCEPTED — "linjemässigt osv helt normalt", and the frame carries slightly
+more black edge on two sides than Test 66's dpi1200 image, i.e. more
+overscan, not a clipped frame. **Colour explicitly NOT judged** ("jag
+bedömer inte färg"), consistent with B1's rule that the eye check is about
+whole frame / planes aligned / no banding, not absolute colour. External
+review (Astra) of the same renders: no proportion defect, no systematic
+channel-registration error, no regular banding; dust, fibres and scratches
+visible (the strip's own, and plain3600 has no IR channel to clean with);
+full lateral coverage and the original's bit depth not judged from the
+display copies — both answered by the measurements above instead.
+
+Files: plustek-135i-analys/wp2-20260913/ (scanimage PNM + both logs),
+~/Bilder/opticfilm-granskning/digiKam20260913/ (digiKam original, positives,
+the Test 66 comparison, two 100 % crops).
+
+VERDICT: PASS. The backend works as a normally installed genesys build,
+through `scanimage` and through digiKam, with the safety model intact
+(calibration every scan, PARK only after a complete pass, eject from the
+CLI). plain3600 now has its recorded eye acceptance for geometry and
+integrity. What this does NOT close: B1 as a whole — whether `of135i
+load`/`eject` alongside the SANE scan satisfies "load, scan a frame,
+deliver" is Christian's decision (docs/sane-wp2-hardware-plan.md §9).
