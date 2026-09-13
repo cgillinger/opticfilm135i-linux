@@ -165,6 +165,12 @@ void magazine_release(Genesys_Device* dev);
 void magazine_eject(Genesys_Device* dev);
 std::string magazine_state_text(const Genesys_Device* dev);
 
+/** Every value magazine_state_text() can return, NULL-terminated, for the
+    "magazine" option's SANE_CONSTRAINT_STRING_LIST. Constraining it makes
+    KSane draw a plain combo showing the current value rather than an edit
+    box with Add/Remove buttons beside it (Test 76). */
+const char* const* magazine_state_values();
+
 } // namespace gl126
 } // namespace genesys
 

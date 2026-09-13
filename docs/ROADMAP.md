@@ -589,3 +589,51 @@ promised scope require them. VueScan stays out of public docs.
 
 Hardware proposals above are for review and Christian's explicit go; they are
 not executed here.
+
+## Candidates, not scheduled (2026-09-13)
+
+Recorded so they are not lost. None is committed work; each needs a
+decision before it starts.
+
+**Whole-strip batch scanning.** The vendor's QuickScan scans all six
+frames in one operation ("Processing 4/6"); our backend scans one frame
+per `sane_start`, chosen by the `frame` option. The gap is smaller than
+it looks:
+
+- **SANE already has the protocol.** It is how document feeders work:
+  the backend reports that the current frame is not the last and the
+  frontend loops `sane_start` until it gets an end status. `scanimage
+  --batch` and KSane implement it today; genesys currently sets
+  `last_frame = true` unconditionally, which is a small contained
+  change.
+- **The hardware prerequisite is proven.** Test 76 scanned a second
+  frame on the same load with `load_document` correctly doing nothing
+  and positioning to frame 2's FEEDL. Six frames is that, five more
+  times.
+- **It already works from a shell loop** — `scanimage --frame 1` … 6 on
+  one load — so the capability exists; it is not exposed as one
+  operation.
+- **Missing:** a mode meaning "all frames", a counter advancing between
+  calls, and a decision about whether the batch ejects at the end.
+- **Cost to weigh:** GL126 recalibrates on every `sane_start` (offset,
+  gain, shading) because it never reuses a cache — a deliberate B1
+  decision, since a restored cache made `begin_scan` refuse. Six frames
+  means six calibrations, roughly 4 s each. Calibrating once per batch
+  is possible to investigate but touches exactly the mechanism that was
+  switched off on purpose.
+
+**Shorten the cold start's opening wait.** Test 77 measured it as dead
+time: the status word is static at 0x48 for the full 15 s in both logged
+runs, so the poll waits for something that never happens on this unit.
+It is best-effort, so a shorter budget changes nothing about correctness
+and removes most of the 40 s an operator waits at Load film. It is a
+timing constant in the load flow and the Python driver carries the
+identical one, so it wants a decision and a hardware A/B rather than a
+quiet edit.
+
+**Mask compensation in the rendering path.** See
+`docs/colour-rendering-analysis.md`: measure the orange mask from
+unexposed film per strip, subtract per channel, then invert. Whether the
+driver should do this at all, or leave it to the frontend, is a decision
+about where colour interpretation belongs. A second strip of a different
+stock is needed before the method can be called general.

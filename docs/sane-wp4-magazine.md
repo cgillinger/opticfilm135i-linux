@@ -1,7 +1,10 @@
 # WP-4 — magazine handling inside the SANE backend (design, offline)
 
-Status: **design decided 2026-09-13, implemented OFFLINE the same day,
-reviewed and corrected the same evening (§9), NOT hardware-run.** The two hooks (`load_document()`, `eject_document()`)
+Status: **DONE. Designed, implemented and hardware-verified 2026-09-13**
+— runs A, B and C (Tests 75, 76, 77), including the power-cycled
+latched-magazine case. Reviewed and corrected twice before the runs
+(§9), and again after them (§9a) when driving the real dialogue exposed
+five interaction defects. The two hooks (`load_document()`, `eject_document()`)
 and the three new options exist in `sane/gl126.cpp` and the integration
 patch; every program is wire-equality-tested against the Python driver;
 nothing has moved the motor from C++ yet. The hardware plan is
@@ -130,13 +133,20 @@ Per device, in `gl126.cpp`:
 - **load-film from Unknown:** reg 0x01 must read 0x22 or 0x00. 0x00 →
   the cold-start program first (§3.1), then reg 0x01 must read 0x22;
   then OPEN, then JOG. → Released.
-- **load-film from Released:** JOG only, from the loose position —
-  this is Test 51's second jog, the recipe for "power-cycled + latched
-  magazine" (§2.3). → Released.
-- **load-film from Loaded / Ejected:** OPEN + JOG, which is the
-  vendor's app open with a latched magazine (it releases it; capture
-  `20260907-vendor-open-with-latched-magazine`, Test 46 timeline).
-  → Released.
+- **load-film from any non-cold state:** OPEN + JOG. There is no
+  per-state branch — the device-open table is written and the jog run
+  every time, which is the vendor's own app open, latched magazine or
+  not (capture `20260907-vendor-open-with-latched-magazine`, Test 46
+  timeline). Pressed a second time from Released it is Test 51's second
+  jog, from the loose position, and that is the supported way out of
+  "power-cycled + latched magazine" (§2.3) — hardware-verified in Test
+  77. → Released.
+
+  *(Corrected 2026-09-13 after Test 77: this section previously claimed
+  "load-film from Released: JOG only". No such branch exists in the
+  code and none ever did. Writing the open table again is harmless —
+  it is registers, no motor — so the document was wrong, not the
+  implementation.)*
 - **sane_start from Released:** Stage B (§3.3). Success → Loaded;
   failure → Failed, `sane_start` returns the error, nothing further
   written.
@@ -437,6 +447,53 @@ tools, as always. `docs/sane-wp4-hardware-plan.md`.
    (`SANE_STATUS_NO_DOCS`, mark kept) rather than running the feed to
    find out.
 8. **`sane_cancel` does not eject**; the model stays non-sheet-fed.
+
+## 9a. Interaction fixes, 2026-09-13 after the hardware runs
+
+Christian's verdict after driving the whole flow from digiKam was that
+the dialogue and the interaction had to become more transparent. Tests
+76 and 77 turned that into five specific defects, all fixed offline, none
+touching a motor sequence.
+
+1. **The status value was a full sentence.** KSane draws an
+   unconstrained string option as an editable combo scrolled to the END
+   of its content, so the operator saw the tail of the advice and never
+   the state word. Every value is now at most 33 characters and leads
+   with the state: `unknown -- press Load film`, `released -- reseat,
+   then scan`, `loaded -- scan, then Eject film`, `ejected -- press Load
+   film`, `failed -- power-cycle the scanner`.
+2. **It was drawn with Add and Remove buttons beside it** — noise for a
+   line nobody can set. The option now carries a
+   `SANE_CONSTRAINT_STRING_LIST` of exactly those values, which makes
+   KSane render a plain combo showing the current one.
+3. **It sat below the two buttons it describes**, so the state was read
+   after acting. `OPT_MAGAZINE` now precedes `OPT_LOAD_FILM` and
+   `OPT_EJECT_FILM` in the option enum, and option order is display
+   order.
+4. **It reported `unknown` while a load was genuinely pending.** The
+   text read only the in-process record, but a release survives on disk
+   — which is the whole point of the mark, and Test 77 hit the case for
+   real when digiKam was restarted between the release and the scan. It
+   now consults the mark and says `reseat the magazine, then scan`.
+5. **A scan with nothing loaded was not refused.** The vendor answers
+   that case with "Please insert the film holder"; we drove the
+   transport with no film in front of the sensor and handed the frontend
+   an image of nothing, silently. `load_document()` now refuses with
+   `SANE_STATUS_NO_DOCS` when the magazine is in the **Ejected** state.
+   Unknown is deliberately not refused: `of135i load` remains a
+   documented way to load, and a fresh process cannot tell that apart
+   from nothing being loaded — refusing there would break the CLI
+   workflow to catch a mistake we cannot actually detect.
+
+Also, the `load-film` option's description now says that a cold start
+takes about forty seconds with no progress shown. SANE has no progress
+channel while an option is being set — the frontend blocks until the
+call returns — so the description is the only lever. **The better answer
+is to remove most of the wait**, which Test 77 measured as dead time: the
+cold start's opening poll reads a status word that is static at 0x48 for
+the whole 15 s, in both logged runs. That is a timing constant in the
+load flow and the Python driver carries the identical one, so it is left
+alone here pending Christian's decision and an A/B.
 
 ## 9. Review round, 2026-09-13 evening (Astra) — four corrections
 

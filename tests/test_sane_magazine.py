@@ -161,6 +161,8 @@ def _run(probe, *args, lock_dir=None):
             rest = line[len("STATUS "):]
             code, _, msg = rest.partition(" ")
             out["statuses"].append((int(code), msg.strip()))
+        elif line.startswith("VALUE "):
+            out.setdefault("values", []).append(line[len("VALUE "):].strip())
         elif line.startswith("OPTSTATUS "):
             out["optstatuses"].append(int(line.split()[1]))
         elif line.startswith("STARTSTATUS "):
@@ -211,6 +213,90 @@ def test_magazine_options_exist_only_for_gl126():
 
     print("test_magazine_options_exist_only_for_gl126 OK "
           "(3 options active on GL126, all inactive on GL124)")
+
+
+def test_the_status_line_is_readable_and_comes_first():
+    """Test 76 found the status line unusable in digiKam: the value was a
+    full sentence, KSane draws an unconstrained string option as an
+    editable combo scrolled to the END of its content, and the option sat
+    BELOW the two buttons it describes. So the operator saw the tail of
+    some advice, after acting, with Add/Remove buttons beside it.
+
+    Three properties fix that and are pinned here: every value is short
+    enough to fit and leads with the state word, the option is
+    constrained to its own values so the widget is a plain combo, and its
+    index places it ahead of the buttons — option order is display
+    order."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_the_status_line_is_readable_and_comes_first")
+
+    r = _run(probe, "options")
+    opts = r["options"]
+
+    # Ahead of both buttons.
+    assert int(opts["magazine"]["index"]) < int(opts["load-film"]["index"]), opts
+    assert int(opts["magazine"]["index"]) < int(opts["eject-film"]["index"]), opts
+
+    # Constrained to a string list (SANE_CONSTRAINT_STRING_LIST == 3).
+    assert int(opts["magazine"]["constraint"]) == 3, opts["magazine"]
+
+    values = r.get("values") or []
+    assert len(values) >= 5, values
+    for v in values:
+        assert len(v) <= 40, (len(v), v)          # fits the widget
+        assert v[0].islower(), v                   # state word leads
+        assert " -- " in v or v.startswith("reseat"), v
+    # The states an operator must be able to tell apart, each present.
+    joined = " | ".join(values)
+    for word in ("unknown", "released", "loaded", "ejected", "failed"):
+        assert word in joined, (word, values)
+    print(f"test_the_status_line_is_readable_and_comes_first OK "
+          f"({len(values)} values, longest {max(len(v) for v in values)} chars, "
+          f"index {opts['magazine']['index']} before the buttons)")
+
+
+def test_the_status_line_reports_a_load_pending_from_another_process():
+    """Test 77: digiKam was restarted between the release and the scan,
+    and the status line said "unknown" while a load was genuinely
+    pending — it read only this process's memory. The mark survives a
+    process by design (that is what lets `scanimage` load in two
+    invocations), so the line must consult it."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_the_status_line_reports_a_load_pending_from_another_process")
+
+    r = _run(probe, "scenario", "state-mark-pending")
+    assert r["text"].startswith("reseat"), r["text"]
+    assert r["mark"].startswith("present"), r["mark"]
+    # And with no mark at all it still says unknown, not a false pending.
+    r2 = _run(probe, "scenario", "state-initial")
+    assert r2["text"].startswith("unknown"), r2["text"]
+    print("test_the_status_line_reports_a_load_pending_from_another_process OK")
+
+
+def test_a_scan_after_eject_is_refused():
+    """The vendor refuses a scan with "Please insert the film holder" when
+    nothing is seated (observed 2026-09-13). We used to scan an empty
+    transport and hand the frontend an image of nothing, silently. Now the
+    one case we can be sure about — we ejected it ourselves — refuses.
+
+    Unknown is deliberately NOT refused: `of135i load` is still a
+    documented way to load the magazine, and a fresh process cannot tell
+    that apart from nothing being loaded."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_a_scan_after_eject_is_refused")
+
+    r = _run(probe, "scenario", "scan-after-eject")
+    assert len(r["statuses"]) == 2, r["statuses"]
+    eject, load = r["statuses"]
+    assert eject[0] == SANE_STATUS_GOOD, eject
+    assert load[0] == SANE_STATUS_NO_DOCS, load
+    assert "no film is loaded" in load[1], load[1]
+    assert "Load film" in load[1], load[1]
+    assert "Nothing was written" in load[1], load[1]
+    print("test_a_scan_after_eject_is_refused OK (NO_DOCS, nothing written)")
 
 
 def test_magazine_text_starts_unknown():
@@ -569,6 +655,9 @@ def main() -> int:
     tests = [
         test_magazine_options_exist_only_for_gl126,
         test_magazine_text_starts_unknown,
+        test_the_status_line_is_readable_and_comes_first,
+        test_the_status_line_reports_a_load_pending_from_another_process,
+        test_a_scan_after_eject_is_refused,
         test_release_refuses_an_unknown_start_state,
         test_release_from_idle_runs_the_open_and_jog_programs,
         test_release_from_cold_verifies_the_bring_up,

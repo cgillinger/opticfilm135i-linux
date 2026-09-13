@@ -217,10 +217,19 @@ int cmd_options(int argc, char** argv)
             continue;
         }
         const SANE_Option_Descriptor* d = sane_get_option_descriptor(h, opt);
-        std::printf("OPT %s type=%d size=%d inactive=%d cap=%x\n", name,
+        std::printf("OPT %s index=%d type=%d size=%d inactive=%d cap=%x constraint=%d\n",
+                    name, opt,
                     static_cast<int>(d->type), static_cast<int>(d->size),
                     (d->cap & SANE_CAP_INACTIVE) ? 1 : 0,
-                    static_cast<unsigned>(d->cap));
+                    static_cast<unsigned>(d->cap),
+                    static_cast<int>(d->constraint_type));
+        if (d->constraint_type == SANE_CONSTRAINT_STRING_LIST &&
+            d->constraint.string_list != nullptr)
+        {
+            for (const SANE_String_Const* v = d->constraint.string_list; *v != nullptr; ++v) {
+                std::printf("VALUE %s\n", *v);
+            }
+        }
     }
     sane_close(h);
     sane_exit();
@@ -352,6 +361,17 @@ int cmd_scenario(int argc, char** argv)
         seed(dev, 0x3C, 0x00);
         dev->settings.frame = 9;
         call_hook(dev, "load");
+    } else if (scenario == "state-mark-pending") {
+        // A release written by an earlier PROCESS. The status line must
+        // say a load is pending, not "unknown" (Test 77).
+        gl126::magazine_mark_write(dev->file_name);
+    } else if (scenario == "scan-after-eject") {
+        // Ejected, then a scan attempted. The backend knows nothing is
+        // loaded and must refuse rather than scan an empty transport.
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);        // loader sensor clear -> "nothing to do"
+        call_hook(dev, "eject");       // -> Ejected, no motor command
+        call_hook(dev, "load");        // must refuse
     } else if (scenario == "load-after-failure") {
         // A release that failed leaves the transport in a state nobody
         // can name -- and it cleared the mark, so the load half must

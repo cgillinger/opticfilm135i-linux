@@ -956,6 +956,29 @@ void magazine_load_if_pending(Genesys_Device* dev)
                             "the transport state is unknown and a scan is not started on top "
                             "of it. Power-cycle the scanner. Nothing was written.");
     }
+    if (state == MagazineState::Ejected) {
+        /* We ejected it ourselves in this session, so we know there is
+           nothing loaded. Scanning from here drives the transport with no
+           film in front of the sensor and hands the frontend an image of
+           nothing -- silently, until now. The vendor refuses the
+           equivalent case with "Please insert the film holder" (observed
+           2026-09-13); this is our version of that refusal.
+
+           Only the state we are SURE about is refused. Unknown is left
+           alone deliberately: `of135i load` remains a documented way to
+           load the magazine, and a fresh frontend process has no way to
+           tell that from nothing being loaded at all. Refusing there
+           would break the CLI workflow to catch a mistake we cannot
+           actually detect. */
+        throw SaneException(SANE_STATUS_NO_DOCS,
+                            "gl126: no film is loaded -- the magazine was ejected. Press "
+                            "Load film, take the magazine fully out and push it back in to "
+                            "the mechanical stop, then scan. Nothing was written.");
+    }
+    if (state == MagazineState::Unknown) {
+        DBG(DBG_info, "gl126: no magazine state known in this session; if nothing is "
+            "loaded this scan will deliver an unusable image\n");
+    }
     bool pending = (state == MagazineState::Released);
     std::string marked_key;
     if (!pending && gl126::magazine_mark_read(&marked_key)) {
@@ -1936,26 +1959,62 @@ void magazine_eject(Genesys_Device* dev)
     magazine_eject_impl(dev);
 }
 
+/* The possible values of the read-only "magazine" option.
+
+   Short, and the STATE WORD FIRST. On hardware 2026-09-13 (Test 76) the
+   previous texts -- full sentences -- overflowed KSane's widget, which
+   renders an unconstrained string option as an editable combo scrolled
+   to the END of its content. The operator saw the tail of the advice and
+   not the state at all. Every string here fits, and the first word is
+   the answer even if the rest is clipped.
+
+   Exposed as a list so genesys.cpp can give the option a
+   SANE_CONSTRAINT_STRING_LIST: a constrained string draws as a plain
+   combo showing its current value, instead of an edit box with Add and
+   Remove buttons beside it. */
+const char* const kMagazineUnknown  = "unknown -- press Load film";
+const char* const kMagazinePending  = "reseat the magazine, then scan";
+const char* const kMagazineReleased = "released -- reseat, then scan";
+const char* const kMagazineLoaded   = "loaded -- scan, then Eject film";
+const char* const kMagazineEjected  = "ejected -- press Load film";
+const char* const kMagazineFailed   = "failed -- power-cycle the scanner";
+
+const char* const* magazine_state_values()
+{
+    static const char* const values[] = {
+        kMagazineUnknown, kMagazinePending, kMagazineReleased,
+        kMagazineLoaded, kMagazineEjected, kMagazineFailed, nullptr,
+    };
+    return values;
+}
+
 std::string magazine_state_text(const Genesys_Device* dev)
 {
     switch (magazine_state_of(dev)) {
-    case MagazineState::Released:
-        return "released -- take the magazine fully out of the slot, push it back in "
-               "to the mechanical stop, then scan";
-    case MagazineState::Loaded:
-        return "loaded -- scan any frame, then press Eject film when you are done";
-    case MagazineState::Ejected:
-        return "ejected -- press Load film to load again";
-    case MagazineState::Failed:
-        return "failed -- power-cycle the scanner and open it again";
-    case MagazineState::Unknown:
-        break;
+    case MagazineState::Released: return kMagazineReleased;
+    case MagazineState::Loaded:   return kMagazineLoaded;
+    case MagazineState::Ejected:  return kMagazineEjected;
+    case MagazineState::Failed:   return kMagazineFailed;
+    case MagazineState::Unknown:  break;
     }
-    // Nothing has been driven from this session yet, so the honest answer
-    // names what to press. The loader sensor would say whether a magazine
-    // is in the slot, but reading it here would put a register read
-    // behind an option query, and it reports presence, not latching.
-    return "unknown -- press Load film to start (its jog also frees a latched magazine)";
+    /* Unknown in THIS process is not the whole truth: a release written by
+       an earlier one survives on disk, and `scanimage` reaches us in a
+       fresh process every invocation. Test 77 hit exactly this -- digiKam
+       was restarted between the release and the scan, and the status line
+       said "unknown" while a load was genuinely pending. Consult the mark,
+       the same way the load half does, so the line agrees with what will
+       actually happen at the next scan.
+
+       The loader sensor is deliberately NOT read here: an option query
+       should not put a register read on the wire, and that bit reports
+       presence rather than whether the film is fed. */
+    std::string marked_key;
+    if (gl126::magazine_mark_read(&marked_key) &&
+        marked_key == magazine_device_key(dev))
+    {
+        return kMagazinePending;
+    }
+    return kMagazineUnknown;
 }
 
 void read_image_chunk_usb(Genesys_Device* dev, std::uint8_t* data, std::size_t size)
