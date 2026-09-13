@@ -43,7 +43,10 @@ Two facts shape the design:
   endpoint carries no event for it. What *is* verified is the LOAD
   feed's completion: a magazine that was not reseated does not engage
   and the feed completes 0xfc55 instead of 0xf455 (Tests 48/49, 2/2,
-  benign, but a failed session by the safety model).
+  benign, but a failed session by the safety model). The converse is
+  NOT established -- a feed that does not complete has other possible
+  causes -- which is why the backend names the step that failed and
+  leaves the cause to the log (§9, finding 5).
 - **A SANE backend only runs while the frontend is calling it**, and a
   `sane_start` must return either an image stream or an error. There
   is no callback to the operator, no "wait for the user" status, and
@@ -254,13 +257,15 @@ call site sheet-fed models use, gated to GL126 by the patch). Order:
    `SANE_STATUS_NO_DOCS` ("no magazine in the slot") with the mark
    kept, so the operator can insert it and scan again. Any other
    mismatch → `SANE_STATUS_INVAL`, mark deleted, state Failed.
-5. The `load` program. **Its FIRST completion** — the engaging feed —
-   not reaching 0xf4 is the "magazine was not reseated" case, and only
-   that one gets the driver's `FEED_NOT_ENGAGED_MSG` wording ("the
-   scanner is fine and nothing is stuck"). A failure at the traverse's
-   completion, or anywhere else, keeps the neutral message: that
-   reassurance is a claim about one documented benign signature, not
-   about every timeout in the sequence (§9).
+5. The `load` program. A failure NAMES the step that did not complete —
+   the engaging feed's completion, the traverse's, or another op —
+   and says nothing about the cause. A timeout at the feed has the same
+   shape as the documented `fc55` outcome of Tests 48/49 (the magazine
+   was not reseated, nothing is stuck), but the hook does not check for
+   that signature, so it does not assert it; the exception carries the
+   op index and the values actually polled, and the signature is read
+   from the log. No message in this flow invites another attempt (§9,
+   findings 4 and 5).
 6. A final status-word read must match the traverse target under the
    mask (`load_completion_target()`'s rule) → Loaded, mark consumed.
 
@@ -467,12 +472,49 @@ not a tidy-up.
 4. **"Nothing is stuck" was said about every load timeout.** That
    reassurance belongs to one documented signature — the engaging feed
    failing to grip, seen 2/2 in Tests 48/49 — not to a traverse timeout
-   or a bulk failure. The hook now keys the message on which completion
-   failed, and the test suite pins the two completions' order and their
-   loader-sensor bit so the distinction cannot drift.
+   or a bulk failure. The hook was changed to key the message on which
+   completion failed.
 
 Also corrected in `docs/sane-wp4-hardware-plan.md`: the mark's path
 (`<lock path>.magazine`, i.e. `/tmp/of135i-07b3-1436.lock.magazine`),
 and the stop rules — a failure ends the approved attempt and the log is
 read before any further motor command, rather than "power-cycle and
 start over".
+
+### Second round, the same evening — two findings that were still open
+
+5. **The load message still asserted a cause it had not checked.**
+   Keying on the feed's completion (finding 4) narrowed WHERE the
+   message applied, but it still told the operator the magazine had not
+   been reseated, that the scanner was fine and nothing was stuck, and
+   invited a power cycle and another attempt. The code never tests for
+   the `fc55` signature: a timeout at that op has other possible causes,
+   including ones where something IS stuck. The message is now neutral —
+   it names the step that failed, states that the transport state is
+   unknown and the session blocked, and says to read the log. The
+   evidence is not lost: the underlying exception already carries the op
+   index and the first and last values polled, so the signature can be
+   read rather than assumed. The generic magazine failure message lost
+   its "power-cycle the scanner, then press Load film" for the same
+   reason — after writes, the next motor command is a decision.
+
+   The line this draws: a refusal that wrote NOTHING (an unknown start
+   state, a cold unit, no magazine in the slot, the base-table state)
+   leaves the unit exactly as it was and may tell the operator what to
+   do next. A failure AFTER writes may not — nobody has named the state
+   it left behind.
+
+6. **The hardware plan still contained automatic recovery.** Its stop
+   section offered "bring the scanner to a safe state" — a power cycle
+   plus `of135i load`/`eject`, and QuickScan in the VM if the magazine
+   was stuck — as the one thing done without further discussion, and
+   listed evidence preservation AFTER it. Run C ended by sending a
+   failed load back to run A. Every one of those is a motor operation,
+   and after a deviation nobody knows what state the transport is in, so
+   none of them is pre-approved. §6 is now a stop rule with no recovery
+   step: stop, preserve (read-only `status`/`doctor` allowed, nothing
+   else), and no further motor operation of any kind — rerun, next run,
+   Python load/eject, double jog, VM route — until the log has been
+   reviewed and Christian has said what happens next. Cutting power on a
+   bad noise stays unconditional, and is explicitly a way to stop rather
+   than permission to start again.

@@ -127,16 +127,13 @@ Expected, in order:
   calibration, POSITION (FEEDL 6562 for frame 1), 233 chunks,
   3762 × 5335, PARK.
 
-If the **engaging feed** does not complete (the documented 0xfc signature
-instead of 0xf4), the message says so in plain words and names the cause:
-the magazine was not taken fully out and reseated. That one is benign and
-was seen 2/2 in Tests 48/49. Any OTHER failure — the traverse's
-completion, a bad acknowledgement, a short bulk transfer, a USB error —
-gets no such reassurance, because "nothing is stuck" is a claim about
-that one known case and not about every timeout in the sequence.
-
-Either way the session is failed and **this attempt is over**: see §6.
-Do not retry from A1 without reading the log first.
+If the load does not reach the state it must reach, the backend names
+the step that failed — the engaging feed's completion, the traverse's,
+or another op — and stops. It does not name a cause, and it does not
+invite another attempt: a timeout at the feed has the same shape as the
+benign `fc55` outcome of Tests 48/49, but the shape is something to READ
+in the log afterwards, not to assume. The session is failed and **this
+attempt is over**: §6.
 
 **A4 — eject.**
 
@@ -200,10 +197,14 @@ Today's recipe from the CLI is `of135i load --double-jog` (Test 51, n =
 4. **Load film again** → this is the second jog, now from the loose
    position — the state the vendor's jog always runs from.
 5. Take it out, reseat to the stop.
-6. Scan frame 1 → the load must engage (0xf4).
+6. Scan frame 1 → the load must reach its two completions (0xf4 at the
+   engaging feed, 0xdc at the traverse).
 
-If step 6's feed does not engage, that is the known `fc55` outcome and
-the fallback is unchanged: power-cycle, then A1.
+If it does not, that is a deviation like any other: §6 applies. The
+`fc55` signature of Tests 48/49 is the outcome we EXPECT to see in that
+case, and if the log shows it the diagnosis is easy — but it is read
+from the log afterwards, not assumed beforehand, and it does not license
+another attempt on its own.
 
 ---
 
@@ -227,29 +228,42 @@ Test 74's, that is a finding, not an acceptance question.
 
 ---
 
-## 6. Stop rules and recovery
+## 6. Stop rule
 
-**This is the first time C++ drives these motors, so a failure ends the
-approved attempt.** Not "power-cycle and try again": stop, bring the
-scanner to a safe state, read the log, and decide with Christian whether
-there is a second attempt and what changes first. The runs below are
-approved one at a time, not as a loop.
+**This is the first time C++ drives these motors. A deviation ends the
+approved attempt.** There is no recovery step in this plan, because
+recovery is itself a motor operation and this plan does not pre-approve
+any.
 
-- **Any** fail-closed poll, unexpected status, or scraping sound: stop
-  immediately. The backend writes nothing further and attempts no
-  recovery — that part is automatic and is the design.
-- Bringing the unit to a safe state is the only thing done without
-  further discussion: power-cycle → `of135i load` (or
-  `load --double-jog` if the magazine is latched) → `of135i eject`. The
-  Python driver remains the recovery tool; WP-4 does not replace it.
-- Then: preserve the debug log, the magazine mark file if it still
-  exists, and `of135i status`/`doctor` output, before any further motor
-  command. A deviation is evidence; a retry overwrites it.
-- Never run a magazine action from a session that already failed: the
-  backend refuses, and that refusal is correct.
-- If a run leaves the magazine stuck: power-cycle; if still stuck,
-  QuickScan in the Windows VM initialises and ejects it, then kill
-  `OpticFilm.exe` and detach the scanner from the VM.
+1. **Stop.** Any fail-closed poll, any unexpected status, any exit code
+   that is not the expected one, anything mechanical that sounds wrong.
+   The backend itself writes nothing further and attempts no recovery —
+   that part is automatic and is the design.
+2. **Preserve what happened, before touching anything.** The debug
+   output of the run, the magazine mark file if it still exists
+   (`/tmp/of135i-07b3-1436.lock.magazine`), the exit status, and what
+   the operator saw and heard. `of135i status` and `doctor` are
+   read-only and may be run; nothing else may.
+3. **Then stop for real.** No further motor operation of any kind until
+   the log has been reviewed and Christian has explicitly approved what
+   happens next. That includes, and is not limited to: rerunning the
+   step, moving on to the next run, `of135i load` or `of135i eject`,
+   `load --double-jog`, and the QuickScan-in-the-VM route. Each of those
+   drives the transport, and after a deviation nobody yet knows what
+   state the transport is in.
+
+**Cutting the power is always allowed.** If the mechanism sounds wrong,
+Christian cuts power immediately — that rule predates this plan and is
+never in question. It is a way to stop, not a permission to start
+again: what follows a power cut is step 2, then step 3.
+
+When recovery is later approved, the Python driver is the tool for it
+(power-cycle → `of135i load`, or `load --double-jog` from a latched
+magazine, → `of135i eject`; QuickScan in the Windows VM if the magazine
+is mechanically stuck). WP-4 does not replace it. But that is a decision
+taken after reading the log, not a step in this plan.
+
+The runs in §2–§4 are approved one at a time, never as a loop.
 
 ---
 

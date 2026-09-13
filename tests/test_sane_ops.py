@@ -2464,10 +2464,13 @@ def test_magazine_programs_are_structurally_sound():
     # the engaging feed wants the done class with the loader-sensor bit
     # CLEAR (the cassette was pulled past the sensor, captured 0xf4 under
     # the mask), the traverse wants it SET again (captured 0xdc -> 0xd8).
-    # gl126.cpp's load hook keys its operator message on WHICH of the two
-    # failed -- "the feed did not engage, nothing is stuck" is a claim
-    # about the first one only -- so the order and the sensor bit are
-    # pinned here rather than left implicit (Astra review 2026-09-13).
+    # gl126.cpp's load hook NAMES which of the two did not complete, so a
+    # log says whether the engaging feed or the prescan traverse failed.
+    # It asserts no cause -- a timeout at the feed looks like Tests
+    # 48/49's benign 0xfc55 but is not checked to be it -- so what has to
+    # stay true is only that the two are distinguishable: their order,
+    # and the loader-sensor bit that separates them (Astra reviews
+    # 2026-09-13, both rounds).
     load_info = _probe_program_info(probe, "magazine", "load")
     load_polls = [op for op in load_info if op["kind"] == "PollMasked"]
     assert len(load_polls) == 2, load_polls

@@ -270,7 +270,15 @@ def test_release_from_idle_runs_the_open_and_jog_programs():
     assert "register write not acknowledged" in msg, msg
     assert "magazine open sequence" in msg, msg
     assert "no recovery" in msg, msg
-    assert "power-cycle" in msg.lower(), msg
+    assert "session is blocked" in msg, msg
+    assert "read the log" in msg.lower(), msg
+    # A failure after writes must NOT tell the operator to try again: the
+    # transport state is unknown, so the next motor command is a decision
+    # someone takes after reading the log, not a reflex the message
+    # prompts (Astra review 2026-09-13, second round). This is the guard
+    # against that language coming back.
+    for prompt in ("try again", "press load film", "start over", "retry"):
+        assert prompt not in msg.lower(), (prompt, msg)
     # A failed magazine sequence is terminal for the session, and the
     # status line says so instead of inviting another press.
     assert r["text"].startswith("failed"), r["text"]

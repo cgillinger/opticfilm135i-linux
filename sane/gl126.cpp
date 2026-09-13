@@ -847,10 +847,15 @@ void run_magazine_program(Genesys_Device* dev, const char* name, RunResult& out,
                 what = "a generated table is inconsistent";
                 break;
         }
+        /* States what happened and stops. No "power-cycle, then press Load
+           film": that is a retry instruction, and a failed magazine
+           sequence leaves the transport in a state nobody has named --
+           the next motor command is a decision, not a reflex (Astra
+           review 2026-09-13, second round). */
         throw SaneException(status,
                             "gl126: %s in the magazine %s sequence at op %zu (%s). Nothing "
-                            "further was written and no recovery was attempted: power-cycle "
-                            "the scanner, then press Load film.",
+                            "further was written and no recovery was attempted; the session "
+                            "is blocked. Read the log before anything else is attempted.",
                             what, name, e.op_index, e.what());
     }
     for (const PollRecord& p : out.polls) {
@@ -1011,30 +1016,40 @@ void magazine_load_if_pending(Genesys_Device* dev)
     try {
         run_magazine_program(dev, "load", load_result, &failed_op);
     } catch (const SaneException& e) {
+        // Name the step that did not complete -- that much IS known, and
+        // it is the diagnosis the log needs. Say nothing about the cause.
+        //
+        // An earlier version told the operator, on any timeout at the
+        // feed's completion, that the magazine had not been reseated,
+        // that the scanner was fine and that nothing was stuck, and
+        // invited a power cycle and another attempt. That is the shape of
+        // ONE documented benign outcome (the 0xfc signature of Tests
+        // 48/49) -- and this code never checks for it. A timeout at that
+        // op has other possible causes, including ones where something IS
+        // stuck, so the reassurance was unverified and the retry prompt
+        // was worse: it invites another motor command on a transport
+        // whose state is unknown (Astra review 2026-09-13, second round).
+        //
+        // The underlying exception already carries the evidence -- the op
+        // index and the first and last values actually polled -- so the
+        // signature can be READ from the log rather than asserted here.
         const OpProgram* prog = magazine_program("load");
-        std::size_t feed_poll = prog != nullptr
-            ? masked_poll_op_index(*prog, 0) : static_cast<std::size_t>(-1);
-        if (e.status() == SANE_STATUS_DEVICE_BUSY && failed_op == feed_poll) {
-            // THE ENGAGING FEED specifically, and nothing else: the one
-            // failure an operator commonly causes themselves, in the
-            // driver's own words (of135i/loadflow.py
-            // FEED_NOT_ENGAGED_MSG). Seen 2/2 in Tests 48/49 with the
-            // benign 0xfc signature. The session is failed exactly as
-            // before; only the explanation is human.
-            //
-            // The traverse's completion, or any other op, gets NO such
-            // reassurance: "nothing is stuck" is a claim about a known
-            // benign case, not about every timeout in the sequence
-            // (Astra review 2026-09-13).
-            throw SaneException(SANE_STATUS_DEVICE_BUSY,
-                                "gl126: the load feed did not engage. This is almost always "
-                                "because the magazine was not taken FULLY OUT of the slot "
-                                "and pushed back in to the mechanical stop after Load film "
-                                "released it. The scanner is fine and nothing is stuck. "
-                                "Power-cycle it, press Load film, take the magazine fully "
-                                "out, push it back in to the stop, then scan.");
+        const char* step = "";
+        if (prog != nullptr) {
+            if (failed_op == masked_poll_op_index(*prog, 0)) {
+                step = " (the engaging feed's completion)";
+            } else if (failed_op == masked_poll_op_index(*prog, 1)) {
+                step = " (the prescan traverse's completion)";
+            }
         }
-        throw;
+        /* The inner message already carries the op index, the values
+           actually polled, and "read the log before anything else is
+           attempted"; this one adds the step in human terms and the
+           consequence, and does not repeat it. */
+        throw SaneException(e.status(),
+                            "gl126: the magazine load did not reach the state it must "
+                            "reach%s, so the transport state is now unknown. %s",
+                            step, e.what());
     }
 
     dev->interface->test_checkpoint("gl126_magazine_after_load");
