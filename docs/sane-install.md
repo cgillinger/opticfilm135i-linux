@@ -299,7 +299,13 @@ descriptor's title, description and range — which the patch provides.
 
 ## 7. Who does what: load, scan, eject
 
-**The magazine is not handled from digiKam, and cannot be.** `CommandSetGl126`
+**The magazine is not handled from digiKam, and cannot be — today.**
+Christian's decision of 2026-09-13: this division is what **B1** delivers,
+and it is a condition for **B2** that it goes away. A SANE backend that needs
+an external CLI to load film is not a SANE backend to the person installing
+it, so `load_document`/`eject_document` must be implemented and hardware-
+verified before anything is submitted upstream (ROADMAP, B2 and WP-4).
+`CommandSetGl126`
 declares `load_document()` and `eject_document()` but both call
 `not_brought_up()` and throw `SANE_STATUS_UNSUPPORTED` — they have never been
 driven from the C++ side. The working division is:

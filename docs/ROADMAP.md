@@ -174,6 +174,21 @@ Scope for B1 mirrors A's in-scope list (single unit, the DPI set, 1–4
 frames, IR). Frontend niceties beyond "scan a frame correctly" are
 deferred. B1 needs no upstream approval — it is entirely under our control.
 
+**Magazine handling — Christian's decision, 2026-09-13.** "Load" in the
+workflow above is a step of the workflow, not a frontend feature: the
+magazine is loaded and ejected with `of135i load` / `of135i eject`, and SANE
+owns the scan. GL126's `load_document()`/`eject_document()` are **not
+implemented** and throw `SANE_STATUS_UNSUPPORTED`. That division satisfies
+B1 and is documented as such (`docs/sane-install.md` §7). It does **not**
+satisfy B2 — see there.
+
+**B1 is DONE, 2026-09-13** (Test 74): installed as a normal genesys build,
+`scanimage` and digiKam both scan through it with the loaded library proved
+at the `dlopen` level, the safety model intact (calibration every scan, PARK
+only after a complete pass), and every claimed profile owner-approved by eye
+for geometry and integrity. Colour rendition was explicitly not part of that
+acceptance; it is the application's job.
+
 ## B2 — SANE contribution delivered (definition of done)
 
 Code + documentation + verification evidence **submitted** to the SANE
@@ -184,6 +199,22 @@ request flow at submission time). Delivered = submitted, review-ready.
 - Post-submission: address review feedback on the submitted work as a
   bounded follow-up. Not an open-ended maintenance pledge (SANE's own
   "unmaintained" status exists for backends whose author steps back).
+
+**Prerequisite added 2026-09-13 (Christian's decision): the backend must
+stand on its own.** A SANE backend that needs an external CLI — our Python
+driver — to load and eject the magazine is not a SANE backend from a user's
+point of view; a person who installs sane-backends and opens any frontend
+must be able to operate the unit. So before anything is submitted:
+`load_document()` and `eject_document()` are implemented in `gl126.cpp` and
+hardware-verified, and the whole load → scan → eject cycle runs from a SANE
+frontend alone, with no `of135i` command. The load flow is the project's
+most delicate motor sequence (it caused the one motor stall), it has to run
+from C++ for the first time, and the operator still has to take the magazine
+out and re-seat it by hand mid-sequence — SANE has no way for a backend to
+prompt for that, so the interaction model needs designing, not just the
+transfers. This is its own work package (WP-4) with its own hardware plan.
+Related and to be taken together: the standing requirement that "power-cycled
++ latched magazine" become a supported driver operation.
 
 ---
 
@@ -276,7 +307,8 @@ is documented as separately unverified, pending a physical slide.
   runs and fixed three real bugs (Tests 68–70: an unrequested last chunk, the
   core's Extract node copying a third of each row, and the IR channels'
   colour-line stagger — the last also fixed in the CLI driver, v0.1.2). The
-  remaining B1 work is WP-2 (install/packaging + a SANE-frontend scan). The
+  B1 is complete since 2026-09-13 (Test 74: installed backend, `scanimage`
+  and digiKam). The
   two Test-63 image findings
   (mirror, colour cast) are investigated and app-layer, not B1 blockers (see
   the dpi2400 bullet below). Per-profile detail is in the **SANE profile
@@ -449,16 +481,39 @@ promised scope require them. VueScan stays out of public docs.
   the device and fixed the same session: the library had been built without
   `--sysconfdir=/etc`, which `scanimage` hid through symbol interposition but
   digiKam (a `dlopen`ed plugin, `RTLD_LOCAL`) did not.
-- Open for decision (**not decided**): B1 says the workflow is "load, scan a
-  frame, deliver". GL126's `load_document`/`eject_document` are **not
-  implemented**, so the magazine is handled by `of135i load` / `of135i eject`
-  and never from the frontend. Whether that division satisfies B1, or whether
-  the frontend must drive the magazine too, is Christian's call — stated as an
-  open question in the plan's §9, not resolved by editing this definition. The
-  external review (2026-09-13) sees the CLI/SANE division as a reasonable
-  first delivery of B1; that is a recommendation, not a scope decision, and
-  B1 stays open until Christian rules.
+- **Decided 2026-09-13 (Christian):** the CLI/SANE division satisfies **B1** —
+  `of135i load` → SANE scan → `of135i eject`, documented as the workflow. It
+  does **not** satisfy **B2**: "en SANE-drivrutin som förlitar sig på CLI och
+  en pythondrivrutin är ingen SANE-drivrutin". Frontend-driven magazine
+  handling is therefore a prerequisite for submission, tracked as WP-4 below,
+  not a B1 gap.
+- **WP-2 status: DONE (Test 74).** With it, **B1 is complete.**
 - Stop condition: an install/enumeration/safety deviation stops WP-2; logged.
+
+**WP-4 — Magazine handling inside the backend (B2 prerequisite).**
+- Why: a backend that needs `of135i` to load and eject is not usable by
+  someone who only installed sane-backends. Christian's condition for
+  submission, 2026-09-13.
+- Goal / acceptance: `load_document()` and `eject_document()` implemented in
+  `sane/gl126.cpp` (today they throw `SANE_STATUS_UNSUPPORTED`), and one full
+  load → scan → eject cycle driven from a SANE frontend alone, no `of135i`
+  command anywhere in it, with the safety model unchanged.
+- Remaining offline: the transfers exist (the Python loader's tables and the
+  op-program generator), so the work is the op programs, the hooks, and —
+  the real design question — **how the operator is prompted**. The vendor's
+  load flow requires taking the magazine out and re-seating it to the stop
+  mid-sequence, and SANE has no mechanism for a backend to ask for that
+  during `sane_start`. Options to weigh before any code: a sensor/button
+  option the frontend polls, a two-call protocol (an option that arms the
+  load, the scan completing it), or refusing with a status the frontend can
+  render. Nothing is decided.
+- Minimal hardware test: its own plan. This is the load flow — the project's
+  most delicate motor sequence, the one that caused the motor stall — driven
+  from C++ for the first time. Not a piggy-back on another session.
+- Take together with: the standing requirement that "power-cycled + latched
+  magazine" become a supported driver operation.
+- Stop condition: any deviation stops WP-4; no blind retry, no recovery
+  experiments.
 
 **WP-3 — SANE submission package, prepared only (B2).**
 - Goal / acceptance: a review-ready branch and evidence bundle exist LOCALLY /

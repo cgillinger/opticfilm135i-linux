@@ -26,15 +26,16 @@ The project has two parts, at different stages:
   test unit.** Scans to raw 16-bit TIFF/PNM at all five resolutions
   (600 / 1200 / 2400 / 3600 / 7200 dpi), with an infrared dust/scratch channel,
   whole-strip batch scanning, and a resumable bulk-digitisation workflow.
-- **SANE backend — in progress (separate status).** Lets standard SANE
-  frontends (`scanimage`, digiKam, …) drive the scanner directly. It builds and
-  links against sane-backends; every resolution profile and the infrared pass
-  have now run on the unit through `scanimage` and been accepted by eye
-  (2026-09-12). The install path is written up and verified in a staging
-  directory — **[docs/sane-install.md](docs/sane-install.md)** — but the system
-  install itself and a scan from inside a SANE frontend have not been run yet.
-  Its verification is tracked independently of the CLI driver's — see the
-  roadmap.
+- **SANE backend — working locally (separate status).** Lets standard SANE
+  frontends drive the scanner directly. It installs as an ordinary genesys
+  build (**[docs/sane-install.md](docs/sane-install.md)**), and as of
+  2026-09-13 a frame has been scanned both through the installed `scanimage`
+  and from inside **digiKam**, with every resolution profile and the infrared
+  pass run on the unit and accepted by eye. One thing it does not do yet:
+  load or eject the magazine. That is `of135i load` / `of135i eject` at the
+  command line, and making it work from a SANE frontend alone is a condition
+  before the backend is offered upstream. Its verification is tracked
+  independently of the CLI driver's — see the roadmap.
 
 **Jump to:** [Install](#install) · [Usage](#usage--the-normal-workflow) ·
 [What works today](#what-works-today) ·

@@ -282,6 +282,14 @@ If the install itself misbehaves at any point:
 
 ## 9. Open question for Christian — does this close B1?
 
+> **ANSWERED 2026-09-13: (a), with a condition.** The CLI/SANE division
+> closes **B1**. It does not close **B2**: Christian's words — "en
+> SANE-drivrutin som förlitar sig på CLI och en pythondrivrutin är ingen
+> SANE-drivrutin" — make frontend-driven magazine handling a prerequisite
+> for submission. It is tracked as ROADMAP WP-4 with its own hardware plan,
+> and is NOT a B1 gap. The rest of this section is the question as it was
+> put.
+
 B1's definition says the backend "performs the agreed workflow via
 `scanimage` and a SANE frontend (digiKam): **load**, scan a frame, deliver
 the image". This plan delivers scan and deliver from both frontends. It does
