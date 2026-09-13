@@ -73,7 +73,7 @@ index 02cfc43..8813651 100644
  
  
 diff --git a/backend/genesys/genesys.cpp b/backend/genesys/genesys.cpp
-index d7ec422..7dcf12a 100644
+index d7ec422..d799caf 100644
 --- a/backend/genesys/genesys.cpp
 +++ b/backend/genesys/genesys.cpp
 @@ -38,6 +38,13 @@
@@ -259,7 +259,7 @@ index d7ec422..7dcf12a 100644
  
      settings.exposure_lperiod = s->exposure_time;
  
-@@ -4802,6 +4872,73 @@ static void init_options(Genesys_Scanner* s)
+@@ -4802,6 +4872,74 @@ static void init_options(Genesys_Scanner* s)
    s->opt[OPT_EXPIRATION_TIME].constraint.range = &expiration_range;
    s->expiration_time = 60;  // 60 minutes by default
  
@@ -309,8 +309,9 @@ index d7ec422..7dcf12a 100644
 +  s->opt[OPT_LOAD_FILM].desc =
 +    SANE_I18N ("Release the film magazine. Take it fully out of the slot, push it back in "
 +               "to the mechanical stop, then scan -- the scan performs the load. From a "
-+               "freshly powered-on scanner this brings the transport up first and takes "
-+               "about 40 seconds, with no progress shown; that is normal.");
++               "freshly powered-on scanner this brings the transport up first, which took "
++               "about 25 seconds on the unit this was developed on and shows no progress "
++               "while it runs; that is normal.");
 +  s->opt[OPT_LOAD_FILM].type = SANE_TYPE_BUTTON;
 +  s->opt[OPT_LOAD_FILM].unit = SANE_UNIT_NONE;
 +  s->opt[OPT_LOAD_FILM].size = 0;
@@ -333,7 +334,7 @@ index d7ec422..7dcf12a 100644
    /* Powersave time (turn lamp off) */
    s->opt[OPT_LAMP_OFF_TIME].name = "lamp-off-time";
    s->opt[OPT_LAMP_OFF_TIME].title = SANE_I18N ("Lamp off time");
-@@ -5457,6 +5594,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5457,6 +5595,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
          throw SaneException("could not find the device to open: %s", devicename);
      }
  
@@ -366,7 +367,7 @@ index d7ec422..7dcf12a 100644
      if (is_testing_mode()) {
          // during testing we need to initialize dev->model before test scanner interface is created
          // as that it needs to know what type of chip it needs to mimic.
-@@ -5473,6 +5636,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5473,6 +5637,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
          dev->interface->get_usb_device().open(dev->file_name.c_str());
      } else {
@@ -389,7 +390,7 @@ index d7ec422..7dcf12a 100644
          dev->interface = std::unique_ptr<ScannerInterfaceUsb>{new ScannerInterfaceUsb{dev}};
  
          dbg.vstatus("open device '%s'", dev->file_name.c_str());
-@@ -5523,6 +5702,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5523,6 +5703,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
      // some hardware capabilities are detected through sensors
      dev->cmd_set->update_hardware_sensors (s);
@@ -402,7 +403,7 @@ index d7ec422..7dcf12a 100644
  }
  
  SANE_GENESYS_API_LINKAGE
-@@ -5556,6 +5741,20 @@ sane_close_impl(SANE_Handle handle)
+@@ -5556,6 +5742,20 @@ sane_close_impl(SANE_Handle handle)
  
      auto* dev = it->dev;
  
@@ -423,7 +424,7 @@ index d7ec422..7dcf12a 100644
      // eject document for sheetfed scanners
      if (dev->model->is_sheetfed) {
          catch_all_exceptions(__func__, [&](){ dev->cmd_set->eject_document(dev); });
-@@ -5579,12 +5778,26 @@ sane_close_impl(SANE_Handle handle)
+@@ -5579,12 +5779,26 @@ sane_close_impl(SANE_Handle handle)
      dev->clear();
  
      // LAMP OFF : same register across all the ASICs */
@@ -454,7 +455,7 @@ index d7ec422..7dcf12a 100644
  
      // not freeing dev because it's in the dev list
      catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().close(); });
-@@ -5715,6 +5928,17 @@ static void get_option_value(Genesys_Scanner* s, int option, void* val)
+@@ -5715,6 +5929,17 @@ static void get_option_value(Genesys_Scanner* s, int option, void* val)
      case OPT_EXPIRATION_TIME:
          *reinterpret_cast<SANE_Word*>(val) = s->expiration_time;
          break;
@@ -472,7 +473,7 @@ index d7ec422..7dcf12a 100644
      case OPT_CUSTOM_GAMMA:
          *reinterpret_cast<SANE_Word*>(val) = s->custom_gamma;
          break;
-@@ -6012,6 +6236,12 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
+@@ -6012,6 +6237,12 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
              }
              break;
          }
@@ -485,7 +486,7 @@ index d7ec422..7dcf12a 100644
          case OPT_EXPIRATION_TIME: {
              if (*reinterpret_cast<SANE_Word*>(val) != s->expiration_time) {
                  s->expiration_time = *reinterpret_cast<SANE_Word*>(val);
-@@ -6092,6 +6322,20 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
+@@ -6092,6 +6323,20 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
              }
              break;
          }

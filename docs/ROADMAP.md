@@ -600,12 +600,19 @@ frames in one operation ("Processing 4/6"); our backend scans one frame
 per `sane_start`, chosen by the `frame` option. The gap is smaller than
 it looks:
 
-- **SANE already has the protocol.** It is how document feeders work:
-  the backend reports that the current frame is not the last and the
-  frontend loops `sane_start` until it gets an end status. `scanimage
-  --batch` and KSane implement it today; genesys currently sets
-  `last_frame = true` unconditionally, which is a small contained
-  change.
+- **SANE has a protocol for it, but NOT the one stated here earlier.**
+  An earlier revision claimed `last_frame = false` was the mechanism.
+  That is wrong: in SANE a *frame* is a band of ONE image
+  (`SANE_Frame` is GRAY / RGB / RED / GREEN / BLUE — the RED/GREEN/BLUE
+  values exist for three-pass scanners), and `last_frame` says whether
+  this is the last band of the current image. It has nothing to do with
+  the next photograph on the strip. Our backend delivers RGB in a single
+  frame, so `last_frame = true` is correct and must stay.
+  The multi-image mechanism is the one document feeders use: the
+  frontend calls `sane_start` AGAIN after `sane_read` reports the end of
+  the current image, and the backend either begins the next image or
+  returns a defined end status (`SANE_STATUS_NO_DOCS`). `scanimage
+  --batch` drives exactly that loop.
 - **The hardware prerequisite is proven.** Test 76 scanned a second
   frame on the same load with `load_document` correctly doing nothing
   and positioning to frame 2's FEEDL. Six frames is that, five more
@@ -613,8 +620,12 @@ it looks:
 - **It already works from a shell loop** — `scanimage --frame 1` … 6 on
   one load — so the capability exists; it is not exposed as one
   operation.
-- **Missing:** a mode meaning "all frames", a counter advancing between
-  calls, and a decision about whether the batch ejects at the end.
+- **Missing:** a mode meaning "all frames"; a frame counter the backend
+  advances between successive `sane_start` calls rather than taking from
+  the `frame` option each time; a defined end — returning
+  `SANE_STATUS_NO_DOCS` once frame 6 has been delivered — so the
+  frontend's loop terminates; and a decision about whether the batch
+  ejects when it finishes.
 - **Cost to weigh:** GL126 recalibrates on every `sane_start` (offset,
   gain, shading) because it never reuses a cache — a deliberate B1
   decision, since a restored cache made `begin_scan` refuse. Six frames
@@ -646,9 +657,18 @@ that register clears the bit the condition requires, so it is likely a
 transcription slip from the capture. The condition itself was left
 alone; only the waiting was shortened.
 
-**Mask compensation in the rendering path.** See
-`docs/colour-rendering-analysis.md`: measure the orange mask from
-unexposed film per strip, subtract per channel, then invert. Whether the
-driver should do this at all, or leave it to the frontend, is a decision
-about where colour interpretation belongs. A second strip of a different
-stock is needed before the method can be called general.
+**~~Mask compensation in the rendering path.~~ WITHDRAWN 2026-09-13.**
+It rested on a claim that has since been retracted — that the cast in our
+preview positives is caused by the orange mask never being removed. It is
+not: `to_positive()` already measures the film base per channel and then
+normalises per channel, so the mask is removed by construction and a
+constant error in measuring it would cancel anyway. See
+`docs/colour-rendering-analysis.md` §5.
+
+The cast itself is real and measured (`to_positive()` on frame 1:
+R − G = −26.0, B − G = −66.9 against the vendor's −0.8 / −11.8), but it
+has **no established cause**, and no colour change should be implemented
+until it does. What a diagnosis would need is listed in §7 of that
+document: a second strip of a different stock, a known-good reference
+rendering of the same raw file, or a working vendor rendering of this
+strip (attempted and failed — the 48-bit path clips blue).

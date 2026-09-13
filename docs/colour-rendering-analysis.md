@@ -1,158 +1,162 @@
-# Why our positives come out yellow — the orange mask, measured
+# The colour cast in our preview positives — what is measured, and what is not
 
-Status: **diagnosed 2026-09-13, not yet fixed.** The mechanism is
-established and the measurement that a fix needs is demonstrated on real
-data. No code has changed. This is an application-layer problem: the raw
-data is sound.
+Status: **observations only. The cause is NOT established, and no colour
+change has been implemented.** An earlier revision of this document
+(2026-09-13, commit `0aab922`) claimed the cast was caused by the orange
+mask never being removed. **That claim was wrong** and is retracted in
+§5, which explains why. What survives is a set of measurements, kept here
+because they are real and reproducible, and a much smaller set of
+conclusions.
 
-Nothing in this document is vendor-derived. The comparison against
-Plustek's own rendering is kept in the private analysis area, per the
-project's standing rule that conclusions may travel but vendor files may
-not.
+Nothing here is vendor-derived. Comparison material from the vendor's own
+software is kept in the private analysis area, per the project's standing
+rule that conclusions may travel but vendor files may not.
 
 ## 1. The symptom
 
-Every positive this project has rendered from a colour negative has a
-yellow-green cast. It has been visible since the first accepted
-production set (Test 58/N3, 2026-09-10), it was re-reported on the WP-4
-frame 1 of 2026-09-13, and the colour verdict has been parked on "compare
-against a vendor scan of the same strip" ever since.
+Positives rendered from this colour negative look yellow-green. Christian
+has reported it on the accepted production set (Test 58/N3, 2026-09-10)
+and again on the WP-4 frame of 2026-09-13.
 
-The explanation carried until now was: *`to_positive` stretches each
-channel over its own range, and since red spans more density than green
-and blue, the stretch pushes red down.* That explanation is **wrong**,
-and it was disproved by measurement, not by argument.
+Measured on frame 1 of 2026-09-13 (`wp4-f1.tiff`), as channel means on an
+8-bit scale, against the vendor's own rendering of a different strip:
 
-## 2. What actually happens
+| renderer | R − G | B − G |
+|---|---|---|
+| `of135i.image.to_positive()` | −26.0 | −66.9 |
+| an ad-hoc linear-inversion preview (§4) | −14.0 | −93.6 |
+| Plustek QuickScan, JPEG path, other strip | −0.8 | −11.8 |
 
-Take frame 1 of 2026-09-13, invert the negative, stretch each channel to
-full range on its own 0.5/99.5 percentiles — exactly what the preview
-renderer does — and look at where the values land:
+Blue is deficient in both of our renderings. Low blue is yellow. The
+symptom is real and it is in our output.
 
-| channel | min | median | mean | max |
-|---|---|---|---|---|
-| R | 0.0 | 191.0 | 173.4 | 255.0 |
-| G | 0.0 | 203.9 | 187.4 | 255.0 |
-| B | 0.0 | **77.0** | 93.7 | 255.0 |
+## 2. What `to_positive()` actually does
 
-Every channel reaches both ends. The endpoints are not the problem —
-per-channel full-range normalisation is doing exactly what it promises.
-But blue's **median sits 127 code values below green's**. Low blue is
-yellow; low blue with slightly low red is yellow-green. That is the cast,
-and it lives entirely in the midtones.
+Read the code before theorising about it (`of135i/image.py`):
 
-So the failure is not the stretch. It is that **the three channels'
-distributions have different shapes**, and matching them at the endpoints
-leaves their middles far apart. A linear stretch cannot fix that, and no
-choice of percentile will.
+1. `base` = the **99.8th percentile per channel** — the unexposed film
+   base, which is the brightest thing in a negative;
+2. `dens = log10(base / px)` — density measured **from that base**;
+3. per-channel normalisation of the density to its own 0.5/99.5
+   percentiles;
+4. a print gamma.
 
-## 3. The cause: the orange mask, never removed
+Two consequences follow directly, and both matter:
 
-A colour negative has an orange mask — a coloured film base that
-transmits red and absorbs blue. It is not part of the image; it is a
-constant offset the image sits on top of. Standard negative processing
-removes it before inverting. Ours never did.
+- **The orange mask is already removed, by construction.** Density is
+  measured relative to the per-channel film base, which *is* the mask
+  level. The docstring has said so since the function was written.
+- **A constant per-channel offset in density cannot survive step 3
+  anyway.** Per-channel percentile normalisation removes offset *and*
+  span differences. Even a badly measured `base` would cancel.
 
-**It is measurable in our own data.** The scan window includes an
-overscan margin beyond the frame (the A+C geometry,
-`docs/holder-position-design.md`), and unexposed film is inside it.
-Profiling frame 1 from top to bottom:
+So no explanation of the cast can rest on "the mask is not removed", and
+none can rest on "red spans more density than green and blue" either —
+step 3 normalises span away too.
 
-- the uniform bands at the extreme ends are dark and nearly neutral
-  (R 640 / G 780 / B 730) — that is the holder's **plastic aperture
-  edge**, not film;
-- between the image and the plastic, rows 5183–5199, is a band that is
-  bright and strongly red-weighted. That is **film base**.
+## 3. What is left, stated as description rather than diagnosis
 
-Measured there — 16 rows, about 0.11 mm at 3600 dpi, medians over the
-central 2900 columns:
+After per-channel normalisation every channel occupies the full range, so
+the only thing that can still differ is **the shape of each channel's
+distribution within that range** — where the mass sits between the
+endpoints. Measured on frame 1 with the driver's own function, the
+channel medians land at R 155, G 186, B 99 on an 8-bit scale.
 
-| channel | value (16-bit) | 8-bit equivalent | density |
-|---|---|---|---|
-| R | 35591 | 138.5 | 0.265 |
-| G | 13646 | 53.1 | 0.681 |
-| B | 9514 | 37.0 | 0.838 |
+That is a restatement of the symptom in more precise terms. **It is not a
+cause.** Whether those shapes differ because of the film (age, stock,
+exposure), the scanner's channel response, the choice of percentiles, the
+gamma, or something else, is not established by anything measured so far.
 
-R/B = 3.74. That is the orange mask, unmistakably: transmits red,
-absorbs blue, and the density difference between blue and red is 0.573.
+## 4. Which code produced which reviewed image
 
-Now compare that with the stretch result in §2. Blue starts 0.573
-density units darker than red on the negative. Invert without removing
-that offset, stretch to full range, and blue's midtones land low. The
-number in §2 and the number here are the same fact seen twice.
+Traceability matters here, because the previous revision of this document
+generalised from the wrong renderer.
 
-## 4. Why the measurement is trustworthy
+- **2026-09-13, `wp4-f1-preview.png`** — the image Christian reviewed and
+  called yellow that evening — was produced by an **ad-hoc script**, not
+  by the driver: linear inversion (`65535 - x`), per-channel 0.5/99.5
+  percentile stretch, rotate 90°. It does **not** use the density domain
+  and does **not** reference the film base. Preserved as
+  `plustek-135i-analys/wp4-20260913/render-scripts/look.py`.
+- **2026-09-13, `wp4-f1-to_positive.png`** — the driver's real
+  `to_positive()` on the same frame, rendered afterwards for this
+  document. Script: `render-scripts/tp.py`.
+- **2026-09-10, the N3 set** — `to_positive()` plus a "v2" variant with a
+  per-channel gamma anchored on the median density. The script was **not
+  preserved** and the chain cannot be reconstructed exactly; only the
+  output images and the test-log description remain.
 
-The obvious worry is that our own calibration already absorbs part of the
-mask, which would make this measurement circular. It does not, and the
-project had already proved it without meaning to.
+## 5. The retracted claim
 
-Our AFE gain calibration reads a white reference and picks per-channel
-gains. On 2026-09-13 the white peaks were R 22206, G 31626, B 25911 and
-the codes chosen were R 0x2e, G 0x20, B 0x27 — the highest gain to the
-weakest channel, equalising white. The sensor and lamp are strongly
-green-favouring: red sits 0.154 density units below green before
-correction.
+The previous revision argued: the endpoints are not the problem because
+every channel reaches both ends; therefore the cause is the orange mask,
+which is never removed; therefore the fix is to measure the mask per
+strip and subtract it.
 
-Crucially, that white reference is read **before the film**, and **Test
-60 demonstrated the consequence empirically**: a black-and-white silver
-strip and a colour negative, scanned in the same session, produced
-*identical* gain codes (46/32/39). Gain is film-independent as a matter
-of measurement, not just of design.
+The first step is sound. **The second does not follow, and is false for
+`to_positive()`**, which already references the film base per channel and
+then normalises per channel — so the mask is removed twice over, and a
+constant error in measuring it would cancel regardless.
 
-So if the gain stage had been absorbing the mask, the mask would have
-normalised toward zero density and §3 would have found nothing. It found
-a strong mask against a film-independent reference. The measurement
-stands on its own.
+The error was generalising from the ad-hoc linear-inversion preview of
+§4, which genuinely does not handle the mask, to the driver's function,
+which does. They are different renderers and only one of them was
+measured before the conclusion was written.
 
-## 5. The fix, and why it belongs to us rather than to constants
+The proposed fix therefore rests on nothing: measuring the film base more
+carefully would change `base` slightly, and step 3 would then remove the
+difference. **No colour change should be implemented on this reasoning.**
 
-The mechanism points at one change: **measure the mask from unexposed
-film, subtract it per channel, then invert and render.** Two properties
-make this the right shape:
+## 6. Observations worth keeping
 
-- it is **per strip and per scan**, so it adapts to film stock, age and
-  exposure, none of which a fixed constant can know;
-- it needs **no new hardware behaviour**. The mask is already in every
-  scan we take.
+These stand on their own and are reproducible.
 
-Sampling sites, best first:
+**The film base is directly measurable in our own scans.** The A+C
+overscan margin contains unexposed film. On frame 1, rows 5183–5199
+(about 0.11 mm at 3600 dpi, between the image and the holder's plastic
+edge, which is dark and near-neutral at R 640 / G 780 / B 730):
 
-1. **The inter-frame gap.** The holder's own geometry puts about 1.90 mm
-   of unexposed film between frames — wide, clean, and reachable by
-   positioning deliberately.
-2. **The overscan margin**, which is what §3 used. At the default
-   0.75 mm overscan only about 0.11 mm of film base is exposed before the
-   plastic edge begins. Enough to prove the method; thin for production.
+| channel | value (16-bit) | density |
+|---|---|---|
+| R | 35591 | 0.265 |
+| G | 13646 | 0.681 |
+| B | 9514 | 0.838 |
 
-The alternative — hardcoding per-channel black and white points — is
-what consumer scanner software does. It works when one vendor pairs known
-constants with a known scanner and a profile tuned to the combination. We
-have the better option available and should take it: a measurement beats
-a calibration when the measurement is free.
+R/B = 3.74 — transmits red, absorbs blue, as an orange mask should. The
+holder's own geometry offers about 1.90 mm of unexposed film between
+frames, a far wider sampling site than the 0.11 mm the default 0.75 mm
+overscan exposes. Useful if a future design ever needs an explicit mask
+measurement; it does not diagnose the cast.
 
-## 6. What this does NOT touch
+**Our gain calibration does not see the film.** The AFE white reference
+is read before the film, and Test 60 demonstrated the consequence
+empirically: a silver black-and-white strip and a colour negative scanned
+in one session produced identical gain codes (46/32/39). So per-channel
+gain is film-independent as a matter of measurement. This rules out one
+possible confound; it does not explain the cast.
 
-The raw data is fine. Frame 1 reaches full range in all three channels
-with **0.0000 % clipped high and 0.0000 % clipped low**, measured 16 bits
-per channel. The sensor path, the calibration, the geometry and the
-transport are not implicated by anything here.
+**The raw data does not clip.** Frame 1 reaches full range in all three
+channels with 0.0000 % at either end, measured at 16 bits per channel.
+This says the signal is not being destroyed by the capture path. **It
+does not say the colour calibration is correct** — an uncorrected or
+mis-scaled channel can occupy the full range perfectly well. The two
+questions are independent.
 
-This is `to_positive` and the preview renderer — the application layer,
-which is exactly where this project's standing principle puts colour:
-*the driver delivers correct raw data; colour interpretation is the
-application's job* (Christian, 2026-09-05). The finding does not change
-that principle. It says our own preview has been a poor application of
-it.
+## 7. What would actually settle it
 
-## 7. Open, and deliberately so
+None of this is scheduled; it is what a real diagnosis would need.
 
-- The fix is **not implemented**. Nothing in `of135i/image.py` or
-  `to_positive` has changed.
-- Whether the driver should ship mask compensation at all, or leave it to
-  the frontend, is Christian's decision. The argument for shipping it: a
-  preview that is obviously wrong is worse than no preview. The argument
-  against: it is interpretation, and interpretation is the application's.
-- A second strip, ideally a different film stock, is needed before the
-  method can be called general. One strip demonstrates; it does not
-  generalise.
+1. **A second strip, ideally a different stock and a newer one.** The
+   present strip was chosen for the holder tests because it has six
+   frames, not for its colour. If a fresh strip renders neutrally
+   through the same code, the cast belongs to this film.
+2. **A known-good reference rendering of the same raw file** — darktable's
+   negadoctor, or another established negative pipeline — to separate
+   "our renderer is wrong" from "this negative is like that".
+3. **A vendor rendering of the same strip.** Attempted 2026-09-13 and it
+   failed: QuickScan's 48-bit TIFF path clipped blue to zero across
+   30–79 % of every frame (measured independently twice). Its JPEG path
+   is the one that works for negatives. Not retried; it needs hardware.
+
+Until at least one of those exists, the honest position is that we have a
+symptom, a precise description of it, and no cause.

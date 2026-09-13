@@ -486,14 +486,16 @@ touching a motor sequence.
    workflow to catch a mistake we cannot actually detect.
 
 Also, the `load-film` option's description now says that a cold start
-takes about forty seconds with no progress shown. SANE has no progress
+takes about twenty-five seconds on the reference unit, with no progress
+shown — the figure was 40 s when that text was written and Tests 78 and
+79 then cut the cold start to ~23 s; the description says which unit it
+was measured on rather than promising a time. SANE has no progress
 channel while an option is being set — the frontend blocks until the
-call returns — so the description is the only lever. **The better answer
-is to remove most of the wait**, which Test 77 measured as dead time: the
-cold start's opening poll reads a status word that is static at 0x48 for
-the whole 15 s, in both logged runs. That is a timing constant in the
-load flow and the Python driver carries the identical one, so it is left
-alone here pending Christian's decision and an A/B.
+call returns — so the description is the only lever. **The better answer was to remove
+most of the wait**, which is what happened: Test 77 measured the opening
+poll as dead time, Christian approved the change, and Tests 78 and 79
+A/B'd it on hardware — 40.1 s → 22.9 s, 43 % of the wait gone, with every
+genuine wait untouched.
 
 ## 9. Review round, 2026-09-13 evening (Astra) — four corrections
 
