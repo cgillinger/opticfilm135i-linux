@@ -637,8 +637,14 @@ rather than copies, with a test tying them together). Removes 13.5 s of
 the ~40 s at Load film. The six motor completions are a genuine wait
 (1.0–1.9 s observed) and were deliberately left at 30 s; so were the reg
 0x32 settle polls, which also time out but are only 1.5 s each and match
-the driver's own loop — one variable at a time. **Those three remain dead
-time worth another 4.5 s**, and are the obvious next candidate.
+the driver's own loop — one variable at a time. **Those three were then shortened too
+(Test 79), on the same evidence and with the same method**: 1.5 s → 0.25
+s, another 3.7 s. Total across both changes: **40.1 s → 22.9 s, 43 % of
+the wait gone**, with every genuine wait untouched. Test 79 also found
+why reg 0x32 never reaches its target — the round's own last write to
+that register clears the bit the condition requires, so it is likely a
+transcription slip from the capture. The condition itself was left
+alone; only the waiting was shortened.
 
 **Mask compensation in the rendering path.** See
 `docs/colour-rendering-analysis.md`: measure the orange mask from

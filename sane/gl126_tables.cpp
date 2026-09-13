@@ -23956,8 +23956,8 @@ static const Op MAGAZINE_COLD_INIT_OPS[201] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 3514, 2, 0, 0x00, 0x00, 0},
     {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 3516, 2, 0, 0x00, 0x00, 0},
-    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xff, 0xbb, 1500},
-    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x1f, 1500},
+    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xff, 0xbb, 250},
+    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x1f, 250},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 3518, 64, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 3582, 64, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 3646, 64, 0, 0x00, 0x00, 0},
@@ -24021,8 +24021,8 @@ static const Op MAGAZINE_COLD_INIT_OPS[201] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 7032, 2, 0, 0x00, 0x00, 0},
     {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 7034, 2, 0, 0x00, 0x00, 0},
-    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xff, 0xbb, 1500},
-    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x1f, 1500},
+    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xff, 0xbb, 250},
+    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x1f, 250},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 7036, 64, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 7100, 64, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 7164, 64, 0, 0x00, 0x00, 0},
@@ -24086,8 +24086,8 @@ static const Op MAGAZINE_COLD_INIT_OPS[201] = {
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 10550, 2, 0, 0x00, 0x00, 0},
     {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 10552, 2, 0, 0x00, 0x00, 0},
-    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xff, 0xbb, 1500},
-    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x1f, 1500},
+    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xff, 0xbb, 250},
+    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x1f, 250},
 };
 
 static const std::uint8_t MAGAZINE_OPEN_OPS_DATA[397] = {

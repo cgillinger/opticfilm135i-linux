@@ -5414,3 +5414,74 @@ saving; that path was not separately exercised here.
 Left alone deliberately, and still dead time: the three reg 0x32 settle
 polls, 1.5 s each, which time out at 0x1d against a wanted 0x1f in every
 run ever logged. 4.5 s more could come off. One variable at a time.
+
+### Test 79: the settle check shortened too — second A/B, and a likely transcription slip found
+
+2026-09-13, 19:55, mintuu. Backend `91676b44` installed. Same starting
+state as Tests 75 and 78 (cold, reg 0x101 = 0x48, magazine loose), same
+command, `scanimage -n --load-film`. Log
+`plustek-135i-analys/wp4-20260913/ab-coldstart2.log`.
+
+The remaining dead time identified in Test 78: the three reg 0x32 settle
+polls, 1.5 s each, which time out at 0x1d against a wanted 0x1f. Budget
+cut from 1.5 s to 0.25 s in both implementations, from one constant
+(`of135i.device.COLD_SETTLE_TIMEOUT`, read by the generator, tied by a
+test).
+
+**Result across all three runs — nineteen polls each, only the intended
+three changed:**
+
+```
+   op     A 15s/1.5s   B 1.5s/1.5s   C 1.5s/0.25s   value
+    3       15001 ms       1507 ms        1501 ms   48/48
+   43        1919 ms       1919 ms        1922 ms   d9/f8
+   48           4 ms          4 ms           4 ms   f8/f8
+   59        1926 ms       1924 ms        1925 ms   d9/f8
+   67        1056 ms       1055 ms        1060 ms   d9/f8
+   69           4 ms          4 ms           4 ms   bb/bb
+   70        1502 ms       1506 ms         256 ms   1d/1d   <-- changed
+  108        1919 ms       1925 ms        1921 ms   d9/f8
+  113           4 ms          4 ms           4 ms   f8/f8
+  124        1922 ms       1926 ms        1920 ms   d9/f8
+  132        1057 ms       1057 ms        1059 ms   d9/f8
+  134           4 ms          4 ms           4 ms   bb/bb
+  135        1505 ms       1501 ms         251 ms   1d/1d   <-- changed
+  173        1919 ms       1924 ms        1922 ms   d9/f8
+  178           4 ms          4 ms           4 ms   f8/f8
+  189        1919 ms       1921 ms        1926 ms   d9/f8
+  197        1056 ms       1058 ms        1056 ms   d9/f8
+  199           4 ms          4 ms           4 ms   bb/bb
+  200        1503 ms       1503 ms         256 ms   1d/1d   <-- changed
+
+total polled wait   34.2 s -> 20.8 s -> 17.0 s
+wall clock          40.1 s -> 26.6 s -> 22.9 s
+```
+
+**17.2 s removed in total, 43 % of the original wait**, with every
+genuine wait untouched: the six motor completions still go 0xd9 → 0xf8
+in 1.0–1.9 s, the per-round ready polls and the reg 0x35 settles still
+land on their first read. The jog after it is unchanged (four
+completions, 0xf8 first poll, 4 ms), `magazine unknown -> released`,
+reg 0x01 = 0x22 afterwards, exit 0, zero errors, sound normal.
+
+#### Why reg 0x32 never reaches 0x1f — a likely transcription slip
+
+Visible in `_cold_homing_round()` itself. 0x1f has bit 0x02 set, and the
+round writes reg 0x32 three times: clear bit 0x02, set it, and then
+**clear it again** — and that last clear is the final write before the
+two closing motor moves and the settle. Unless the hardware sets the bit
+back by itself, the condition is unreachable by construction, which is
+consistent with all nine observations (three rounds × three cold starts)
+reading a static 0x1d.
+
+The most likely explanation is that 0x1f was read off the capture at a
+point where bit 0x02 was still set, i.e. before the third write. **The
+condition was deliberately left alone**: which of 0x1f and 0x1d is
+correct is not established, guessing would be worse than waiting, and
+the mismatch keeps being logged. Only the waiting was shortened. The
+motor completion preceding this settle has already confirmed the move
+finished, so it is a secondary check and not what proves the transport
+is done.
+
+Nothing dead remains in the cold start. What is left is 17.0 s of real
+waiting, almost all of it the nine homing moves.

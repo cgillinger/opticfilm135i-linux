@@ -187,6 +187,29 @@ _PARK_POLL_INTERVAL = 0.02
 # the sequence, it only stops waiting sooner.
 COLD_READY_TIMEOUT = 1.5
 
+# _cold_homing_round()'s closing settle check, waiting for reg 0x35 = 0xbb
+# and reg 0x32 = 0x1f. Non-raising: it warns and continues.
+#
+# 0.25 s, not the 1.5 s (30 rounds of 50 ms) it was until 2026-09-13.
+# Reg 0x35 reaches 0xbb on the FIRST read, every round of every run ever
+# logged. Reg 0x32 never reaches 0x1f -- it reads 0x1d, static, in all
+# nine observations across three cold starts (docs/test-log.md Tests 77,
+# 78).
+#
+# The likely reason is visible in this very function: 0x1f has bit 0x02
+# set, and the last thing the round writes to reg 0x32 before the settle
+# is `val32 & ~0x02`, which CLEARS it. Unless the hardware sets that bit
+# back by itself, the condition is unreachable by construction, and the
+# 0x1f almost certainly comes from reading the capture at a point where
+# the bit was still set. The condition is left ALONE -- which of 0x1f and
+# 0x1d is correct is not established, and guessing would be worse than
+# waiting. Only the waiting is shortened, and the mismatch keeps being
+# logged. The motor completion that precedes this settle has already
+# confirmed the move finished, so this is a secondary check, not the one
+# that proves the transport is done.
+COLD_SETTLE_TIMEOUT = 0.25
+COLD_SETTLE_INTERVAL = 0.05
+
 
 # Masked completion test for the LOAD flow (docs/test-log.md Test 14,
 # docs/load-analysis.md). The status word (reg 0x101 high byte, ack
@@ -1221,12 +1244,12 @@ class Scanner:
         # ---- settle: motor disable, poll 0x35/0x32 until stable ---------
         self.io.write_regs([(0x09, 0x00)])
         val35 = val32 = None
-        for _ in range(30):
+        for _ in range(max(1, round(COLD_SETTLE_TIMEOUT / COLD_SETTLE_INTERVAL))):
             val35 = self.io.read_reg(0x35)
             val32 = self.io.read_reg(0x32)
             if val35 == 0xBB and val32 == 0x1F:
                 break
-            time.sleep(0.05)
+            time.sleep(COLD_SETTLE_INTERVAL)
         else:
             log.warning(
                 "cold_init: settle poll did not reach 0x35=0xbb/0x32=0x1f "

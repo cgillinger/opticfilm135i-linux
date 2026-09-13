@@ -2488,6 +2488,19 @@ def test_magazine_programs_are_structurally_sound():
     for op in ready:
         assert int(op["timeout_ms"]) == want_ms, (op, want_ms)
     assert want_ms <= 3000, ("the whole point was to stop waiting 15 s", want_ms)
+    # The closing settle check, same treatment and same reason: reg 0x35
+    # settles on its first read while reg 0x32 never reaches the value
+    # this waits for (0x1d against 0x1f, nine observations). Tied to the
+    # driver's constant so neither side drifts.
+    from of135i.device import COLD_SETTLE_TIMEOUT
+    settle_ms = round(COLD_SETTLE_TIMEOUT * 1000)
+    settle = [op for op in cold_info
+              if op["kind"] == "PollBestEffort" and op["want"] in ("bb", "1f")]
+    assert len(settle) == 6, ("reg 0x35 and reg 0x32, once per homing round", len(settle))
+    for op in settle:
+        assert int(op["timeout_ms"]) == settle_ms, (op, settle_ms)
+    assert settle_ms <= 500, ("the point was to stop waiting 1.5 s", settle_ms)
+
     # The motor completions are a different, genuine wait (1.0-1.9 s
     # observed) and must NOT have been shortened with them.
     moves = [op for op in cold_info

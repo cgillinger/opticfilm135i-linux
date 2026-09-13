@@ -839,8 +839,11 @@ _REG_WRITE_CHUNK = 64     # usbio._WRITE_CHUNK: 64 B = 32 (reg, val) pairs
 #: (see the driver's own comment for the evidence).
 _COLD_READY_TIMEOUT_MS = round(_device.COLD_READY_TIMEOUT * 1000)
 _COLD_MOVE_TIMEOUT_MS = 30000
-#: _cold_homing_round's settle loop: 30 rounds, 50 ms apart.
-_COLD_SETTLE_TIMEOUT_MS = 1500
+#: _cold_homing_round's closing settle check. Taken FROM the driver
+#: (device.COLD_SETTLE_TIMEOUT) so the two implementations cannot drift;
+#: shortened from 1.5 s on 2026-09-13 -- see the driver's comment for why
+#: reg 0x32 never reaches the value this waits for.
+_COLD_SETTLE_TIMEOUT_MS = round(_device.COLD_SETTLE_TIMEOUT * 1000)
 #: _eject_body's completion loop.
 _EJECT_TIMEOUT_MS = 10000
 
