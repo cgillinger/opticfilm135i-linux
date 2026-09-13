@@ -5350,3 +5350,67 @@ can say what is happening and roughly how long.
 
 Physical state at the end: magazine ejected and loose, still in the slot,
 the six-frame colour negative still in it.
+
+### Test 78: the cold start's shortened opening wait — A/B on hardware, confirmed
+
+2026-09-13, 19:40, mintuu. Backend `dc94e676` installed (the reinstall is
+part of the test: the previous build carried the 15 s constant). Scanner
+power-cycled, magazine loose in the slot, **starting state identical to
+Test 75's run A** — reg 0x01 = 0x00 cold-never-homed, reg 0x101 = 0x48,
+no magazine mark. Same command as run A used, `scanimage -n
+--load-film`, so the only difference between the two runs is the
+constant. Log `plustek-135i-analys/wp4-20260913/ab-coldstart.log`.
+
+**Result: exactly the intended change and nothing else.** Nineteen polls
+in both runs; eighteen identical.
+
+```
+   op   A: first/last  polls      ms      B: first/last  polls      ms
+    3   48/48         1935     15001      48/48           191      1507   <-- changed
+   43   d9/f8          250      1919      d9/f8           244      1919
+   48   f8/f8            1         4      f8/f8             1         4
+   59   d9/f8          255      1926      d9/f8           244      1924
+   67   d9/f8          137      1056      d9/f8           137      1055
+   69   bb/bb            1         4      bb/bb             1         4
+   70   1d/1d          197      1502      1d/1d           192      1506
+  108   d9/f8          253      1919      d9/f8           250      1925
+  113   f8/f8            1         4      f8/f8             1         4
+  124   d9/f8          254      1922      d9/f8           249      1926
+  132   d9/f8          141      1057      d9/f8           135      1057
+  134   bb/bb            1         4      bb/bb             1         4
+  135   1d/1d          199      1505      1d/1d           190      1501
+  173   d9/f8          249      1919      d9/f8           251      1924
+  178   f8/f8            1         4      f8/f8             1         4
+  189   d9/f8          253      1919      d9/f8           248      1921
+  197   d9/f8          137      1056      d9/f8           137      1058
+  199   bb/bb            1         4      bb/bb             1         4
+  200   1d/1d          195      1503      1d/1d           193      1503
+
+total polled wait   A 34.2 s   B 20.8 s
+wall clock          A 40.1 s   B 26.6 s      saving 13.5 s
+```
+
+- The six motor completions still go busy 0xd9 → done 0xf8 in 1.0–1.9 s,
+  unchanged to within milliseconds. The per-round ready polls still
+  settle on their first read. The reg 0x32 settles still time out at
+  0x1d after ~1.5 s. Nothing that was a genuine wait was shortened.
+- **op 3 is still static at 0x48 for its whole (shortened) budget** —
+  191 polls, first == last. A third independent confirmation that the
+  opening wait is waiting for a state the engine cannot be in yet: at
+  power-on it is not in the done class and does not enter it until the
+  first homing move has run.
+- The jog that follows is unchanged: four completions, 0xf8 on the first
+  poll, 4 ms each. `magazine unknown -> released`, mark written for
+  `libusb:001:011`, reg 0x01 = 0x22 afterwards, exit 0, **zero errors in
+  the log**. Magazine loose. Sound normal (Christian).
+
+**Verdict: the change is proven on hardware.** 13.5 s comes off every
+Load film from a cold scanner — a third of the wait — with every other
+observable byte-for-byte where it was. The same constant governs the
+Python driver (`of135i.device.COLD_READY_TIMEOUT`, which the SANE table
+generator reads rather than copies), so `of135i load` gets the same
+saving; that path was not separately exercised here.
+
+Left alone deliberately, and still dead time: the three reg 0x32 settle
+polls, 1.5 s each, which time out at 0x1d against a wanted 0x1f in every
+run ever logged. 4.5 s more could come off. One variable at a time.

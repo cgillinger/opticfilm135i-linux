@@ -622,8 +622,9 @@ it looks:
   is possible to investigate but touches exactly the mechanism that was
   switched off on purpose.
 
-**~~Shorten the cold start's opening wait.~~ DONE offline 2026-09-13**
-(Christian's decision the same evening), *pending a hardware A/B*. Test
+**~~Shorten the cold start's opening wait.~~ DONE and PROVEN ON HARDWARE
+2026-09-13** (Test 78: eighteen of nineteen polls byte-for-byte
+identical to run A, only the opening one changed, 40.1 s → 26.6 s). Test
 77's measurement: across two cold starts the OPENING wait never settles —
 status word static at 0x48 for the full 15 s, ~1900 polls, first == last
 — because at power-on the engine is not in the done class and does not
@@ -636,7 +637,8 @@ rather than copies, with a test tying them together). Removes 13.5 s of
 the ~40 s at Load film. The six motor completions are a genuine wait
 (1.0–1.9 s observed) and were deliberately left at 30 s; so were the reg
 0x32 settle polls, which also time out but are only 1.5 s each and match
-the driver's own loop — one variable at a time.
+the driver's own loop — one variable at a time. **Those three remain dead
+time worth another 4.5 s**, and are the obvious next candidate.
 
 **Mask compensation in the rendering path.** See
 `docs/colour-rendering-analysis.md`: measure the orange mask from
