@@ -160,11 +160,15 @@ printf '\n# Plustek OpticFilm 135i\nusb 0x07b3 0x1436\n' | sudo tee -a /etc/sane
 A green `scanimage -L` is not proof by itself — the point is *which file*
 served it.
 
-* `tools/sane_install.sh verify` runs `SANE_DEBUG_DLL=4 scanimage -L` and
-  prints the `dlopen()`ing line. It must name
-  `/usr/lib64/sane/libsane-genesys.so.1`, with **no** `LD_LIBRARY_PATH` set in
-  the environment. (This enumerates a connected scanner — hardware session
-  only.)
+* `tools/sane_install.sh verify` runs `SANE_DEBUG_DLL=4 scanimage -L`, checks
+  the `dlopen()`ing line against `/usr/lib64/sane/libsane-genesys.so.1`, and
+  **exits non-zero if it does not match** — a different genesys backend, a
+  failing `scanimage`, or a leftover `LD_LIBRARY_PATH`/`SANE_CONFIG_DIR` all
+  fail the check rather than passing quietly. It separates the two questions:
+  `LOAD OK` (the right library was loaded) and `DEVICE OK` (the 135i was
+  enumerated). Exit 0 = both, 1 = library right but no device, 2 = wrong
+  library or a broken run. (This enumerates a connected scanner — hardware
+  session only.)
 * `tools/sane_install.sh status` compares the installed file with the current
   build byte for byte, so "the right path" also means "the right build".
 * For digiKam, the same `dll` backend does the loading. `ldd` on
@@ -173,14 +177,22 @@ served it.
   `/lib64/libsane.so.1` — the `dll` meta-backend, whose compiled-in `LIBDIR`
   is `/usr/lib64/sane` (its own debug output says so). digiKam therefore
   loads the same file `scanimage` does; there is no second SANE to configure.
-  To see it in the live process rather than infer it:
+  **But `ldd` is not proof.** It shows what is linked at start-up; the
+  backend itself arrives later, through `dlopen`, and nothing in the link
+  map says which file that will be. Two ways to see the real thing, both
+  after the scanner dialog has been opened at least once (the library is
+  loaded lazily, on the first `sane_init`):
 
   ```
-  grep -E 'libsane' /proc/$(pidof digikam)/maps
+  grep libsane-genesys /proc/$(pidof digikam)/maps      # the mapped file
+  ls -l /proc/$(pidof digikam)/map_files/ | grep libsane-genesys
   ```
 
-  The `libsane-genesys*` line there is the file that is really serving the
-  scan. `ls -l` that path to see which build it resolves to.
+  The `libsane-genesys*` path there is the file that is really serving the
+  scan — resolve it (`ls -l`) and compare with
+  `tools/sane_install.sh status`. Belt and braces: start digiKam with
+  `SANE_DEBUG_DLL=4` and read its `dlopen()`ing line in the log, which is
+  the same evidence `verify` checks for `scanimage`.
 
 ## 6. The digiKam workflow, and where its limits are
 
@@ -202,7 +214,7 @@ in; pick the row.
 | Bit depth | Basic Options | 16 (the only value the model offers) |
 | Resolution | Basic Options | 3600 (the list is 600/1200/2400/3600/7200) |
 | Frame | **Scanner Specific Options** | 1 (range 1–6) |
-| Output format | save dialog | PNG or TIFF — both lossless; KSaneCore hands over 16 bits per channel (`QImage::Format_RGBX64`) and digiKam's `DImg` keeps them |
+| Output format | save dialog | PNG or TIFF — both lossless. KSaneCore hands over 16 bits per channel (`QImage::Format_RGBX64`) and digiKam's `DImg` can keep them, but choosing a lossless format is **not evidence** that 16 bits reached the file: check the file itself with `tools/image_probe.py` (below) |
 
 `Frame` appears automatically: KSaneWidget puts every option it does not
 handle itself onto a *Scanner Specific Options* tab, using the SANE
@@ -225,15 +237,43 @@ descriptor's title, description and range — which the patch provides.
   read; no scan is started by opening the device or by changing an option.
   Batch mode and "wait for external button" exist in KSaneCore but are off
   unless switched on — leave them off.
-* **Cancel does not park — by design, and it costs a power cycle.** Cancel
-  reaches `sane_cancel` → `end_scan`, and a pass that was streaming gives
-  `ParkDecision::AbortedPass`: nothing is written, an error is raised naming
-  the bytes read of the bytes expected, and the scanner needs a power cycle.
-  That is the driver's rule — PARK is defined only after a complete pass
-  (`docs/sane-hook5-frame.md` §9) — not a defect, but it means pressing
-  Cancel mid-scan ends the session: power-cycle, `of135i load`, start over.
-  Cancelling *before* the pass streams (NoPass) writes nothing and costs
-  nothing.
+* **Cancel does not park — by design — and once a scan has been started it
+  costs a power cycle.** Two situations, and they are not the same:
+
+  1. *Closing the dialog without having started a scan.* This is the only
+     write-free case: `sane_open` writes nothing on GL126 (Test 46/47) and
+     `sane_close` is gated to write nothing either, so the device is left as
+     it was found.
+  2. *Anything after pressing Scan.* By then the backend has already written
+     to the scanner: `sane_start` runs offset, gain and shading calibration
+     (hooks 2–4) before the frame is positioned and the pass begins. A
+     cancel, an error, or a frontend crash anywhere in there leaves the
+     hardware in a state the driver does not try to reason about. PARK is
+     deliberately NOT run (`ParkDecision::AbortedPass` raises an error naming
+     bytes read of bytes expected; `NoPass` means only that the scan pass was
+     never armed — it does **not** mean the session wrote nothing). Recovery
+     is the standing rule in `docs/hardware-safety.md`: power off, power on,
+     read-only status check, `of135i load`, start over. No blind retry.
+* **Bit depth has to be checked on the saved file.** Pillow — which
+  `sane_coverage.py` and the preview-positive command use — returns 8-bit
+  RGB for a 16-bit RGB PNG or TIFF, and a header saying `bit_depth 16`
+  cannot distinguish real 16-bit data from 8-bit data widened to 16. Use
+  `tools/image_probe.py`, which parses PNG itself and reads TIFF through
+  `tifffile`, so 16-bit RGB survives:
+
+  ```
+  .venv/bin/python tools/image_probe.py FILE \
+      --expect 3762x5335 --expect-channels 3 --expect-bits 16 \
+      --min-low-byte-nonzero 0.5
+  ```
+
+  `low_byte_nonzero` is the fraction of samples whose low byte is not zero.
+  A real scan sits near 1.0 (this repo's own 16-bit TIFF measures 0.9987);
+  8-bit data widened to 16 gives exactly 0.0. The Pillow path stays where it
+  is for coverage and preview images — it is adequate there, because the
+  aperture edge is found from a relative step in a row-mean profile — and
+  the limitation is now asserted by a test rather than assumed
+  (`tests/test_image_probe.py`).
 * A harmless log line at `sane_close`: *Cannot open calibration for writing*.
   GL126 never restores a calibration cache (the patch gates the restore off),
   so nothing depends on it. `mkdir -p ~/.sane` silences it.
@@ -264,21 +304,34 @@ first, then eject.
 sudo tools/sane_install.sh uninstall
 ```
 
-Restores `libsane-genesys.so.1` to the recorded distribution target, removes
-`libsane-genesys-gl126.so.*`, and deletes the marker block from
-`genesys.conf`. Verified in staging to leave the tree byte for byte as it was
-(`tests/test_sane_install.py`). Belt and braces:
-`sudo dnf reinstall sane-backends-drivers-scanners` restores the packaged
-symlink too.
+It does not blindly put back what it once recorded — it looks at the link's
+current state first:
+
+| what it finds | what it does |
+|---|---|
+| `libsane-genesys.so.1` points at our library, recorded target still present | restores that target, removes our library |
+| points at ours, but the recorded target is **gone** (a package update replaced it) | follows the one distribution library that is there, so the link never dangles |
+| points at ours, recorded target gone and **several or no** distribution libraries present | **refuses, changes nothing**, and says to run `dnf reinstall sane-backends-drivers-scanners` first |
+| already points at a distribution library (the update took the link back) | leaves the link alone and only removes our library |
+
+A library is never removed while the live link still resolves to it. From
+`genesys.conf` only our marked block is deleted: original blank lines stay,
+and edits made after the install are kept — the pre-install backup is used
+for comparison, never restored over the live file (it is deleted only when
+the result is byte-identical to it).
 
 **Caveat worth knowing:** an RPM update of `sane-backends-drivers-scanners`
-will recreate its own `libsane-genesys.so.1` symlink, silently pointing SANE
-back at the distribution's genesys — at which point the 135i stops being
-found. `tools/sane_install.sh status` shows this immediately (`genesys.so.1 ->
-libsane-genesys.so.1.4.0`), and re-running `install` fixes it. This is the
-price of not overwriting packaged files, and it is the right trade.
+recreates its own `libsane-genesys.so.1` symlink, silently pointing SANE back
+at the distribution's genesys — at which point the 135i stops being found.
+`tools/sane_install.sh status` says so in as many words (`(the
+distribution's -- our backend is NOT in use)`, and it flags a recorded target
+that has disappeared), and re-running `install` fixes it. This is the price
+of not overwriting packaged files, and it is the right trade.
 
-## 9. Verified offline (2026-09-13), and what is left
+## 9. Verified offline, and what is left
+
+First written 2026-09-13; revised the same day after external review (Astra)
+found three real defects in the first installer — see the log below.
 
 Verified:
 
@@ -286,21 +339,44 @@ Verified:
   which is what rules out the alternatives in §1;
 * Fedora's `libsane.so.1` `dlopen()`s our 27 MB build and resolves every
   `sane_genesys_*` op — run through a staging directory with **every** `usb`
-  line disabled, so no device was attached and the scanner was never addressed;
-* `install` → `uninstall` against a synthetic root that mirrors Fedora's
-  layout: our file added under its own name, only the `.so.1` symlink
-  repointed, the distribution's library and `.so` link untouched, the USB id
-  added once, and the tree restored byte for byte
-  (`tests/test_sane_install.py`, 6 tests);
+  line disabled, so no device was attached and the scanner was never
+  addressed;
+* the installer against a synthetic root mirroring Fedora's layout
+  (`tests/test_sane_install.py`, 19 tests): install adds without overwriting,
+  is idempotent, refuses an incomplete clone, and **rolls back completely if
+  a step after the symlink change fails**; uninstall restores byte for byte,
+  follows a package update to the new library instead of leaving a dangling
+  link, leaves a reinstated distribution link alone, refuses an ambiguous or
+  missing restore target without changing anything, keeps original blank
+  lines and later edits in `genesys.conf`, and leaves a USB id it did not add;
+* `verify`'s failure paths, against a stub `scanimage` (no enumeration):
+  wrong library → exit 2, library right but no device → exit 1, `scanimage`
+  failing → exit 2, a leftover `LD_LIBRARY_PATH` → exit 2;
+* 16-bit preservation can be checked on a real file: `tools/image_probe.py`
+  round-trips 16-bit RGB through all five PNG row filters and through TIFF,
+  and catches 8-bit data widened to 16 bits, which the header cannot
+  (`tests/test_image_probe.py`, 6 tests);
 * the clone's `git diff` is byte-identical to `sane/gl126-integration.patch`,
   and the built library carries 612 gl126 symbols (sha256 `1062ed01…`, the
   build Tests 71–73 ran);
-* 267 offline tests green (`tools/release_check.py`), including the four C++
+* 286 offline tests green (`tools/release_check.py`), including the four C++
   probes that link this build (`test_sane_ops`, `test_sane_geometry`,
   `test_sane_open_params`, `test_sane_calibration_cache`) — none skipped;
 * the digiKam path and its limits in §6, from the KSaneCore/libksane sources.
 
+**Review log, 2026-09-13.** The first version of `tools/sane_install.sh` had
+three defects, all reproduced in staging and all fixed above, with a test
+each: `uninstall` restored a recorded link target that a package update had
+removed, producing a dangling link and reporting success; a failure at the
+config step left the library installed and the symlink repointed; and
+`uninstall` stripped `genesys.conf`'s original trailing blank lines along
+with its own block. `verify` also hid every failure behind `|| true`, and
+the PNG test in `tests/test_aperture_crop.py` was described as if it proved
+bit-depth preservation, which it does not (it is 8-bit by construction; its
+subject is the coverage verdict).
+
 Left for hardware (`docs/sane-wp2-hardware-plan.md`): the system install
 itself, `verify` naming `/usr/lib64/sane/libsane-genesys.so.1`, one plain3600
-frame-1 scan through the installed `scanimage`, one through digiKam, and
-Christian's eye acceptance of the digiKam image.
+frame-1 scan through the installed `scanimage`, one through digiKam with the
+loaded library proved at the `dlopen` level and the saved file's bit depth
+probed, and Christian's eye acceptance of the digiKam image.

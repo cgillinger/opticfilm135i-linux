@@ -22,7 +22,7 @@ Estimated hands-on time: ~20 minutes, one magazine load, two scans.
 
 1. `git rev-parse HEAD` == the approved WP-2 commit; `git status` clean.
 2. `.venv/bin/python tools/gen_sane_tables.py --check` → "up to date".
-3. `.venv/bin/python tools/release_check.py` → 267 tests, all OK.
+3. `.venv/bin/python tools/release_check.py` → 286 tests, all OK.
 4. `make -j8 -C ~/Dokument/Github/sane-backends/backend libsane-genesys.la`
    → links, no warnings from our files.
 5. `tools/sane_install.sh status` → nine sources present, built library
@@ -64,13 +64,19 @@ Stop if any line differs. Nothing has touched the scanner yet.
 ## 3. Which library is serving (before any scan)
 
 ```
-tools/sane_install.sh verify
+tools/sane_install.sh verify; echo "exit=$?"
 ```
 
-Accept only if the `dlopen()`ing line names
-`/usr/lib64/sane/libsane-genesys.so.1` and the device is listed as
-`genesys:libusb:BBB:DDD  PLUSTEK OpticFilm 135i`. Note the **fresh** device
-string — it changes on every re-enumeration; never reuse an old one.
+The command decides, rather than printing something to read past:
+
+| exit | meaning |
+|---|---|
+| 0 | `LOAD OK` (the `dlopen()`ed backend is `/usr/lib64/sane/libsane-genesys.so.1`) **and** `DEVICE OK` |
+| 1 | right library, no 135i listed — scanner off, asleep, claimed by a VM, or held by `of135i` |
+| 2 | wrong library, `scanimage` failed, or `LD_LIBRARY_PATH`/`SANE_CONFIG_DIR` is set |
+
+Only exit 0 continues. Note the **fresh** device string — it changes on every
+re-enumeration; never reuse an old one.
 
 ## 4. Scan A — plain3600 frame 1 through the installed `scanimage`
 
@@ -106,7 +112,7 @@ output is captured:
 
 ```
 pgrep -a digikam          # expect no output
-SANE_DEBUG_GENESYS=4 digikam 2> $OUT/digikam.log
+SANE_DEBUG_DLL=4 SANE_DEBUG_GENESYS=4 digikam 2> $OUT/digikam.log
 ```
 
 If this is digiKam's first run it opens a first-time configuration wizard;
@@ -130,6 +136,19 @@ In digiKam: **Import → Import from Scanner** → pick the row
   choice, not ours. Afterwards copy the file **unmodified** to
   `$OUT/digikam-plain3600-f1.png` and keep digiKam's own copy too.
 
+**Prove which backend digiKam loaded** — `ldd` cannot: it shows start-up
+links, while the backend arrives later through `dlopen`. With the scanner
+dialog open, in another terminal:
+
+```
+grep libsane-genesys /proc/$(pidof digikam)/maps
+ls -l /proc/$(pidof digikam)/map_files/ | grep libsane-genesys
+```
+
+The mapped path must resolve to our installed build; `digikam.log` (started
+with `SANE_DEBUG_DLL=4` if you want it in writing) carries the same
+`dlopen()`ing line. Record both.
+
 Expected: the same geometry as scan A in `digikam.log` (FEEDL 6562, 233
 chunks, 3762 × 5335 delivered), PARK normal, and a 16-bit image in digiKam.
 
@@ -144,7 +163,26 @@ open, and the shared process lock will otherwise refuse the eject.
 
 Preserve, unmodified, in `$OUT`: both originals
 (`scanimage-plain3600-f1.pnm`, `digikam-plain3600-f1.png`), both logs,
-`tools/sane_install.sh status` output, and the `verify` output from §3.
+`tools/sane_install.sh status` output, the `verify` output and its exit code
+from §3, and the `/proc/.../maps` lines from §5.
+
+**Probe the digiKam file — the format choice is not evidence.** A lossless
+format and a "16 bit" setting say nothing about what reached the file, and
+Pillow cannot tell you (it truncates 16-bit RGB to 8). Run:
+
+```
+.venv/bin/python tools/image_probe.py $OUT/digikam-plain3600-f1.png \
+    --expect 3762x5335 --expect-channels 3 --expect-bits 16 \
+    --min-low-byte-nonzero 0.5
+```
+
+Expect `OK`: 3762 × 5335, 3 channels, 16 bits per channel, and
+`low_byte_nonzero` near 1.0 (this repo's 16-bit TIFF measures 0.9987; 8-bit
+data widened to 16 bits gives exactly 0.0). A `NOT OK` is a finding about
+digiKam's save path, logged as such — it does **not** invalidate the scan,
+and nothing in the driver is changed to make the number come out right. The
+default reads the first 256 lines; `--max-lines 0` reads all of them
+(slow for PNG, since the row filters are undone in Python).
 
 Render preview positives for the eye check — the digiKam image, which is the
 one being judged, and the `scanimage` PNM beside it as the 16-bit reference
@@ -183,13 +221,15 @@ stops WP-2 for plain3600 and is logged as-is.
 
 WP-2 is done when **all** of these hold:
 
-- `verify` named `/usr/lib64/sane/libsane-genesys.so.1`, with no
-  `LD_LIBRARY_PATH`/`SANE_CONFIG_DIR` set, and `status` said the installed
-  file is identical to the build;
+- `verify` exited **0** and named `/usr/lib64/sane/libsane-genesys.so.1`,
+  with no `LD_LIBRARY_PATH`/`SANE_CONFIG_DIR` set, and `status` said the
+  installed file is identical to the build;
 - scan A: ledger geometry exactly, full transfer, normal PARK, coverage
   verified;
-- scan B: delivered from digiKam with the same geometry, image saved
-  losslessly;
+- scan B: delivered from digiKam with the same geometry; the backend digiKam
+  `dlopen()`ed proved from `/proc/<pid>/maps` (not from `ldd`); the saved
+  file probed 3762 × 5335, 3 channels, 16 bits per channel with a non-empty
+  low byte;
 - normal eject from post-PARK;
 - Christian's eye acceptance of the digiKam positive.
 
@@ -204,9 +244,20 @@ the program is not recovery) and "Cross-process exclusion" (the shared
 `flock`, which is why digiKam's dialog must be closed before `of135i eject`).
 
 No deliberate interruptions, no cancel experiments, no recovery attempts are
-part of this plan. On any anomaly — wrong FEEDL/chunk count, POSITION past
-the hard timeout, short transfer, unexpected eject, PARK error, unusual
-sound, or a frontend error mid-pass:
+part of this plan.
+
+One distinction that matters when judging what happened: **closing the
+scanner dialog before any scan has been started is write-free** (`sane_open`
+and `sane_close` write nothing on GL126). From the moment Scan is pressed it
+is not: `sane_start` runs offset, gain and shading calibration before the
+frame is positioned, so a cancel, error or crash anywhere after that has
+already written to the scanner, whatever the backend's park decision says.
+`NoPass` means only that the scan pass was never armed — never that the
+session was write-free.
+
+On any anomaly — wrong FEEDL/chunk count, POSITION past the hard timeout,
+short transfer, unexpected eject, PARK error, unusual sound, or a frontend
+error mid-pass:
 
 1. **Stop.** No blind retry, no second attempt at the same step.
 2. No PARK after an incomplete transfer (the ScanPass machine already
@@ -242,6 +293,11 @@ Two readings, Christian's call — the definition is not being edited here:
   bring up `load_document`/`eject_document` in the backend — new hardware
   bring-up of the load flow from C++, with its own plan, and related to the
   parked "power-cycled + latched magazine" requirement.
+
+Where this stands: the external review (Astra, 2026-09-13) considers (a) a
+reasonable **first delivery** of B1, and so do I — but neither of us decides
+it. Until Christian says which reading holds, B1 stays open, and nothing in
+this repository describes magazine handling from digiKam as implemented.
 
 Recommendation: **(a)**, documented explicitly, with (b) recorded as a
 separate wish. The load flow needs an operator at the machine anyway (the

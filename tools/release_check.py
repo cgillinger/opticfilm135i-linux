@@ -21,6 +21,7 @@ SUITES = ("test_safety", "test_calibrate", "test_hwblock", "test_park",
           "test_offline", "test_diag", "test_dpi", "test_ir", "test_sane_lock",
           "test_sane_ops", "test_sane_geometry", "test_sane_open_params",
           "test_sane_calibration_cache", "test_sane_install",
+          "test_image_probe",
           "test_aperture_crop", "test_overscan", "test_dual_overscan")
 
 

@@ -427,7 +427,13 @@ promised scope require them. VueScan stays out of public docs.
 - Remaining offline: **done 2026-09-13.** The install path, the digiKam
   workflow and its limits are **[docs/sane-install.md](sane-install.md)**;
   `tools/sane_install.sh` installs/uninstalls it and was exercised against a
-  staging root (byte-for-byte restore, `tests/test_sane_install.py`, 6 tests);
+  staging root (`tests/test_sane_install.py`, 19 tests: byte-for-byte restore,
+  rollback of a failed install, package-update and ambiguous-target handling,
+  and `verify`'s failure paths against a stub `scanimage`). Bit-depth
+  preservation in a frontend's saved file has its own probe,
+  `tools/image_probe.py` (`tests/test_image_probe.py`, 6 tests), because
+  Pillow truncates 16-bit RGB and a file header cannot tell real 16-bit data
+  from 8-bit widened to 16;
   Fedora's own `libsane.so.1` was shown to load our build with every device
   line disabled, so nothing was addressed on the wire. Two facts the older
   notes had wrong: the symlink list in `sane-port.md` was missing `gl126_ops`
@@ -438,12 +444,15 @@ promised scope require them. VueScan stays out of public docs.
   the installed `scanimage` and one from digiKam on the same load, eject, and
   the owner's eye acceptance of the digiKam image (which also fills the
   plain3600 row above). Awaiting Christian's approval; not run.
-- Open for decision: B1 says the workflow is "load, scan a frame, deliver".
-  GL126's `load_document`/`eject_document` are **not implemented**, so the
-  magazine is handled by `of135i load` / `of135i eject` and never from the
-  frontend. Whether that division satisfies B1, or whether the frontend must
-  drive the magazine too, is Christian's call — stated as an open question in
-  the plan's §9, not resolved by editing this definition.
+- Open for decision (**not decided**): B1 says the workflow is "load, scan a
+  frame, deliver". GL126's `load_document`/`eject_document` are **not
+  implemented**, so the magazine is handled by `of135i load` / `of135i eject`
+  and never from the frontend. Whether that division satisfies B1, or whether
+  the frontend must drive the magazine too, is Christian's call — stated as an
+  open question in the plan's §9, not resolved by editing this definition. The
+  external review (2026-09-13) sees the CLI/SANE division as a reasonable
+  first delivery of B1; that is a recommendation, not a scope decision, and
+  B1 stays open until Christian rules.
 - Stop condition: an install/enumeration/safety deviation stops WP-2; logged.
 
 **WP-3 — SANE submission package, prepared only (B2).**

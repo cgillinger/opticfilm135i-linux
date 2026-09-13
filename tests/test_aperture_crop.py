@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 """Offline tests for of135i.aperture_crop -- no hardware required.
 
-Also covers tools/sane_coverage.py's reader: the same frame delivered as a
-16-bit PNM (scanimage) and as a 16-bit PNG (what digiKam saves) must give
+Also covers tools/sane_coverage.py's reader: a frame delivered as a 16-bit
+PNM (scanimage) and the SAME frame as a PNG (what digiKam saves) must give
 the same coverage verdict, or WP-2's frontend image cannot be judged by the
 same criterion as the scanimage one (docs/sane-install.md).
+
+Scope of that check, precisely: it is about the COVERAGE VERDICT surviving
+the PNG path, not about bit depth. The PNG it writes is 8-bit, because that
+is what the Pillow reader would give us back anyway -- Pillow truncates
+16-bit RGB to 8 bits. Whether digiKam actually saved 16 bits per channel is
+a different question, answered by tools/image_probe.py and
+tests/test_image_probe.py.
 
 Plain asserts, no pytest dependency. Run with:
     .venv/bin/python tests/test_aperture_crop.py
@@ -256,8 +263,12 @@ def _sane_coverage_module():
 
 
 def test_sane_coverage_reads_png_and_pnm_alike():
-    """A frontend that writes PNG (digiKam) must be judged by the same
-    verdict as scanimage's PNM. Same pixels in, same coverage out."""
+    """The coverage verdict must survive the PNG path: a 16-bit PNM and the
+    same frame as an 8-bit RGB PNG put the aperture edges in the same place.
+
+    This says nothing about bit depth -- it deliberately compares a 16-bit
+    PNM against the 8-bit RGB Pillow hands back for any PNG. Bit-depth
+    preservation is tools/image_probe.py's job (tests/test_image_probe.py)."""
     try:
         from PIL import Image
     except ImportError:
