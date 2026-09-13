@@ -5173,3 +5173,68 @@ Each is approved separately. B2 also still needs WP-3.
 
 Physical state at the end: magazine ejected and loose, still in the slot;
 unit at reg 0x01 = 0x22.
+
+### Test 76: WP-4 — the same cycle from digiKam, and a second frame on the same load (run B)
+
+2026-09-13, 17:39–18:04, mintuu, digiKam 9.1.0 launched from a terminal
+with `SANE_DEBUG_GENESYS=8` (log in `plustek-135i-analys/wp4-20260913/
+digikam.log`; images in `~/Bilder/opticfilm-granskning/digiKam20260913/`
+as `image2.tif` = frame 1 and `image3` = frame 2, digiKam's own naming).
+Scanner power-cycled first, magazine loose in the slot, same colour
+negative as run A.
+
+**Run B of docs/sane-wp4-hardware-plan.md, complete — driven entirely
+from the digiKam dialog.** Christian pressed the buttons; no command
+line took part.
+
+- **Load film** from the "Specifika alternativ för bildläsare" tab: cold
+  start, device-open table, jog — the jog's four completions 0xf8 on the
+  first poll. `magazine unknown -> released`.
+- Reseat, then **Läs in** with Frame 1, Färg, 3600: the LOAD ran —
+  **engaging feed 0xf4 on the first poll, traverse 0xdd → 0xdc in 3 polls
+  / 20 ms** — `magazine released -> loaded`. Image measured 3762 × 5335,
+  3 channels, 16 bit/channel, `low_byte_nonzero` 0.9960.
+- **Frame 2, Läs in again — the point of run B.** `load_document` was
+  called and returned with NOTHING in between: no magazine program, no
+  register read, no transition. Then `offset calibration ... frame 2` and
+  `positioning to frame 2 (FEEDL 17315)`, the ledger value. The second
+  image is 3762 × 5335 / 16 bit and is a DIFFERENT image from the first
+  (compared on a strided subsample), so it is genuinely frame 2.
+- **Eject film**: 0xc9 → 0xe8 in 937 ms, `magazine loaded -> ejected`.
+- Transitions over the whole session, in order and once each:
+  `unknown -> released`, `released -> loaded`, `loaded -> ejected`.
+  Zero refusals and zero failures in the log.
+
+**Acceptance criterion 4 met.** With Test 75 that leaves only run C
+(power-cycled with a LATCHED magazine, two presses of Load film).
+
+**Correction to the record.** Tests 45 and 51 noted `0x32 = 0x1d ×3`
+during the cold start as a *latched-magazine* deviation. It is not: the
+same three settle polls read 0x1d, time out after ~1.5 s and continue in
+BOTH run A and run B, with a loose magazine. They belong to the cold
+start on this unit, not to the latched case. (The driver's own settle
+loop behaves the same way — it warns and continues.) The `0x4855`
+opening-poll timeout was already withdrawn as a latched indicator
+earlier; this completes that correction.
+
+**Interaction findings — the dialog is not clear enough (Christian).**
+Recorded here, to be fixed offline, not mid-session:
+1. The `magazine` status value is far too long. KSane renders an
+   unconstrained string option as an editable combo and shows the END of
+   the text, so the state word is off-screen; only the tail
+   distinguishes the states.
+2. The status line sits BELOW the two buttons, so the operator reads the
+   result after acting instead of before.
+3. The read-only string is drawn with "Ta bort"/"Lägg till" buttons
+   beside it — noise for a value nobody can set.
+4. The cold start's ~40 s is silent; the dialog looks hung. SANE has no
+   progress channel while an option is being set, so the only lever is
+   saying so in the option's description.
+   Proposed: move `magazine` above the buttons, shorten the value to
+   something that fits (state word first), give it a string-list
+   constraint so KSane draws a plain combo, and carry the next step in
+   the button titles. Backend-side only; no motor sequence touched.
+
+Physical state at the end: magazine ejected and loose, still in the slot;
+the strip stays in for the QuickScan vendor reference (Christian's call,
+taken before the negative gets swapped).

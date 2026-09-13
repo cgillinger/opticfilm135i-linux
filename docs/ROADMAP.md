@@ -534,9 +534,17 @@ promised scope require them. VueScan stays out of public docs.
   continued, which is the first hardware confirmation that the
   best-effort poll policy was right. Acceptance criteria 1, 2, 3 and 6
   met.
-- Remaining: **run B** (the same cycle from digiKam, plus a second frame
-  on the same load) and **run C** (power-cycled with the magazine
-  latched, two presses of Load film) — each approved separately.
+- **RUN B DONE ON HARDWARE 2026-09-13 (Test 76).** The same cycle driven
+  entirely from the digiKam dialog, and a second frame on the same load
+  proving `load_document` does nothing when no release is pending
+  (FEEDL 17315 for frame 2, a genuinely different image). Transitions
+  `unknown -> released -> loaded -> ejected`, once each, zero refusals.
+  Criterion 4 met.
+- Remaining: **run C** (power-cycled with the magazine latched, two
+  presses of Load film), approved separately. Plus an offline
+  interaction fix the run exposed: the `magazine` status option is too
+  long for KSane's widget, sits below the buttons it describes, and is
+  drawn as an editable combo — see Test 76.
 - Minimal hardware test plan: `docs/sane-wp4-hardware-plan.md`. This is the load flow — the project's most
   delicate motor sequence, the one that caused the motor stall — driven
   from C++ for the first time. Not a piggy-back on another session.
