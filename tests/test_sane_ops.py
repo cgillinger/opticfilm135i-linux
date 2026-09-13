@@ -2471,6 +2471,31 @@ def test_magazine_programs_are_structurally_sound():
     # stay true is only that the two are distinguishable: their order,
     # and the loader-sensor bit that separates them (Astra reviews
     # 2026-09-13, both rounds).
+    # The cold start's "engine reached the done class" wait must carry the
+    # DRIVER's budget, not a copy of it. Test 77 measured the opening one
+    # as dead time (status word static at 0x48 for the full 15 s, because
+    # at power-on the engine cannot be in the done class yet) while the
+    # per-round one settles on its first read in 4 ms, so it was cut to
+    # 1.5 s in both implementations. Tying the generated table to
+    # of135i.device.COLD_READY_TIMEOUT is what stops one side drifting
+    # back on its own.
+    from of135i.device import COLD_READY_TIMEOUT
+    want_ms = round(COLD_READY_TIMEOUT * 1000)
+    cold_info = _probe_program_info(probe, "magazine", "cold_init")
+    ready = [op for op in cold_info
+             if op["kind"] == "PollBestEffort" and op["mask"] == "f0" and op["want"] == "f0"]
+    assert len(ready) == 4, ("one opening wait plus one per homing round", len(ready))
+    for op in ready:
+        assert int(op["timeout_ms"]) == want_ms, (op, want_ms)
+    assert want_ms <= 3000, ("the whole point was to stop waiting 15 s", want_ms)
+    # The motor completions are a different, genuine wait (1.0-1.9 s
+    # observed) and must NOT have been shortened with them.
+    moves = [op for op in cold_info
+             if op["kind"] == "PollBestEffort" and op["want"] == "f8"]
+    assert len(moves) == 9, ("three homing rounds of three moves", len(moves))
+    for op in moves:
+        assert int(op["timeout_ms"]) == 30000, op
+
     load_info = _probe_program_info(probe, "magazine", "load")
     load_polls = [op for op in load_info if op["kind"] == "PollMasked"]
     assert len(load_polls) == 2, load_polls

@@ -121,6 +121,7 @@ REPO = Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from of135i import device as _device  # noqa: E402
 from of135i import (  # noqa: E402
     tables, tables_base, tables_ir, tables_load,
     tables_dpi600, tables_dpi1200, tables_dpi2400, tables_dpi7200,
@@ -831,8 +832,12 @@ _WI_CHIP = 0x26FE
 _REG_WRITE_CHUNK = 64     # usbio._WRITE_CHUNK: 64 B = 32 (reg, val) pairs
 
 #: usbio.poll_status_word's budgets in cold_init (device.py): the ready
-#: wait and each homing move's completion.
-_COLD_READY_TIMEOUT_MS = 15000
+#: wait and each homing move's completion. The ready wait is taken FROM
+#: the driver (device.COLD_READY_TIMEOUT) rather than duplicated, so the
+#: two implementations cannot drift apart -- it was shortened from 15 s to
+#: 1.5 s on 2026-09-13 after Test 77 measured the opening one as dead time
+#: (see the driver's own comment for the evidence).
+_COLD_READY_TIMEOUT_MS = round(_device.COLD_READY_TIMEOUT * 1000)
 _COLD_MOVE_TIMEOUT_MS = 30000
 #: _cold_homing_round's settle loop: 30 rounds, 50 ms apart.
 _COLD_SETTLE_TIMEOUT_MS = 1500

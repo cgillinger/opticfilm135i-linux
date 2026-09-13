@@ -169,6 +169,24 @@ _PARK_WAIT_B_TIMEOUT = 30.0
 # bounded exactly as before. Fail-closed is unchanged; only the patience is.
 _PARK_POLL_INTERVAL = 0.02
 
+# cold_init()'s "engine reached the done class" wait, at both of its sites
+# (the opening one in _cold_init_body and the per-round one in
+# _cold_homing_round). Non-raising: poll_status_word logs and continues.
+#
+# 1.5 s, not the 15 s it was until 2026-09-13. Measured on hardware that
+# day across two cold starts (docs/test-log.md Test 77): the OPENING wait
+# never settles at all -- the status word reads 0x48 and stays there for
+# the full budget, ~1900 polls, first == last -- because at power-on the
+# engine is not in the done class and does not enter it until the first
+# homing move has run. The PER-ROUND wait, the same mask and target, then
+# settles on its FIRST read in 4 ms, every round of every run. So the
+# opening 15 s was waiting for something that cannot happen yet, and the
+# per-round one needs a fraction of a second; 1.5 s is ~375x the observed
+# settle and still removes 13.5 s from the ~40 s an operator waits at
+# load. The wait is best-effort either way: a shorter budget cannot fail
+# the sequence, it only stops waiting sooner.
+COLD_READY_TIMEOUT = 1.5
+
 
 # Masked completion test for the LOAD flow (docs/test-log.md Test 14,
 # docs/load-analysis.md). The status word (reg 0x101 high byte, ack
@@ -1073,7 +1091,7 @@ class Scanner:
         # ---- 2: status word, poll until ready ---------------------------
         word = self.io.read_status_word()
         log.info("cold_init: initial status word %#06x", word)
-        self.io.poll_status_word(mask=0xF000, value=0xF000, timeout=15.0)
+        self.io.poll_status_word(mask=0xF000, value=0xF000, timeout=COLD_READY_TIMEOUT)
 
         # ---- 3-7: cold register table + end_access + AFE bring-up ------
         self._cold_write_table_and_afe()
@@ -1184,7 +1202,7 @@ class Scanner:
         val35 = self.io.read_reg(0x35)
         self.io.write_regs([(0x35, val35 & ~0x40 & 0xFF)])
         self.io.read_reg(0x32)
-        self.io.poll_status_word(mask=0xF000, value=0xF000, timeout=15.0)
+        self.io.poll_status_word(mask=0xF000, value=0xF000, timeout=COLD_READY_TIMEOUT)
         val32 = self.io.read_reg(0x32)
         self.io.write_regs([(0x32, val32 & ~0x02 & 0xFF)])
         w = self.io.read_status_word()

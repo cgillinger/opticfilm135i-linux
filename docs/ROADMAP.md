@@ -622,14 +622,21 @@ it looks:
   is possible to investigate but touches exactly the mechanism that was
   switched off on purpose.
 
-**Shorten the cold start's opening wait.** Test 77 measured it as dead
-time: the status word is static at 0x48 for the full 15 s in both logged
-runs, so the poll waits for something that never happens on this unit.
-It is best-effort, so a shorter budget changes nothing about correctness
-and removes most of the 40 s an operator waits at Load film. It is a
-timing constant in the load flow and the Python driver carries the
-identical one, so it wants a decision and a hardware A/B rather than a
-quiet edit.
+**~~Shorten the cold start's opening wait.~~ DONE offline 2026-09-13**
+(Christian's decision the same evening), *pending a hardware A/B*. Test
+77's measurement: across two cold starts the OPENING wait never settles —
+status word static at 0x48 for the full 15 s, ~1900 polls, first == last
+— because at power-on the engine is not in the done class and does not
+enter it until the first homing move has run. The PER-ROUND wait, same
+mask and target, then settles on its FIRST read in 4 ms, every round of
+every run. So 15 s was waiting for something that cannot happen yet.
+Now 1.5 s, ~375x the observed settle, in BOTH implementations from one
+constant (`of135i.device.COLD_READY_TIMEOUT`, which the generator reads
+rather than copies, with a test tying them together). Removes 13.5 s of
+the ~40 s at Load film. The six motor completions are a genuine wait
+(1.0–1.9 s observed) and were deliberately left at 30 s; so were the reg
+0x32 settle polls, which also time out but are only 1.5 s each and match
+the driver's own loop — one variable at a time.
 
 **Mask compensation in the rendering path.** See
 `docs/colour-rendering-analysis.md`: measure the orange mask from
