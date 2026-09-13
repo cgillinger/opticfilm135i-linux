@@ -5238,3 +5238,115 @@ Recorded here, to be fixed offline, not mid-session:
 Physical state at the end: magazine ejected and loose, still in the slot;
 the strip stays in for the QuickScan vendor reference (Christian's call,
 taken before the negative gets swapped).
+
+### Test 77: WP-4 — power-cycled with a LATCHED magazine, freed and loaded by the backend (run C)
+
+2026-09-13, 18:24–18:32, mintuu, digiKam 9.1.0. **This completes WP-4:
+runs A, B and C are all done.** Log
+`plustek-135i-analys/wp4-20260913/digikam-runC.log`; image
+`~/Bilder/opticfilm-granskning/digiKam20260913/image5.tif`.
+
+**The setup was free.** A QuickScan session (the vendor reference scan,
+see the colour work below) had just scanned the whole strip and left the
+magazine LATCHED — the vendor does not eject at the end. That is exactly
+the precondition run C needs and is otherwise awkward to create
+deliberately, so it was used rather than cleared.
+
+**Christian pressed every button; no `of135i` command took part.**
+
+- **Power cycle with the magazine latched**, then **Load film** (first
+  press): the cold-start program, then the device-open table and the jog.
+  The magazine came loose, orange lamp. Sound normal.
+- **Reseat**, **Load film** (second press) — this is the double jog,
+  Test 51's recipe, now from C++. No cold start this time (the unit was
+  already homed): device-open table plus jog, whose **four completions
+  read 0xf8 on the first poll, 4–8 ms**. `magazine unknown -> released`.
+- **Reseat**, **Läs in** with Frame 1 / Färg / 3600: the load ran —
+  **engaging feed 0xf4 on the FIRST poll**, traverse 0xdd → 0xdc in 4
+  polls / 28 ms — `magazine released -> loaded`, reg 0x101 = 0xdc. Then
+  positioning to frame 1 at **FEEDL 6562**, the scan pass (line register
+  5367, 5359 raw lines, 120 963 348 raw bytes) and PARK: Wait A 0xfb
+  first poll, Wait B 0x81 → 0xe8 in 3776 ms, "parked (2 waits recorded)".
+- **Eject film**: 0xc9 → 0xe8 in 937 ms, `magazine loaded -> ejected`.
+- Transitions over the run, in order and once each:
+  `unknown -> released`, `released -> loaded`, `loaded -> ejected`.
+  **Zero refusals and zero failures in the log.**
+- Image measured 3762 × 5335, 3 channels, 16 bit/channel — identical
+  geometry to runs A and B.
+
+**Acceptance criterion 5 met, and with it all six.** Christian's standing
+requirement — that "power-cycled + latched magazine" become a supported
+driver operation — is now satisfied by the SANE backend itself, from a
+frontend, for the sequence that once caused a motor stall.
+
+#### Three incidental findings
+
+**1. The disk mark earned its keep, unplanned.** The first Load film
+press was not logged: digiKam had been restarted without the logging
+command, so the cold start and the first jog left no record. The release
+itself was provable anyway — `/tmp/of135i-07b3-1436.lock.magazine` held
+`released … libusb:001:010` — and because the mark survives a process,
+digiKam could be restarted WITH logging without losing the pending load.
+The mechanism exists so `scanimage` can load in two invocations; here it
+rescued a hardware run instead. The first press's numbers are lost; the
+second press's are in the log and are what this entry reports.
+
+**2. VMware's autoConnect stole the device at re-enumeration.** After the
+power cycle the scanner came back as a NEW device instance, and the still
+running Windows guest claimed it (interface bound to `usbfs`, SANE could
+not see it) even though Christian had detached it before the cycle — the
+detach applied to the old instance. Shutting the guest down fixed it.
+Documented in `docs/hardware-safety.md` as a risk; this is the first time
+it has been recorded actually happening mid-session.
+
+**3. QuickScan leaves a clean state.** Read from the Linux side
+immediately after the vendor session: reg 0x01 = 0x22 (idle-homed),
+0x32 = 0x95, 0x35 = 0xbb, 0x101 = 0xf8. Never measured before. The vendor
+is a well-behaved guest — it does not leave the unit in an undefined
+state.
+
+#### For the interaction fix list (offline, no motor sequence involved)
+
+- The `magazine` status text reads only the in-process record, not the
+  disk mark, so a fresh frontend process reports `unknown` while a load
+  is genuinely pending. Functionally harmless; misleading to read.
+- `docs/sane-wp4-magazine.md` §2.2 says "load-film from Released: JOG
+  only". The implementation has no such branch — it always runs the
+  device-open table and then the jog. Harmless (the open table is just
+  registers) but the document describes behaviour that does not exist.
+  Fix the document or add the branch; the document is wrong either way.
+- Together with what Test 76 recorded: the status value is too long for
+  KSane's widget and shows only its tail, it sits below the buttons it
+  describes, and the vendor refuses a scan with "Please insert the film
+  holder" where we would scan an unloaded transport and deliver a useless
+  image.
+
+#### The cold start's opening wait is dead time — measured
+
+Christian asked for transparency during the ~15 s silence at the start of
+Load film. The measurement says something better: the wait need not
+exist. The cold start's opening poll waits for the status word to reach
+class F, and across both logged cold starts tonight:
+
+    a1-release.log: cold_init op 3, first 0x48 last 0x48, 1935 polls, 15001 ms
+    digikam.log:    cold_init op 3, first 0x48 last 0x48, 1893 polls, 15001 ms
+
+`first == last == 0x48` in both. The register is **static for the whole
+15 s** — this is not a slow settle, the value never moves. Tests 45 and
+51 recorded the same timeout historically.
+
+The poll is best-effort (it logs and continues), so shortening its budget
+to 1–2 s changes nothing about correctness; it only stops waiting for
+something that demonstrably does not happen on this unit. That removes
+most of the 40 s. It is a timing constant in the load flow, so it wants
+Christian's decision and ideally a hardware A/B — and note the Python
+driver carries the identical 15 s `poll_status_word`, so the change
+belongs in both or neither.
+
+Whatever remains can at least be explained: SANE has no progress channel
+while an option is being set (the frontend blocks until the call
+returns), but the option's own description is rendered as a tooltip and
+can say what is happening and roughly how long.
+
+Physical state at the end: magazine ejected and loose, still in the slot,
+the six-frame colour negative still in it.

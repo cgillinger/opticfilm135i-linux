@@ -540,11 +540,23 @@ promised scope require them. VueScan stays out of public docs.
   (FEEDL 17315 for frame 2, a genuinely different image). Transitions
   `unknown -> released -> loaded -> ejected`, once each, zero refusals.
   Criterion 4 met.
-- Remaining: **run C** (power-cycled with the magazine latched, two
-  presses of Load film), approved separately. Plus an offline
-  interaction fix the run exposed: the `magazine` status option is too
-  long for KSane's widget, sits below the buttons it describes, and is
-  drawn as an editable combo — see Test 76.
+- **RUN C DONE ON HARDWARE 2026-09-13 (Test 77) — WP-4 IS COMPLETE.**
+  Power-cycled with the magazine LATCHED (a vendor session had left it
+  that way), freed by two presses of Load film — the double jog of Test
+  51, now from C++ — then loaded (feed 0xf4 first poll, traverse 0xdc),
+  scanned and ejected, all from the digiKam dialog with no `of135i`
+  command. All six acceptance criteria met. **Christian's standing
+  requirement that "power-cycled + latched magazine" be a supported
+  driver operation is satisfied by the backend itself.**
+- **WP-4 status: DONE.** B2's magazine prerequisite is met; what remains
+  for B2 is WP-3 (submission package, prepared only).
+- Offline follow-ups the three runs exposed, none touching a motor
+  sequence: the `magazine` status value is too long for KSane's widget
+  and shows only its tail, it sits below the buttons it describes, it
+  reads only the in-process record so a fresh frontend says `unknown`
+  while a load is pending, and unlike the vendor we do not refuse a scan
+  when nothing is loaded. Plus the cold start's opening 15 s poll, which
+  Test 77 measured as dead time on this unit.
 - Minimal hardware test plan: `docs/sane-wp4-hardware-plan.md`. This is the load flow — the project's most
   delicate motor sequence, the one that caused the motor stall — driven
   from C++ for the first time. Not a piggy-back on another session.
