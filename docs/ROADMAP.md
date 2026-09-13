@@ -374,7 +374,7 @@ is the owner's eye rule and is scoped to what was actually judged.
 
 | Profile   | Impl + offline | SANE HW verified | Frames (SANE HW) | Image acceptance (scope) | Concrete remaining for B1 |
 |-----------|----------------|------------------|------------------|--------------------------|---------------------------|
-| plain3600 | yes | transport + coverage (Test 62) | 1–6 | images seen; no formal eye-accept recorded | one correctly-rendered plain3600 SANE image, owner-approved (the delivery path is the one Tests 65–71 accepted) |
+| plain3600 | yes | transport + coverage (Test 62) | 1–6 | images seen; no formal eye-accept recorded | one correctly-rendered plain3600 SANE image, owner-approved — planned as WP-2's digiKam scan (docs/sane-wp2-hardware-plan.md §5–6) |
 | dpi2400   | yes | transport + coverage + proportion (Tests 62/63) | 1 | EYE-ACCEPTED, geometry only (Test 63); colour is the app's job | none for geometry; frames 2–6 not required for B1 (one frame proves the profile) |
 | ir3600    | yes | transport + full-width, colour-aligned IR (Tests 68–71) | 1 | EYE-ACCEPTED (Test 71: cleaner, no streaks, well positioned; alignment by measurement) | none |
 | dpi600    | yes | transport + coverage (Test 65) | 1 | EYE-ACCEPTED, geometry (Test 65) | none |
@@ -424,10 +424,26 @@ promised scope require them. VueScan stays out of public docs.
   safety model.
 - Evidence already enough: uninstalled runs via `LD_LIBRARY_PATH` +
   `SANE_CONFIG_DIR` work (Tests 47–64).
-- Remaining offline: document the install steps and the `dll.conf`/config; dry-
-  run the frontend path where possible without hardware.
-- Minimal hardware test: one load→scan→deliver through the installed backend
-  and through digiKam (can pigg-back on WP-1's session).
+- Remaining offline: **done 2026-09-13.** The install path, the digiKam
+  workflow and its limits are **[docs/sane-install.md](sane-install.md)**;
+  `tools/sane_install.sh` installs/uninstalls it and was exercised against a
+  staging root (byte-for-byte restore, `tests/test_sane_install.py`, 6 tests);
+  Fedora's own `libsane.so.1` was shown to load our build with every device
+  line disabled, so nothing was addressed on the wire. Two facts the older
+  notes had wrong: the symlink list in `sane-port.md` was missing `gl126_ops`
+  and `gl126_lock` (fixed), and a preview in digiKam is a **full 600 dpi scan**,
+  not a cheap one.
+- Minimal hardware test: **[docs/sane-wp2-hardware-plan.md](sane-wp2-hardware-plan.md)**
+  — install, prove which library is loaded, one plain3600 frame-1 scan through
+  the installed `scanimage` and one from digiKam on the same load, eject, and
+  the owner's eye acceptance of the digiKam image (which also fills the
+  plain3600 row above). Awaiting Christian's approval; not run.
+- Open for decision: B1 says the workflow is "load, scan a frame, deliver".
+  GL126's `load_document`/`eject_document` are **not implemented**, so the
+  magazine is handled by `of135i load` / `of135i eject` and never from the
+  frontend. Whether that division satisfies B1, or whether the frontend must
+  drive the magazine too, is Christian's call — stated as an open question in
+  the plan's §9, not resolved by editing this definition.
 - Stop condition: an install/enumeration/safety deviation stops WP-2; logged.
 
 **WP-3 — SANE submission package, prepared only (B2).**

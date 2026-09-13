@@ -17,10 +17,19 @@ sane-backends checkout's `backend/genesys/`:
 
 ```
 cd /path/to/sane-backends/backend/genesys
-for f in gl126.h gl126.cpp gl126_registers.h gl126_tables.h gl126_tables.cpp; do
+for f in gl126.h gl126.cpp gl126_registers.h \
+         gl126_tables.h gl126_tables.cpp \
+         gl126_ops.h gl126_ops.cpp \
+         gl126_lock.h gl126_lock.cpp; do
     ln -sf /path/to/opticfilm135i-linux/sane/$f $f
 done
 ```
+
+All **nine** files: `Makefile.am` lists `gl126_ops` (the op-program runner,
+hooks 2-7) and `gl126_lock` (the process lock shared with the Python driver)
+as well, and a five-file symlink set -- the list this document carried until
+2026-09-13 -- produces a library that does not link. `tools/sane_install.sh
+status` checks all nine.
 
 Symlinks rather than copies: an edit here is picked up by the next build
 with nothing to re-sync. The eventual merge request takes copies.
@@ -473,7 +482,14 @@ SANE backend on this geometry is PENDING**; the CLI driver's own
 hardware acceptance (Test 58-61) verifies the CLI implementation, not
 this separate C++ one.
 
-Not yet in the port: install/packaging.
+Install and packaging: `docs/sane-install.md` (WP-2). The backend installs
+by name into the distribution's SANE backend directory, with only the
+`libsane-genesys.so.1` symlink repointed and the USB id appended to
+`/etc/sane.d/genesys.conf`; `tools/sane_install.sh` does it and reverses it.
+Offline-verified 2026-09-13 in a staging root (install and uninstall,
+byte-for-byte restore, `tests/test_sane_install.py`); the system install and
+the two frontend scans are `docs/sane-wp2-hardware-plan.md`, awaiting
+approval.
 
 Hook 2 is `offset_calibration()` and nothing else: the driver's
 CAL_DARK_A / CAL_DARK_B phases (two dark reads at AFE offset 0x80 and

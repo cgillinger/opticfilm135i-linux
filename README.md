@@ -30,9 +30,11 @@ The project has two parts, at different stages:
   frontends (`scanimage`, digiKam, …) drive the scanner directly. It builds and
   links against sane-backends; every resolution profile and the infrared pass
   have now run on the unit through `scanimage` and been accepted by eye
-  (2026-09-12). Install/packaging and a scan from inside a SANE frontend
-  remain. Its verification is tracked independently of the CLI driver's — see
-  the roadmap.
+  (2026-09-12). The install path is written up and verified in a staging
+  directory — **[docs/sane-install.md](docs/sane-install.md)** — but the system
+  install itself and a scan from inside a SANE frontend have not been run yet.
+  Its verification is tracked independently of the CLI driver's — see the
+  roadmap.
 
 **Jump to:** [Install](#install) · [Usage](#usage--the-normal-workflow) ·
 [What works today](#what-works-today) ·
@@ -61,8 +63,10 @@ functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md]
   found and fixed three real bugs on the way (a chunk the pipeline never
   requested, a core crop node copying a third of each row, and the IR
   channels' colour-line stagger). Ordinary scanning needs no
-  `--force-calibration`. Packaging and a scan from inside a SANE frontend
-  remain. Per-profile detail: **[docs/ROADMAP.md](docs/ROADMAP.md)**
+  `--force-calibration`. The install path is documented and staging-verified
+  (**[docs/sane-install.md](docs/sane-install.md)**); the system install and a
+  scan from inside a SANE frontend remain. Per-profile detail:
+  **[docs/ROADMAP.md](docs/ROADMAP.md)**
 
 See **[docs/ROADMAP.md](docs/ROADMAP.md)** for the acceptance matrix,
 frozen scope, and exactly what remains before the driver is "complete".
@@ -472,7 +476,7 @@ interoperability constants and our own code.
 - [x] Loader sensor and button event reading
 - [x] ICC-tagged output (`--positive` TIFFs carry an sRGB profile; raw negatives are untagged linear data)
 - [x] Baseline-conformant TIFF resolution tags (the file states its own dpi, so physical size survives; the 2400 dpi profile is anisotropic — 3600 across, 2400 along — and the TIFF carries per-axis X/Y resolution that follows the image's orientation)
-- [ ] SANE genesys backend support for GL126 (upstream goal) — plan and hook mapping in [`docs/sane-port.md`](docs/sane-port.md); register tables generated from the driver's own tables and the command set in `sane/`; calibration, positioning (frames 1–6), the scan pass and park run on hardware through `scanimage`; all five resolutions and the infrared pass hardware-run and eye-accepted for geometry (Tests 62–71, 2026-09-12); install/packaging and a SANE-frontend scan open
+- [ ] SANE genesys backend support for GL126 (upstream goal) — plan and hook mapping in [`docs/sane-port.md`](docs/sane-port.md); register tables generated from the driver's own tables and the command set in `sane/`; calibration, positioning (frames 1–6), the scan pass and park run on hardware through `scanimage`; all five resolutions and the infrared pass hardware-run and eye-accepted for geometry (Tests 62–71, 2026-09-12); the install path is documented and staging-verified in [`docs/sane-install.md`](docs/sane-install.md), while the system install and a SANE-frontend scan are open
 
 ## Status & disclaimer
 

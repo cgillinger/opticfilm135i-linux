@@ -9,11 +9,15 @@ SANE hardware run can be judged by the same coverage criterion as an
 overscan CLI scan -- did the whole aperture land inside the window, with
 overscan margin on both sides?
 
-    tools/sane_coverage.py <frame.pnm> --dpi 3600 [--min-margin-mm 0.15]
+    tools/sane_coverage.py <frame.pnm|frame.png|frame.tif> --dpi 3600 \
+        [--min-margin-mm 0.15]
 
-Reads a binary PNM (P6, 8- or 16-bit; scanimage --format pnm). Exit 0 if
-coverage verified, 1 if not, 2 on a read/parse error. It never crops or
-writes -- read-only, a verdict only.
+Reads a binary PNM (P6, 8- or 16-bit; scanimage --format pnm) directly, and
+anything Pillow opens (PNG/TIFF) for frames that reached us through a
+frontend that writes those -- digiKam saves PNG or TIFF, not PNM, so the
+same coverage verdict has to be available on its output (WP-2,
+docs/sane-install.md). Exit 0 if coverage verified, 1 if not, 2 on a
+read/parse error. It never crops or writes -- read-only, a verdict only.
 """
 
 from __future__ import annotations
@@ -62,6 +66,36 @@ def read_pnm(path: str) -> np.ndarray:
     return px[:need].reshape(height, width, 3)
 
 
+def read_image(path: str) -> np.ndarray:
+    """A P6 PNM, or any image Pillow can open (digiKam saves PNG or TIFF).
+
+    Returns (lines, width, 3). The PNM path is unchanged and byte-exact,
+    16-bit included. Pillow's PNG/TIFF readers hand back 8-bit RGB even for
+    a 48-bit file (verified on this repo's own 16-bit TIFFs), and a 16-bit
+    grayscale file comes back 2-D -- both are fine here: measure_coverage
+    bins to ~600 dpi and locates the aperture edge from the RELATIVE step
+    between the two plateaus of a row-mean profile, so the verdict does not
+    depend on the bit depth. Use the PNM when the pixel values themselves
+    matter.
+    """
+    with open(path, "rb") as f:                           # magic only: a frame
+        magic = f.read(2)                                 # is tens of megabytes
+    if magic == b"P6":
+        return read_pnm(path)
+    try:
+        from PIL import Image
+    except ImportError as e:                              # pragma: no cover
+        raise ValueError(f"{path}: not a P6 PNM and Pillow is unavailable ({e})")
+    with Image.open(path) as im:
+        arr = np.asarray(im)
+    if arr.ndim == 2:                                     # grayscale: one plane
+        arr = np.repeat(arr[:, :, None], 3, axis=2)
+    if arr.ndim != 3 or arr.shape[2] < 3:
+        raise ValueError(f"{path}: not an image with three channels "
+                         f"(shape {arr.shape})")
+    return arr[:, :, :3]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("pnm")
@@ -71,7 +105,7 @@ def main() -> int:
     args = ap.parse_args()
 
     try:
-        img = read_pnm(args.pnm)
+        img = read_image(args.pnm)
     except (OSError, ValueError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2

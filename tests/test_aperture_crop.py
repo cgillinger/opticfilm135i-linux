@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """Offline tests for of135i.aperture_crop -- no hardware required.
 
+Also covers tools/sane_coverage.py's reader: the same frame delivered as a
+16-bit PNM (scanimage) and as a 16-bit PNG (what digiKam saves) must give
+the same coverage verdict, or WP-2's frontend image cannot be judged by the
+same criterion as the scanimage one (docs/sane-install.md).
+
 Plain asserts, no pytest dependency. Run with:
     .venv/bin/python tests/test_aperture_crop.py
 """
 
+import importlib.util
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -239,6 +246,57 @@ def test_crop_to_aperture_raises_without_located_edges():
     print("test_crop_to_aperture_raises_without_located_edges OK")
 
 
+def _sane_coverage_module():
+    """tools/ is not a package; load the tool by path, as the shell does."""
+    path = Path(__file__).resolve().parents[1] / "tools" / "sane_coverage.py"
+    spec = importlib.util.spec_from_file_location("sane_coverage", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_sane_coverage_reads_png_and_pnm_alike():
+    """A frontend that writes PNG (digiKam) must be judged by the same
+    verdict as scanimage's PNM. Same pixels in, same coverage out."""
+    try:
+        from PIL import Image
+    except ImportError:
+        print("SKIP: Pillow not available")
+        return "skipped"
+    sc = _sane_coverage_module()
+    leading = trailing = 100
+    n_ap = _aperture_lines()
+    image = _line_image([800.0] * leading + [40000.0] * n_ap + [800.0] * trailing)
+
+    with tempfile.TemporaryDirectory() as d:
+        pnm = Path(d) / "frame.pnm"
+        h, w, _ = image.shape
+        # P6 is big-endian by definition; the test image is little-endian u2
+        pnm.write_bytes(b"P6\n%d %d\n65535\n" % (w, h) +
+                        image.astype(">u2").tobytes())
+        # What digiKam actually writes: an RGB PNG. Pillow gives 8-bit RGB
+        # back for those, which is the point of the check -- the verdict must
+        # not depend on the bit depth.
+        png = Path(d) / "frame.png"
+        Image.fromarray((image >> 8).astype("uint8"), mode="RGB").save(png)
+
+        from_pnm = sc.read_image(str(pnm))
+        from_png = sc.read_image(str(png))
+        assert from_pnm.shape == image.shape, f"PNM shape {from_pnm.shape}"
+        assert from_png.shape == image.shape, f"PNG shape {from_png.shape}"
+        assert np.array_equal(from_pnm[:, :, 0] >> 8, from_png[:, :, 0]), \
+            "PNM and PNG readers disagree on the pixel data"
+
+        cov_pnm = measure_coverage(from_pnm, dpi=DPI)
+        cov_png = measure_coverage(from_png, dpi=DPI)
+        assert cov_pnm.verified and cov_png.verified, \
+            f"coverage not verified: pnm={cov_pnm.reason!r} png={cov_png.reason!r}"
+        assert (cov_pnm.leading_line, cov_pnm.trailing_line) == \
+               (cov_png.leading_line, cov_png.trailing_line), \
+            "the two readers put the aperture edges in different places"
+    print("test_sane_coverage_reads_png_and_pnm_alike OK")
+
+
 def main() -> int:
     tests = [
         test_measure_coverage_clean_aperture_is_verified,
@@ -251,10 +309,18 @@ def main() -> int:
         test_crop_to_aperture_line_count_and_no_mutation,
         test_crop_to_aperture_clamps_to_image_bounds_with_pad,
         test_crop_to_aperture_raises_without_located_edges,
+        test_sane_coverage_reads_png_and_pnm_alike,
     ]
+    passed = skipped = 0
     for t in tests:
-        t()
-    print(f"\n{len(tests)} tests passed.")
+        if t() == "skipped":
+            skipped += 1
+        else:
+            passed += 1
+    if skipped:
+        print(f"\n{passed} tests passed, {skipped} skipped.")
+    else:
+        print(f"\n{passed} tests passed.")
     return 0
 
 
