@@ -60,6 +60,14 @@ Nya tester ska kunna kopplas till:
 
 Undvik att skapa ett permanent projekt där Test 82 automatiskt leder till Test 83 därför att ytterligare ett test alltid är möjligt.
 
+Samma slutdisciplin ska gälla granskningen inför submission. Efter nulägesgranskningen fastställer du en kort lista över konkreta submissionblockerare. För varje punkt anger du:
+
+- vilket krav eller belagt problem den gäller,
+- vilken åtgärd eller vilket beslut som behövs,
+- vilket verifierbart slutkriterium som stänger punkten.
+
+Övriga frågor dokumenteras som motiverade designval eller framtida arbete. En tänkbar reviewerinvändning är inte i sig en blockerare. Nya blockerare tillkommer endast med konkret evidens, exempelvis ett identifierat fel eller ett tillämpligt upstreamkrav. När slutkriterierna är uppfyllda går arbetet vidare till beslut om submission.
+
 ---
 
 # 3. Föreslagen prioritet 1: gör repot självkonsistent
@@ -121,6 +129,8 @@ Bedöm:
 
 Håll lösningen liten.
 
+CI är ett möjligt sätt att uppfylla reproducerbarhetskravet, inte en egen obligatorisk milstolpe. Fastställ vilka offlinekontroller som behövs, deras beroenden, körkommandon och godkänt resultat. Ett dokumenterat och reproducerbart lokalt upplägg kan räcka om CI skulle tillföra oproportionerligt underhåll.
+
 Om ett enkelt CI-upplägg ger betydande regressionsskydd är det motiverat. Om det kräver en stor specialmiljö och blir ett projekt i projektet, föreslå hellre en mindre variant.
 
 ---
@@ -171,6 +181,15 @@ Granska särskilt:
 - varför det inte kan lösas inom en vanlig backendprocess,
 - vad som händer om companion-drivrutinen inte finns installerad.
 
+Granska också säker filhantering för både låset och magasinmarkören. I den kod som granskades ligger standardlåset på en förutsägbar sökväg i `/tmp`; filerna öppnas utan `O_NOFOLLOW`, och skrivvägar kan trunkera den öppnade filen. Kontrollera först om detta fortfarande gäller och bedöm sedan:
+
+- hantering av symboliska länkar och oväntade filtyper,
+- ägarskap och skrivbehörigheter mellan användare,
+- om kontroll och öppning kan påverkas av att sökvägen byts ut,
+- hur fel eller ofullständig skrivning av markören hanteras.
+
+Detta är en konkret granskningspunkt, inte ett konstaterande att en viss attack eller hårdvaruskada har visats. Skilj mellan designval som behöver förklaras och faktiska fel som behöver rättas. Verifiera berörda filoperationer offline i en isolerad testmiljö utan skanner.
+
 Målet behöver inte vara att ta bort konstruktionen.
 
 Målet är att den ska vara **avsiktlig, begriplig och reviewerbar**.
@@ -188,6 +207,18 @@ Men verifiera att kod och kommentarer gör skillnaden tydlig mellan:
 - villkor som sannolikt härrör från ett capture/transcription-antagande och därför tillåts timeouta.
 
 En reviewer ska inte behöva reverse-engineera vår reverse engineering för att förstå varför en timeout är accepterad på ett ställe men fatal på ett annat.
+
+## D. Påverkan på andra Genesys-enheter
+
+Submissionen ändrar även gemensam Genesys-kod. Integrationspatchens ändring i `ImagePipelineNodeExtract` är ett konkret exempel på beteende som inte är avgränsat till GL126.
+
+Identifiera vilka ändringar som är GL126-specifika och vilka som påverkar gemensamma kodvägar. För de gemensamma ändringarna:
+
+- förklara vilket problem de löser och vilka beteenden som påverkas,
+- kör relevanta befintliga offlinetester och komplettera endast där en konkret risk saknar täckning,
+- bedöm om generella buggrättningar bör ligga i separata commits med egen motivering och verifiering.
+
+Målet är ett avgränsat regressionsunderlag för den kod serien faktiskt ändrar. Det innebär inte en ny hårdvarukampanj för andra skannermodeller. Redovisa vad offlineunderlaget visar och vilken hårdvaruverifiering som saknas.
 
 ---
 
@@ -290,7 +321,7 @@ Inte ett submissionblocker för den scannerfunktion som redan fungerar.
 
 ### Slide holder
 
-Fortfarande ett eget supportområde och bör behandlas som sådant.
+Kvarstår som det separata, beslutade målet C2 med ROADMAP:s befintliga acceptanskriterier. Förslaget är att lägga detta arbete efter den nuvarande SANE-submissionen; det tas inte bort ur projektet och blockerar inte B2. En ändring av själva omfattningen kräver ett uttryckligt scopebeslut.
 
 ### Panorama
 
@@ -421,11 +452,19 @@ Den tekniska kärnan fungerar.
 
 Återstående arbete handlar främst om submissionkvalitet, upstreamanpassning, reproducerbarhet och de sista relevanta verifieringarna.
 
-### C — Expanded holder support
+### C1 — Strip holder, frames 1–6
 
-Strip holder 1–6 är långt gången/färdig inom den verifierade delen.
+Behåll ROADMAP:s befintliga acceptanskriterier och redovisa status separat för Python-drivrutinen och SANE-backenden. Ersätt den vaga sammanfattningen ”långt gången/färdig inom den verifierade delen” med ett entydigt besked per återstående kriterium: uppfyllt med evidenshänvisning, eller öppet med ett konkret slutkriterium.
 
-Slide holder och andra holdertyper behandlas separat och får inte automatiskt återöppna A/B.
+Redan accepterade delar står kvar som avslutade. Nulägeskontrollen ska inte automatiskt skapa nya tester eller göra C1 till ett nytt B2-krav utöver den funktion submissionen faktiskt påstår sig stödja.
+
+### C2 — Mounted-slide holder
+
+**Kvarstående separat projektmål; föreslås genomföras efter B2.**
+
+Behåll ROADMAP:s avgränsning: ett tomt originalmagasin kan verifiera identifiering, laddning, transport och geometri, men inte bildkvalitet och IR-beteende hos en fysisk dia. Den senare delen ska fortsatt anges som separat overifierad.
+
+C2 tas inte bort när dokumentationen städas. Senareläggning ändrar arbetsordningen; en minskning av beslutade acceptanskriterier kräver Christians uttryckliga scopebeslut. Andra hållartyper får inte automatiskt återöppna A/B.
 
 ---
 
@@ -434,8 +473,9 @@ Slide holder och andra holdertyper behandlas separat och får inte automatiskt �
 Nästa fas är lyckad när:
 
 - README, ROADMAP och submissionunderlag berättar samma aktuella historia,
-- offlinekvaliteten är så reproducerbar som rimligt utan skanner,
-- de sannolika upstreamfrågorna har tekniskt genomtänkta svar,
+- de i nulägesgranskningen fastställda offlinekontrollerna går att reproducera med dokumenterade beroenden och kommandon, utan skanner,
+- den avgränsade blockerlistans slutkriterier är uppfyllda och övriga granskningsfrågor har dokumenterade designbeslut eller är placerade i framtida arbete,
+- filhanteringen för lås och magasinmarkör samt påverkan på gemensam Genesys-kod har granskats och eventuella blockerande fel har åtgärdats och verifierats,
 - upstreamspecifika tester har körts när det är säkert eller dokumenterats ärligt när de inte kan köras,
 - submissionserien bygger rent mot aktuell sane-backends,
 - det inte finns något känt blockerande fel i den funktion som serien påstår sig stödja,
@@ -478,7 +518,8 @@ När du tar över från detta dokument vill jag att du först:
    - **ACCEPT WITH CHANGES**, eller
    - **RETHINK**,
 4. specificerar de ändringar du anser behövs och varför,
-5. presenterar den konkreta ordning du själv rekommenderar för nästa arbetsfas.
+5. presenterar den konkreta ordning du själv rekommenderar för nästa arbetsfas,
+6. fastställer den korta blockerlistan med slutkriterier och vilka offlinekontroller som ska ingå, samt skiljer dessa från framtida arbete.
 
 Var självsäker där evidensen är stark och explicit där något fortfarande är en bedömning.
 
