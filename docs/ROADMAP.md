@@ -321,8 +321,9 @@ reduction of them would be an explicit scope decision.
 - **B2 — SANE contribution:** **PREPARATION PHASE — prepared, not
   submitted.** The B2 prerequisite (the backend works the magazine itself)
   is met on hardware (WP-4, Tests 75–77, including a power-cycled unit with
-  a latched magazine). A four-commit submission package exists and builds
-  on its own (WP-3, `docs/sane-wp3-submission.md`). Nothing has been sent.
+  a latched magazine). A five-commit submission package exists and builds
+  on its own, rebased onto current upstream (WP-3,
+  `docs/sane-wp3-submission.md`). Nothing has been sent.
   What stands between "prepared" and a submission decision is the blocker
   list in **B2 — preparation phase** below.
 - **C — full-length holder:** C1 is done for the driver and verified
@@ -577,9 +578,10 @@ promised scope require them. VueScan stays out of public docs.
 - Stop condition: any deviation stops WP-4; no blind retry, no recovery
   experiments.
 
-**WP-3 — SANE submission package, prepared only (B2). PREPARED
-2026-09-13 — see `docs/sane-wp3-submission.md`.** A four-commit series on
-branch `wp3-gl126-submission`, based on sane-backends `1d47d7c`, with the
+**WP-3 — SANE submission package, prepared only (B2). PREPARED,
+rebased onto current upstream 2026-09-15 — see
+`docs/sane-wp3-submission.md`.** A five-commit series on branch
+`wp3-gl126-submission-v2`, based on sane-backends `7fb102b`, with the
 GL126 files as REAL files rather than the development symlinks: it builds
 clean from the branch alone (zero warnings), exports the same 107 gl126
 symbols as the development build, and passes the three backend-dependent
@@ -627,11 +629,11 @@ Nothing in that mission runs before Christian says the code is ready.
 | # | Blocker | Closes when |
 |---|---|---|
 | 1 | Status drift between README, this roadmap and the submission document | The six questions in `updated-course.md` §3 get one answer everywhere; the submission text's motor-wait and testing claims match the code and the evidence. **Done in this revision.** |
-| 2 | The exact WP-3 series is not reproducible from this repository | **Done 2026-09-15:** bundle + four patches in `sane/wp3-package/`, recreated identically (tree `f313368…`) in two clean clones. |
+| 2 | The exact WP-3 series is not reproducible from this repository | **Done 2026-09-15:** bundle + five patches in `sane/wp3-package/`, recreated identically (tip tree `65a7b8bd…`) by both the `git am` and bundle routes in a clean clone. |
 | 3 | Lock and magazine-mark file handling (`/tmp`, mode 0666, no `O_NOFOLLOW`, truncating write) | **Done 2026-09-15:** both sides open `O_NOFOLLOW` + regular-file check, the mark is written via temp+`rename`, path/format unchanged; new probes in `test_sane_lock`/`test_safety` (see `gl126_lock.h`). |
-| 4 | Shared genesys code changed without a per-hunk rationale | **Mostly done 2026-09-15:** every shared hunk classified in submission §8; each best-effort poll site now carries its reason in the generated table. Open: splitting the `ImagePipelineNodeExtract` fix into its own commit, folded into the rebase (item 6). |
-| 5 | The offline checks are not fixed as a list | **Done 2026-09-15:** `docs/offline-checks.md` lists them; `.github/workflows/offline-checks.yml` runs the buildless subset (generator check, 12 Python suites, 4 compiler suites). Full local gate `release_check.py` green at 321. |
-| 6 | The series is based on `1d47d7c`; upstream has moved | **Submission-time mission step 1** (runbook). Rebase on current `origin/master`, split out the Extract commit, build standalone, re-run checks on the branch, re-export the package. Version-bound — not done early. |
+| 4 | Shared genesys code changed without a per-hunk rationale | **Done 2026-09-15:** every shared hunk classified in submission §8; each best-effort poll site carries its reason in the generated table; the `ImagePipelineNodeExtract` fix is now the series' own first commit. |
+| 5 | The offline checks are not fixed as a list | **Done 2026-09-15:** `docs/offline-checks.md` documents them with commands and expected results; `release_check.py` now reports PASS/FAIL/SKIP and refuses to call a run full when a mandatory suite skipped. Substantiated by a local run: **FULL VERIFICATION, 325 tests**. A GitHub Actions workflow file is provided but not activated (publishing it needs a `workflow`-scoped push); no CI run is claimed. |
+| 6 | The series is based on `1d47d7c`; upstream has moved | **Done for this revision 2026-09-15:** rebased onto `7fb102b` (upstream had touched none of the affected paths — clean), built standalone (0 warnings, 107 symbols), backend suites pass, re-exported to `sane/wp3-package/` (tip tree `65a7b8bd…`). At submission time, re-rebase only if upstream moved on the affected paths (runbook). |
 | 7 | `scanimage -T` and `tstbackend` neither run nor analysed | **Analysed 2026-09-15** (source read): run `tstbackend -l 1` only (read-only, no motor); document the scan-driving tools as "not run because". **Submission-time mission step 2**, against the rebased build. |
 | 8 | Decision | "Send this to SANE" or "not yet, for these reasons". Christian's. **Submission-time mission step 3.** |
 

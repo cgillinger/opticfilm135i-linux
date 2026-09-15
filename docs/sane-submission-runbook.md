@@ -1,27 +1,34 @@
 # The upstream submission runbook — one mission, run at submission time
 
-Blockers 6, 7 and 8 of the B2 preparation phase (`docs/ROADMAP.md`) are
-**not three separate to-dos.** They are one mission, executed in a single
-session, on the day Christian decides the code is ready to be offered
-upstream. This document freezes every decision so that day is execution,
-not re-deliberation.
+Blockers 6, 7 and 8 of the B2 preparation phase (`docs/ROADMAP.md`) belong
+together. The rebase and the package (6, and the shared-fix split from 4)
+are prepared now, so a concrete package exists to assess; a final upstream
+re-check, the `tstbackend -l 1` conformance run and Christian's go/no-go
+run in a single session on the day he decides the code is ready. This
+document freezes every decision so that day is execution, not
+re-deliberation.
 
-## Why they collapse into one mission
+## Where the three stand
 
-Each of the three is version-bound, and doing any of them ahead of the
-others wastes the work:
+The rebase and the package preparation (blockers 6 and 4) are **done for
+the current revision** (2026-09-15): the series is rebased onto `7fb102b`,
+split so the shared `ImagePipelineNodeExtract` fix is its own first
+commit, built standalone (0 warnings, 107 gl126 symbols), verified by the
+three backend suites, and exported to `sane/wp3-package/` with its ids and
+a verification table. A concrete package exists for Christian to assess.
 
-- **The rebase (6) can only be done at submission time.** Upstream
-  sane-backends moves; a rebase done now is stale within weeks. It is
-  meaningful only against the master that exists the day we submit.
+What is still version-bound, and so is left for the submission session:
+
+- **A final upstream re-check.** Upstream sane-backends keeps moving. At
+  submission time, re-fetch and compare: if it has touched the paths this
+  series changes (it had not between `1d47d7c` and `7fb102b`), re-rebase
+  and re-export; if not, the current package stands. Not a wholesale
+  redo — only the then-relevant difference is assessed.
 - **The conformance run (7) must describe the submitted build.** A
   maintainer's implicit question is "did these pass on the code you are
-  submitting?" A run before the rebase describes a build that is not what
-  ships. So it runs *after* the rebase, against the rebased package.
+  submitting?" So `tstbackend -l 1` runs against the final build, after
+  any final re-rebase.
 - **The decision (8) follows the evidence (7).**
-
-So there is nothing useful to do on 6, 7 or 8 before that day. Until then
-the WP-3 package simply sits reviewable in `sane/wp3-package/`.
 
 ## Trigger
 
@@ -57,20 +64,18 @@ implied by "finish B2", "prepare upstream", or any earlier go.
 (`.venv/bin/python tools/release_check.py`); the WP-3 package as last
 exported (`sane/wp3-package/`).
 
-**1. Rebase (blocker 6).** Fetch current `origin/master` in the
-sane-backends clone. Rebase the four-commit series onto it. Resolve
-conflicts as a real port — read the new upstream and adapt, never paste
-the old solution over changed code. Split the `ImagePipelineNodeExtract`
-fix into its own commit (blocker 4's remaining item). Rebuild standalone
-(`./autogen.sh && ./configure --sysconfdir=/etc`, then `lib`, `sanei`,
-`backend/libsane-genesys.la`) with zero warnings. Run the offline checks
-against the branch (`docs/offline-checks.md`). Re-export the package to
-`sane/wp3-package/` with a fresh revision table (new base, commit and
-tree ids).
+**1. Final upstream re-check (blockers 6 and 4 — already prepared).** The
+five-commit series is current against `7fb102b` and exported. Fetch
+`origin/master` again; if it has touched `backend/genesys/`, the
+`Makefile.am`, `genesys.conf.in`, the `.desc`, the man page or `AUTHORS`
+since `7fb102b`, re-rebase as a real port (read the new upstream, do not
+paste), rebuild standalone with zero warnings, re-run the offline checks
+against the branch, and re-export to `sane/wp3-package/` with a fresh
+revision table. If it has not, the current package stands unchanged.
 
 **2. Conformance run (blocker 7).** With Christian's go, the scanner in a
 known idle state (reg 0x01 = 0x22) and nothing else owning the device
-(watch for VMware autoConnect), run `tstbackend -l 1` against the rebased
+(watch for VMware autoConnect), run `tstbackend -l 1` against the final
 build. Record the result verbatim. It is read-only; no motor moves. Write
 the "not run, because …" note for the scan-driving tools. Fold both into
 `docs/sane-wp3-submission.md` (§3 and §7).
