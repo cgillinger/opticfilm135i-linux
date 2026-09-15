@@ -3,9 +3,11 @@
 Every check here runs without a scanner and without network access. It
 is the reproducibility answer the project's updated course asks for: a
 documented set of checks, their dependencies, their commands and their
-expected results, that any commit can be held to. A small CI job
-(`.github/workflows/offline-checks.yml`) runs the subset that needs no
-built SANE backend; the rest is a local step.
+expected results, that any commit can be held to. The substantiated
+mechanism is the local commands below. A GitHub Actions workflow file is
+also provided (`.github/workflows/offline-checks.yml`) but has not been
+activated and no CI run has occurred -- see "The GitHub Actions workflow"
+at the end.
 
 Nothing here talks to USB. The suites that would drive hardware are the
 scanning tests, and those are not offline — they live in
@@ -28,12 +30,24 @@ scanning tests, and those are not offline — they live in
 .venv/bin/python tools/release_check.py
 ```
 
-Runs every offline suite, requires a clean checkout (`--allow-dirty` to
-skip that), and prints the version, git revision and per-file counts.
-Exit 0 only if all pass. This is the one command to run before a release
-or a submission refresh. It expects the three backend suites' build to be
-present; run it where the backend has been built (the development clone),
-or read the CI subset below as the buildless equivalent.
+Runs every offline suite and reports each as **PASSED**, **FAILED**, or
+**SKIPPED** (a precondition -- a compiler or a built backend -- is
+absent). It does **not** count a mandatory suite as done just because its
+script exited cleanly: a suite that ran no tests because its precondition
+was missing is reported skipped, and the run is then **PARTIAL**, never
+full verification. Verdict and exit code:
+
+- **FULL VERIFICATION** (exit 0) when every mandatory suite ran and passed;
+- **PARTIAL** (exit 1) when any suite failed, or a mandatory suite skipped
+  for a missing precondition;
+- **LIMITED** (exit 0) under `--no-backend`, which makes the three backend
+  suites' absence an acknowledged, limited run (core + compiler must still
+  pass). `--allow-dirty` drops the clean-checkout requirement.
+
+Substantiated: a full local run on 2026-09-15, against a built backend,
+reported **FULL VERIFICATION, 325 tests**. Run it where the backend is
+built (the development clone) for full verification, or with
+`--no-backend` for the buildless subset.
 
 ### 2. Generated-table consistency
 
@@ -98,12 +112,18 @@ three suites whose logic the op and geometry suites already cover on the
 wire. Run them in the development clone, or against a recreated WP-3
 package build (`sane/wp3-package/README.md` shows how).
 
-## What CI runs
+## The GitHub Actions workflow (provided, not yet activated)
 
-`.github/workflows/offline-checks.yml` runs checks 2, 3 and 4 on push and
-pull request: the generator check, the twelve Python suites and the four
-compiler-based suites. It installs only the four Python packages and uses
-the distribution's `g++`. It never builds the full backend and never
-touches hardware. A green run means the driver's logic, the generated
-tables and the backend's wire-level and lock behaviour are unregressed;
-it does not exercise an installed backend (check 5) or the scanner.
+A workflow file, `.github/workflows/offline-checks.yml`, is provided to
+run checks 2-4 (the generator check, the twelve Python suites and the four
+compiler-based suites) on push and pull request, installing only the four
+Python packages, using the distribution's `g++`, building no backend and
+touching no hardware.
+
+It has **not been activated, and no CI run has occurred.** Publishing a
+workflow file to this repository needs a token carrying the `workflow`
+scope, which is the owner's to grant; until then the file sits ready and
+the substantiated mechanism is the local commands above. **No green CI is
+claimed.** Once enabled, the workflow would cover the driver's logic, the
+generated tables and the backend's wire-level and lock behaviour, but
+never an installed backend (check 5) or the scanner.
