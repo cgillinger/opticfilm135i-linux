@@ -1,0 +1,81 @@
+From 05f2ea7016b3bfc93ce16fa9172f90f79de3ef48 Mon Sep 17 00:00:00 2001
+From: Christian Gillinger <christian.gillinger@gmail.com>
+Date: Sun, 13 Sep 2026 20:03:44 +0200
+Subject: [PATCH 4/4] genesys: document the GL126 and the OpticFilm 135i
+
+The chip list in the man page's title and description, an AUTHORS entry,
+and the description file's status.
+
+The .desc entry moves from :untested to :good and its comment is
+rewritten: it described a skeleton with bring-up in progress, which is no
+longer what this is. It now says what the scanner actually does -- one
+frame of the strip per scan chosen by the frame option, magazine handling
+through two further options, the five resolutions and the infrared pass
+-- and states plainly that the testing covers a single unit, because only
+one exists for this work.
+---
+ AUTHORS                       | 3 ++-
+ doc/descriptions/genesys.desc | 4 ++--
+ doc/sane-genesys.man          | 6 +++---
+ 3 files changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/AUTHORS b/AUTHORS
+index 71d95ce..127e839 100644
+--- a/AUTHORS
++++ b/AUTHORS
+@@ -33,7 +33,8 @@ Backends:
+  fujitsu:       Randolph Bentson, Frederik Ramm, Oliver Schirrmeister,
+                 m. allan noah (*)
+  genesys:       Henning Geinitz, Gerhard Jaeger (*), Stéphane Voltz,
+-                Pierre Willenbrock, Povilas Kanapickas (*)
++                Pierre Willenbrock, Povilas Kanapickas (*),
++                Christian Gillinger (GL126 / OpticFilm 135i)
+  gphoto2:       Peter Fales
+  gt68xx:        Sergey Vlasov, Andreas Nowack, David Stevenson, and
+                 Henning Geinitz
+diff --git a/doc/descriptions/genesys.desc b/doc/descriptions/genesys.desc
+index 83414f8..23146ef 100644
+--- a/doc/descriptions/genesys.desc
++++ b/doc/descriptions/genesys.desc
+@@ -20,8 +20,8 @@
+ :model "OpticFilm 135i"
+ :interface "USB"
+ :usbid "0x07b3" "0x1436"
+-:status :untested
+-:comment "GL126; backend skeleton, hardware bring-up in progress"
++:status :good
++:comment "GL126. 35mm film scanner: one frame of the strip per scan, selected by the 'frame' option (1-6); the magazine is loaded and ejected with the 'load-film' and 'eject-film' options. 600/1200/2400/3600/7200 dpi and an infrared pass. Tested on a single unit."
+ 
+ :model "OpticFilm 7200"
+ :interface "USB"
+diff --git a/doc/sane-genesys.man b/doc/sane-genesys.man
+index b4767ab..022b4c8 100644
+--- a/doc/sane-genesys.man
++++ b/doc/sane-genesys.man
+@@ -1,12 +1,12 @@
+ .TH "sane\-genesys" "5" "4 Jul 2012" "@PACKAGEVERSION@" "SANE Scanner Access Now Easy"
+ .IX sane\-genesys
+ .SH "NAME"
+-sane\-genesys \- SANE backend for GL646, GL841, GL843, GL847 and GL124 based USB flatbed scanners
++sane\-genesys \- SANE backend for GL646, GL841, GL843, GL847, GL124 and GL126 based USB flatbed scanners
+ .SH "DESCRIPTION"
+ The
+ .B sane\-genesys
+ library implements a SANE (Scanner Access Now Easy) backend that provides
+-access to USB flatbed scanners based on the Genesys GL646, GL841, GL843, GL847 and GL124 chips.
++access to USB flatbed scanners based on the Genesys GL646, GL841, GL843, GL847, GL124 and GL126 chips.
+ At present, the following scanners are known to work with this backend:
+ .PP
+ .RS
+@@ -43,7 +43,7 @@ or syslog) to the sane\-devel mailing list. Even if the scanner's name is only
+ slightly different from the models mentioned above, please let me know.
+ .PP
+ If you own a scanner that isn't detected by the genesys backend but has a GL646,
+-GL841, GL843, GL847 or GL124 chipset, you can try to add it to the backend.
++GL841, GL843, GL847, GL124 or GL126 chipset, you can try to add it to the backend.
+ .PP
+ .SH "CALIBRATION"
+ To give correct image quality, sheet fed scanners need to be calibrated using the
+-- 
+2.55.0
+

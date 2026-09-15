@@ -1,0 +1,235 @@
+From b85136d4497c11a0fa5d6d8038ded81522465b47 Mon Sep 17 00:00:00 2001
+From: Christian Gillinger <christian.gillinger@gmail.com>
+Date: Sun, 13 Sep 2026 20:03:12 +0200
+Subject: [PATCH 2/4] genesys: add the Plustek OpticFilm 135i (07b3:1436)
+
+A 35 mm film scanner built on the GL126. It scans one frame of a loaded
+film strip per pass, addressed by number rather than by a scan area: the
+frame's geometry is fixed by the holder, and positioning is a single
+absolute feed from the load reference rather than the core's
+scanner_move.
+
+The model declares the resolutions the vendor's own captures cover --
+600, 1200, 2400, 3600 and 7200 dpi, plus an infrared pass -- and the
+sensor entry carries the per-resolution readout widths and the
+colour-line shift the core's pipeline undoes on the host.
+
+The .desc entry is updated with the model and its status.
+---
+ backend/genesys.conf.in           |   3 +
+ backend/genesys/tables_model.cpp  | 106 ++++++++++++++++++++++++++++++
+ backend/genesys/tables_sensor.cpp |  52 +++++++++++++++
+ doc/descriptions/genesys.desc     |   6 ++
+ 4 files changed, 167 insertions(+)
+
+diff --git a/backend/genesys.conf.in b/backend/genesys.conf.in
+index 6e6a8d7..1153059 100644
+--- a/backend/genesys.conf.in
++++ b/backend/genesys.conf.in
+@@ -169,3 +169,6 @@ usb 0x07b3 0x1300
+ 
+ # Plustek OpticFilm 7600i
+ usb 0x07b3 0x0c3b
++
++# Plustek OpticFilm 135i
++usb 0x07b3 0x1436
+diff --git a/backend/genesys/tables_model.cpp b/backend/genesys/tables_model.cpp
+index 321d179..33c4788 100644
+--- a/backend/genesys/tables_model.cpp
++++ b/backend/genesys/tables_model.cpp
+@@ -2311,6 +2311,112 @@ void genesys_init_usb_device_tables()
+ 
+ 
+ 
++    /* Plustek OpticFilm 135i (GL126).
++
++       STAGE 1 SKELETON, UNTESTED. The sensor/adc/gpio/motor ids below are
++       the 7200's, used as placeholders so the model registers and the
++       backend builds: the 135i's own tables are not written yet, and
++       every scan hook in gl126.cpp refuses before anything reaches the
++       wire, so the placeholder values cannot drive the hardware. They are
++       replaced with measured ones during stage 3 bring-up
++       (docs/sane-port.md).
++
++       Geometry is the 35 mm frame as the driver scans it: a 36 x 24 mm
++       image area on a strip fed through the magazine. */
++    model = Genesys_Model();
++    model.name = "plustek-opticfilm-135i";
++    model.vendor = "PLUSTEK";
++    model.model = "OpticFilm 135i";
++    model.model_id = ModelId::PLUSTEK_OPTICFILM_135I;
++    model.asic_type = AsicType::GL126;
++
++    /* Every resolution is captured with the dual-light (IR + visible) pass
++       except 3600 dpi, which also has the vendor's visible-only pass; the
++       IR method delivers the IR lines of the same dual pass as a separate
++       scan (docs/sane-hook8-dual.md). */
++    model.resolutions = {
++        {
++            { ScanMethod::TRANSPARENCY, ScanMethod::TRANSPARENCY_INFRARED },
++            { 7200, 3600, 2400, 1200, 600 },
++            { 7200, 3600, 2400, 1200, 600 },
++        }
++    };
++
++    model.bpp_gray_values = { 16 };
++    model.bpp_color_values = { 16 };
++    model.default_method = ScanMethod::TRANSPARENCY;
++
++    model.x_offset = 0.0;
++    model.y_offset = 0.0;
++    /* The captured frame: 3762 px across the sensor window and 5137 lines
++       along the transport at 3600 dpi (26.54 x 36.24 mm). The scan hook
++       pins the session to these regardless of the requested window. */
++    model.x_size = 26.5447;
++    model.y_size = 36.2447;
++
++    model.y_offset_calib_white = 0.0;
++    model.y_size_calib_mm = 0.0;
++    model.x_offset_calib_black = 0.0;
++    model.x_size_calib_mm = 36.0;
++
++    model.x_offset_ta = 0.0;
++    model.y_offset_ta = 0.0;
++    model.x_size_ta = 36.0;
++    model.y_size_ta = 24.0;
++
++    model.y_offset_sensor_to_ta = 0.0;
++    model.y_offset_calib_black_ta = 0.0;
++    model.y_offset_calib_white_ta = 0.0;
++    model.y_size_calib_ta_mm = 0.0;
++
++    model.post_scan = 0.0;
++    model.eject_feed = 0.0;
++
++    /* Colour-line shift at the motor's base 3600 dpi: in the raw stream a
++       feature appears in R 24 lines after B, in G 12 lines after B
++       (docs/protocol-notes.md pass 18; the driver's image.align_channels,
++       whose output the core's ComponentShiftLines node reproduces exactly:
++       output line k = R[k+24], G[k+12], B[k]; verified offline on the
++       Test 52/53 images, docs/test-log.md). */
++    model.ld_shift_r = 24;
++    model.ld_shift_g = 12;
++    model.ld_shift_b = 0;
++
++    model.line_mode_color_order = ColorOrder::RGB;
++
++    model.is_cis = false;
++    /* Not sheetfed: that path ejects after every scan and reloads before
++       calibration, which breaks a 1-4 frame batch (docs/sane-port.md,
++       decision 4). */
++    model.is_sheetfed = false;
++
++    model.sensor_id = SensorId::CCD_PLUSTEK_OPTICFILM_135I;
++    /* Placeholders -- see the note above. */
++    model.adc_id = AdcId::PLUSTEK_OPTICFILM_7200;
++    model.gpio_id = GpioId::PLUSTEK_OPTICFILM_7200;
++    model.motor_id = MotorId::PLUSTEK_OPTICFILM_7200;
++
++    /* No ModelFlag::WARMUP: the core's warm-up moves the head to the
++       calibration area and runs a lamp warm-up before every scan, neither
++       of which the vendor does on this unit. The lamp warm-up that exists
++       is the retry inside the gain calibration (docs/sane-hook2-offset.md,
++       section 4).
++       DISABLE_SHADING_CALIBRATION: the shading tables are measured and
++       uploaded by the backend's own calibration hook, in the vendor's
++       format; the core's shading pass, repark and coefficient upload are
++       never used (docs/sane-hook4-shading.md, section 5). */
++    /* HOST_SIDE_GRAY: the vendor's scan pass is always 3-channel; a gray
++       request is scanned in colour and merged on the host by the core's
++       pipeline, so the hooks see one and the same session (Test 52,
++       attempt 2: a gray default request was refused by the frame check). */
++    model.flags = ModelFlag::UNTESTED |
++                  ModelFlag::DISABLE_SHADING_CALIBRATION |
++                  ModelFlag::HOST_SIDE_GRAY;
++
++    model.search_lines = 200;
++    s_usb_devices->emplace_back(0x07b3, 0x1436, model);
++
++
+     model = Genesys_Model();
+     model.name = "plustek-opticfilm-7200";
+     model.vendor = "PLUSTEK";
+diff --git a/backend/genesys/tables_sensor.cpp b/backend/genesys/tables_sensor.cpp
+index 09ca861..a8df6a0 100644
+--- a/backend/genesys/tables_sensor.cpp
++++ b/backend/genesys/tables_sensor.cpp
+@@ -3355,6 +3355,58 @@ void genesys_init_sensor_tables()
+     }
+ 
+ 
++    /* Plustek OpticFilm 135i (GL126). The GL126 command set drives the
++       chip from register tables generated from USB captures
++       (gl126_tables.cpp), so the per-sensor register and calibration
++       fields the core uses for other chips are not consulted; what the
++       core does read from here is the resolution list, the scan method
++       and the channel count. The rest is left at its defaults and marked
++       as such rather than copied from another sensor. */
++    sensor = Genesys_Sensor();
++    sensor.sensor_id = SensorId::CCD_PLUSTEK_OPTICFILM_135I; // gl126
++    sensor.full_resolution = 7200;
++    sensor.optical_resolution = 7200;
++    sensor.register_dpihw = 3600; // not used by the GL126 hooks
++    sensor.black_pixels = 0;      // calibration is table-driven in gl126.cpp
++    sensor.dummy_pixel = 0;
++    sensor.fau_gain_white_ref = 0;
++    sensor.gain_white_ref = 0;
++    sensor.exposure = { 0x0000, 0x0000, 0x0000 };
++    /* Not consumed by the GL126 hooks: the captured tables carry the
++       per-channel exposure block (regs 0xe0-0xf7, DPI-independent). The
++       core still needs a non-negative value here to seed its exposure
++       option; 0x3ffb is the end of that captured block. */
++    sensor.exposure_lperiod = 0x3ffb;
++    sensor.gamma = { 1.0f, 1.0f, 1.0f };
++    {
++        struct CustomSensorSettings
++        {
++            ValueFilterAny<unsigned> resolutions;
++            unsigned register_dpiset;
++        };
++
++        CustomSensorSettings custom_settings[] = {
++            { { 600 }, 600 },
++            { { 1200 }, 1200 },
++            { { 2400 }, 2400 },
++            { { 3600 }, 3600 },
++            { { 7200 }, 7200 },
++        };
++
++        for (const CustomSensorSettings& setting : custom_settings) {
++            for (ScanMethod method : { ScanMethod::TRANSPARENCY,
++                                       ScanMethod::TRANSPARENCY_INFRARED }) {
++                sensor.resolutions = setting.resolutions;
++                sensor.method = method;
++                sensor.shading_resolution = setting.resolutions.values().front();
++                sensor.register_dpiset = setting.register_dpiset;
++                sensor.pixel_count_ratio = Ratio{1, 1};
++                sensor.output_pixel_offset = 0;
++                s_sensors->push_back(sensor);
++            }
++        }
++    }
++
+     sensor = Genesys_Sensor();
+     sensor.sensor_id = SensorId::CCD_PLUSTEK_OPTICFILM_7300; // gl843
+     sensor.full_resolution = 7200;
+diff --git a/doc/descriptions/genesys.desc b/doc/descriptions/genesys.desc
+index 43b0736..83414f8 100644
+--- a/doc/descriptions/genesys.desc
++++ b/doc/descriptions/genesys.desc
+@@ -17,6 +17,12 @@
+ :status :basic
+ :comment "Has a Primax USB ID"
+ 
++:model "OpticFilm 135i"
++:interface "USB"
++:usbid "0x07b3" "0x1436"
++:status :untested
++:comment "GL126; backend skeleton, hardware bring-up in progress"
++
+ :model "OpticFilm 7200"
+ :interface "USB"
+ :usbid "0x07b3" "0x0807"
+-- 
+2.55.0
+
