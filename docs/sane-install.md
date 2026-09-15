@@ -299,17 +299,19 @@ descriptor's title, description and range — which the patch provides.
 
 ## 7. Who does what: load, scan, eject
 
-**The magazine is handled from the command line — for now.** Christian's
-decision of 2026-09-13: this division is what **B1** delivers, and it is a
-condition for **B2** that it goes away. A SANE backend that needs an external
-CLI to load film is not a SANE backend to the person installing it.
+**The backend handles the magazine itself.** `load_document()` /
+`eject_document()` are implemented behind a `load-film` / `eject-film` /
+`magazine` option set (WP-4, `docs/sane-wp4-magazine.md`), and the whole
+load → scan → eject cycle has run on hardware from `scanimage` and from
+digiKam with no command-line step, including freeing a latched magazine
+after a power cycle (Tests 75–77, 2026-09-13). The two-step protocol:
+press **Load film**, take the magazine out when told and re-seat it to
+the stop, then start the scan — the load runs before calibration.
+**Eject film** ejects from the post-PARK state.
 
-The backend can now do it itself — `load_document()`/`eject_document()` are
-implemented behind a `load-film` / `eject-film` / `magazine` option set
-(WP-4, `docs/sane-wp4-magazine.md`) — but **that code has never driven the
-motor.** Until `docs/sane-wp4-hardware-plan.md` has been run and accepted,
-the workflow below is the documented one, and the options should be left
-alone. The working division is:
+The command-line division below still works and was the B1 workflow
+(Christian's decision of 2026-09-13; it does not satisfy B2, which is why
+WP-4 exists). Use it when you prefer the driver's interactive load tool:
 
 | step | who | command |
 |---|---|---|

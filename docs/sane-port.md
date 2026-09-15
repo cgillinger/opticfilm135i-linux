@@ -36,6 +36,13 @@ with nothing to re-sync. The eventual merge request takes copies.
 
 ## Status (2026-09-10: Lager 1 A+C geometry migrated, offline-verified — see the Lager 1 section below; hook history from 2026-09-08 onward)
 
+> **Current status lives in `docs/ROADMAP.md`** (B1 done 2026-09-13;
+> backend-driven magazine handling hardware-verified, Tests 75–77; the
+> submission package prepared, `docs/sane-wp3-submission.md`). The stage
+> history below is kept as written: where it says an operation throws
+> `SANE_STATUS_UNSUPPORTED` or is pending, that was true on the date of
+> the entry.
+
 - **Stage 2 — done (offline).** `tools/gen_sane_tables.py` emits
   `sane/gl126_tables.{h,cpp}` from `of135i/tables*.py`: the base, AFE,
   cold-init and loader-speed tables, the deduplicated motor slope tables,

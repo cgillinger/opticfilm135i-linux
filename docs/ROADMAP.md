@@ -174,13 +174,14 @@ Scope for B1 mirrors A's in-scope list (single unit, the DPI set, 1–4
 frames, IR). Frontend niceties beyond "scan a frame correctly" are
 deferred. B1 needs no upstream approval — it is entirely under our control.
 
-**Magazine handling — Christian's decision, 2026-09-13.** "Load" in the
-workflow above is a step of the workflow, not a frontend feature: the
-magazine is loaded and ejected with `of135i load` / `of135i eject`, and SANE
-owns the scan. GL126's `load_document()`/`eject_document()` are **not
-implemented** and throw `SANE_STATUS_UNSUPPORTED`. That division satisfies
-B1 and is documented as such (`docs/sane-install.md` §7). It does **not**
-satisfy B2 — see there.
+**Magazine handling.** When B1 was declared done (2026-09-13, Christian's
+decision) "load" was a step of the workflow, not a frontend feature: the
+magazine was loaded and ejected with `of135i load` / `of135i eject`, and
+SANE owned the scan. That division satisfied B1 but not B2, so WP-4 was
+added and completed the same day: `load_document()`/`eject_document()`
+are implemented and the backend runs the whole load → scan → eject cycle
+by itself (Tests 75–77). The CLI division remains a valid workflow
+(`docs/sane-install.md` §7); it is no longer the only one.
 
 **B1 is DONE, 2026-09-13** (Test 74): installed as a normal genesys build,
 `scanimage` and digiKam both scan through it with the loaded library proved
@@ -243,20 +244,25 @@ frozen. C extends the holder support without reopening it.
    `frame_geometry()`) was wired to the SAME frozen A+C ledger
    (`Profile::frames[]`, `sane/gl126_tables.h`) 2026-09-10 ("Lager 1")
    — offline-verified (235 tests green, generator `--check` clean, 0
-   build warnings); **hardware-verification of the SANE backend on
-   this geometry is PENDING** (the CLI driver's own hardware
-   verification above does not transfer to this separate
-   implementation). The overscan window is still delivered whole to
+   build warnings) and **hardware-verified through the backend** on
+   plain 3600 dpi, frames 1–6 (Test 62, 2026-09-11; the CLI driver's own
+   verification does not transfer to this separate implementation, so
+   it was run on its own). The overscan window is still delivered whole to
    the SANE frontend (Lager 2's aperture-registered crop + coverage
    check is not ported). The default flip reopened frames 1–6
    for the positioning requirement; the one empty-holder regression
    load re-verified them (Test 59, coverage 6/6).
 3. Each of the six scan windows contains its whole aperture with positive
    measured margin on both sides, on hardware, with the empty holder.
+   ✅ done (Test 59: the empty-holder regression load under the A+C
+   default, coverage verified 6/6, lead 0.73–0.91 / trail 0.59–0.94 mm).
 4. Load-to-load variation is measured over three separate loads and is
-   smaller than that margin.
+   smaller than that margin. ✅ done (Test 56: three separate empty-holder
+   loads, ±0.24 mm observed against the 0.75 mm commanded margin).
 5. Frames 5 and 6 are hardware-verified: POSITION completes on class F
-   inside budget, the scan delivers, PARK completes.
+   inside budget, the scan delivers, PARK completes. ✅ done (Tests 55
+   and 59: POSITION 12.4–12.5 s on frame 6 against the 43.5 s budget,
+   scan and PARK normal; repeated through `digitize` in Test 83).
 6. A full-length six-frame **colour** negative scans 1–6 with the right
    image in each position. ✅ done on hardware and accepted by eye
    (Test 58/N3: six frames delivered via overscan + crop, coverage
@@ -273,7 +279,17 @@ frozen. C extends the holder support without reopening it.
    empty-holder regression under the A+C default — coverage 6/6,
    calibration and timing identical to N3's band).
 10. README, this roadmap and the test log describe what was actually
-    verified, separately from what was measured offline.
+    verified, separately from what was measured offline. ✅ converged
+    2026-09-15 (this revision).
+
+**C1 status, per implementation (2026-09-15).** Python driver: every
+criterion above is met with evidence; **C1 is done for the driver.** SANE
+backend: positioning to the same ledger is hardware-verified for frames
+1–6 on plain 3600 dpi (Test 62) and frame 1 on every other profile (Tests
+63–71); frames 0 and 7+ are refused before any write; the backend delivers
+the whole overscan window — the host-side coverage check and crop are not
+ported, by design (submission limitation 2). No C1 criterion is open for
+the backend beyond that documented limitation, and none is a B2 blocker.
 
 **C2 — the mounted-slide holder.** An empty original holder can establish
 identification, load and transport, frame count, pitch, the four aperture
@@ -282,10 +298,12 @@ establish focus at the film plane inside a mount, sharpness, positive-film
 colour or tonal rendering, infrared behaviour on a real slide, or dust
 removal. Done when the first list is verified on hardware and the second
 is documented as separately unverified, pending a physical slide.
+**Scheduled after B2 (2026-09-15); the criteria are unchanged** — a
+reduction of them would be an explicit scope decision.
 
 ---
 
-## Current status (2026-09-10)
+## Current status (2026-09-15)
 
 - **M1 — protocol** ✅ and **M2 — driver drives the hardware** ✅.
 - **M3 — robustness:** ✅ **complete.** Every row of the A-matrix is met;
@@ -293,28 +311,23 @@ is documented as separately unverified, pending a physical slide.
   open rows.
 - **A — own driver:** ✅ **complete.** All acceptance criteria met and
   packaged: tagged **v0.1.0** (45305a4), README install/usage confirmed.
-- **B1 — SANE, in progress** (since 2026-09-06): all six profiles are
-  implemented and offline-verified (register tables generated from the
-  driver's own tables, wire-equal op tests, geometry ledger). Hooks 1–8 are
-  built; `sane_open`/calibration/positioning/scan/park run through
-  `scanimage`. The calibration-cache item is fixed and hardware-confirmed
-  (Test 64) — ordinary scans need no `--force-calibration`. Hardware SANE
-  coverage: **plain3600** frames 1–6 (transport + coverage, Test 62),
-  **dpi2400** frame 1 (transport + coverage + corrected proportion, eye-
-  accepted for geometry, Tests 62/63), and — 2026-09-12 — **dpi600, dpi1200,
-  dpi7200 and ir3600** frame 1 each, transport to the ledger, coverage
-  verified, eye-accepted (Tests 65–67, 71). The infrared profile took four
-  runs and fixed three real bugs (Tests 68–70: an unrequested last chunk, the
-  core's Extract node copying a third of each row, and the IR channels'
-  colour-line stagger — the last also fixed in the CLI driver, v0.1.2). The
-  B1 is complete since 2026-09-13 (Test 74: installed backend, `scanimage`
-  and digiKam). The
-  two Test-63 image findings
-  (mirror, colour cast) are investigated and app-layer, not B1 blockers (see
-  the dpi2400 bullet below). Per-profile detail is in the **SANE profile
-  matrix**, and the remaining work in the **B1/B2 finite plan**, both below.
-  **B2** not started.
-- **C — full-length holder, in progress:** the strip holder's six
+- **B1 — SANE, local backend:** ✅ **complete (2026-09-13, Test 74).** All
+  six profiles implemented, offline-verified and hardware-run through the
+  backend (plain3600 frames 1–6; the other five frame 1 each, eye-accepted
+  for geometry — Tests 62–71); ordinary scans need no `--force-calibration`
+  (Test 64); installed as a normal genesys build and used from `scanimage`
+  and digiKam (Test 74). Per-profile detail in the **SANE profile matrix**
+  below.
+- **B2 — SANE contribution:** **PREPARATION PHASE — prepared, not
+  submitted.** The B2 prerequisite (the backend works the magazine itself)
+  is met on hardware (WP-4, Tests 75–77, including a power-cycled unit with
+  a latched magazine). A four-commit submission package exists and builds
+  on its own (WP-3, `docs/sane-wp3-submission.md`). Nothing has been sent.
+  What stands between "prepared" and a submission decision is the blocker
+  list in **B2 — preparation phase** below.
+- **C — full-length holder:** C1 is done for the driver and verified
+  through the backend as far as it promises (per-criterion status above);
+  C2 (slides) is pending, scheduled after B2. History: the strip holder's six
   apertures are measured and the driver reaches and scans all six
   positions on hardware — transport, scan and PARK verified across
   three separate empty-holder loads plus one with film (Test 55–57).
@@ -393,8 +406,8 @@ is documented as separately unverified, pending a physical slide.
   open observation, not a blocker.
 
 Milestone A is done; the A6 note records an observation from B1's
-bring-up, not a CLI regression. The next action is the remaining B1 hardware
-verification per the finite plan below.
+bring-up, not a CLI regression. B1 is done. The next action is the B2
+preparation-phase blocker list below.
 
 ## SANE profile matrix (2026-09-12)
 
@@ -421,8 +434,7 @@ colour or the positive's orientation, which are the frontend's/user's job.
 
 The four profiles' hardware plan, ledger and per-run status (Tests 65–71,
 2026-09-12) are in **[docs/sane-remaining-profiles-plan.md](sane-remaining-profiles-plan.md)**;
-all four are done. Not read into this table: the plain3600 row's formal
-eye-accept, still to be recorded.
+all four are done.
 
 ## B1 / B2 finite plan (2026-09-12)
 
@@ -495,7 +507,7 @@ promised scope require them. VueScan stays out of public docs.
   someone who only installed sane-backends. Christian's condition for
   submission, 2026-09-13.
 - Goal / acceptance: `load_document()` and `eject_document()` implemented in
-  `sane/gl126.cpp` (today they throw `SANE_STATUS_UNSUPPORTED`), and one full
+  `sane/gl126.cpp` (they threw `SANE_STATUS_UNSUPPORTED` when WP-4 opened), and one full
   load → scan → eject cycle driven from a SANE frontend alone, no `of135i`
   command anywhere in it, with the safety model unchanged.
 - **Interaction model decided 2026-09-13 (Christian): the two-step
@@ -600,6 +612,35 @@ document.
 Hardware proposals above are for review and Christian's explicit go; they are
 not executed here.
 
+## B2 — preparation phase: blockers and completion criteria (2026-09-15)
+
+Fixed after the status review of `docs/updated-course.md` (the steering
+document adopted 2026-09-15). A blocker is added only on concrete
+evidence; everything else is a documented design choice or future work.
+Items 1–5 are done offline. Items 6, 7 and 8 are each version-bound —
+a rebase is only meaningful at submission time, the conformance run
+must describe the rebased build, and the decision follows it — so they
+are **one mission run in a single session at submission time**, frozen
+in **[docs/sane-submission-runbook.md](sane-submission-runbook.md)**.
+Nothing in that mission runs before Christian says the code is ready.
+
+| # | Blocker | Closes when |
+|---|---|---|
+| 1 | Status drift between README, this roadmap and the submission document | The six questions in `updated-course.md` §3 get one answer everywhere; the submission text's motor-wait and testing claims match the code and the evidence. **Done in this revision.** |
+| 2 | The exact WP-3 series is not reproducible from this repository | **Done 2026-09-15:** bundle + four patches in `sane/wp3-package/`, recreated identically (tree `f313368…`) in two clean clones. |
+| 3 | Lock and magazine-mark file handling (`/tmp`, mode 0666, no `O_NOFOLLOW`, truncating write) | **Done 2026-09-15:** both sides open `O_NOFOLLOW` + regular-file check, the mark is written via temp+`rename`, path/format unchanged; new probes in `test_sane_lock`/`test_safety` (see `gl126_lock.h`). |
+| 4 | Shared genesys code changed without a per-hunk rationale | **Mostly done 2026-09-15:** every shared hunk classified in submission §8; each best-effort poll site now carries its reason in the generated table. Open: splitting the `ImagePipelineNodeExtract` fix into its own commit, folded into the rebase (item 6). |
+| 5 | The offline checks are not fixed as a list | **Done 2026-09-15:** `docs/offline-checks.md` lists them; `.github/workflows/offline-checks.yml` runs the buildless subset (generator check, 12 Python suites, 4 compiler suites). Full local gate `release_check.py` green at 321. |
+| 6 | The series is based on `1d47d7c`; upstream has moved | **Submission-time mission step 1** (runbook). Rebase on current `origin/master`, split out the Extract commit, build standalone, re-run checks on the branch, re-export the package. Version-bound — not done early. |
+| 7 | `scanimage -T` and `tstbackend` neither run nor analysed | **Analysed 2026-09-15** (source read): run `tstbackend -l 1` only (read-only, no motor); document the scan-driving tools as "not run because". **Submission-time mission step 2**, against the rebased build. |
+| 8 | Decision | "Send this to SANE" or "not yet, for these reasons". Christian's. **Submission-time mission step 3.** |
+
+Not blockers — documented design choices or future work: the size of the
+generated table (its answer is provenance and byte-exact verification,
+not a rewrite); whole-strip scanning; the physical button and the
+interrupt endpoint; the slide holder (C2, after B2); any colour rendering
+change; further timing work; repeats of accepted profiles.
+
 ## Candidates, not scheduled (2026-09-13)
 
 Recorded so they are not lost. None is committed work; each needs a
@@ -683,10 +724,17 @@ cause**, and no colour change should be implemented until it does.
 the vendor's own software renders the same strip at B − G ≈ −160 and a
 median blue of 22, against our −66.9 and 98. Our renderer understates the
 blue deficit; it does not exaggerate it. Bit depth and container were
-each excluded by holding one constant while changing the other. What
-remains open is whether the cast belongs to this negative or to the
-exposure setting used for it, which a single scan of a different stock
-through unchanged vendor settings separates.
+each excluded by holding one constant while changing the other. That
+separation was then made the same evening — a second stock renders
+neutrally through unchanged vendor settings (Test 80) — and Test 82
+(2026-09-15) cleared the scanner itself: a vendor scan of one strip from
+before the project and one taken that day agree within ±1 code per band.
+**The colour question is parked as outside the driver's scope
+(Christian, 2026-09-15).** What the evidence supports: the cast is real,
+it varies between strips, it appears in the vendor's path too, and it has
+not been shown to be a defect in our code; the film's properties and the
+chosen treatment remain possible explanations. No colour change is
+implemented or scheduled.
 
 **The physical Eject button works while the vendor's software is
 running** (observed 2026-09-13). That is a data point about where the
@@ -695,9 +743,10 @@ endpoint continuously — the same endpoint whose 0x48 event triggers its
 automatic load — so the button is almost certainly reported there and
 acted on by the application, not by the firmware. Consequences:
 
-- **Our SANE backend cannot do this**, and the reason is structural: the
-  genesys USB abstraction has no interrupt transfer at all. This is
-  already recorded as limitation 5 of the submission package. The SANE-
+- **Our SANE backend does not do this today**: the genesys USB
+  abstraction has no interrupt transfer, which is a limit of the current
+  implementation (limitation 5 of the submission package), not proof that
+  a button feature is impossible within SANE. The SANE-
   shaped answer is the standard one — expose button and sensor as
   read-only sensor options and let `scanbd` poll them — which needs the
   endpoint read to exist somewhere first.
@@ -723,4 +772,15 @@ acted on by the application, not by the firmware. Consequences:
   carries no event type, and the vendor's application discriminates by
   reading registers afterwards. A watcher must do the same. It must also
   re-arm quickly — the application re-submits its interrupt read 0.7–1.8 s
-  after each completion, and anything inside that window is invisible.
+  after each completion; whether the device stores a notification that
+  arrives inside that window is not established, so a watcher that
+  re-arms slowly may lose presses. A button watcher and auto-load remain
+  future, undecided features.
+
+**A "no film in this aperture" check (added 2026-09-15, Test 83).**
+Aperture coverage verifies positioning from the holder's plastic edges,
+so an unexposed frame, a strip that ends mid-holder and an empty aperture
+all pass it, are dust-cleaned and are counted as frames. An empty
+aperture saturates all three channels across the full 24 mm, which is
+easy to detect on the overscan frame. Cheap, host-side, no motor
+sequence; not scheduled.

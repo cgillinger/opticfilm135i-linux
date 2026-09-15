@@ -3,7 +3,7 @@
 ![License: GPL-2.0-or-later](https://img.shields.io/badge/License-GPL--2.0--or--later-blue.svg)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
 ![Release: v0.1.2](https://img.shields.io/badge/Release-v0.1.2-blue.svg)
-![Status: CLI driver complete, SANE backend in progress](https://img.shields.io/badge/Status-CLI%20driver%20complete%2C%20SANE%20backend%20in%20progress-green.svg)
+![Status: CLI driver complete, SANE backend working locally](https://img.shields.io/badge/Status-CLI%20driver%20complete%2C%20SANE%20backend%20working%20locally-green.svg)
 
 **Unofficial, community-built Linux driver for the Plustek OpticFilm 135i**
 (USB `07b3:1436`, Genesys Logic GL126) — a 35 mm film scanner with motorized
@@ -31,15 +31,16 @@ The project has two parts, at different stages:
   build (**[docs/sane-install.md](docs/sane-install.md)**), and as of
   2026-09-13 a frame has been scanned both through the installed `scanimage`
   and from inside **digiKam**, with every resolution profile and the infrared
-  pass run on the unit and accepted by eye. One thing it does not do yet:
-  load or eject the magazine. That is `of135i load` / `of135i eject` at the
-  command line, and making it work from a SANE frontend alone is a condition
-  before the backend is offered upstream. The code for it exists — a
-  `Load film` / `Eject film` option pair, with the load completing on the
-  next scan because the operator has to reseat the magazine in between —
-  but it has not yet driven the motor, so the command-line workflow is
-  still the documented one. Its verification is tracked independently of
-  the CLI driver's — see the roadmap.
+  pass run on the unit and accepted by eye. It loads, frees and ejects the
+  magazine itself through a `Load film` / `Eject film` option pair (the
+  load completes on the next scan, because the operator has to reseat the
+  magazine in between): the whole load → scan → eject cycle has run from
+  `scanimage` and from digiKam with no command-line step, including a
+  power-cycled unit with a latched magazine (Tests 75–77, 2026-09-13).
+  What it does not do is anything upstream: a submission package for the
+  SANE project is prepared and reviewable, and nothing has been sent. Its
+  verification is tracked independently of the CLI driver's — see the
+  roadmap.
 
 **Jump to:** [Install](#install) · [Usage](#usage--the-normal-workflow) ·
 [What works today](#what-works-today) ·
@@ -57,32 +58,32 @@ functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md]
 - **M3 — Robustness and honest limits** ✅ (every acceptance-matrix row met;
   the residual-dark_b fix is hardware-verified — A10/Test 36 — positioning
   verified, cross-unit a documented limitation)
-- **M4 — SANE backend** — in progress (verified separately from the CLI
-  driver, and not every profile is at the same stage): it builds and links
-  against sane-backends, enumerates the scanner, and runs calibration,
-  positioning, the scan pass and park on the unit through `scanimage`. On
-  hardware, the **plain 3600 dpi** profile scans frames 1–6 (transport and
-  aperture coverage), and **2400, 600, 1200, 7200 dpi and the infrared pass**
-  each scan frame 1 with the delivered geometry accepted by eye (geometry and
-  integrity only, not colour — Tests 62–71, 2026-09-12). The infrared runs
-  found and fixed three real bugs on the way (a chunk the pipeline never
-  requested, a core crop node copying a third of each row, and the IR
-  channels' colour-line stagger). Ordinary scanning needs no
-  `--force-calibration`. The install path is documented and staging-verified
-  (**[docs/sane-install.md](docs/sane-install.md)**); the system install and a
-  scan from inside a SANE frontend remain. Per-profile detail:
+- **M4 — SANE backend** — **working locally; not offered upstream.**
+  Verified separately from the CLI driver. It installs as an ordinary
+  genesys build, enumerates, and runs calibration, positioning, the scan
+  pass and park on the unit through `scanimage` and from inside digiKam
+  (Test 74). On hardware, the **plain 3600 dpi** profile scans frames 1–6
+  (transport and aperture coverage), and **2400, 600, 1200, 7200 dpi and
+  the infrared pass** each scan frame 1 with the delivered geometry
+  accepted by eye (geometry and integrity only, not colour — Tests 62–71).
+  The backend loads and ejects the magazine itself, including freeing a
+  latched magazine after a power cycle (Tests 75–77). Ordinary scanning
+  needs no `--force-calibration`. Install:
+  **[docs/sane-install.md](docs/sane-install.md)**. A submission package
+  for the SANE project is prepared and under review
+  (**[docs/sane-wp3-submission.md](docs/sane-wp3-submission.md)**);
+  nothing has been submitted. Per-profile detail:
   **[docs/ROADMAP.md](docs/ROADMAP.md)**
 
 See **[docs/ROADMAP.md](docs/ROADMAP.md)** for the acceptance matrix,
 frozen scope, and exactly what remains before the driver is "complete".
 
-Today you scan from the command line to raw 16-bit TIFF — including a
-resumable **bulk-digitisation** workflow (`of135i digitize`) for working
-through boxes of film strip by strip — and import the files into any tool
-(including digiKam). Scanning *from inside* a SANE frontend needs M4. The
-SANE backend can be **built and installed locally** — it does not depend on
-the SANE project accepting it upstream; upstreaming is a separate, later
-step for wider distribution.
+Today you scan either from the command line to raw 16-bit TIFF — including
+a resumable **bulk-digitisation** workflow (`of135i digitize`) for working
+through boxes of film strip by strip — or from inside a SANE frontend
+through the locally installed backend. The backend does not depend on the
+SANE project accepting it upstream; upstreaming is a separate, later step
+for wider distribution, and it has not happened.
 
 ## What works today
 
@@ -139,9 +140,10 @@ frame for frame against the vendor application's output of the same strip
 every dust speck appeared three times in the IR image. "Complete" here means that functional milestone is met **within
 its frozen scope on the one test unit** — it is **not** broad field testing or
 proof of compatibility with other scanners or Linux systems. The **SANE
-backend is a separate, in-progress effort** with its own status (see Project
-status above and [docs/ROADMAP.md](docs/ROADMAP.md)); do not read the CLI
-driver's hardware verification as the backend's. This is early software,
+backend is a separate effort with its own status** — working locally, not
+offered upstream (see Project status above and
+[docs/ROADMAP.md](docs/ROADMAP.md)); do not read the CLI driver's hardware
+verification as the backend's. This is early software,
 verified on the single unit that exists, and these are the rough edges you
 should know about:
 
@@ -481,7 +483,7 @@ interoperability constants and our own code.
 - [x] Loader sensor and button event reading
 - [x] ICC-tagged output (`--positive` TIFFs carry an sRGB profile; raw negatives are untagged linear data)
 - [x] Baseline-conformant TIFF resolution tags (the file states its own dpi, so physical size survives; the 2400 dpi profile is anisotropic — 3600 across, 2400 along — and the TIFF carries per-axis X/Y resolution that follows the image's orientation)
-- [ ] SANE genesys backend support for GL126 (upstream goal) — plan and hook mapping in [`docs/sane-port.md`](docs/sane-port.md); register tables generated from the driver's own tables and the command set in `sane/`; calibration, positioning (frames 1–6), the scan pass and park run on hardware through `scanimage`; all five resolutions and the infrared pass hardware-run and eye-accepted for geometry (Tests 62–71, 2026-09-12); the install path is documented and staging-verified in [`docs/sane-install.md`](docs/sane-install.md), while the system install and a SANE-frontend scan are open
+- [ ] SANE genesys backend support for GL126 (upstream goal) — the backend works locally: installed as a normal genesys build ([docs/sane-install.md](docs/sane-install.md)), all five resolutions and the infrared pass hardware-run and eye-accepted for geometry (Tests 62–71), scanning from `scanimage` and digiKam (Test 74), and the magazine loaded and ejected by the backend itself (Tests 75–77); design and hook history in [`docs/sane-port.md`](docs/sane-port.md). Open: the upstream submission — a package is prepared ([docs/sane-wp3-submission.md](docs/sane-wp3-submission.md)) and nothing has been sent
 
 ## Status & disclaimer
 

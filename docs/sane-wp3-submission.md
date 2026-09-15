@@ -23,10 +23,11 @@ submitted, and by whom, is Christian's decision.
 | Commits | 4 |
 | Scope | 9 new files, 16 modified, +30632 / −29 lines |
 
-The base commit **is** `origin/master` as last fetched, and nothing
-upstream has touched `backend/genesys/` since it. Before any real
-submission the clone must be re-fetched and the branch rebased onto
-current master — that is the first item in §7.
+The base commit was `origin/master` as fetched on 2026-09-02. Upstream
+has moved since (a dry-run fetch on 2026-09-15 showed new commits on
+master); whether any of them touch `backend/genesys/` is not yet checked.
+Before any real submission the clone must be re-fetched and the branch
+rebased onto current master — that is the first item in §7.
 
 The worktree is separate from `~/Dokument/Github/sane-backends`, which
 keeps the development arrangement (symlinks into this repo's `sane/`)
@@ -35,7 +36,12 @@ zero mode-120000 entries, and the nine GL126 files are real files
 committed to the branch. That was the point of building it this way —
 a reviewer clones, builds, and needs nothing from this repository.
 
-To recreate it from scratch:
+**Exported 2026-09-15 to `sane/wp3-package/`** — a bundle and the four
+patches, with the base and every commit and tree id, recreation and build
+instructions, and the verification done in two clean clones. That is the
+reviewable form; the worktree is the working copy.
+
+To recreate it from scratch by hand instead:
 
 ```
 cd ~/Dokument/Github/sane-backends
@@ -87,8 +93,10 @@ worktree rather than the development tree:
 | `test_sane_calibration_cache` | 6 passed |
 | `test_sane_magazine` | 20 passed |
 
-The full offline suite (316 tests) passes in this repository against the
-development build.
+The full offline suite passes in this repository against the development
+build: 316 tests at the `12d5193` baseline this package was exported
+from, 321 with the lock-file-hardening tests added afterwards (which
+belong to the next series revision, §7).
 
 **Checklist items from `doc/backend-writing.txt`.** That checklist is
 written for a *new backend*; this is a new ASIC and model inside the
@@ -160,17 +168,30 @@ Earlier work covering the profiles, geometry and image path is in
 > load. A read-only `magazine` option reports where it is believed to be.
 > All four options are inactive on every other ASIC.
 >
-> Every motor sequence fails closed: the first unacknowledged write,
-> short transfer or timed-out wait ends the sequence with nothing further
-> written and no recovery attempted, because this hardware has a
-> documented history of stalling when driven from an undefined state.
+> The motor sequences are guarded rather than retried: an unacknowledged
+> write, a short transfer, or a timed-out wait on a motor-completion
+> condition ends the sequence with nothing further written and no
+> recovery attempted, because this hardware has a documented history of
+> stalling when driven from an undefined state. Not every wait is of that
+> kind. A minority of polls are best-effort — they mirror the vendor
+> driver's own non-raising status reads — and a timeout there is recorded
+> and the sequence continues. That distinction is deliberate: the cold
+> start's opening poll waits on a state the engine cannot reach before
+> its first homing move, and treating it as fatal would refuse every
+> power-cycled unit. Which kind each wait is, is marked at the site in
+> the generated tables.
 >
-> Testing: one unit, over an extended bring-up. A full load → scan →
-> eject cycle has been driven from `scanimage` and from digiKam, at every
-> resolution the vendor's captures cover plus the infrared pass. Known
-> limitations are listed in the accompanying notes; the most important is
-> that a single unit exists for this work, so nothing here is verified
-> across units.
+> Testing: one unit, over an extended bring-up. Every resolution the
+> vendor's captures cover, plus the infrared pass, has been scanned
+> through the backend from `scanimage`, with the magazine loaded by the
+> companion command-line driver. The backend-driven magazine flow — a
+> full load → scan → eject cycle with no external command, from
+> `scanimage` and from digiKam, including a power-cycled unit with a
+> latched magazine — has been run at 3600 dpi only. Interrupting a scan
+> mid-pass leaves the transport unparked and needs a power cycle; no
+> automatic recovery exists, by design. Known limitations are listed in
+> the accompanying notes; the most important is that a single unit
+> exists for this work, so nothing here is verified across units.
 
 ## 6. Known limitations, to accompany any submission
 
@@ -188,9 +209,10 @@ Earlier work covering the profiles, geometry and image path is in
    pays roughly four seconds of calibration.
 5. **The interrupt endpoint is not drained.** The genesys USB abstraction
    has no interrupt transfer. Nothing in the SANE flow reads that
-   endpoint, so nothing here is harmed, but a backend-driven load may
-   leave it in an overflow state for other software until the next power
-   cycle.
+   endpoint, so nothing here is harmed. Whether a backend-driven load
+   leaves it in an overflow state for other software was predicted but
+   not observed: the one direct check afterwards (Test 75) read the
+   endpoint normally.
 6. **A process lock shared with an external driver.** The backend takes a
    `flock` on a well-known path to keep itself and the reverse-engineered
    Python driver off the device simultaneously. No other genesys ASIC
@@ -202,11 +224,63 @@ Earlier work covering the profiles, geometry and image path is in
 8. **2400 dpi is anisotropic** (3600 across, 2400 along) and is resampled
    on the host so delivered pixels are square.
 9. **Colour rendering is not addressed.** The backend delivers linear raw
-   data; the preview rendering in the companion driver has an
-   unexplained cast (`docs/colour-rendering-analysis.md`). Nothing in
-   this series depends on it.
+   data; rendering a negative is the frontend's job. The companion
+   driver's preview shows a cast on some strips that also appears in the
+   vendor's own rendering and has not been traced to any code
+   (`docs/colour-rendering-analysis.md`). Nothing in this series depends
+   on it.
+
+## 8. Changes to shared genesys code, hunk by hunk
+
+Classified 2026-09-15 for the reviewer's question "what does this series
+do to scanners that are not a GL126?". Everything outside the nine
+`gl126_*` files is listed; "gated" means the new behaviour is behind
+`asic_type == AsicType::GL126` and other ASICs execute exactly the code
+they did before.
+
+| file | change | class | effect on other ASICs |
+|---|---|---|---|
+| `enums.{h,cpp}` | `AsicType::GL126`, `ModelId::PLUSTEK_OPTICFILM_135I`, `SensorId::CCD_PLUSTEK_OPTICFILM_135I`, their name strings | additive | none |
+| `low.cpp` | `create_cmd_set` and `scanner_read_status` dispatch for GL126; the dual-light pipeline nodes pushed only for GL126 | gated | none |
+| `scanner_interface_usb.cpp` | GL126 added to the GL124-style 16-bit register read/write and `write_fe_register` branches; `bulk_read_data` takes the GL126 path first | gated | none |
+| `settings.h` | `Genesys_Settings::frame` (default 1), `ScanSession::gl126_keep_parity` (default 2 = keep every line) | additive fields with defaults | none — no shared code reads them |
+| `genesys.h` | four new `Genesys_Option` values, `Genesys_Scanner::frame` | additive | option **indices** after `OPT_EXPIRATION_TIME` shift by four for every model; SANE frontends address options by name, and the four are `SANE_CAP_INACTIVE` on every other ASIC |
+| `genesys.cpp`, option setup / get / set | the `frame`, `magazine`, `load-film`, `eject-film` options | gated (inactive elsewhere) | none |
+| `genesys.cpp`, `sane_open_impl` / `sane_close_impl` | the process lock with its RAII guards; lamp-off, `clear_halt` and `reset` skipped at close | gated | none — the guard is armed only for GL126 |
+| `genesys.cpp`, `genesys_flatbed_calibration` | `init_shading_data` and `move_to_ta` skipped | gated | none |
+| `genesys.cpp`, `genesys_start_scan` | home / TA moves, calibration-cache restore, `write_registers`, the post-`begin_scan` waits skipped; `load_document` also called for GL126 | gated | one line is not: `dev->parking = false` after the `if (dev->parking)` block now runs for every ASIC. Upstream's `sanei_genesys_wait_for_home` already clears `parking` on entry, so this is a redundant assignment, not a behaviour change |
+| `genesys.cpp`, `calculate_scan_settings` | `settings.frame = s->frame` | additive | none — the field is unused outside GL126 |
+| `image_pipeline.cpp`, `ImagePipelineNodeExtract::get_next_row_data` | bytes per pixel computed from the row format instead of `depth / 8` | **shared bug fix, not gated** | any user of `ImagePipelineNodeExtract` on a multi-channel format copied one third of each row and zero-padded the rest. In the base revision no in-tree model reaches that node with a multi-channel format (GL126's IR crop was the first), so no existing model's output changes; a reviewer may still want this as its own commit, and the next series revision makes it one |
+| `test_scanner_interface.cpp` | seeds regs 0x01 and 0x101 for GL126 in testing mode | gated | none |
+| `tables_model.cpp`, `tables_sensor.cpp` | the model and sensor entries | additive | none. **Found in this review:** the model comment still called the entry a "stage 1 skeleton, untested" with placeholder ids "replaced during bring-up", and `ModelFlag::UNTESTED` was still set although the `.desc` says `:good`. Corrected in the integration patch 2026-09-15: the adc/gpio/motor ids stay the 7200's because the model must register valid ids and no GL126 hook consults those tables; the flag is gone. The `settings.h` comment said frames 1–4; it is 1–6 |
+| `Makefile.am`, `genesys.conf.in`, `.desc`, man page, `AUTHORS` | build list, USB id, model entry, chip list, author | additive | none |
+
+**Offline coverage of the shared changes.** The op and geometry suites
+(`tests/test_sane_ops.py`, `test_sane_geometry.py`) prove the GL126 path
+byte-exact against the Python driver; `tests/gl126_session_probe.cpp` runs
+the real `calculate_scan_session` and the pipeline in `pull` mode against
+a counting pattern mock, which is what caught the `Extract` bug (Test 69).
+Nothing in this repository exercises another ASIC through the modified
+functions, and nothing can without that hardware: for the gated hunks the
+argument is the gate itself, for the `Extract` fix it is the analysis
+above. That is the honest extent of the regression evidence.
+
+**Best-effort waits, at the site.** The generated tables now carry a
+trailing comment on every `PollBestEffort` op saying why that wait may
+time out and continue (22 sites: the cold start's ready and settle polls,
+its motor completions, the device-open status read, one lenient reg 0x32
+read in LOAD, and the eject completion loop). Motor completions in JOG
+and LOAD are `PollMasked` and fail closed. `gl126_ops.h` documents the
+kinds; `tools/gen_sane_tables.py` refuses to emit a best-effort site it
+has no reason for.
 
 ## 7. What remains before anything could be submitted
+
+**These steps are one submission-time mission**, frozen with its
+decisions in **[docs/sane-submission-runbook.md](sane-submission-runbook.md)**:
+the rebase, the `tstbackend -l 1` conformance run against the rebased
+build, and Christian's go/no-go. They are version-bound and run
+together the day the code is ready, not before.
 
 Listed so the decision is informed, not to schedule it.
 
@@ -214,11 +288,26 @@ Listed so the decision is informed, not to schedule it.
    Upstream will have moved.
 2. **Run `scanimage -T` and `tstbackend`** against the real device, or
    state explicitly that they were not run. Both need hardware.
-3. **Decide the generated-table question.** `gl126_tables.cpp` is 1.9 MB
-   of generated data whose generator lives in this repository, not
-   upstream. A reviewer may ask for the generator, for the captures, or
-   for the file to be reduced. There is no good answer prepared.
-4. **Decide how much of the magazine machinery to offer.** Items 6 and 7
-   of §6 are the two most likely to be challenged.
-5. **Christian's own decision on contact.** Nothing in this package
+3. **The generated-table question, answered rather than avoided.**
+   `gl126_tables.cpp` is 1.9 MB of generated data whose generator lives
+   in this repository. The prepared answer: the tables are the vendor's
+   register sequences, verified byte-exact against USB captures and on
+   hardware, and every calibration value that varies is injected at run
+   time rather than baked in; the file header records the generator, its
+   inputs and the revision. Reducing the representation would mean
+   re-deriving semantics that were reverse-engineered as sequences, which
+   is a rewrite of hardware-verified code for appearance. If a maintainer
+   asks for the generator, it can be offered as a follow-up; the captures
+   themselves are not published. What is *not* prepared is a smaller
+   file, on purpose.
+4. **Refresh the series (next revision).** Since the export: best-effort
+   poll reasons in the generated tables, the model-table comment and
+   `UNTESTED` flag, the `settings.h` comment, the lock-file hardening,
+   and the `ImagePipelineNodeExtract` fix moved to its own first commit.
+   Rebase on current master, rebuild standalone, re-run the checks on
+   the branch, re-export to `sane/wp3-package/`.
+5. **Decide how much of the magazine machinery to offer.** Items 6 and 7
+   of §6 are the two most likely to be challenged; the file handling
+   behind them is hardened and documented in `gl126_lock.h`.
+6. **Christian's own decision on contact.** Nothing in this package
    initiates it, and nothing should without him doing it himself.

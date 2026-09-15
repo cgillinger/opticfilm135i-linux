@@ -1,10 +1,14 @@
 # The colour cast in our preview positives — what is measured, and what is not
 
-Status: **RESOLVED 2026-09-13, as far as our code is concerned, and no
-colour change has been implemented.** The vendor's own software renders
-the same strip *more* strongly yellow than we do, and a different stock
-renders neutrally through the vendor's unchanged settings. The cast
-belongs to that first strip, not to anyone's rendering code (§8).
+Status: **PARKED 2026-09-15 (Christian's decision), and no colour change
+has been implemented.** The vendor's own software renders the same strip
+*more* strongly yellow than we do, and a different stock renders
+neutrally through the vendor's unchanged settings (§8); the scanner
+itself is unchanged by the project's work (Test 82). The cast varies
+between strips, appears in the vendor path too, and has not been shown
+to be a defect in our code; the film's properties and the chosen
+treatment remain possible explanations. Post-processing is outside this
+project's scope.
 An earlier revision of this document
 (2026-09-13, commit `0aab922`) claimed the cast was caused by the orange
 mask never being removed. **That claim was wrong** and is retracted in
@@ -235,19 +239,26 @@ The vendor path works and the settings are not the fault. It also
 disposes of the leading hypothesis about auto-exposure, which was off for
 this run too.
 
-**Conclusion.** The cast is not produced by our rendering code, and it is
-not produced by the vendor's settings. It belongs to the first strip
-itself — an unusually dense or aged negative, a stock the chosen film
-profile does not suit, or both. Our renderer handles that material
-*better* than the vendor's does, which is the opposite of what was
-suspected when this document was opened.
+**Conclusion, as far as the evidence carries.** The cast appears in the
+vendor's path too, it varies between strips, and it has not been shown
+to be a defect in our rendering code. What remains possible is the film
+itself — an unusually dense or aged negative — and its interaction with
+the chosen treatment (film profile, exposure), which this comparison did
+not separate. Our renderer shows *less* of the cast on this material
+than the vendor's does, which is the opposite of what was suspected when
+this document was opened. (Revised 2026-09-15: an earlier wording said
+the cast "belongs to the first strip itself", which is more than was
+measured.)
 
 **What this closes.** The colour question has been open since Test 58
 (N3, 2026-09-10), where the eye acceptance passed but the verdict on
 colour was parked pending a vendor comparison of the same strip. That
 comparison now exists, and the verdict is that no colour change is
 warranted on this evidence. The driver keeps delivering linear raw data
-and `to_positive()` stays as it is.
+and `to_positive()` stays as it is. Test 82 (2026-09-15) added that the
+scanner is unchanged by the project's work and that the dual/IR profile
+is not the cause; the question was then parked as outside the driver's
+scope.
 
 **Provenance.** The vendor renderings are archived outside this
 repository, per the standing rule that conclusions may travel but vendor
