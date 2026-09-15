@@ -1,0 +1,52 @@
+name: offline checks
+
+# Hardware-free regression gate. Runs the generated-table check, the
+# Python offline suites and the compiler-based probe suites. It never
+# builds the full SANE backend and never touches a scanner -- see
+# docs/offline-checks.md, which this job mirrors. The three backend
+# suites (check 5 there) need a built libsane-genesys.so and stay a
+# local step.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade numpy pillow tifffile pyusb
+
+      - name: g++ version (compiler-based suites need it)
+        run: g++ --version
+
+      - name: Generated-table consistency
+        run: python tools/gen_sane_tables.py --check
+
+      - name: Python offline suites
+        run: |
+          set -e
+          for t in test_safety test_calibrate test_hwblock test_park \
+                   test_offline test_diag test_dpi test_ir test_image_probe \
+                   test_aperture_crop test_overscan test_dual_overscan; do
+            echo "== $t"
+            python tests/$t.py
+          done
+
+      - name: Compiler-based suites (lock, ops, geometry, install)
+        run: |
+          set -e
+          for t in test_sane_lock test_sane_ops test_sane_geometry \
+                   test_sane_install; do
+            echo "== $t"
+            python tests/$t.py
+          done
