@@ -72,8 +72,8 @@ import usb.core  # noqa: E402
 from of135i import cli, device, diag, safety, tables, tables_base, tables_load  # noqa: E402
 from of135i.device import Scanner  # noqa: E402
 from of135i.safety import (  # noqa: E402
-    OperationNotAllowedError, ReadOnlySessionError, ScannerBusyError, SessionFailedError,
-    SessionState, StartState, UnsafeStartStateError,
+    OperationNotAllowedError, ReadOnlySessionError, SafetyError, ScannerBusyError,
+    SessionFailedError, SessionState, StartState, UnsafeStartStateError,
 )
 from of135i.usbio import UsbIo  # noqa: E402
 
@@ -2418,6 +2418,32 @@ def test_process_lock_excludes_second_process():
     print("test_process_lock_excludes_second_process OK")
 
 
+def test_process_lock_refuses_symlinked_path():
+    """A symlink planted at the lock path (a shared, world-writable
+    directory: /tmp) must never be followed -- it could point at any
+    file this process is able to write. acquire() must refuse it before
+    ever taking flock() or writing, and the symlink's target must come
+    out byte-identical."""
+    with tempfile.TemporaryDirectory() as td:
+        victim = Path(td) / "victim"
+        victim.write_text("victim content\n")
+        lock_path = Path(td) / "of135i.lock"
+        lock_path.symlink_to(victim)
+
+        error = None
+        try:
+            safety.ProcessLock(str(lock_path)).acquire()
+        except Exception as exc:
+            error = exc
+        assert error is not None, "ProcessLock followed a symlink at the lock path"
+        assert not isinstance(error, ScannerBusyError), (
+            "a symlinked lock path is a file-handling refusal, not a busy lock")
+        assert isinstance(error, SafetyError), type(error)
+        assert str(lock_path) in str(error), str(error)
+        assert victim.read_text() == "victim content\n"
+    print("test_process_lock_refuses_symlinked_path OK")
+
+
 # ============================================================== hwblock
 
 
@@ -2551,6 +2577,7 @@ def main() -> int:
         test_open_configuration_failure_marks_session_failed,
         test_readonly_open_never_configures,
         test_process_lock_excludes_second_process,
+        test_process_lock_refuses_symlinked_path,
         test_hwblock_uses_central_guard_and_writes_nothing_when_unsafe,
         test_verify_start_state_on_raw_io_for_tools,
     ]

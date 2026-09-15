@@ -45,6 +45,25 @@
    GL126-only: no other genesys ASIC has a conflicting driver, so no
    other command set includes this header or calls into this namespace.
 
+   File handling: the path is deliberately predictable, in a directory
+   (/tmp) any local user can write to, and the file is created mode
+   0666 -- two independent programs, potentially run by two different
+   users on a shared machine, need to take the SAME lock, so it cannot
+   be owner-only. That combination (fixed path, shared directory, open
+   permissions) is exactly the setup a symlink or hard-link attack
+   targets, so every open() of the lock or the magazine mark passes
+   O_NOFOLLOW and the resulting fd is checked to be a regular file
+   before anything is locked, read or written; refused otherwise
+   (process_lock_acquire() throws, magazine_mark_read() returns false).
+   The mark is additionally never modified in place -- magazine_mark_
+   write() writes a private temp file next to it and rename()s that
+   over the mark path, so the write can never land inside whatever the
+   mark path used to point to. A mark that cannot be written or read is
+   by design not a failure: it is a hint for a load that spans two
+   processes, and the hardware is re-verified before every load anyway
+   (see the comment below), so the worst case is falling back to asking
+   the operator to reseat the magazine.
+
    Reference-counted within a process: process_lock_acquire() and
    process_lock_release() must be called in matched pairs (an acquire
    while already held just adds a reference), so that one owner's

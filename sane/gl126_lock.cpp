@@ -22,6 +22,7 @@
 
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -55,6 +56,27 @@ std::string now_iso8601_utc()
     char buf[32];
     std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S+00:00", &tm_buf);
     return std::string(buf);
+}
+
+/* Refuse to lock or write through anything but a plain, ordinary file at
+   the well-known path: both the lock and the magazine mark live at a
+   predictable spot in a world-writable directory (/tmp), so a symlink
+   planted there (pointing at, say, a config file this process can
+   overwrite) or a directory dropped in its place must never be opened
+   for writing. O_NOFOLLOW makes the open() itself fail (ELOOP) on the
+   symlink case; this check catches anything O_NOFOLLOW does not, such
+   as a directory (an O_RDONLY open of a directory succeeds) or a device
+   node created at the path. Throws with `path` in the message; the
+   caller has not touched the fd's content yet. */
+void require_regular_file(int fd, const std::string& path)
+{
+    struct stat st{};
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        close(fd);
+        throw std::runtime_error(std::string("gl126: ") + path +
+                                 " is not a regular file, refusing to use it "
+                                 "as the lock/mark file");
+    }
 }
 
 std::string read_holder(int fd)
@@ -104,16 +126,26 @@ bool process_lock_acquire(std::string* holder)
 
     std::string path = process_lock_path();
 
-    int fd = open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+    // O_NOFOLLOW: the lock lives at a predictable path in a shared,
+    // world-writable directory (/tmp) -- never follow a symlink planted
+    // there onto some other file this process happens to be able to
+    // write to. A symlink at the path fails open() with ELOOP.
+    int fd = open(path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0666);
     if (fd < 0 && (errno == EACCES || errno == EPERM)) {
         // Read-only fallback: flock() works on a read-only fd, it is the
         // write of the holder line afterwards that is best-effort.
-        fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+        fd = open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    }
+    if (fd < 0 && errno == ELOOP) {
+        throw std::runtime_error(std::string("gl126: ") + path +
+                                 " is a symbolic link, refusing to lock through it");
     }
     if (fd < 0) {
         throw std::runtime_error(std::string("gl126: could not open lock file ") +
                                  path + ": " + std::strerror(errno));
     }
+
+    require_regular_file(fd, path); // throws; e.g. a directory at the path
 
     if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
@@ -182,12 +214,22 @@ std::string magazine_mark_path()
 
 bool magazine_mark_write(const std::string& device_key)
 {
-    // Truncating, not appending: at most one magazine is ever waiting to
-    // be loaded -- there is one unit.
-    int fd = ::open(magazine_mark_path().c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    // Written atomically via a temp file + rename(), never by truncating
+    // whatever already sits at the mark path in place: a truncate-in-
+    // place would follow a symlink planted at the mark path straight
+    // into its target, and would leave a half-written file visible to a
+    // concurrent reader. rename() replaces the mark path's directory
+    // entry itself -- including a symlink entry -- without ever opening
+    // or following what that entry used to point to.
+    std::string mark_path = magazine_mark_path();
+    std::string tmp_path = mark_path + ".tmp." + std::to_string(static_cast<long>(getpid()));
+
+    int fd = ::open(tmp_path.c_str(),
+                    O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0666);
     if (fd < 0) {
         return false;
     }
+
     // The device key goes on its OWN line: it is whatever string the SANE
     // frontend uses to name the device, and it can contain spaces (the
     // backend's own test mode produces "test device:0x07b3:0x1436"), so a
@@ -198,14 +240,32 @@ bool magazine_mark_write(const std::string& device_key)
                        device_key + "\n";
     ssize_t written = ::write(fd, line.data(), line.size());
     ::close(fd);
-    return written == static_cast<ssize_t>(line.size());
+    if (written != static_cast<ssize_t>(line.size())) {
+        ::unlink(tmp_path.c_str());
+        return false;
+    }
+    if (::rename(tmp_path.c_str(), mark_path.c_str()) != 0) {
+        ::unlink(tmp_path.c_str());
+        return false;
+    }
+    return true;
 }
 
 bool magazine_mark_read(std::string* device_key)
 {
-    int fd = ::open(magazine_mark_path().c_str(), O_RDONLY);
+    int fd = ::open(magazine_mark_path().c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0) {
         return false;
+    }
+    {
+        struct stat st{};
+        if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+            // Not a mark we wrote (symlink, directory, ...): treat exactly
+            // like "no mark" -- this path is read unconditionally before
+            // every load, so it must never throw.
+            ::close(fd);
+            return false;
+        }
     }
     char buf[256] = {0};
     ssize_t n = ::read(fd, buf, sizeof(buf) - 1);

@@ -30,7 +30,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from of135i.safety import ProcessLock, ScannerBusyError  # noqa: E402
+from of135i.safety import ProcessLock, SafetyError, ScannerBusyError  # noqa: E402
 
 SANE_DIR = REPO / "sane"
 PROBE_SRC = Path(__file__).resolve().parent / "gl126_lock_probe.cpp"
@@ -347,6 +347,131 @@ def test_magazine_mark_round_trip():
           "(path, round trip, replace, clear, malformed)")
 
 
+def test_lock_path_symlink_is_refused():
+    """A symlink planted at the well-known lock path must never be
+    followed for locking or writing -- it could point anywhere this
+    process can write. Both the C++ probe and the Python ProcessLock
+    must refuse it, and the symlink's target must come out untouched."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_lock_path_symlink_is_refused SKIPPED (no g++)")
+        return "skipped"
+
+    with tempfile.TemporaryDirectory() as td:
+        victim = Path(td) / "victim"
+        victim.write_text("victim content\n")
+        lock_path = Path(td) / "of135i.lock"
+        lock_path.symlink_to(victim)
+
+        r = subprocess.run([probe, "try"], capture_output=True, text=True,
+                            env=_probe_env(str(lock_path)))
+        assert r.returncode != 0, r
+        assert str(lock_path) in r.stderr, r.stderr
+        assert victim.read_text() == "victim content\n"
+
+        error = None
+        try:
+            ProcessLock(str(lock_path)).acquire()
+        except Exception as exc:  # not necessarily ScannerBusyError
+            error = exc
+        assert error is not None, "ProcessLock followed a symlink at the lock path"
+        assert not isinstance(error, ScannerBusyError), (
+            "a symlinked lock path is a file-handling refusal, not a busy lock")
+        assert str(lock_path) in str(error), str(error)
+        assert victim.read_text() == "victim content\n"
+    print("test_lock_path_symlink_is_refused OK")
+
+
+def test_lock_path_directory_is_refused():
+    """A directory at the lock path (however it got there) must be
+    refused cleanly, not crash either implementation."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_lock_path_directory_is_refused SKIPPED (no g++)")
+        return "skipped"
+
+    with tempfile.TemporaryDirectory() as td:
+        lock_path = Path(td) / "of135i.lock"
+        lock_path.mkdir()
+
+        r = subprocess.run([probe, "try"], capture_output=True, text=True,
+                            env=_probe_env(str(lock_path)))
+        assert r.returncode != 0, r
+
+        error = None
+        try:
+            ProcessLock(str(lock_path)).acquire()
+        except Exception as exc:
+            error = exc
+        assert error is not None, "ProcessLock opened a directory as the lock file"
+    print("test_lock_path_directory_is_refused OK")
+
+
+def test_magazine_mark_symlink_is_replaced_not_written_through():
+    """A symlink planted at the mark path must never be written through
+    in place: mark-write must either fail, or replace the symlink
+    itself (via rename()) -- never touch what the symlink pointed at,
+    and never leave a `.tmp.<pid>` file behind either way."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_magazine_mark_symlink_is_replaced_not_written_through SKIPPED (no g++)")
+        return "skipped"
+
+    with tempfile.TemporaryDirectory() as td:
+        lock_path = str(Path(td) / "of135i.lock")
+        victim = Path(td) / "victim"
+        victim.write_text("victim content\n")
+        mark_path = Path(lock_path + ".magazine")
+        mark_path.symlink_to(victim)
+
+        r = subprocess.run([probe, "mark-write", "libusb:001:007"],
+                            capture_output=True, text=True, env=_probe_env(lock_path))
+        assert r.stdout.strip() in ("WROTE", "FAILED"), r.stdout
+
+        # Whichever outcome: the symlink's old target is untouched, and no
+        # temp file survives.
+        assert victim.read_text() == "victim content\n"
+        leftovers = [p.name for p in Path(td).iterdir() if ".tmp." in p.name]
+        assert leftovers == [], leftovers
+
+        if r.stdout.strip() == "WROTE":
+            # Succeeded by replacing the symlink itself with a regular file.
+            assert not mark_path.is_symlink(), "mark-write wrote through the symlink"
+            r2 = subprocess.run([probe, "mark-read"], capture_output=True, text=True,
+                                 env=_probe_env(lock_path))
+            assert r2.stdout.strip() == "KEY libusb:001:007", r2.stdout
+    print("test_magazine_mark_symlink_is_replaced_not_written_through OK")
+
+
+def test_magazine_mark_empty_file_reads_as_no_mark():
+    """An empty mark file (e.g. a crash mid-write, before the atomic
+    rename existed) must read as "no mark", not a crash -- same rule as
+    the truncated/garbage case already covered by
+    test_magazine_mark_round_trip. Also checks that a normal write
+    leaves no temp file behind."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_magazine_mark_empty_file_reads_as_no_mark SKIPPED (no g++)")
+        return "skipped"
+
+    with tempfile.TemporaryDirectory() as td:
+        lock_path = str(Path(td) / "of135i.lock")
+        env = _probe_env(lock_path)
+
+        r = subprocess.run([probe, "mark-write", "libusb:001:007"],
+                            capture_output=True, text=True, env=env)
+        assert r.stdout.strip() == "WROTE", r
+        mark_path = Path(lock_path + ".magazine")
+        assert mark_path.exists() and not mark_path.is_symlink()
+        leftovers = [p.name for p in Path(td).iterdir() if ".tmp." in p.name]
+        assert leftovers == [], leftovers
+
+        mark_path.write_text("")
+        r = subprocess.run([probe, "mark-read"], capture_output=True, text=True, env=env)
+        assert r.returncode == 1 and r.stdout.strip() == "NONE", r
+    print("test_magazine_mark_empty_file_reads_as_no_mark OK")
+
+
 def main() -> int:
     tests = [
         test_driver_holding_lock_refuses_sane_open,
@@ -356,6 +481,10 @@ def main() -> int:
         test_failed_second_open_keeps_first_sessions_lock,
         test_release_without_acquire_is_noop,
         test_magazine_mark_round_trip,
+        test_lock_path_symlink_is_refused,
+        test_lock_path_directory_is_refused,
+        test_magazine_mark_symlink_is_replaced_not_written_through,
+        test_magazine_mark_empty_file_reads_as_no_mark,
     ]
     passed = 0
     skipped = 0

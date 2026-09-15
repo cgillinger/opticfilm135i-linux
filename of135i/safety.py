@@ -58,9 +58,11 @@ state is a power cycle, performed by a person.
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import logging
 import os
+import stat
 import threading
 import time
 from contextlib import contextmanager
@@ -745,10 +747,36 @@ class ProcessLock:
     def acquire(self) -> None:
         if self._fd is not None:
             return
+        # O_NOFOLLOW: the lock lives at a predictable path in a shared,
+        # world-writable directory (/tmp) -- never follow a symlink planted
+        # there onto some other file this process can write to. A symlink
+        # at the path fails open() with ELOOP (OSError, not the more
+        # specific PermissionError, so it is not swallowed by the
+        # read-only fallback below).
         try:
-            fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o666)
+            fd = os.open(self.path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o666)
         except PermissionError:
-            fd = os.open(self.path, os.O_RDONLY)
+            fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError as e:
+            if e.errno == errno.ELOOP:
+                raise SafetyError(
+                    f"{self.path} is a symbolic link, refusing to lock "
+                    f"through it") from e
+            raise
+        # Anything O_NOFOLLOW does not catch (a directory or other
+        # non-regular node dropped at the path -- an O_RDONLY open of a
+        # directory succeeds) is refused here, before the fd is locked or
+        # written to.
+        try:
+            st = os.fstat(fd)
+        except OSError:
+            os.close(fd)
+            raise
+        if not stat.S_ISREG(st.st_mode):
+            os.close(fd)
+            raise SafetyError(
+                f"{self.path} is not a regular file, refusing to use it as "
+                f"the lock file")
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except (BlockingIOError, PermissionError) as e:
