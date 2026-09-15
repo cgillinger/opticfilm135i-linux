@@ -753,20 +753,30 @@ class ProcessLock:
         # at the path fails open() with ELOOP (OSError, not the more
         # specific PermissionError, so it is not swallowed by the
         # read-only fallback below).
+        # O_NONBLOCK: the same path could instead hold a FIFO or a device
+        # node -- without it, opening a FIFO for reading (or some char
+        # devices) blocks the open() itself until a writer shows up,
+        # hanging this call before the regular-file check below ever
+        # runs. On a regular file O_NONBLOCK is a no-op for the later
+        # fcntl.flock()/write() calls.
         try:
-            fd = os.open(self.path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o666)
+            fd = os.open(self.path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o666)
         except PermissionError:
-            fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
+            fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         except OSError as e:
             if e.errno == errno.ELOOP:
                 raise SafetyError(
                     f"{self.path} is a symbolic link, refusing to lock "
                     f"through it") from e
             raise
-        # Anything O_NOFOLLOW does not catch (a directory or other
-        # non-regular node dropped at the path -- an O_RDONLY open of a
-        # directory succeeds) is refused here, before the fd is locked or
-        # written to.
+        # Anything O_NOFOLLOW/O_NONBLOCK does not catch (a directory or
+        # other non-regular node dropped at the path -- an O_RDONLY open
+        # of a directory succeeds; or a hard link onto some other file
+        # this process can write to, which is not a symlink at all and so
+        # passes O_NOFOLLOW cleanly) is refused here, before the fd is
+        # locked or written to. A lock file this code created is never
+        # hard-linked, so st_nlink > 1 means some other name also points
+        # at this inode -- refuse it exactly like a directory.
         try:
             st = os.fstat(fd)
         except OSError:
@@ -777,6 +787,11 @@ class ProcessLock:
             raise SafetyError(
                 f"{self.path} is not a regular file, refusing to use it as "
                 f"the lock file")
+        if st.st_nlink != 1:
+            os.close(fd)
+            raise SafetyError(
+                f"{self.path} has more than one hard link (possible "
+                f"hard-link attack), refusing to use it as the lock file")
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except (BlockingIOError, PermissionError) as e:

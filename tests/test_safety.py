@@ -2444,6 +2444,33 @@ def test_process_lock_refuses_symlinked_path():
     print("test_process_lock_refuses_symlinked_path OK")
 
 
+def test_process_lock_refuses_hard_linked_path():
+    """A hard link planted at the lock path -- a second directory entry
+    for the SAME inode as some other file this process can write to --
+    is not a symlink, so O_NOFOLLOW does not stop it; acquire() must
+    still refuse it (via the regular-file-and-single-hard-link check)
+    before ever taking flock() or writing, and the victim's content must
+    come out byte-identical."""
+    with tempfile.TemporaryDirectory() as td:
+        victim = Path(td) / "victim"
+        victim.write_text("victim content\n")
+        lock_path = Path(td) / "of135i.lock"
+        os.link(str(victim), str(lock_path))
+
+        error = None
+        try:
+            safety.ProcessLock(str(lock_path)).acquire()
+        except Exception as exc:
+            error = exc
+        assert error is not None, "ProcessLock locked/wrote through a hard link at the lock path"
+        assert not isinstance(error, ScannerBusyError), (
+            "a hard-linked lock path is a file-handling refusal, not a busy lock")
+        assert isinstance(error, SafetyError), type(error)
+        assert str(lock_path) in str(error), str(error)
+        assert victim.read_text() == "victim content\n"
+    print("test_process_lock_refuses_hard_linked_path OK")
+
+
 # ============================================================== hwblock
 
 
@@ -2578,6 +2605,7 @@ def main() -> int:
         test_readonly_open_never_configures,
         test_process_lock_excludes_second_process,
         test_process_lock_refuses_symlinked_path,
+        test_process_lock_refuses_hard_linked_path,
         test_hwblock_uses_central_guard_and_writes_nothing_when_unsafe,
         test_verify_start_state_on_raw_io_for_tools,
     ]

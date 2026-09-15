@@ -59,16 +59,21 @@ std::string now_iso8601_utc()
 }
 
 /* Refuse to lock or write through anything but a plain, ordinary file at
-   the well-known path: both the lock and the magazine mark live at a
-   predictable spot in a world-writable directory (/tmp), so a symlink
-   planted there (pointing at, say, a config file this process can
-   overwrite) or a directory dropped in its place must never be opened
-   for writing. O_NOFOLLOW makes the open() itself fail (ELOOP) on the
-   symlink case; this check catches anything O_NOFOLLOW does not, such
-   as a directory (an O_RDONLY open of a directory succeeds) or a device
-   node created at the path. Throws with `path` in the message; the
-   caller has not touched the fd's content yet. */
-void require_regular_file(int fd, const std::string& path)
+   the well-known path, with exactly one hard link, at the well-known
+   path: both the lock and the magazine mark live at a predictable spot
+   in a world-writable directory (/tmp), so a symlink planted there
+   (pointing at, say, a config file this process can overwrite), a
+   directory dropped in its place, or a hard link to some other file
+   this process can write must never be locked or written through.
+   O_NOFOLLOW makes the open() itself fail (ELOOP) on the symlink case;
+   this check catches what O_NOFOLLOW does not: a directory (an
+   O_RDONLY open of a directory succeeds), a device node created at the
+   path, or -- since a hard link is not a symlink at all, just another
+   directory entry for the same regular-file inode -- a hard link onto
+   a victim file (st_nlink >= 2; an ordinary, never-linked lock/mark
+   file always has st_nlink == 1). Throws with `path` in the message;
+   the caller has not touched the fd's content yet. */
+void require_plain_file(int fd, const std::string& path)
 {
     struct stat st{};
     if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
@@ -76,6 +81,13 @@ void require_regular_file(int fd, const std::string& path)
         throw std::runtime_error(std::string("gl126: ") + path +
                                  " is not a regular file, refusing to use it "
                                  "as the lock/mark file");
+    }
+    if (st.st_nlink != 1) {
+        close(fd);
+        throw std::runtime_error(std::string("gl126: ") + path +
+                                 " has more than one hard link (possible "
+                                 "hard-link attack), refusing to use it as "
+                                 "the lock/mark file");
     }
 }
 
@@ -130,11 +142,17 @@ bool process_lock_acquire(std::string* holder)
     // world-writable directory (/tmp) -- never follow a symlink planted
     // there onto some other file this process happens to be able to
     // write to. A symlink at the path fails open() with ELOOP.
-    int fd = open(path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0666);
+    // O_NONBLOCK: the same predictable path could instead hold a FIFO or
+    // a device node; without O_NONBLOCK, opening a FIFO for reading (or
+    // some character devices) blocks the open() itself until a writer
+    // shows up, which would hang this call before the regular-file check
+    // below ever runs. On a regular file O_NONBLOCK is a no-op -- it does
+    // not affect the flock() or the later read()/write() calls.
+    int fd = open(path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0666);
     if (fd < 0 && (errno == EACCES || errno == EPERM)) {
         // Read-only fallback: flock() works on a read-only fd, it is the
         // write of the holder line afterwards that is best-effort.
-        fd = open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        fd = open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
     }
     if (fd < 0 && errno == ELOOP) {
         throw std::runtime_error(std::string("gl126: ") + path +
@@ -145,7 +163,7 @@ bool process_lock_acquire(std::string* holder)
                                  path + ": " + std::strerror(errno));
     }
 
-    require_regular_file(fd, path); // throws; e.g. a directory at the path
+    require_plain_file(fd, path); // throws; e.g. a directory or hard link at the path
 
     if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
@@ -224,8 +242,12 @@ bool magazine_mark_write(const std::string& device_key)
     std::string mark_path = magazine_mark_path();
     std::string tmp_path = mark_path + ".tmp." + std::to_string(static_cast<long>(getpid()));
 
+    // O_EXCL already refuses a pre-existing FIFO/device at the temp path
+    // (the path is fresh, PID-suffixed); O_NONBLOCK is added for the same
+    // uniformity as every other open() in this file -- it costs nothing
+    // here since O_EXCL guarantees this process created the file.
     int fd = ::open(tmp_path.c_str(),
-                    O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0666);
+                    O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0666);
     if (fd < 0) {
         return false;
     }
@@ -253,16 +275,22 @@ bool magazine_mark_write(const std::string& device_key)
 
 bool magazine_mark_read(std::string* device_key)
 {
-    int fd = ::open(magazine_mark_path().c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    // O_NONBLOCK: this path is read unconditionally before every load, so
+    // the open() itself must never block -- a FIFO planted here (no
+    // writer attached) would otherwise hang the open() before the
+    // regular-file check below is ever reached. On the regular file this
+    // function actually expects, O_NONBLOCK has no effect on the read().
+    int fd = ::open(magazine_mark_path().c_str(),
+                    O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0) {
         return false;
     }
     {
         struct stat st{};
-        if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
-            // Not a mark we wrote (symlink, directory, ...): treat exactly
-            // like "no mark" -- this path is read unconditionally before
-            // every load, so it must never throw.
+        if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1) {
+            // Not a mark we wrote (symlink, directory, FIFO, hard link to
+            // a victim file, ...): treat exactly like "no mark" -- this
+            // function must never throw.
             ::close(fd);
             return false;
         }

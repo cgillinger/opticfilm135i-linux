@@ -50,19 +50,42 @@
    0666 -- two independent programs, potentially run by two different
    users on a shared machine, need to take the SAME lock, so it cannot
    be owner-only. That combination (fixed path, shared directory, open
-   permissions) is exactly the setup a symlink or hard-link attack
-   targets, so every open() of the lock or the magazine mark passes
-   O_NOFOLLOW and the resulting fd is checked to be a regular file
-   before anything is locked, read or written; refused otherwise
-   (process_lock_acquire() throws, magazine_mark_read() returns false).
-   The mark is additionally never modified in place -- magazine_mark_
-   write() writes a private temp file next to it and rename()s that
-   over the mark path, so the write can never land inside whatever the
-   mark path used to point to. A mark that cannot be written or read is
-   by design not a failure: it is a hint for a load that spans two
-   processes, and the hardware is re-verified before every load anyway
-   (see the comment below), so the worst case is falling back to asking
-   the operator to reseat the magazine.
+   permissions) is exactly the setup a symlink, hard-link, or FIFO/
+   device-node attack targets, so every open() of the lock or the
+   magazine mark passes:
+     - O_NOFOLLOW, so a symlink planted at the path fails the open()
+       itself with ELOOP rather than being followed onto whatever it
+       points at;
+     - O_NONBLOCK, so the open() itself can never block -- a FIFO (or
+       certain device nodes) dropped at the path would otherwise hang
+       an O_RDONLY open with no writer attached, before any later check
+       ever runs; it has no effect on a regular file's later read()/
+       write(), and none on flock();
+   and the resulting fd is then checked to be a regular file with
+   exactly one hard link (S_ISREG && st_nlink == 1) before anything is
+   locked, read or written -- refused otherwise (process_lock_acquire()
+   throws; magazine_mark_read() returns false, since it runs before
+   every load and must never fail the session). That check catches what
+   O_NOFOLLOW/O_NONBLOCK do not: a directory (an O_RDONLY open of a
+   directory succeeds), a device node, or a hard link onto some other
+   file this process can write to (not a symlink at all -- st_nlink
+   climbs to 2 or more, which a lock/mark file this code created never
+   has). The mark is additionally never modified in place --
+   magazine_mark_write() writes a private temp file next to it and
+   rename()s that over the mark path, so the write can never land
+   inside whatever the mark path used to point to. A mark that cannot
+   be written or read is by design not a failure: it is a hint for a
+   load that spans two processes, and the hardware is re-verified
+   before every load anyway (see the comment below), so the worst case
+   is falling back to asking the operator to reseat the magazine.
+
+   What this is NOT: a security boundary against a privileged or
+   same-user attacker who can also write to /tmp at will -- it is a
+   cooperative convention between two trusted programs (the driver and
+   this backend) sharing one predictable, world-writable path, hardened
+   against the ordinary local hazards of that spot (stale symlinks,
+   FIFOs, hard links) rather than against a determined adversary who
+   races the open() or has broader filesystem control.
 
    Reference-counted within a process: process_lock_acquire() and
    process_lock_release() must be called in matched pairs (an acquire

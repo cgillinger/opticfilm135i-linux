@@ -407,6 +407,95 @@ def test_lock_path_directory_is_refused():
     print("test_lock_path_directory_is_refused OK")
 
 
+def test_lock_path_hard_link_is_refused():
+    """A hard link planted at the lock path -- not a symlink, so
+    O_NOFOLLOW does not touch it, but the same directory entry as some
+    other file this process can also see -- must never be locked or
+    written through. Both the C++ probe and the Python ProcessLock must
+    refuse it (st_nlink > 1), and the victim's content must come out
+    byte-identical (no ftruncate(0)+write clobbering it)."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_lock_path_hard_link_is_refused SKIPPED (no g++)")
+        return "skipped"
+
+    with tempfile.TemporaryDirectory() as td:
+        victim = Path(td) / "victim"
+        victim.write_text("victim content\n")
+        lock_path = Path(td) / "of135i.lock"
+        os.link(str(victim), str(lock_path))
+
+        r = subprocess.run([probe, "try"], capture_output=True, text=True,
+                            env=_probe_env(str(lock_path)), timeout=10)
+        assert r.returncode != 0, r
+        assert str(lock_path) in r.stderr, r.stderr
+        assert victim.read_text() == "victim content\n"
+
+        error = None
+        try:
+            ProcessLock(str(lock_path)).acquire()
+        except Exception as exc:  # not necessarily ScannerBusyError
+            error = exc
+        assert error is not None, "ProcessLock locked/wrote through a hard link at the lock path"
+        assert not isinstance(error, ScannerBusyError), (
+            "a hard-linked lock path is a file-handling refusal, not a busy lock")
+        assert isinstance(error, SafetyError), type(error)
+        assert str(lock_path) in str(error), str(error)
+        assert victim.read_text() == "victim content\n"
+    print("test_lock_path_hard_link_is_refused OK")
+
+
+def test_magazine_mark_path_fifo_does_not_block_the_read():
+    """A FIFO planted at the mark path must not hang magazine_mark_read()
+    -- it is called before every load and must always return promptly.
+    Before O_NONBLOCK this open() would block forever on a FIFO with no
+    writer attached; a regression here must fail the test outright
+    rather than hang the whole suite, hence the explicit subprocess
+    timeout."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_magazine_mark_path_fifo_does_not_block_the_read SKIPPED (no g++)")
+        return "skipped"
+
+    with tempfile.TemporaryDirectory() as td:
+        lock_path = str(Path(td) / "of135i.lock")
+        mark_path = Path(lock_path + ".magazine")
+        os.mkfifo(str(mark_path))
+
+        try:
+            r = subprocess.run([probe, "mark-read"], capture_output=True, text=True,
+                                env=_probe_env(lock_path), timeout=10)
+        except subprocess.TimeoutExpired:
+            raise AssertionError(
+                "magazine_mark_read() blocked on a FIFO at the mark path -- "
+                "the O_NONBLOCK open regressed")
+        assert r.returncode == 1 and r.stdout.strip() == "NONE", r
+    print("test_magazine_mark_path_fifo_does_not_block_the_read OK")
+
+
+def test_magazine_mark_path_hard_link_is_refused():
+    """A hard link planted at the mark path must read as "no mark" (like
+    a symlink or FIFO there) and must never be written through -- the
+    victim's content comes out unchanged."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_magazine_mark_path_hard_link_is_refused SKIPPED (no g++)")
+        return "skipped"
+
+    with tempfile.TemporaryDirectory() as td:
+        lock_path = str(Path(td) / "of135i.lock")
+        victim = Path(td) / "victim"
+        victim.write_text("victim content\n")
+        mark_path = Path(lock_path + ".magazine")
+        os.link(str(victim), str(mark_path))
+
+        r = subprocess.run([probe, "mark-read"], capture_output=True, text=True,
+                            env=_probe_env(lock_path), timeout=10)
+        assert r.returncode == 1 and r.stdout.strip() == "NONE", r
+        assert victim.read_text() == "victim content\n"
+    print("test_magazine_mark_path_hard_link_is_refused OK")
+
+
 def test_magazine_mark_symlink_is_replaced_not_written_through():
     """A symlink planted at the mark path must never be written through
     in place: mark-write must either fail, or replace the symlink
@@ -483,6 +572,9 @@ def main() -> int:
         test_magazine_mark_round_trip,
         test_lock_path_symlink_is_refused,
         test_lock_path_directory_is_refused,
+        test_lock_path_hard_link_is_refused,
+        test_magazine_mark_path_fifo_does_not_block_the_read,
+        test_magazine_mark_path_hard_link_is_refused,
         test_magazine_mark_symlink_is_replaced_not_written_through,
         test_magazine_mark_empty_file_reads_as_no_mark,
     ]
