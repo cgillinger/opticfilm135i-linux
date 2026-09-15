@@ -1,55 +1,34 @@
-From b998ffbd70da30c5f628937c365f14c17b33e635 Mon Sep 17 00:00:00 2001
+From 5c6777cf689946a8bab4d574fb0dd0c96a83202d Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
-Date: Sun, 13 Sep 2026 20:03:03 +0200
-Subject: [PATCH 1/4] genesys: add support for the GL126 ASIC
+Date: Tue, 15 Sep 2026 12:05:27 +0200
+Subject: [PATCH 2/5] genesys: add support for the GL126 ASIC
 
-The GL126 is close enough to the GL124 for the genesys framework to fit,
-but its scan flow is the vendor's rather than GL124's, so it gets its own
-command set instead of being a GL124 model variant.
-
-The command set replays captured phases as ordered "op programs": one
-transfer per captured transfer, with boundaries, interleaving and the
-bulk IN/OUT dance preserved, executed by a runner (gl126_ops) that is
-deliberately free of genesys headers so it can be built and exercised
-standalone. Every failure is fail-closed: the first bad acknowledgement,
-short transfer or timed-out wait ends the sequence with nothing further
-written and no recovery attempted. The register values in gl126_tables
-are generated from USB captures of the vendor driver and verified
-byte-exact against them.
-
-gl126_lock implements a process lock shared with the reverse-engineered
-Python driver this backend grew out of, so the two cannot drive the unit
-at the same time; the convention is a non-blocking flock on a well-known
-path, and no other genesys ASIC needs it.
-
-Core changes GL126 requires: the AsicType enum and its string mapping,
-two ScanSession fields for the dual-light profiles, an image-pipeline
-hook for those profiles' interleaved output, a GL126 branch in the USB
-interface's bulk read (the chip wants a descriptor with wIndex 8 for the
-first chunk of a scan and 0 afterwards), and a small addition to the test
-scanner interface.
-
-This commit adds the ASIC and its command set only; the model that uses
-it follows.
+The Genesys GL126 as its own command set. It is close enough to the
+GL124 for the framework to fit, but its scan flow is the vendor's, so it
+is a command set of its own rather than a GL124 model variant. The
+register sequences are generated from USB captures of the vendor driver
+and verified byte-exact against them; the generator is not part of this
+series, its output (gl126_tables.cpp) is, with the provenance in the
+header. gl126_lock.{h,cpp} keeps this backend and the reverse-engineered
+companion driver off the one unit at once.
 ---
  backend/Makefile.am                        |     4 +
  backend/genesys/enums.cpp                  |     2 +
  backend/genesys/enums.h                    |     3 +
  backend/genesys/gl126.cpp                  |  2052 ++
  backend/genesys/gl126.h                    |   177 +
- backend/genesys/gl126_lock.cpp             |   242 +
- backend/genesys/gl126_lock.h               |   150 +
+ backend/genesys/gl126_lock.cpp             |   330 +
+ backend/genesys/gl126_lock.h               |   192 +
  backend/genesys/gl126_ops.cpp              |  1356 +
  backend/genesys/gl126_ops.h                |   788 +
  backend/genesys/gl126_registers.h          |    66 +
  backend/genesys/gl126_tables.cpp           | 24984 +++++++++++++++++++
  backend/genesys/gl126_tables.h             |   312 +
- backend/genesys/image_pipeline.cpp         |     6 +-
  backend/genesys/low.cpp                    |    12 +-
  backend/genesys/scanner_interface_usb.cpp  |    19 +-
  backend/genesys/settings.h                 |     9 +
  backend/genesys/test_scanner_interface.cpp |    10 +
- 17 files changed, 30187 insertions(+), 5 deletions(-)
+ 16 files changed, 30312 insertions(+), 4 deletions(-)
  create mode 100644 backend/genesys/gl126.cpp
  create mode 100644 backend/genesys/gl126.h
  create mode 100644 backend/genesys/gl126_lock.cpp
@@ -2366,10 +2345,10 @@ index 0000000..82bd5ee
 +#endif // BACKEND_GENESYS_GL126_H
 diff --git a/backend/genesys/gl126_lock.cpp b/backend/genesys/gl126_lock.cpp
 new file mode 100644
-index 0000000..9515bac
+index 0000000..d32af33
 --- /dev/null
 +++ b/backend/genesys/gl126_lock.cpp
-@@ -0,0 +1,242 @@
+@@ -0,0 +1,330 @@
 +/* sane - Scanner Access Now Easy.
 +
 +   Copyright (C) 2026 Christian Gillinger
@@ -2394,6 +2373,7 @@ index 0000000..9515bac
 +
 +#include <fcntl.h>
 +#include <sys/file.h>
++#include <sys/stat.h>
 +#include <unistd.h>
 +
 +#include <cerrno>
@@ -2427,6 +2407,39 @@ index 0000000..9515bac
 +    char buf[32];
 +    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S+00:00", &tm_buf);
 +    return std::string(buf);
++}
++
++/* Refuse to lock or write through anything but a plain, ordinary file at
++   the well-known path, with exactly one hard link, at the well-known
++   path: both the lock and the magazine mark live at a predictable spot
++   in a world-writable directory (/tmp), so a symlink planted there
++   (pointing at, say, a config file this process can overwrite), a
++   directory dropped in its place, or a hard link to some other file
++   this process can write must never be locked or written through.
++   O_NOFOLLOW makes the open() itself fail (ELOOP) on the symlink case;
++   this check catches what O_NOFOLLOW does not: a directory (an
++   O_RDONLY open of a directory succeeds), a device node created at the
++   path, or -- since a hard link is not a symlink at all, just another
++   directory entry for the same regular-file inode -- a hard link onto
++   a victim file (st_nlink >= 2; an ordinary, never-linked lock/mark
++   file always has st_nlink == 1). Throws with `path` in the message;
++   the caller has not touched the fd's content yet. */
++void require_plain_file(int fd, const std::string& path)
++{
++    struct stat st{};
++    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
++        close(fd);
++        throw std::runtime_error(std::string("gl126: ") + path +
++                                 " is not a regular file, refusing to use it "
++                                 "as the lock/mark file");
++    }
++    if (st.st_nlink != 1) {
++        close(fd);
++        throw std::runtime_error(std::string("gl126: ") + path +
++                                 " has more than one hard link (possible "
++                                 "hard-link attack), refusing to use it as "
++                                 "the lock/mark file");
++    }
 +}
 +
 +std::string read_holder(int fd)
@@ -2476,16 +2489,32 @@ index 0000000..9515bac
 +
 +    std::string path = process_lock_path();
 +
-+    int fd = open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0666);
++    // O_NOFOLLOW: the lock lives at a predictable path in a shared,
++    // world-writable directory (/tmp) -- never follow a symlink planted
++    // there onto some other file this process happens to be able to
++    // write to. A symlink at the path fails open() with ELOOP.
++    // O_NONBLOCK: the same predictable path could instead hold a FIFO or
++    // a device node; without O_NONBLOCK, opening a FIFO for reading (or
++    // some character devices) blocks the open() itself until a writer
++    // shows up, which would hang this call before the regular-file check
++    // below ever runs. On a regular file O_NONBLOCK is a no-op -- it does
++    // not affect the flock() or the later read()/write() calls.
++    int fd = open(path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0666);
 +    if (fd < 0 && (errno == EACCES || errno == EPERM)) {
 +        // Read-only fallback: flock() works on a read-only fd, it is the
 +        // write of the holder line afterwards that is best-effort.
-+        fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
++        fd = open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
++    }
++    if (fd < 0 && errno == ELOOP) {
++        throw std::runtime_error(std::string("gl126: ") + path +
++                                 " is a symbolic link, refusing to lock through it");
 +    }
 +    if (fd < 0) {
 +        throw std::runtime_error(std::string("gl126: could not open lock file ") +
 +                                 path + ": " + std::strerror(errno));
 +    }
++
++    require_plain_file(fd, path); // throws; e.g. a directory or hard link at the path
 +
 +    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
 +        if (errno == EWOULDBLOCK || errno == EAGAIN) {
@@ -2554,12 +2583,26 @@ index 0000000..9515bac
 +
 +bool magazine_mark_write(const std::string& device_key)
 +{
-+    // Truncating, not appending: at most one magazine is ever waiting to
-+    // be loaded -- there is one unit.
-+    int fd = ::open(magazine_mark_path().c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
++    // Written atomically via a temp file + rename(), never by truncating
++    // whatever already sits at the mark path in place: a truncate-in-
++    // place would follow a symlink planted at the mark path straight
++    // into its target, and would leave a half-written file visible to a
++    // concurrent reader. rename() replaces the mark path's directory
++    // entry itself -- including a symlink entry -- without ever opening
++    // or following what that entry used to point to.
++    std::string mark_path = magazine_mark_path();
++    std::string tmp_path = mark_path + ".tmp." + std::to_string(static_cast<long>(getpid()));
++
++    // O_EXCL already refuses a pre-existing FIFO/device at the temp path
++    // (the path is fresh, PID-suffixed); O_NONBLOCK is added for the same
++    // uniformity as every other open() in this file -- it costs nothing
++    // here since O_EXCL guarantees this process created the file.
++    int fd = ::open(tmp_path.c_str(),
++                    O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0666);
 +    if (fd < 0) {
 +        return false;
 +    }
++
 +    // The device key goes on its OWN line: it is whatever string the SANE
 +    // frontend uses to name the device, and it can contain spaces (the
 +    // backend's own test mode produces "test device:0x07b3:0x1436"), so a
@@ -2570,14 +2613,38 @@ index 0000000..9515bac
 +                       device_key + "\n";
 +    ssize_t written = ::write(fd, line.data(), line.size());
 +    ::close(fd);
-+    return written == static_cast<ssize_t>(line.size());
++    if (written != static_cast<ssize_t>(line.size())) {
++        ::unlink(tmp_path.c_str());
++        return false;
++    }
++    if (::rename(tmp_path.c_str(), mark_path.c_str()) != 0) {
++        ::unlink(tmp_path.c_str());
++        return false;
++    }
++    return true;
 +}
 +
 +bool magazine_mark_read(std::string* device_key)
 +{
-+    int fd = ::open(magazine_mark_path().c_str(), O_RDONLY);
++    // O_NONBLOCK: this path is read unconditionally before every load, so
++    // the open() itself must never block -- a FIFO planted here (no
++    // writer attached) would otherwise hang the open() before the
++    // regular-file check below is ever reached. On the regular file this
++    // function actually expects, O_NONBLOCK has no effect on the read().
++    int fd = ::open(magazine_mark_path().c_str(),
++                    O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
 +    if (fd < 0) {
 +        return false;
++    }
++    {
++        struct stat st{};
++        if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1) {
++            // Not a mark we wrote (symlink, directory, FIFO, hard link to
++            // a victim file, ...): treat exactly like "no mark" -- this
++            // function must never throw.
++            ::close(fd);
++            return false;
++        }
 +    }
 +    char buf[256] = {0};
 +    ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
@@ -2614,10 +2681,10 @@ index 0000000..9515bac
 +} // namespace genesys
 diff --git a/backend/genesys/gl126_lock.h b/backend/genesys/gl126_lock.h
 new file mode 100644
-index 0000000..1e83852
+index 0000000..46a144c
 --- /dev/null
 +++ b/backend/genesys/gl126_lock.h
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,192 @@
 +/* sane - Scanner Access Now Easy.
 +
 +   Copyright (C) 2026 Christian Gillinger
@@ -2664,6 +2731,48 @@ index 0000000..1e83852
 +
 +   GL126-only: no other genesys ASIC has a conflicting driver, so no
 +   other command set includes this header or calls into this namespace.
++
++   File handling: the path is deliberately predictable, in a directory
++   (/tmp) any local user can write to, and the file is created mode
++   0666 -- two independent programs, potentially run by two different
++   users on a shared machine, need to take the SAME lock, so it cannot
++   be owner-only. That combination (fixed path, shared directory, open
++   permissions) is exactly the setup a symlink, hard-link, or FIFO/
++   device-node attack targets, so every open() of the lock or the
++   magazine mark passes:
++     - O_NOFOLLOW, so a symlink planted at the path fails the open()
++       itself with ELOOP rather than being followed onto whatever it
++       points at;
++     - O_NONBLOCK, so the open() itself can never block -- a FIFO (or
++       certain device nodes) dropped at the path would otherwise hang
++       an O_RDONLY open with no writer attached, before any later check
++       ever runs; it has no effect on a regular file's later read()/
++       write(), and none on flock();
++   and the resulting fd is then checked to be a regular file with
++   exactly one hard link (S_ISREG && st_nlink == 1) before anything is
++   locked, read or written -- refused otherwise (process_lock_acquire()
++   throws; magazine_mark_read() returns false, since it runs before
++   every load and must never fail the session). That check catches what
++   O_NOFOLLOW/O_NONBLOCK do not: a directory (an O_RDONLY open of a
++   directory succeeds), a device node, or a hard link onto some other
++   file this process can write to (not a symlink at all -- st_nlink
++   climbs to 2 or more, which a lock/mark file this code created never
++   has). The mark is additionally never modified in place --
++   magazine_mark_write() writes a private temp file next to it and
++   rename()s that over the mark path, so the write can never land
++   inside whatever the mark path used to point to. A mark that cannot
++   be written or read is by design not a failure: it is a hint for a
++   load that spans two processes, and the hardware is re-verified
++   before every load anyway (see the comment below), so the worst case
++   is falling back to asking the operator to reseat the magazine.
++
++   What this is NOT: a security boundary against a privileged or
++   same-user attacker who can also write to /tmp at will -- it is a
++   cooperative convention between two trusted programs (the driver and
++   this backend) sharing one predictable, world-writable path, hardened
++   against the ordinary local hazards of that spot (stale symlinks,
++   FIFOs, hard links) rather than against a determined adversary who
++   races the open() or has broader filesystem control.
 +
 +   Reference-counted within a process: process_lock_acquire() and
 +   process_lock_release() must be called in matched pairs (an acquire
@@ -4998,7 +5107,7 @@ index 0000000..40dbfb4
 +#endif // BACKEND_GENESYS_GL126_REGISTERS_H
 diff --git a/backend/genesys/gl126_tables.cpp b/backend/genesys/gl126_tables.cpp
 new file mode 100644
-index 0000000..27050e2
+index 0000000..1ab7873
 --- /dev/null
 +++ b/backend/genesys/gl126_tables.cpp
 @@ -0,0 +1,24984 @@
@@ -28914,7 +29023,7 @@ index 0000000..27050e2
 +    {OpKind::Read, 0x0c, 0x008a, 0x26fe, nullptr, 1, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x0c, 0x008b, 0x26fe, nullptr, 0, 0, 0x00, 0x00, 0},
 +    {OpKind::Read, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xf0, 0xf0, 1500},
++    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xf0, 0xf0, 1500},  // best-effort: cold-start ready poll, budget from the driver's COLD_READY_TIMEOUT: before the first homing move the engine is not in the done class, so the opening one cannot settle (Test 77); the per-round ones settle on the first read; the driver's cold_init continues either way
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 0, 64, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 64, 64, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 128, 64, 0, 0x00, 0x00, 0},
@@ -28954,12 +29063,12 @@ index 0000000..27050e2
 +    {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 854, 8, 0, 0x00, 0x00, 0},
 +    {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 862, 512, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 1374, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},
++    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 1376, 2, 0, 0x00, 0x00, 0},
 +    {OpKind::ReadModifyWrite, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x00, 0},
 +    {OpKind::ReadModifyWrite, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xbf, 0x00, 0},
 +    {OpKind::Read, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xf0, 0xf0, 1500},
++    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xf0, 0xf0, 1500},  // best-effort: cold-start ready poll, budget from the driver's COLD_READY_TIMEOUT: before the first homing move the engine is not in the done class, so the opening one cannot settle (Test 77); the per-round ones settle on the first read; the driver's cold_init continues either way
 +    {OpKind::ReadModifyWrite, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xfd, 0x00, 0},
 +    {OpKind::Read, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0x00, 0x00, 0},
 +    {OpKind::Read, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0x00, 0x00, 0},
@@ -28970,7 +29079,7 @@ index 0000000..27050e2
 +    {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 1938, 8, 0, 0x00, 0x00, 0},
 +    {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 1946, 512, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 2458, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},
++    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 2460, 2, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 2462, 12, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 2474, 8, 0, 0x00, 0x00, 0},
@@ -28978,10 +29087,10 @@ index 0000000..27050e2
 +    {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 2994, 8, 0, 0x00, 0x00, 0},
 +    {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 3002, 512, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 3514, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},
++    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 3516, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xff, 0xbb, 250},
-+    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x1f, 250},
++    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xff, 0xbb, 250},  // best-effort: round-closing settle read of reg 0x35; reg 0x32 cannot reach its target here (the round's own last write clears the bit -- likely a capture transcription slip, Test 79); condition kept as captured, budget 0.25 s
++    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x1f, 250},  // best-effort: round-closing settle read of reg 0x32; reg 0x32 cannot reach its target here (the round's own last write clears the bit -- likely a capture transcription slip, Test 79); condition kept as captured, budget 0.25 s
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 3518, 64, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 3582, 64, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 3646, 64, 0, 0x00, 0x00, 0},
@@ -29019,12 +29128,12 @@ index 0000000..27050e2
 +    {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 4372, 8, 0, 0x00, 0x00, 0},
 +    {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 4380, 512, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 4892, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},
++    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 4894, 2, 0, 0x00, 0x00, 0},
 +    {OpKind::ReadModifyWrite, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x00, 0},
 +    {OpKind::ReadModifyWrite, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xbf, 0x00, 0},
 +    {OpKind::Read, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xf0, 0xf0, 1500},
++    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xf0, 0xf0, 1500},  // best-effort: cold-start ready poll, budget from the driver's COLD_READY_TIMEOUT: before the first homing move the engine is not in the done class, so the opening one cannot settle (Test 77); the per-round ones settle on the first read; the driver's cold_init continues either way
 +    {OpKind::ReadModifyWrite, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xfd, 0x00, 0},
 +    {OpKind::Read, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0x00, 0x00, 0},
 +    {OpKind::Read, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0x00, 0x00, 0},
@@ -29035,7 +29144,7 @@ index 0000000..27050e2
 +    {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 5456, 8, 0, 0x00, 0x00, 0},
 +    {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 5464, 512, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 5976, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},
++    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 5978, 2, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 5980, 12, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 5992, 8, 0, 0x00, 0x00, 0},
@@ -29043,10 +29152,10 @@ index 0000000..27050e2
 +    {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 6512, 8, 0, 0x00, 0x00, 0},
 +    {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 6520, 512, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 7032, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},
++    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 7034, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xff, 0xbb, 250},
-+    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x1f, 250},
++    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xff, 0xbb, 250},  // best-effort: round-closing settle read of reg 0x35; reg 0x32 cannot reach its target here (the round's own last write clears the bit -- likely a capture transcription slip, Test 79); condition kept as captured, budget 0.25 s
++    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x1f, 250},  // best-effort: round-closing settle read of reg 0x32; reg 0x32 cannot reach its target here (the round's own last write clears the bit -- likely a capture transcription slip, Test 79); condition kept as captured, budget 0.25 s
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 7036, 64, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 7100, 64, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 7164, 64, 0, 0x00, 0x00, 0},
@@ -29084,12 +29193,12 @@ index 0000000..27050e2
 +    {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 7890, 8, 0, 0x00, 0x00, 0},
 +    {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 7898, 512, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 8410, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},
++    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 8412, 2, 0, 0x00, 0x00, 0},
 +    {OpKind::ReadModifyWrite, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x00, 0},
 +    {OpKind::ReadModifyWrite, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xbf, 0x00, 0},
 +    {OpKind::Read, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xf0, 0xf0, 1500},
++    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xf0, 0xf0, 1500},  // best-effort: cold-start ready poll, budget from the driver's COLD_READY_TIMEOUT: before the first homing move the engine is not in the done class, so the opening one cannot settle (Test 77); the per-round ones settle on the first read; the driver's cold_init continues either way
 +    {OpKind::ReadModifyWrite, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xfd, 0x00, 0},
 +    {OpKind::Read, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0x00, 0x00, 0},
 +    {OpKind::Read, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0x00, 0x00, 0},
@@ -29100,7 +29209,7 @@ index 0000000..27050e2
 +    {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 8974, 8, 0, 0x00, 0x00, 0},
 +    {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 8982, 512, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 9494, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},
++    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 9496, 2, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 9498, 12, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 9510, 8, 0, 0x00, 0x00, 0},
@@ -29108,10 +29217,10 @@ index 0000000..27050e2
 +    {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 10030, 8, 0, 0x00, 0x00, 0},
 +    {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 10038, 512, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 10550, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},
++    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 10552, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xff, 0xbb, 250},
-+    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x1f, 250},
++    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xff, 0xbb, 250},  // best-effort: round-closing settle read of reg 0x35; reg 0x32 cannot reach its target here (the round's own last write clears the bit -- likely a capture transcription slip, Test 79); condition kept as captured, budget 0.25 s
++    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x1f, 250},  // best-effort: round-closing settle read of reg 0x32; reg 0x32 cannot reach its target here (the round's own last write clears the bit -- likely a capture transcription slip, Test 79); condition kept as captured, budget 0.25 s
 +};
 +
 +static const std::uint8_t MAGAZINE_OPEN_OPS_DATA[397] = {
@@ -29183,7 +29292,7 @@ index 0000000..27050e2
 +    {OpKind::Write, 0x04, 0x008b, 0x000b, MAGAZINE_OPEN_OPS_DATA + 264, 4, 0, 0x00, 0x00, 0},
 +    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, MAGAZINE_OPEN_OPS_DATA + 268, 1, 0, 0x00, 0x00, 0},
 +    {OpKind::Read, 0x04, 0x008a, 0x000f, MAGAZINE_OPEN_OPS_DATA + 269, 64, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, MAGAZINE_OPEN_OPS_DATA + 333, 2, 4, 0xf0, 0xd0, 1000},
++    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, MAGAZINE_OPEN_OPS_DATA + 333, 2, 4, 0xf0, 0xd0, 1000},  // best-effort: device-open status read, state class only (upper nibble); the driver's non-strict poll at app open
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_OPEN_OPS_DATA + 335, 2, 0, 0x00, 0x00, 0},
 +    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, MAGAZINE_OPEN_OPS_DATA + 337, 1, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_OPEN_OPS_DATA + 338, 2, 0, 0x00, 0x00, 0},
@@ -29850,7 +29959,7 @@ index 0000000..27050e2
 +    {OpKind::AckRead, 0x0c, 0x008e, 0x0020, MAGAZINE_LOAD_OPS_DATA + 2438, 1, 0, 0x00, 0x00, 0},
 +    {OpKind::Sleep, 0x00, 0x0000, 0x0000, nullptr, 0, 2000, 0x00, 0x00, 0},
 +    {OpKind::Read, 0x04, 0x008e, 0x3522, MAGAZINE_LOAD_OPS_DATA + 2439, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, MAGAZINE_LOAD_OPS_DATA + 2441, 2, 4, 0xe7, 0x05, 1000},
++    {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, MAGAZINE_LOAD_OPS_DATA + 2441, 2, 4, 0xe7, 0x05, 1000},  // best-effort: reg 0x32 during LOAD with the sensor-state bits 3-4 masked out; the driver's non-strict poll -- LOAD's motor completions are the strict PollMasked ops, fail-closed
 +    {OpKind::Sleep, 0x00, 0x0000, 0x0000, nullptr, 0, 104, 0x00, 0x00, 0},
 +    {OpKind::Read, 0x04, 0x008e, 0x3122, MAGAZINE_LOAD_OPS_DATA + 2443, 2, 0, 0x00, 0x00, 0},
 +    {OpKind::Read, 0x04, 0x008e, 0x3222, MAGAZINE_LOAD_OPS_DATA + 2445, 2, 0, 0x00, 0x00, 0},
@@ -29963,7 +30072,7 @@ index 0000000..27050e2
 +    {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_EJECT_OPS_DATA + 562, 8, 0, 0x00, 0x00, 0},
 +    {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_EJECT_OPS_DATA + 570, 512, 0, 0x00, 0x00, 0},
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_EJECT_OPS_DATA + 1082, 2, 0, 0x00, 0x00, 0},
-+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0x21, 0x20, 10000},
++    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0x21, 0x20, 10000},  // best-effort: eject completion loop, the driver's _eject_body: non-raising, checked against the eject-done state a successful eject never re-enters (0xe8 on Tests 75-77); terminal -- only motor-off follows, and the next session's start-state check is the gate
 +    {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_EJECT_OPS_DATA + 1084, 2, 0, 0x00, 0x00, 0},
 +};
 +
@@ -30304,23 +30413,6 @@ index 0000000..ef34581
 +} // namespace genesys
 +
 +#endif // BACKEND_GENESYS_GL126_TABLES_H
-diff --git a/backend/genesys/image_pipeline.cpp b/backend/genesys/image_pipeline.cpp
-index 8dae0c5..61d7e5f 100644
---- a/backend/genesys/image_pipeline.cpp
-+++ b/backend/genesys/image_pipeline.cpp
-@@ -740,7 +740,11 @@ bool ImagePipelineNodeExtract::get_next_row_data(std::uint8_t* out_data)
-             set_raw_pixel_to_row(out_data, i + x_src_width, RawPixel{}, format);
-         }
-     } else {
--        std::size_t bpp = get_pixel_format_depth(format) / 8;
-+        // bytes per PIXEL: the format depth is per channel (RGB161616 = 16),
-+        // so depth / 8 copied one third of a 3-channel row and zero-padded
-+        // the rest (found by the GL126 IR crop, which is the first user of
-+        // this node on a multi-channel format)
-+        std::size_t bpp = get_pixel_row_bytes(format, 1);
-         if (x_src_width > 0) {
-             std::memcpy(out_data, cached_line_.data() + offset_x_ * bpp,
-                         x_src_width * bpp);
 diff --git a/backend/genesys/low.cpp b/backend/genesys/low.cpp
 index 3ffc24a..2b236e4 100644
 --- a/backend/genesys/low.cpp
@@ -30424,14 +30516,14 @@ index 542d4ff..b21e534 100644
          reg.init_reg(0x5e, value & 0xff);
      } else {
 diff --git a/backend/genesys/settings.h b/backend/genesys/settings.h
-index 5713912..785d777 100644
+index 5713912..6150e35 100644
 --- a/backend/genesys/settings.h
 +++ b/backend/genesys/settings.h
 @@ -64,6 +64,10 @@ struct Genesys_Settings
      // cache entries expiration time
      int expiration_time = 0;
  
-+    // GL126 (OpticFilm 135i): the frame of the film strip to scan (1-4);
++    // GL126 (OpticFilm 135i): the frame of the film strip to scan (1-6);
 +    // the transport is positioned to it by an absolute feed from home
 +    unsigned frame = 1;
 +

@@ -1,18 +1,10 @@
-From 05f2ea7016b3bfc93ce16fa9172f90f79de3ef48 Mon Sep 17 00:00:00 2001
+From 92a6bdd1ab463a4134709635db825459ce8bf490 Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
-Date: Sun, 13 Sep 2026 20:03:44 +0200
-Subject: [PATCH 4/4] genesys: document the GL126 and the OpticFilm 135i
+Date: Tue, 15 Sep 2026 12:05:46 +0200
+Subject: [PATCH 5/5] genesys: document the GL126 and the OpticFilm 135i
 
-The chip list in the man page's title and description, an AUTHORS entry,
-and the description file's status.
-
-The .desc entry moves from :untested to :good and its comment is
-rewritten: it described a skeleton with bring-up in progress, which is no
-longer what this is. It now says what the scanner actually does -- one
-frame of the strip per scan chosen by the frame option, magazine handling
-through two further options, the five resolutions and the infrared pass
--- and states plainly that the testing covers a single unit, because only
-one exists for this work.
+The man page's chip list, an AUTHORS entry, and the .desc status from
+:untested to :good with a comment describing the scanner.
 ---
  AUTHORS                       | 3 ++-
  doc/descriptions/genesys.desc | 4 ++--

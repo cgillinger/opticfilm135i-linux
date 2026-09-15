@@ -1,36 +1,16 @@
-From 6e61ed56967f941854f81b0bfb64af6cb1bbe2a7 Mon Sep 17 00:00:00 2001
+From a95bd2f8da7821bc899fcd1f1bcf4fe063896197 Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
-Date: Sun, 13 Sep 2026 20:03:12 +0200
-Subject: [PATCH 3/4] genesys: frame selection and magazine handling for the
+Date: Tue, 15 Sep 2026 12:05:27 +0200
+Subject: [PATCH 4/5] genesys: frame selection and magazine handling for the
  OpticFilm 135i
 
-Three options, all inactive on every other ASIC.
-
-"frame" chooses which frame of the six-aperture strip holder to scan,
-constrained to 1-6.
-
-"load-film" and "eject-film" work the magazine, and "magazine" is a
-read-only line saying where it is believed to be and what to do next.
-The two buttons exist because the vendor's insert flow needs the operator
-to take the magazine out and re-seat it to the mechanical stop in the
-MIDDLE of the sequence, and SANE has no way for a backend to ask for that
-during sane_start. So load-film runs the release half -- bringing a cold
-transport up if needed, then the jog that frees the cassette -- the
-operator re-seats, and the next sane_start performs the load before it
-calibrates. The vendor's own application does the same two steps; it can
-start the release at application launch because it owns the device, which
-a SANE backend cannot do since sane_open is called during enumeration.
-
-That a release is pending must survive a process, because scanimage
-reaches the backend in a fresh one for every invocation, so it is also
-recorded beside the process lock and keyed by device name. It never
-authorises anything on its own: the hardware state is re-read before the
-load, and a power cycle both re-enumerates the unit and leaves it cold,
-so a stale record cannot reach the motor.
-
-Every refusal here is read-only and says what to do instead. A failure
-after writing fails the session and does not invite a retry, because the
-transport state is then unknown.
+Four options, inactive on every other ASIC: 'frame' (which frame of the
+loaded strip to scan, 1-6, the geometry being fixed by the holder),
+'load-film' and 'eject-film' (the two-step magazine protocol -- the
+operator reseats the magazine between the release and the next scan,
+since SANE cannot prompt during sane_start), and a read-only 'magazine'
+status line. sane_open/sane_close take the companion driver's process
+lock around the device.
 ---
  backend/genesys/genesys.cpp | 285 +++++++++++++++++++++++++++++++++---
  backend/genesys/genesys.h   |   8 +

@@ -1,26 +1,16 @@
-From b85136d4497c11a0fa5d6d8038ded81522465b47 Mon Sep 17 00:00:00 2001
+From b68756e6dc313883c719ebc84fde0f5909339600 Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
-Date: Sun, 13 Sep 2026 20:03:12 +0200
-Subject: [PATCH 2/4] genesys: add the Plustek OpticFilm 135i (07b3:1436)
+Date: Tue, 15 Sep 2026 12:05:27 +0200
+Subject: [PATCH 3/5] genesys: add the Plustek OpticFilm 135i (07b3:1436)
 
-A 35 mm film scanner built on the GL126. It scans one frame of a loaded
-film strip per pass, addressed by number rather than by a scan area: the
-frame's geometry is fixed by the holder, and positioning is a single
-absolute feed from the load reference rather than the core's
-scanner_move.
-
-The model declares the resolutions the vendor's own captures cover --
-600, 1200, 2400, 3600 and 7200 dpi, plus an infrared pass -- and the
-sensor entry carries the per-resolution readout widths and the
-colour-line shift the core's pipeline undoes on the host.
-
-The .desc entry is updated with the model and its status.
+The model and sensor entries for the OpticFilm 135i, a 35 mm film
+scanner, and its USB id in genesys.conf.in and the .desc file.
 ---
  backend/genesys.conf.in           |   3 +
- backend/genesys/tables_model.cpp  | 106 ++++++++++++++++++++++++++++++
+ backend/genesys/tables_model.cpp  | 105 ++++++++++++++++++++++++++++++
  backend/genesys/tables_sensor.cpp |  52 +++++++++++++++
  doc/descriptions/genesys.desc     |   6 ++
- 4 files changed, 167 insertions(+)
+ 4 files changed, 166 insertions(+)
 
 diff --git a/backend/genesys.conf.in b/backend/genesys.conf.in
 index 6e6a8d7..1153059 100644
@@ -34,22 +24,21 @@ index 6e6a8d7..1153059 100644
 +# Plustek OpticFilm 135i
 +usb 0x07b3 0x1436
 diff --git a/backend/genesys/tables_model.cpp b/backend/genesys/tables_model.cpp
-index 321d179..33c4788 100644
+index 321d179..f68d5ab 100644
 --- a/backend/genesys/tables_model.cpp
 +++ b/backend/genesys/tables_model.cpp
-@@ -2311,6 +2311,112 @@ void genesys_init_usb_device_tables()
+@@ -2311,6 +2311,111 @@ void genesys_init_usb_device_tables()
  
  
  
 +    /* Plustek OpticFilm 135i (GL126).
 +
-+       STAGE 1 SKELETON, UNTESTED. The sensor/adc/gpio/motor ids below are
-+       the 7200's, used as placeholders so the model registers and the
-+       backend builds: the 135i's own tables are not written yet, and
-+       every scan hook in gl126.cpp refuses before anything reaches the
-+       wire, so the placeholder values cannot drive the hardware. They are
-+       replaced with measured ones during stage 3 bring-up
-+       (docs/sane-port.md).
++       The GL126 command set drives the chip from register tables
++       generated from USB captures of the vendor driver (gl126_tables.cpp),
++       so the adc/gpio/motor tables the core looks up by id are never
++       consulted by any GL126 hook: the ids below are the OpticFilm 7200's
++       only because the model needs valid entries to register. Nothing
++       reaches the wire from those tables.
 +
 +       Geometry is the 35 mm frame as the driver scans it: a 36 x 24 mm
 +       image area on a strip fed through the magazine. */
@@ -116,12 +105,13 @@ index 321d179..33c4788 100644
 +
 +    model.is_cis = false;
 +    /* Not sheetfed: that path ejects after every scan and reloads before
-+       calibration, which breaks a 1-4 frame batch (docs/sane-port.md,
-+       decision 4). */
++       calibration, which breaks scanning several frames of one strip on
++       one load (docs/sane-port.md, decision 4). The magazine is handled
++       through the load-film / eject-film options instead. */
 +    model.is_sheetfed = false;
 +
 +    model.sensor_id = SensorId::CCD_PLUSTEK_OPTICFILM_135I;
-+    /* Placeholders -- see the note above. */
++    /* Never consulted by the GL126 hooks -- see the note above. */
 +    model.adc_id = AdcId::PLUSTEK_OPTICFILM_7200;
 +    model.gpio_id = GpioId::PLUSTEK_OPTICFILM_7200;
 +    model.motor_id = MotorId::PLUSTEK_OPTICFILM_7200;
@@ -139,8 +129,7 @@ index 321d179..33c4788 100644
 +       request is scanned in colour and merged on the host by the core's
 +       pipeline, so the hooks see one and the same session (Test 52,
 +       attempt 2: a gray default request was refused by the frame check). */
-+    model.flags = ModelFlag::UNTESTED |
-+                  ModelFlag::DISABLE_SHADING_CALIBRATION |
++    model.flags = ModelFlag::DISABLE_SHADING_CALIBRATION |
 +                  ModelFlag::HOST_SIDE_GRAY;
 +
 +    model.search_lines = 200;

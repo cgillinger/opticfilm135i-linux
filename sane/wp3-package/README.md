@@ -1,62 +1,77 @@
 # WP-3 package — the exact SANE submission series, exported
 
-**Status: prepared for review. Nothing has been sent.** This directory
-holds the four-commit series described in `docs/sane-wp3-submission.md`
-in two forms that recreate it without manual reconstruction. No merge
-request, issue, mail or contact with the SANE project has been made, and
-nothing here initiates one.
+**Status: prepared for review. Nothing has been sent.** No merge request,
+issue, mail or contact with the SANE project or anyone else, and nothing
+here initiates one. This directory holds the five-commit series in two
+forms that recreate it without manual reconstruction.
 
 ## What is in here
 
 | file | what |
 |---|---|
-| `wp3-gl126-submission.bundle` | `git bundle` of the series, `1d47d7c..wp3-gl126-submission`. Preserves the exact commit ids. |
-| `0001-genesys-add-support-for-the-GL126-ASIC.patch` | commit 1, `git format-patch` output |
-| `0002-genesys-add-the-Plustek-OpticFilm-135i-07b3-1436.patch` | commit 2 |
-| `0003-genesys-frame-selection-and-magazine-handling-for-th.patch` | commit 3 |
-| `0004-genesys-document-the-GL126-and-the-OpticFilm-135i.patch` | commit 4 |
+| `wp3-gl126-submission.bundle` | `git bundle` of the series, `7fb102b..wp3-gl126-submission-v2`. Preserves the exact commit ids. |
+| `0001-genesys-fix-ImagePipelineNodeExtract-bytes-per-pixel.patch` | commit 1 |
+| `0002-genesys-add-support-for-the-GL126-ASIC.patch` | commit 2 |
+| `0003-genesys-add-the-Plustek-OpticFilm-135i-07b3-1436.patch` | commit 3 |
+| `0004-genesys-frame-selection-and-magazine-handling-for-th.patch` | commit 4 |
+| `0005-genesys-document-the-GL126-and-the-OpticFilm-135i.patch` | commit 5 |
 
 ## Revisions
 
-Base: sane-backends `1d47d7ca48a0b86b206698dc30594bd5ea47309b`
-("Merge branch 'ci_juint_test_reports' into 'master'", `origin/master` as
-fetched 2026-09-02 from `https://gitlab.com/sane-project/backends.git`).
+Base: sane-backends `7fb102bf...` — "Merge branch 'fix/scanimage-abort-status'
+into 'master'", `origin/master` as fetched 2026-09-15 from
+`https://gitlab.com/sane-project/backends.git`.
 
 | # | commit | tree | subject |
 |---|---|---|---|
-| 1 | `b998ffbd70da30c5f628937c365f14c17b33e635` | `01ad1b8b33522d0ae56180835c02c551b65c301c` | genesys: add support for the GL126 ASIC |
-| 2 | `b85136d4497c11a0fa5d6d8038ded81522465b47` | `f04ed9a0594547d5d2cb731c79a614fbb6924f97` | genesys: add the Plustek OpticFilm 135i (07b3:1436) |
-| 3 | `6e61ed56967f941854f81b0bfb64af6cb1bbe2a7` | `dd0d8ef6e5dbeea1fc304aee09b3c213accf5bf4` | genesys: frame selection and magazine handling for the OpticFilm 135i |
-| 4 | `05f2ea7016b3bfc93ce16fa9172f90f79de3ef48` | `f3133681db32ee2ef267fd381aeac078dce8db93` | genesys: document the GL126 and the OpticFilm 135i |
+| 1 | `077df55d3e264b173cca2a1c317759a9e98d483b` | `e1114f55191f422d5c0288a36878e0ed37aff800` | genesys: fix ImagePipelineNodeExtract bytes-per-pixel for multi-channel rows |
+| 2 | `5c6777cf689946a8bab4d574fb0dd0c96a83202d` | `9e5f27015328da7f1799ec75e7665013c8936c63` | genesys: add support for the GL126 ASIC |
+| 3 | `b68756e6dc313883c719ebc84fde0f5909339600` | `47b7dab5b192b796c95b28102fb592a12ed29221` | genesys: add the Plustek OpticFilm 135i (07b3:1436) |
+| 4 | `a95bd2f8da7821bc899fcd1f1bcf4fe063896197` | `a1f0b93a7bb323ce4050803ff1e213b0764e0fc5` | genesys: frame selection and magazine handling for the OpticFilm 135i |
+| 5 | `92a6bdd1ab463a4134709635db825459ce8bf490` | `65a7b8bd1416968ad3630a617e7aebdc9bfcf068` | genesys: document the GL126 and the OpticFilm 135i |
 
-The tip tree `f313368…` is the identity of the package: any route below
+The tip tree `65a7b8bd…` is the identity of the package: any route below
 that ends on that tree has recreated it exactly.
 
-Relationship to this repository at the time of export (2026-09-15): the
-nine `backend/genesys/gl126_*` files in the series are byte-identical to
-`sane/gl126*` at commit `12d5193`, and the series' changes to shared
-genesys files equal `sane/gl126-integration.patch` at that commit plus
-the three items commit 4 adds (the `AUTHORS` entry, the `.desc` status
-`:untested → :good` with its comment, and the man page's chip list).
-Work after that commit (best-effort poll annotations in the generated
-tables, the model-table comment and `UNTESTED` flag, the lock-file
-hardening) is **not** in this package; it goes into the next series
-revision, which will be rebased on current upstream and re-exported here
-with a new revision table.
+### What changed since the previous export (base `1d47d7c`, four commits)
+
+- **Rebased onto current upstream** (`1d47d7c` → `7fb102b`). Upstream
+  touched none of the files this series changes (`backend/genesys/`,
+  `backend/Makefile.am`, `backend/genesys.conf.in`, the `.desc`, the man
+  page, `AUTHORS` all have zero upstream commits in that range), so the
+  rebase was clean and no GL126 behaviour changed.
+- **The `ImagePipelineNodeExtract` bytes-per-pixel fix is now its own
+  commit (1)**, ahead of the ASIC, since it is a latent bug in shared
+  code rather than GL126-specific.
+- The series carries this session's **lock-file hardening**
+  (`O_NOFOLLOW` + `O_NONBLOCK` + a regular-file / single-hard-link check,
+  atomic mark write), the **per-site reasons on every best-effort poll**
+  in the generated tables, and the **removal of `ModelFlag::UNTESTED`**
+  so the runtime warning and the `.desc` `:good` agree.
+
+### Hardware evidence, and whether it still applies
+
+All of it (`docs/test-log.md` Tests 62–79) was produced on the GL126 code
+that this series ships, and upstream did not touch `backend/genesys/`
+between the old base and `7fb102b`, so the code is byte-identical in
+behaviour and **every prior hardware result still applies unchanged.**
+Nothing in this revision needs re-verification on hardware; the changes
+since the last export are offline (file-handling hardening, comments, a
+build flag, the commit split).
 
 ## Recreate it
 
-Either route needs a clone of sane-backends that contains the base commit.
+Either route needs a clone of sane-backends containing the base commit.
 
 **Route A — the bundle (exact commit ids):**
 
 ```
 git clone https://gitlab.com/sane-project/backends.git sane-backends
 cd sane-backends
-git fetch /path/to/wp3-gl126-submission.bundle wp3-gl126-submission
+git fetch /path/to/wp3-gl126-submission.bundle wp3-gl126-submission-v2
 git checkout -b wp3-gl126-submission FETCH_HEAD
-git rev-parse HEAD            # 05f2ea7016b3bfc93ce16fa9172f90f79de3ef48
-git rev-parse HEAD^{tree}     # f3133681db32ee2ef267fd381aeac078dce8db93
+git rev-parse HEAD            # 92a6bdd1ab463a4134709635db825459ce8bf490
+git rev-parse HEAD^{tree}     # 65a7b8bd1416968ad3630a617e7aebdc9bfcf068
 ```
 
 **Route B — the patches (same trees, new commit ids):**
@@ -64,13 +79,13 @@ git rev-parse HEAD^{tree}     # f3133681db32ee2ef267fd381aeac078dce8db93
 ```
 git clone https://gitlab.com/sane-project/backends.git sane-backends
 cd sane-backends
-git checkout -b wp3-gl126-submission 1d47d7c
-git am /path/to/000[1-4]-*.patch
-git rev-parse HEAD^{tree}     # f3133681db32ee2ef267fd381aeac078dce8db93
+git checkout -b wp3-gl126-submission 7fb102b
+git am /path/to/000[1-5]-*.patch
+git rev-parse HEAD^{tree}     # 65a7b8bd1416968ad3630a617e7aebdc9bfcf068
 ```
 
 `git bundle verify wp3-gl126-submission.bundle` lists the one prerequisite
-(`1d47d7c…`).
+(`7fb102b…`).
 
 ## Build
 
@@ -85,44 +100,33 @@ make -j8 -C backend libsane-genesys.la
 nm -D backend/.libs/libsane-genesys.so | grep -c gl126     # 107
 ```
 
-`--sysconfdir=/etc` matters for an installed backend (see
-`docs/sane-install.md`); it does not affect the build check itself.
-
 ## Verification of this export (2026-09-15)
 
-Done in two fresh clones in a scratch directory, separate from the
-development clone and its worktree:
+Done in fresh clones/worktrees in a scratch directory, separate from the
+development clone:
 
 | check | result |
 |---|---|
-| Route A: fetch from the bundle | `FETCH_HEAD` = `05f2ea7…`, tree `f313368…` — **identical** |
-| Route B: `git am` of the four patches onto `1d47d7c` | four commits, per-commit trees `01ad1b8…`, `f04ed9a…`, `dd0d8ef…`, `f313368…` — **identical** |
-| symlinks in the recreated tree | 0 (`git ls-files -s`, mode 120000) |
-| standalone build in the Route A clone (`autogen`, `configure`, `lib`, `sanei`, `backend/libsane-genesys.la`, `-j8`) | exit 0, 45 s wall; 0 compiler warnings (the log's 12 "warning" lines are all autotools notices from `configure.ac` / `Makefile.am`, none from a source file) |
-| exported symbols | 107 mentioning `gl126`, as in the development build |
+| Standalone build in a worktree on `7fb102b` (`autogen`, `configure --sysconfdir=/etc`, `lib`, `sanei`, `backend/libsane-genesys.la`, `-j8`) | exit 0, **0 compiler warnings** from any source file (only autotools notices) |
+| exported symbols | **107** mentioning `gl126` |
 | `tests/test_sane_open_params.py` against that build | 7 passed |
 | `tests/test_sane_calibration_cache.py` against that build | 6 passed |
 | `tests/test_sane_magazine.py` against that build | 20 passed |
+| `tools/gen_sane_tables.py --check` (tables == generator output) | up to date |
+| Route B: `git am` of the five patches onto `7fb102b` | tip tree `65a7b8bd…` — **identical** |
+| Route A: fetch from the bundle | tip `92a6bdd…`, tree `65a7b8bd…` — **identical** |
+| symlinks in the recreated tree | 0 (`git ls-files -s`, mode 120000) |
 
-These results apply to the package identified by tree `f313368…` and to
-no other revision. The full offline suite of this repository (316 tests
-at `12d5193`) runs against the development build, not the package;
-`docs/sane-wp3-submission.md` §3 records that.
+The full offline gate of this repository (`tools/release_check.py`)
+reports FULL VERIFICATION, 325 tests, against the development build (which
+includes the same GL126 files); see `docs/offline-checks.md`.
 
-To run the three backend-dependent suites against a recreated build:
+Not run: `scanimage -T`, `tstbackend` (both drive the device; the plan is
+in `docs/sane-submission-runbook.md`, and only `tstbackend -l 1` is judged
+safe — read-only, no motor — to be run against the final version).
 
-```
-cd /path/to/opticfilm135i-linux
-SANE_BACKENDS_DIR=/path/to/sane-backends .venv/bin/python tests/test_sane_open_params.py
-SANE_BACKENDS_DIR=/path/to/sane-backends .venv/bin/python tests/test_sane_calibration_cache.py
-SANE_BACKENDS_DIR=/path/to/sane-backends .venv/bin/python tests/test_sane_magazine.py
-```
+## Nothing leaves this repository
 
-Not run: `scanimage -T`, `tstbackend` (both drive the device; see
-`docs/sane-wp3-submission.md` §7).
-
-## Hardware evidence the package rests on
-
-Tests 74–79 in `docs/test-log.md`, on one unit; summarised in
-`docs/sane-wp3-submission.md` §4. Nothing in this directory was produced
-by touching the scanner.
+This package is built and exported locally. It is committed only to
+`cgillinger/opticfilm135i-linux`. No branch is pushed from the
+sane-backends clone, which tracks the real upstream.
