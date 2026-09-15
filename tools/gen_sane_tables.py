@@ -1071,6 +1071,45 @@ def build_eject_program() -> list[OpEntry]:
     return entries
 
 
+def best_effort_reason(phase_name: str, e: "OpEntry") -> str:
+    """Why this particular PollBestEffort site is allowed to time out and
+    continue. Keyed on what identifies the site on the wire (phase,
+    wValue/wIndex, mask, target); the text is emitted as a trailing
+    comment on the op so the generated table explains itself. Every
+    PollBestEffort site the generator emits must match one entry here --
+    the fallback is deliberately loud."""
+    key = (phase_name.lower(), e.value, e.index, e.mask, e.want)
+    status = (WV_EXT_STATUS, WI_DATAENB)
+    if key[0] == "cold_init":
+        if (e.value, e.index) == status and e.mask == 0xF0:
+            return ("cold-start ready poll, budget from the driver's "
+                    "COLD_READY_TIMEOUT: before the first homing move the "
+                    "engine is not in the done class, so the opening one "
+                    "cannot settle (Test 77); the per-round ones settle on "
+                    "the first read; the driver's cold_init continues either way")
+        if (e.value, e.index) == status and e.mask == 0xFF:
+            return ("cold-start motor completion, observed 1.0-1.9 s (Test 78); "
+                    "non-raising like the driver's cold_init because the "
+                    "pre-homing transport state is undefined by design")
+        if e.index == 0x3522 or e.index == 0x3222:
+            return ("round-closing settle read of reg 0x%02x; reg 0x32 cannot "
+                    "reach its target here (the round's own last write clears "
+                    "the bit -- likely a capture transcription slip, Test 79); "
+                    "condition kept as captured, budget 0.25 s" % (e.index >> 8))
+    if key[0] == "open" and (e.value, e.index) == status:
+        return ("device-open status read, state class only (upper nibble); "
+                "the driver's non-strict poll at app open")
+    if key[0] == "load" and e.index == 0x3222:
+        return ("reg 0x32 during LOAD with the sensor-state bits 3-4 masked "
+                "out; the driver's non-strict poll -- LOAD's motor completions "
+                "are the strict PollMasked ops, fail-closed")
+    if key[0] == "eject" and (e.value, e.index) == status:
+        return ("eject completion loop, the driver's _eject_body: non-raising, "
+                "the end state is what the following register reads show "
+                "(0xe8 on Tests 75-77)")
+    raise ValueError(f"PollBestEffort site without a documented reason: {key}")
+
+
 def emit_op_program(key: str, phase_name: str, entries: list[OpEntry],
                     injections: list[tuple[str, int, int]],
                     bulk_injections: list[tuple[str, int, int]],
@@ -1101,10 +1140,17 @@ def emit_op_program(key: str, phase_name: str, entries: list[OpEntry],
     c.append(f"static const Op {ops_name}[{len(entries)}] = {{")
     for e, off in zip(entries, offsets):
         data_expr = f"{data_name} + {off}" if e.data else "nullptr"
-        c.append(f"    {{OpKind::{e.kind}, 0x{e.request:02x}, "
-                 f"0x{e.value:04x}, 0x{e.index:04x}, {data_expr}, "
-                 f"{e.length}, {e.dur_ms}, 0x{e.mask:02x}, 0x{e.want:02x}, "
-                 f"{e.timeout_ms}}},")
+        line = (f"    {{OpKind::{e.kind}, 0x{e.request:02x}, "
+                f"0x{e.value:04x}, 0x{e.index:04x}, {data_expr}, "
+                f"{e.length}, {e.dur_ms}, 0x{e.mask:02x}, 0x{e.want:02x}, "
+                f"{e.timeout_ms}}},")
+        if e.kind == "PollBestEffort":
+            # Every wait that is allowed to time out says why, at the site:
+            # a reviewer should not have to reverse-engineer our reverse
+            # engineering to see the difference between a motor-completion
+            # wait (PollMasked, fail-closed) and one of these.
+            line += f"  // best-effort: {best_effort_reason(phase_name, e)}"
+        c.append(line)
     c.append("};\n")
 
     if injections:
