@@ -1,0 +1,19 @@
+SPDX-License-Identifier: CC-BY-4.0
+
+The documentation in this directory (docs/) is licensed under the Creative
+Commons Attribution 4.0 International License (CC BY 4.0).
+
+  Copyright (c) 2026 Christian Gillinger
+
+You are free to share and adapt this material for any purpose, including
+commercially, provided you give appropriate credit to Christian Gillinger,
+link to the licence, and indicate if changes were made.
+
+  Licence:  https://creativecommons.org/licenses/by/4.0/legalcode
+  Summary:  https://creativecommons.org/licenses/by/4.0/
+
+Note on the facts: the protocol details described here — register values,
+timings, calibration formulas, geometry, motor sequences — are facts, and
+facts are not restricted by copyright in any jurisdiction. CC BY 4.0 governs
+this particular written expression of them; the underlying facts are free for
+anyone to use. Attribution to Christian Gillinger is requested either way.

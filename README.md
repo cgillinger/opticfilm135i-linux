@@ -1,6 +1,6 @@
 # opticfilm135i-linux — Linux driver for the Plustek OpticFilm 135i film scanner
 
-![License: GPL-2.0-or-later](https://img.shields.io/badge/License-GPL--2.0--or--later-blue.svg)
+![License: GPL-2.0-or-later or MIT (driver), CC BY 4.0 (docs)](https://img.shields.io/badge/License-GPL--2.0--or--later%20%7C%20MIT%20%7C%20CC--BY--4.0-blue.svg)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
 ![Release: v0.1.2](https://img.shields.io/badge/Release-v0.1.2-blue.svg)
 ![Status: CLI driver complete, SANE backend working locally](https://img.shields.io/badge/Status-CLI%20driver%20complete%2C%20SANE%20backend%20working%20locally-green.svg)
@@ -495,4 +495,11 @@ hardware this software interoperates with.
 
 ## License
 
-GPL-2.0-or-later — see [LICENSE](LICENSE).
+Multi-licensed by area — see **[LICENSING.md](LICENSING.md)**. Every part
+requires attribution to Christian Gillinger.
+
+- **Driver** (`of135i/`, `tools/`): GPL-2.0-or-later **or** MIT, your choice —
+  so it can be used in GPL software or in a proprietary product.
+- **SANE backend** (`sane/`): GPL-2.0-or-later (it builds on sane-backends).
+- **Documentation** (`docs/`): CC BY 4.0 — and the protocol facts are free to
+  use regardless, with credit requested.
