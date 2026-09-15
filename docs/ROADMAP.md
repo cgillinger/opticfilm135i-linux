@@ -150,8 +150,10 @@ Each is outside the promised function or has a verified safe handling:
   frames 1–6 are fully supported: the corrected A+C positioning is the
   production default, hardware-verified across all six frames and every
   profile, and the six-frame production workflow is accepted
-  (Tests 55–61; `docs/holder-position-design.md`). The mounted-slide
-  holder is uncharacterised; panorama is a vendor software mode (one
+  (Tests 55–61; `docs/holder-position-design.md`). **The four-slide
+  holder that ships with the scanner is not supported yet** — its frame
+  pitch and load flow are uncaptured and it has never been run (C2, a
+  planned separate milestone); panorama is a vendor software mode (one
   continuous scan, the holder encodes as the strip holder) that needs
   its own capture. (The 1–6 work was delivered under milestone C.)
 
@@ -642,6 +644,21 @@ generated table (its answer is provenance and byte-exact verification,
 not a rewrite); whole-strip scanning; the physical button and the
 interrupt endpoint; the slide holder (C2, after B2); any colour rendering
 change; further timing work; repeats of accepted profiles.
+
+## Known issues (cosmetic, not blocking)
+
+- **The magazine controls render awkwardly in digiKam / KSane.** The
+  read-only `magazine` status is a wide text field that truncates its value
+  (KSane shows only the tail), and it sits with the `Load film` / `Eject
+  film` buttons in a layout KSane lays out oddly — one control looks
+  over-long. Scanning and the magazine operations themselves work; this is
+  purely how KSaneWidgets draws the options. The code already constrains the
+  status to a value list (so KSane does not draw an editable combo) and orders
+  the status before the buttons, but the width/truncation remains. A proper
+  fix — a shorter status string and option sizing that KSane renders cleanly —
+  needs a digiKam session to see the result, so it is tracked here rather than
+  changed blind (which would also churn the WP-3 package). Observed on digiKam
+  9.1.0 / KSane 26.08 (Test 76).
 
 ## Candidates, not scheduled (2026-09-13)
 

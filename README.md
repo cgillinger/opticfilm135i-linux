@@ -174,9 +174,11 @@ should know about:
   path on a second film stock (Test 60). The dual-light profiles carry
   the same contract in visible-line units, hardware-verified one run
   per profile (Test 61; see
-  [`docs/ROADMAP.md`](docs/ROADMAP.md) milestone C). **Mounted slides:** the scanner
-  ships with a four-slide holder; the driver and the backend have not
-  been tested with it (its frame pitch and load flow are uncaptured) — planned.
+  [`docs/ROADMAP.md`](docs/ROADMAP.md) milestone C). **Mounted slides — not supported yet.** The
+  scanner ships with a four-slide holder. **Neither the driver nor the SANE
+  backend covers it:** its frame pitch and load flow are uncaptured and it has
+  never been run. It is a planned, separate milestone (C2 in the roadmap), not
+  part of what works today.
   **Panorama:** Plustek's optional panoramic holder (frames up to
   226 mm) carries the same identification tab encoding as the strip
   holder (35mmc's review), so "panorama" is a software mode — one

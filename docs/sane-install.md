@@ -239,6 +239,13 @@ in; pick the row.
 handle itself onto a *Scanner Specific Options* tab, using the SANE
 descriptor's title, description and range — which the patch provides.
 
+The magazine controls (`Load film`, `Eject film`, and the read-only
+`magazine` status) land on that same tab. **They render awkwardly:** KSane
+draws the status as a wide field and truncates its text, and the layout of
+the two buttons looks odd. This is cosmetic — the controls work — and is a
+known issue (see the roadmap's "Known issues"); a fix needs a digiKam session
+to verify.
+
 **Things that can ask for something the backend will not do:**
 
 * **Preview is a real scan.** KSaneCore's preview sets `tl-*`/`br-*` to the
