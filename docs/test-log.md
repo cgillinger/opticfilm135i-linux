@@ -5642,3 +5642,86 @@ of the mechanism `docs/sane-wp4-magazine.md` describes from the captures:
 the insert event on this same endpoint triggers the vendor's LOAD
 directly. It is precisely why our two-step protocol exists — SANE has no
 background thread, so we run LOAD at the next call instead.
+
+### Test 82: one strip through both 3600 dpi profiles, against a vendor reference taken before the project began
+
+Two questions in one session, both about where a colour cast originates.
+A strip that the vendor's software had scanned **before any driver work
+started** was put back in the machine, so its own rendering of the same
+frames is available as a reference. Nothing about the driver, the motor
+sequences or the image path was changed.
+
+**Part 1 — the vendor reference, measured offline.** Two vendor scans of
+the same four frames exist: the original set from before the project, and
+a second set made on the same day as this test. Measured per luminance
+percentile band, on every frame, **R, G and B agree within ±1 code in
+every band** — mean luminance 170.9 against 170.0 on frame 1, B−G in the
+brightest band −1.1 against −0.4.
+
+They are not one scan exported twice. The delivered areas differ
+(4992x3336 against 5016x3324), and after alignment the two correlate at
+0.84 with 60 % of pixels differing by more than four codes and a mean
+absolute difference of 14 codes — the signature of two separate loads,
+not of JPEG compression.
+
+So the vendor's rendering is reproducible across separate loads, and
+**the scanner is unchanged by everything the project has run through it.**
+Earlier that rested on indirect evidence: gain codes that have not moved
+since Test 59, calibration that re-measures before every frame, and the
+film-independent gain of Test 60. This is the direct form of the same
+statement — same strip, same application, before and after, same result.
+A lamp that had drifted would have shown here.
+
+**Part 2 — the same frame through both 3600 dpi profiles.** One frame,
+scanned twice, each on its own load (see the operational note below).
+
+| | dual 3600 with IR | plain 3600 |
+|---|---|---|
+| gain | R 0x2c G 0x21 B 0x27 | R 0x2d G 0x20 B 0x27 |
+| offset | 010a / 0109 / 010a | 010a / 010a / 010a |
+| FEEDL | 6538 | 6562 |
+| chunks | 670 | 233 |
+| commanded margins | lead 0.750 / trail 0.779 mm | lead 0.750 / trail 0.772 mm |
+| aperture coverage | VERIFIED, lead 0.577 / trail 0.962 mm | VERIFIED, lead 0.768 / trail 0.783 mm |
+| delivered | 5184x5119 | 3762x5117 |
+| poll timeouts / cr mismatches | 2 / 21 | 0 / 10 |
+
+Both loads ran through the documented flow with the prompt supplied by a
+file signal rather than Enter, which changes nothing in the driver — the
+jog settled `f855` on the first poll all four times in both loads, and
+LOAD gave `f455` then `dc55` after 0.06 s, with reg 0x32 reading 0x1f
+before and after the reinsertion and no interrupt events.
+
+**Raw signal, same frame, both profiles:**
+
+| channel | dual+IR p1..p99 | density | plain p1..p99 | density |
+|---|---|---|---|---|
+| R | 1463..36569 | 1.398 | 591..36095 | 1.786 |
+| G | 1649..29086 | 1.246 | 749..21024 | 1.448 |
+| B | 1230..17908 | 1.163 | 647..16083 | 1.395 |
+
+Blue carries **83.2 %** of red's density range in the dual pass with IR
+and **78.1 %** in plain. No clipping in any channel in either. The dual
+and IR profile is therefore **not** the cause of a weak blue channel — on
+the same frame it is marginally the better of the two, which is the
+opposite of what was expected.
+
+**Where the dark end actually sits.** Measured over the densest 2 % of
+the negative — the part that becomes the positive's highlights — the
+three channels read about 1520 / 1700 / 1290 codes. They read the same on
+frames from an unrelated strip measured for comparison. That floor is the
+scanner's dark level, not film density: blue does not bottom out in the
+highlights, and the difference between strips lies at the thin end of the
+scale, where blue reaches 11 773 codes on one strip against 18 602 on
+another.
+
+**IR dust removal, measured rather than assumed.** Recomputing the mask
+from a stored IR channel masks **1.14 %** of pixels, filled by local
+inpainting from unmasked neighbours. It cannot move a frame's colour
+balance globally.
+
+**Operational note.** `digitize` ejects the magazine when a roll is
+finished. Running a second profile on the same load therefore needs
+`scan`, which does not eject unless asked, or a second load. This test
+used a second load; the frame positions confirm it cost nothing but a
+handling step.
