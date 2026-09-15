@@ -5635,6 +5635,16 @@ cannot be seen. A watcher that re-arms slowly will silently drop presses.
 **Provenance.** Three captures, archived in the private analysis area.
 The host only listened; no command was sent to the device from Linux.
 
+**Correction, 2026-09-15 (review).** Two statements above go past the
+evidence. "Structurally cannot" is too strong: the genesys USB
+abstraction has no interrupt read today, which is a limit of the current
+implementation, not proof that a button feature is impossible within
+SANE. And the re-arm gap does not by itself prove that presses are lost:
+whether the device stores a notification that arrives while no read is
+pending was not measured. A button watcher and auto-load remain future,
+undecided features; the 0x48 observations and the need for register
+reads after the event stand.
+
 **Related observation, same evening.** Pulling the magazine out and
 pushing it back to the stop **auto-loads it** under the vendor's
 software, with no button pressed. That is the operator-side confirmation
@@ -5725,3 +5735,104 @@ finished. Running a second profile on the same load therefore needs
 `scan`, which does not eject unless asked, or a second load. This test
 used a second load; the frame positions confirm it cost nothing but a
 handling step.
+
+### Test 83: two production strips through `digitize` on one power-on — four frames, then a strip that ends mid-holder (run 2026-09-14, written up 2026-09-15)
+
+2026-09-14, 19:17–19:53, mintuu, driver at master `adfaa99` (the Python
+driver unchanged since `9805f38`). Recorded after Test 82 because it was
+written up a day late; chronologically it precedes it. This was the first
+**production** use of the bulk-digitisation workflow on real
+colour negative film (Kodak 200) — so the entry carries transport data,
+calibration, margins and timings only: no project name, motif, era or
+staging path (the owner's rule, stated before the run). The diagnostics are archived privately in
+`plustek-135i-analys/production-20260914/` (the ten `*.diag.json` files
+and the manifest), since the staging area is deleted once the images are
+approved.
+
+**Setup.** Scanner cold — reg 0x01 = 0x00, never homed since power-on.
+The VM was shut down. The operator loaded the strips by hand; the session
+ran the commands. The load flow ran through `loadflow.run(ask=...)` with
+its prompt answered by a file signal instead of Enter — a wrapper script
+outside the repository, no change to the driver: same session, same motor
+steps, same wait conditions, same failure handling. Both loads went
+through the documented flow: cold init 0x00 → 0x22 (first load only),
+jog with four completions `f855` each on the first poll, the operator's
+remove-and-reseat, then LOAD `f455` → `dc55`. No interrupt events on
+either load.
+
+**Roll A — a four-frame strip:** `of135i digitize --frames 1-4 --dpi 3600`
+(infrared and dust removal on by default). **Roll B** — the next strip,
+which the operator expected to hold six frames: `--frames 1-6`, same
+profile. Both rolls ejected normally at the end of their run; roll B was
+loaded straight after roll A's eject without a power cycle (session start
+state 0x22, no cold init).
+
+| | roll A (frames 1–4) | roll B (frames 1–6) |
+|---|---|---|
+| wall time, load done → eject done | 6 min 31 s | 9 min 54 s |
+| per frame, calibration + position + scan + park | 64.9 / 65.8 / 68.8 / 72.8 s | 64.9 / 66.7 / 69.8 / 72.8 / 74.9 / 79.2 s |
+| POSITION | 1.8 / 3.8 / 5.9 / 8.1 s | 1.8 / 3.8 / 5.9 / 8.1 / 10.2 / 12.4 s |
+| scan pass | 39.9–41.3 s | 39.9–41.3 s |
+| PARK (verbatim) | 13.6–15.6 s | 13.6–16.6 s |
+| FEEDL | 6538 / 17291 / 28050 / 38828 | … / 49560 / 60275 |
+| chunks (× 497 664 B, exact) | 670 / 669 / 667 / 664 | … / 664 / 665 |
+| gain | 44 / 33 / 39 on every frame | 44 / 33 / 39 on every frame |
+| offset | 266 / 265–266 / 266 | 266 / 265–266 / 266 |
+| dark_b substituted | 0 of 4 | 0 of 6 |
+| coverage | VERIFIED 4/4, lead 0.69–0.75, trail 0.72–0.84 mm | VERIFIED 6/6, lead 0.38–0.83, trail 0.80–0.95 mm |
+| poll timeouts / cr mismatches | 2–5 / 23–40 per frame | 2–7 / 23–43 per frame |
+| delivered width | 5184 px | 5184 px |
+
+The poll timeouts are all in the known benign families (`9c55` where
+`ad55`/`bd55` was wanted, `8155` where `95xx` was) — Test 61's band. The
+POSITION times sit on the FEEDL-proportional line Test 55 established
+(frame 6 at 12.4 s against Test 55's 12.5 s). `dark_a` drifts 0.46 %
+downward within a roll (21 669 → 21 569 codes on R) and resets at the
+next roll's first frame — thermal, uniform across channels, and
+compensated per frame since calibration re-measures before each one.
+Gain is the same 44/33/39 it has read since Test 59.
+
+**What roll B actually contained, measured afterwards.** The operator
+said before the run that the fourth frame looked unexposed. Measured on
+the delivered products (median red code, share of pixels at 65 535):
+
+| frame | median R | saturated | reading |
+|---|---|---|---|
+| 1–3 | 12 284–16 560 | 0.00 % | exposed frames |
+| 4 | 42 911 | 0.00 % | film base, no image (unexposed) |
+| 5 | 46 217 | 43.5 %, rows ≥ ~1 730 | film ends about a third of the way in; open aperture beyond it |
+| 6 | 65 535 | 65.8 % (the whole aperture, columns ~840–4 270) | no film |
+
+Roll A: all four frames 0.00 % saturated, medians 6 736–16 658 — four
+exposed frames. So the two strips held **four real images and three**,
+seven in all, not ten; that is the count the session also arrived at from
+the images.
+
+**What this establishes, and what it does not.**
+1. The bulk-digitisation path ran two strips on one power-on, ten frames,
+   with calibration, positioning, transfer and PARK exactly in the bands
+   the earlier tests set, including frames 5 and 6 through `digitize`
+   (Test 58 reached them through `scan`).
+2. **The dual 3600 dpi profile with infrared has now run positions 1–6 on
+   one load.** Test 61 verified it on frame 1 only; here FEEDL, chunk
+   count and coverage held on every position.
+3. **Aperture coverage says nothing about the film.** The detector reads
+   the holder's plastic edges, so it verified an unexposed frame and two
+   apertures with no film in them, and `digitize` marked all six "ok" and
+   dust-cleaned them. This is by design — coverage is a positioning
+   check — but it means a run's frame count is not an image count. A
+   "no film in this aperture" check is a candidate, not scheduled.
+4. **An empty aperture saturates the sensor** at the gain the calibration
+   chose (65 535 in all three channels, across the full 24 mm). Raw
+   integrity on the exposed frames is untouched: 0.00 % saturated in all
+   seven.
+5. Eye check of the working images (the session's, not the owner's
+   production acceptance): four distinct whole frames on roll A, no
+   banding, no skew, delivered on their side (rotation is the app's job,
+   as before); text in a roll-B frame read mirrored in the quick preview
+   until the vendor's horizontal mirror was applied — the Test 63
+   orientation finding again, not a new one.
+6. The finished JPEGs rendered from these scans looked yellow to the
+   owner, which led directly to Test 82 the next day. The colour question
+   was then parked as outside the driver's scope (2026-09-15); the raw
+   data from this run is unchanged and healthy by the measurements above.
