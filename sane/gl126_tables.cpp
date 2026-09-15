@@ -23950,7 +23950,7 @@ static const Op MAGAZINE_COLD_INIT_OPS[201] = {
     {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 854, 8, 0, 0x00, 0x00, 0},
     {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 862, 512, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 1374, 2, 0, 0x00, 0x00, 0},
-    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design
+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 1376, 2, 0, 0x00, 0x00, 0},
     {OpKind::ReadModifyWrite, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x00, 0},
     {OpKind::ReadModifyWrite, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xbf, 0x00, 0},
@@ -23966,7 +23966,7 @@ static const Op MAGAZINE_COLD_INIT_OPS[201] = {
     {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 1938, 8, 0, 0x00, 0x00, 0},
     {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 1946, 512, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 2458, 2, 0, 0x00, 0x00, 0},
-    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design
+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 2460, 2, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 2462, 12, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 2474, 8, 0, 0x00, 0x00, 0},
@@ -23974,7 +23974,7 @@ static const Op MAGAZINE_COLD_INIT_OPS[201] = {
     {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 2994, 8, 0, 0x00, 0x00, 0},
     {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 3002, 512, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 3514, 2, 0, 0x00, 0x00, 0},
-    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design
+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 3516, 2, 0, 0x00, 0x00, 0},
     {OpKind::PollBestEffort, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xff, 0xbb, 250},  // best-effort: round-closing settle read of reg 0x35; reg 0x32 cannot reach its target here (the round's own last write clears the bit -- likely a capture transcription slip, Test 79); condition kept as captured, budget 0.25 s
     {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x1f, 250},  // best-effort: round-closing settle read of reg 0x32; reg 0x32 cannot reach its target here (the round's own last write clears the bit -- likely a capture transcription slip, Test 79); condition kept as captured, budget 0.25 s
@@ -24015,7 +24015,7 @@ static const Op MAGAZINE_COLD_INIT_OPS[201] = {
     {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 4372, 8, 0, 0x00, 0x00, 0},
     {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 4380, 512, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 4892, 2, 0, 0x00, 0x00, 0},
-    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design
+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 4894, 2, 0, 0x00, 0x00, 0},
     {OpKind::ReadModifyWrite, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x00, 0},
     {OpKind::ReadModifyWrite, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xbf, 0x00, 0},
@@ -24031,7 +24031,7 @@ static const Op MAGAZINE_COLD_INIT_OPS[201] = {
     {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 5456, 8, 0, 0x00, 0x00, 0},
     {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 5464, 512, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 5976, 2, 0, 0x00, 0x00, 0},
-    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design
+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 5978, 2, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 5980, 12, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 5992, 8, 0, 0x00, 0x00, 0},
@@ -24039,7 +24039,7 @@ static const Op MAGAZINE_COLD_INIT_OPS[201] = {
     {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 6512, 8, 0, 0x00, 0x00, 0},
     {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 6520, 512, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 7032, 2, 0, 0x00, 0x00, 0},
-    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design
+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 7034, 2, 0, 0x00, 0x00, 0},
     {OpKind::PollBestEffort, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xff, 0xbb, 250},  // best-effort: round-closing settle read of reg 0x35; reg 0x32 cannot reach its target here (the round's own last write clears the bit -- likely a capture transcription slip, Test 79); condition kept as captured, budget 0.25 s
     {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x1f, 250},  // best-effort: round-closing settle read of reg 0x32; reg 0x32 cannot reach its target here (the round's own last write clears the bit -- likely a capture transcription slip, Test 79); condition kept as captured, budget 0.25 s
@@ -24080,7 +24080,7 @@ static const Op MAGAZINE_COLD_INIT_OPS[201] = {
     {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 7890, 8, 0, 0x00, 0x00, 0},
     {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 7898, 512, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 8410, 2, 0, 0x00, 0x00, 0},
-    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design
+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 8412, 2, 0, 0x00, 0x00, 0},
     {OpKind::ReadModifyWrite, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x00, 0},
     {OpKind::ReadModifyWrite, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xbf, 0x00, 0},
@@ -24096,7 +24096,7 @@ static const Op MAGAZINE_COLD_INIT_OPS[201] = {
     {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 8974, 8, 0, 0x00, 0x00, 0},
     {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 8982, 512, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 9494, 2, 0, 0x00, 0x00, 0},
-    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design
+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 9496, 2, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 9498, 12, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 9510, 8, 0, 0x00, 0x00, 0},
@@ -24104,7 +24104,7 @@ static const Op MAGAZINE_COLD_INIT_OPS[201] = {
     {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_COLD_INIT_OPS_DATA + 10030, 8, 0, 0x00, 0x00, 0},
     {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 10038, 512, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 10550, 2, 0, 0x00, 0x00, 0},
-    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design
+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0xff, 0xf8, 30000},  // best-effort: cold-start motor completion, observed 1.0-1.9 s (Test 78); non-raising like the driver's cold_init because the pre-homing transport state is undefined by design -- a timeout is not the gate: cold_init reads reg 0x01 = 0x22 afterwards (gl126.cpp) and fails the session if homing did not reach idle-homed, before any load
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_COLD_INIT_OPS_DATA + 10552, 2, 0, 0x00, 0x00, 0},
     {OpKind::PollBestEffort, 0x04, 0x008e, 0x3522, nullptr, 2, 0, 0xff, 0xbb, 250},  // best-effort: round-closing settle read of reg 0x35; reg 0x32 cannot reach its target here (the round's own last write clears the bit -- likely a capture transcription slip, Test 79); condition kept as captured, budget 0.25 s
     {OpKind::PollBestEffort, 0x04, 0x008e, 0x3222, nullptr, 2, 0, 0xff, 0x1f, 250},  // best-effort: round-closing settle read of reg 0x32; reg 0x32 cannot reach its target here (the round's own last write clears the bit -- likely a capture transcription slip, Test 79); condition kept as captured, budget 0.25 s
@@ -24959,7 +24959,7 @@ static const Op MAGAZINE_EJECT_OPS[11] = {
     {OpKind::Write, 0x04, 0x0082, 0x0001, MAGAZINE_EJECT_OPS_DATA + 562, 8, 0, 0x00, 0x00, 0},
     {OpKind::BulkOut, 0x00, 0x0000, 0x0000, MAGAZINE_EJECT_OPS_DATA + 570, 512, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_EJECT_OPS_DATA + 1082, 2, 0, 0x00, 0x00, 0},
-    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0x21, 0x20, 10000},  // best-effort: eject completion loop, the driver's _eject_body: non-raising, the end state is what the following register reads show (0xe8 on Tests 75-77)
+    {OpKind::PollBestEffort, 0x04, 0x018e, 0x0122, nullptr, 2, 0, 0x21, 0x20, 10000},  // best-effort: eject completion loop, the driver's _eject_body: non-raising, checked against the eject-done state a successful eject never re-enters (0xe8 on Tests 75-77); terminal -- only motor-off follows, and the next session's start-state check is the gate
     {OpKind::Write, 0x04, 0x0083, 0x0000, MAGAZINE_EJECT_OPS_DATA + 1084, 2, 0, 0x00, 0x00, 0},
 };
 

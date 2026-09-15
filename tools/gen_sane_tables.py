@@ -1090,7 +1090,10 @@ def best_effort_reason(phase_name: str, e: "OpEntry") -> str:
         if (e.value, e.index) == status and e.mask == 0xFF:
             return ("cold-start motor completion, observed 1.0-1.9 s (Test 78); "
                     "non-raising like the driver's cold_init because the "
-                    "pre-homing transport state is undefined by design")
+                    "pre-homing transport state is undefined by design -- a "
+                    "timeout is not the gate: cold_init reads reg 0x01 = 0x22 "
+                    "afterwards (gl126.cpp) and fails the session if homing did "
+                    "not reach idle-homed, before any load")
         if e.index == 0x3522 or e.index == 0x3222:
             return ("round-closing settle read of reg 0x%02x; reg 0x32 cannot "
                     "reach its target here (the round's own last write clears "
@@ -1105,8 +1108,9 @@ def best_effort_reason(phase_name: str, e: "OpEntry") -> str:
                 "are the strict PollMasked ops, fail-closed")
     if key[0] == "eject" and (e.value, e.index) == status:
         return ("eject completion loop, the driver's _eject_body: non-raising, "
-                "the end state is what the following register reads show "
-                "(0xe8 on Tests 75-77)")
+                "checked against the eject-done state a successful eject never "
+                "re-enters (0xe8 on Tests 75-77); terminal -- only motor-off "
+                "follows, and the next session's start-state check is the gate")
     raise ValueError(f"PollBestEffort site without a documented reason: {key}")
 
 
