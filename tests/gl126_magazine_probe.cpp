@@ -13,8 +13,10 @@
    The test scanner interface answers every control IN with zeroes and
    discards every control OUT, so any program that reaches the wire stops
    at its first unacknowledged register write ("register write not
-   acknowledged"). That is itself the observation for the paths that are
-   SUPPOSED to reach the wire: a refusal never gets that far, and its
+   acknowledged") -- or, for the cold-start program, which has no ack
+   reads, at its first fail-closed motor completion (a status word that
+   never reads 0xf8). That is itself the observation for the paths that
+   are SUPPOSED to reach the wire: a refusal never gets that far, and its
    message says so.
 
    Usage:
@@ -245,11 +247,13 @@ int cmd_scenario(int argc, char** argv)
     const std::string scenario = argv[2];
 
     if (scenario == "release-usb-failure") {
-        // After the COLD-START program, which is the one magazine program
-        // that runs to completion against the test interface (it carries
-        // no ack reads), so the injection really does land after nine
-        // motor moves' worth of writes.
-        g_throw_at = "gl126_magazine_after_cold_init";
+        // At the moment the fail guard is armed, before the first
+        // program. (Until 2026-09-15 this sat after the cold-start
+        // program, which then ran to completion against the test
+        // interface because its motor completions were best-effort; now
+        // they are fail-closed and the zero-answering interface never
+        // gets past the first one -- see "release-cold".)
+        g_throw_at = "gl126_magazine_armed";
     } else if (scenario == "eject-usb-failure") {
         g_throw_at = "gl126_magazine_after_eject";
     }

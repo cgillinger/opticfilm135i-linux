@@ -391,7 +391,11 @@ def vendor_like_load_status(fake: FakeUsbDevice, after_traverse: int = 0xDC,
 
     def high(f):
         if f.pulses <= n0:
-            return 0xE8
+            # Before the flow: the cold start's own nine moves, each of
+            # which the driver now waits for STRICTLY at 0xf855 -- what
+            # every logged cold start reads after each move (Test 78:
+            # busy 0xd9 -> done 0xf8 in 1.0-1.9 s, nine of nine).
+            return 0xF8
         if f.pulses <= n0 + n_jog:
             return jog_value
         if f.pulses == n0 + n_jog + 1:
@@ -700,6 +704,68 @@ def test_cold_state_permits_only_the_cold_init_path():
         expect(OperationNotAllowedError, scanner.cold_init)
     assert fake.out_count == 0
     print("test_cold_state_permits_only_the_cold_init_path OK")
+
+
+def test_cold_init_motor_completion_timeout_fails_closed():
+    """Offline 2026-09-15 (review): the cold start's nine motor
+    completions are the only thing between one motor start and the next,
+    and they used to be best-effort -- a timeout was logged and the NEXT
+    move was started on an engine not known to be done, up to eight more
+    before the closing reg 0x01 = 0x22 check. Now each completion is
+    strict: the first move whose status word never reaches 0xf855 ends
+    the cold start with nothing further written, the session FAILED and
+    a power cycle required.
+
+    Pinned at the FIRST move of round 1 and at a move in round 2 (after
+    the round boundary's table rewrite), with the fake answering the busy
+    value Test 78 recorded (0xd9). The opening ready poll still sees the
+    power-on 0x48 and still times out and continues, as on hardware."""
+    for label, fail_at in (("first move", 1), ("round 2, move 1", 4)):
+        fake = FakeUsbDevice(reg01=0x00)
+
+        def high(f, fail_at=fail_at):
+            if f.pulses == 0:
+                return 0x48            # power-on: not in the done class (Test 77/78)
+            if f.pulses >= fail_at:
+                return 0xD9            # busy, and it stays busy
+            return 0xF8
+        fake.status_high = high
+        scanner = make_scanner(fake)
+        with fast_time():
+            e = expect(safety.StrictPollTimeoutError, scanner.initialize)
+        # Exactly `fail_at` execute pulses: the failing move was started,
+        # no later one.
+        assert fake.pulses == fail_at, (label, fake.pulses)
+        # The last thing on the wire is the failing move's own execute
+        # pulse; after it only the status-word reads of the wait.
+        assert fake.out_log[-1]["data"] == bytes([0x0F, 0x01]), (label, fake.out_log[-1])
+        n = fake.out_count
+        assert "did not complete" in str(e) and "d955" in str(e), str(e)
+        assert "cold_init:homing-" in str(e), str(e)
+        assert "no further motor move is started" in str(e), str(e)
+        assert "new observation" in str(e), str(e)
+        _assert_power_cycle_message(str(e))
+        assert e.last.hex() == "d955" and e.want.hex() == "f855", (e.last, e.want)
+        assert scanner.session.state is SessionState.FAILED, scanner.session.state
+        assert not scanner.session.cold_init_done
+        # Terminal: nothing further, whatever is asked for.
+        with fast_time():
+            expect(SessionFailedError, scanner.initialize)
+            expect(SessionFailedError, scanner.eject)
+            expect(SessionFailedError, scanner.cold_init)
+        assert fake.out_count == n, (label, fake.out_count, n)
+
+    # Contrast: the same fake with every completion at 0xf8 (Test 78's
+    # signature, opening poll static at 0x48) runs all nine moves and
+    # arms -- the best-effort ready poll's timeout is still not the gate.
+    fake = FakeUsbDevice(reg01=0x00)
+    fake.status_high = lambda f: 0x48 if f.pulses == 0 else 0xF8
+    scanner = make_scanner(fake)
+    with fast_time():
+        scanner.initialize()
+    assert fake.pulses == 9 and scanner.session.cold_init_done, fake.pulses
+    print("test_cold_init_motor_completion_timeout_fails_closed OK "
+          "(stops at move 1 and at move 4; 0x48 opening poll still continues)")
 
 
 def test_cold_init_post_verification_fails_closed():
@@ -2557,6 +2623,7 @@ def main() -> int:
         test_scan_requires_initialize_before_every_frame,
         test_batch_is_one_session_and_transient_states_are_tolerated,
         test_cold_state_permits_only_the_cold_init_path,
+        test_cold_init_motor_completion_timeout_fails_closed,
         test_cold_init_post_verification_fails_closed,
         test_fault_before_first_write,
         test_fault_after_first_register_write,

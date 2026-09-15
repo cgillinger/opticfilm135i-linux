@@ -184,8 +184,9 @@ struct RunPolicy {
         (0 = no bound). It can only ever SHORTEN a wait, never lengthen
         one, and it exists for offline runs against a mock that never
         answers: the magazine flow's cold start carries the driver's own
-        15 s and 30 s budgets, which a test would otherwise spend in real
-        wall-clock time at every one of its nineteen best-effort sites.
+        1.5 s and 30 s budgets, which a test would otherwise spend in real
+        wall-clock time at every one of its nineteen poll sites (ten
+        best-effort, nine fail-closed motor completions).
         gl126.cpp sets it from $OF135I_SANE_POLL_CAP_MS. */
     unsigned max_poll_timeout_ms = 0;
 };
@@ -245,9 +246,16 @@ struct RunPolicy {
                        ..., 2); (reply[0] & op.mask) == op.want -> done,
                        recorded; on timeout ALSO done and recorded, with
                        no throw -- the driver's own non-raising polls
-                       (usbio.poll_status_word, _eject_body's completion
-                       loop, device.py _poll_one's non-strict path).
-                       Budget: the op's own, else policy.poll_timeout_ms.
+                       (usbio.poll_status_word's default form at the cold
+                       start's ready and settle sites, _eject_body's
+                       completion loop, device.py _poll_one's non-strict
+                       path). NEVER a motor completion: every wait that
+                       separates one motor start from the next is a
+                       PollMasked (the cold start's nine, JOG's four,
+                       LOAD's two), because continuing past an unfinished
+                       move would start the next one on an engine not
+                       known to be done. Budget: the op's own, else
+                       policy.poll_timeout_ms.
       ReadModifyWrite -> read register (op.index >> 8) via
                        control_read(op.request, op.value, op.index, ...,
                        2), UNLESS the immediately preceding op is a

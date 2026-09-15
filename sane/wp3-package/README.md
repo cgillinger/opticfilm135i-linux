@@ -5,6 +5,15 @@ issue, mail or contact with the SANE project or anyone else, and nothing
 here initiates one. This directory holds the five-commit series in two
 forms that recreate it without manual reconstruction.
 
+**Superseded in one respect (2026-09-15, after this export):** the
+repository's `sane/` now runs the cold-start program's nine motor
+completions as `PollMasked` (fail-closed) instead of `PollBestEffort`,
+and carries a `gl126_magazine_armed` test checkpoint; this series still
+has the earlier form. It must be refreshed from the current `sane/` and
+re-exported before any submission (`docs/sane-wp3-submission.md` §7,
+item 5). Left as exported so the revisions below stay true of the files
+here.
+
 ## What is in here
 
 | file | what |

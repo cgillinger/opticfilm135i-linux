@@ -767,8 +767,8 @@ RunPolicy magazine_policy(Genesys_Device* dev)
     /* $OF135I_SANE_POLL_CAP_MS caps every poll site's wait, and is read
        ONLY when the wire is a mock -- the backend's test mode, where the
        device answers nothing and the cold-start program would otherwise
-       spend the driver's real 15 s and 30 s budgets at nineteen
-       best-effort sites.
+       spend the driver's real 1.5 s and 30 s budgets at nineteen poll
+       sites (ten best-effort, nine fail-closed motor completions).
 
        Gated on the interface, not on the environment: a shorter wait is
        NOT automatically a safer one. A best-effort poll that gives up
@@ -890,6 +890,15 @@ void magazine_release_impl(Genesys_Device* dev)
     // than success fails the session and invalidates a pending load.
     MagazineFailGuard guard(dev);
     guard.arm();
+    /* genesys's own injection point (a no-op on the USB interface, a
+       callback in test mode), placed at the first moment the guard is
+       armed. The offline test throws a NON-OpsError exception here to
+       prove that ANY way out after arming fails the session and drops a
+       pending load -- the hole Astra's 2026-09-13 review found. (It used
+       to sit after the cold-start program; since that program's motor
+       completions are fail-closed, the zero-answering test interface
+       never gets past its first one, so the injection moved up.) */
+    dev->interface->test_checkpoint("gl126_magazine_armed");
 
     if (reg01 == 0x00) {
         DBG(DBG_info, "gl126: reg 0x01 = 0x00 (cold, never homed) -- running the "
@@ -909,12 +918,9 @@ void magazine_release_impl(Genesys_Device* dev)
 
     RunResult open_result;
     run_magazine_program(dev, "open", open_result);
-    /* genesys's own injection point (a no-op on the USB interface, a
-       callback in test mode). Placed where writes have certainly
-       happened and the sequence is not finished, so an offline test can
-       throw a NON-OpsError exception exactly there and prove the guard
-       above fails the session and drops a pending load -- the hole
-       Astra's 2026-09-13 review found. */
+    /* A second injection point, after the device-open program: reached
+       on hardware, not on the zero-answering test interface (OPEN stops
+       at its first unacknowledged write there). */
     dev->interface->test_checkpoint("gl126_magazine_after_open");
 
     RunResult jog_result;

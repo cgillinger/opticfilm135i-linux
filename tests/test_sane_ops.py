@@ -2395,9 +2395,11 @@ def test_eject_program_matches_the_driver():
 def test_poll_best_effort_continues_on_timeout():
     """A PollBestEffort that never settles does NOT fail the program: it
     is recorded and the next op runs. This is what keeps a cold start
-    with a latched magazine -- a status-word timeout every time (Tests
-    45/51) -- a supported operation rather than a failed session, which
-    is exactly Christian's standing requirement."""
+    with a latched magazine -- its OPENING ready poll times out every
+    time (Tests 45/51/77) -- a supported operation rather than a failed
+    session, which is exactly Christian's standing requirement. (The
+    motor completions are not of this kind; see
+    test_cold_init_motor_completion_timeout_is_fatal.)"""
     probe = _build_probe()
     if probe is None:
         print("test_poll_best_effort_continues_on_timeout SKIPPED (no g++)")
@@ -2429,6 +2431,83 @@ def test_poll_best_effort_continues_on_timeout():
           f"({len(polls)} polls, then the program continued)")
 
 
+def test_cold_init_motor_completion_timeout_is_fatal():
+    """Offline 2026-09-15 (review): the cold-start program's nine motor
+    completions are PollMasked, fail-closed. Each is the only wait between
+    one motor start and the next; as PollBestEffort (until this change) a
+    timeout was recorded and the NEXT move started -- up to eight more
+    before the hook's closing reg 0x01 = 0x22 check -- on an engine not
+    known to be done. Pinned at the first completion of round 1 and at
+    the first of round 2, fed the busy value Test 78 recorded (0xd9); the
+    program must stop there with nothing further sent, and in particular
+    no further execute pulse. The best-effort waits around them (the
+    opening ready poll at the power-on 0x48, the reg 0x32 settle at 0x1d)
+    still continue, as on hardware."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_cold_init_motor_completion_timeout_is_fatal SKIPPED (no g++)")
+        return "skipped"
+
+    # Op indices from the generator's own program (program_info carries
+    # kinds only), cross-checked against what the built table says.
+    sys.path.insert(0, str(REPO / "tools"))
+    import gen_sane_tables as gen
+    prog = gen.build_cold_init_program()
+    info = _probe_program_info(probe, "magazine", "cold_init")
+    assert [e.kind for e in prog] == [e["kind"] for e in info]
+    masked = [i for i, e in enumerate(prog) if e.kind == "PollMasked"]
+    assert len(masked) == 9, masked
+    execs = [i for i, e in enumerate(prog)
+             if e.kind == "Write" and e.data == bytes([0x0F, 0x01])]
+    assert len(execs) == 9, execs
+    # Each completion directly follows its own execute pulse.
+    assert all(m == x + 1 for m, x in zip(masked, execs)), (masked, execs)
+
+    for occurrence in (0, 3):
+        rc, out, err = _run_probe_program(probe, "magazine", "cold_init",
+                                          [f"masked_poll_at {occurrence} d955",
+                                           "best_effort_at 0 4855"])
+        assert rc == 1, (occurrence, out, err)
+        fail = _lines(out)[-1]
+        op = masked[occurrence]
+        assert fail.startswith(f"FAIL PollTimeout op={op} "), (occurrence, fail)
+        transfers = _parse_probe_transfers(out)
+        pulses = [t for t in transfers if t[0] == "W" and t[2] == 0x0083
+                  and t[4] == bytes([0x0F, 0x01])]
+        assert len(pulses) == occurrence + 1, (occurrence, len(pulses))
+        # After the failing move's execute pulse only its own status-word
+        # reads are on the wire -- no write, no bulk, no next move.
+        last_pulse = max(i for i, t in enumerate(transfers) if t in pulses)
+        tail = transfers[last_pulse + 1:]
+        assert tail and all(t[0] == "R" and t[2] == 0x018E and t[3] == 0x0122
+                            for t in tail), tail[:3]
+        assert len(tail) > 10, len(tail)   # it polled its budget out, not one read
+
+    # Control: every completion settling (the probe's default, 0xf8) with
+    # the opening ready poll static at 0x48 and every reg 0x32 settle at
+    # 0x1d -- Test 78's signature -- runs the whole program.
+    script = ["best_effort_at 0 4855"]
+    be = [i for i, e in enumerate(prog) if e.kind == "PollBestEffort"]
+    for occ, i in enumerate(be):
+        if prog[i].index == 0x3222:
+            script.append(f"best_effort_at {occ} 1d55")
+    assert len(script) == 4, script      # opening poll + three settles
+    rc, out, err = _run_probe_program(probe, "magazine", "cold_init", script)
+    assert rc == 0, (out, err)
+    assert _lines(out)[-1].startswith("DONE"), out
+    transfers = _parse_probe_transfers(out)
+    pulses = [t for t in transfers if t[0] == "W" and t[2] == 0x0083
+              and t[4] == bytes([0x0F, 0x01])]
+    assert len(pulses) == 9, len(pulses)
+    print("test_cold_init_motor_completion_timeout_is_fatal OK "
+          f"(stops at op {masked[0]} and op {masked[3]}; 9/9 moves when they settle)")
+
+
+def gen_sane_tables_cold_move_timeout_ms() -> float:
+    from of135i import device as _device
+    return _device.COLD_MOVE_TIMEOUT * 1000
+
+
 def test_magazine_programs_are_structurally_sound():
     """Structural checks on all five, with no run_program() involved:
     every BulkOut carries its payload (the magazine flow injects nothing
@@ -2440,7 +2519,7 @@ def test_magazine_programs_are_structurally_sound():
         print("test_magazine_programs_are_structurally_sound SKIPPED (no g++)")
         return "skipped"
 
-    want_masked = {"jog": 4, "load": 2, "open": 0, "cold_init": 0, "eject": 0}
+    want_masked = {"jog": 4, "load": 2, "open": 0, "cold_init": 9, "eject": 0}
     for name in MAGAZINE_PROGRAMS:
         info = _probe_program_info(probe, "magazine", name)
         kinds = [op["kind"] for op in info]
@@ -2455,10 +2534,19 @@ def test_magazine_programs_are_structurally_sound():
                 assert int(op["dur_ms"]) > 0, (name, op)
         assert kinds.count("PollMasked") == want_masked[name], (name, kinds.count("PollMasked"))
         assert kinds.count("BulkOut") % 2 == 0, name
-        # Every fail-closed completion uses the driver's own mask.
+        # Every fail-closed completion uses the driver's own condition:
+        # LOAD_STATUS_MASK (0xfb) for the captured JOG/LOAD completions;
+        # the cold start's nine compare the whole status byte against
+        # 0xf8 (poll_status_word's 0xf855, strict) with the 30 s budget
+        # the driver's COLD_MOVE_TIMEOUT sets.
         for op in info:
             if op["kind"] == "PollMasked":
-                assert op["mask"] == "fb", (name, op)
+                if name == "cold_init":
+                    assert (op["mask"], op["want"]) == ("ff", "f8"), (name, op)
+                    assert int(op["timeout_ms"]) == round(
+                        gen_sane_tables_cold_move_timeout_ms()), (name, op)
+                else:
+                    assert op["mask"] == "fb", (name, op)
 
     # The load program's two completions, in order and distinguishable:
     # the engaging feed wants the done class with the loader-sensor bit
@@ -2502,9 +2590,10 @@ def test_magazine_programs_are_structurally_sound():
     assert settle_ms <= 500, ("the point was to stop waiting 1.5 s", settle_ms)
 
     # The motor completions are a different, genuine wait (1.0-1.9 s
-    # observed) and must NOT have been shortened with them.
+    # observed) and must NOT have been shortened with them -- and since
+    # 2026-09-15 they are PollMasked, fail-closed.
     moves = [op for op in cold_info
-             if op["kind"] == "PollBestEffort" and op["want"] == "f8"]
+             if op["kind"] == "PollMasked" and op["want"] == "f8"]
     assert len(moves) == 9, ("three homing rounds of three moves", len(moves))
     for op in moves:
         assert int(op["timeout_ms"]) == 30000, op
@@ -2566,6 +2655,7 @@ def main() -> int:
         test_cold_init_program_matches_the_driver,
         test_eject_program_matches_the_driver,
         test_poll_best_effort_continues_on_timeout,
+        test_cold_init_motor_completion_timeout_is_fatal,
         test_magazine_programs_are_structurally_sound,
     ]
     passed = 0

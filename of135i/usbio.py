@@ -283,14 +283,19 @@ class UsbIo:
         return (resp[0] << 8) | resp[1]
 
     def poll_status_word(self, mask: int, value: int, timeout: float = 30.0,
-                          interval: float = 0.02) -> int:
+                          interval: float = 0.02, *, strict: bool = False) -> int:
         """Poll read_status_word() until (word & mask) == value.
 
-        Non-raising, like read_status()/eject()'s own completion poll:
-        logs a warning and returns the last value on timeout rather
-        than raising, so a cold-init call site can continue best-
-        effort through a stuck poll instead of aborting the whole
-        sequence. Returns the last word read either way.
+        By default non-raising, like read_status()/eject()'s own
+        completion poll: logs a warning and returns the last value on
+        timeout rather than raising, so a cold-init ready or settle
+        site can continue best-effort through a stuck poll instead of
+        aborting the whole sequence. With ``strict=True`` a timeout
+        raises safety.StrictPollTimeoutError (``last``/``want`` as
+        2-byte big-endian words) -- the form the cold start's motor
+        completions use, where continuing would start the next motor
+        move on an engine not known to be done. Returns the last word
+        read otherwise.
         """
         import time
 
@@ -298,6 +303,17 @@ class UsbIo:
         last = self.read_status_word()
         while (last & mask) != value:
             if time.monotonic() > deadline:
+                if strict:
+                    log.error(
+                        "poll_status_word timed out after %.1fs: last %#06x, "
+                        "want %#06x (mask %#06x) -- strict, stopping",
+                        timeout, last, value, mask,
+                    )
+                    raise safety.StrictPollTimeoutError(
+                        f"status word did not reach {value:#06x} (mask {mask:#06x}) "
+                        f"within {timeout:.1f}s: last {last:#06x}",
+                        last=(last & 0xFFFF).to_bytes(2, "big"),
+                        want=(value & 0xFFFF).to_bytes(2, "big"))
                 log.warning(
                     "poll_status_word timed out after %.1fs: last %#06x, "
                     "want %#06x (mask %#06x) -- continuing",

@@ -210,6 +210,31 @@ COLD_READY_TIMEOUT = 1.5
 COLD_SETTLE_TIMEOUT = 0.25
 COLD_SETTLE_INTERVAL = 0.05
 
+# _cold_motor_move()'s completion wait: the status word must read
+# 0xf855 (done class, loader sensor bit set, 0x55 ack) after each of the
+# nine loader-profile moves. STRICT since 2026-09-15 -- a timeout raises
+# StrictPollTimeoutError, the cold start stops, nothing further is
+# written, the session is FAILED and a power cycle is the only way on.
+#
+# Why strict, when the ready and settle polls around it are not: this is
+# the only wait that separates one motor start from the next. After a
+# timeout the sequence would otherwise write 0x09/0x0f and start the next
+# move (up to eight more before the closing reg 0x01 = 0x22 check) on an
+# engine whose previous move is not known to have finished. No hardware
+# property makes that safe, and the one time a command was sent on top
+# of a running engine the firmware hung (2026-09-04, power cycle). The
+# lenient form was a replay habit, not evidence: the completions have
+# settled at 0xf855 in 1.0-1.9 s (busy 0xd9 first) in every cold start
+# ever logged, latched magazine or not (docs/test-log.md Tests 45, 51,
+# 77, 78, 79) -- the latched case's "timeout every time" was the OPENING
+# ready poll (still best-effort, see COLD_READY_TIMEOUT) and the reg 0x32
+# settle, never a completion. So the strict form changes no observed
+# run; it changes only what happens in a case never seen. Budget 30 s
+# unchanged (~15x the observed move). The C++ backend's cold-start
+# program takes this budget from here (tools/gen_sane_tables.py) and
+# runs the same nine waits as PollMasked, fail-closed.
+COLD_MOVE_TIMEOUT = 30.0
+
 
 # Masked completion test for the LOAD flow (docs/test-log.md Test 14,
 # docs/load-analysis.md). The status word (reg 0x101 high byte, ack
@@ -1067,13 +1092,21 @@ class Scanner:
         initialize() still runs its normal power-on table write
         afterwards.
 
-        When the sequence completes, reg 0x01 is read again (strictly)
-        and must be 0x22 -- COLD_INIT_PAIRS writes 0x01=0x22 and the
-        idle bit 0x20 sets when the last homing move completes -- for
-        the session to be armed for normal operations. Anything else
-        is a new observation: the session is refused there, no
-        further command is sent, and the operator is asked to power-
-        cycle (and to record the value).
+        Two kinds of wait, deliberately different (docs/test-log.md,
+        "Offline 2026-09-15"): the opening ready poll, the per-round
+        ready poll and the settle check are best-effort -- they log and
+        continue, and on a latched magazine (or, for the opening one, on
+        every cold start) they time out and must not stop the sequence.
+        Each of the NINE motor completions is STRICT: it is the only
+        thing between one motor start and the next, and a timeout there
+        ends the cold start with nothing further written (see
+        COLD_MOVE_TIMEOUT). When the sequence completes, reg 0x01 is
+        read again (strictly) and must be 0x22 -- COLD_INIT_PAIRS
+        writes 0x01=0x22 and the idle bit 0x20 sets when the last
+        homing move completes -- for the session to be armed for normal
+        operations. Anything else is a new observation: the session is
+        refused there, no further command is sent, and the operator is
+        asked to power-cycle (and to record the value).
         """
         # Precondition BEFORE the operation (a refusal here is not a
         # hardware failure): the read-only start check, then COLD-only.
@@ -1167,15 +1200,19 @@ class Scanner:
         for adr, val in tables_base.AFE_BASE_PAIRS:
             self.io.write_regs([(0x51, adr), (0x5D, 0x00), (0x5E, val)])
 
-    def _cold_motor_move(self, feedl: int, full_speed_regs: bool) -> None:
+    def _cold_motor_move(self, feedl: int, full_speed_regs: bool,
+                         label: str = "loader move") -> None:
         """One loader-profile motor move within a cold_init() homing
         round: enable, feed-length + motor params (the full 19-register
         loader speed profile when `full_speed_regs`, otherwise just the
         6 move-specific registers -- COLD_INIT_PAIRS already primed the
         speed profile at the top of the round), the loader slope table
         uploaded to both scanner-RAM addresses (same table _motor_run/
-        eject() use), execute, poll to completion (target 0xf855, per
-        the capture)."""
+        eject() use), execute, then wait for completion (status word
+        0xf855, per the capture) -- STRICTLY: this wait is what stands
+        between this motor start and the next one, so a timeout ends the
+        cold start with nothing further written (see COLD_MOVE_TIMEOUT).
+        `label` names the move in the failure message."""
         self.io.write_regs([(0x09, 0x08)])
         move_regs = [
             (0x02, 0x18), (0xAE, 0x00), (0xAF, 0xFF),
@@ -1188,7 +1225,19 @@ class Scanner:
         for addr in (0x1000C000, 0x10010000):
             self.io.buf_write(addr, tables_base.SLOPE_TABLE_LOADER)
         self.io.write_regs([(0x0F, 0x01)])
-        self.io.poll_status_word(mask=0xFFFF, value=0xF855, timeout=30.0)
+        try:
+            self.io.poll_status_word(mask=0xFFFF, value=0xF855,
+                                     timeout=COLD_MOVE_TIMEOUT, strict=True)
+        except safety.StrictPollTimeoutError as e:
+            raise safety.StrictPollTimeoutError(
+                f"cold_init: {label} (feed 0x{feedl:04x}) did not complete within "
+                f"{COLD_MOVE_TIMEOUT:.0f}s: status word {e.last.hex()}, want f855. "
+                f"The transport state is unknown and the cold start stops here -- no "
+                f"further motor move is started. This is a new observation (every "
+                f"logged cold start completed each move in 1-2 s) -- please record it. "
+                f"{safety.NO_RECOVERY_ATTEMPTED} {safety.POWER_CYCLE_INSTRUCTION}",
+                last=e.last, want=e.want, observed=self.session.start_reg01,
+                session=self.session.snapshot()) from None
 
     def _cold_homing_round(self) -> None:
         """One of cold_init()'s three homing rounds: pre-move sensor/
@@ -1216,7 +1265,8 @@ class Scanner:
         self.io.read_status_word()
 
         # ---- move 1 ----------------------------------------------------
-        self._cold_motor_move(FEEDL_1_2, full_speed_regs=False)
+        self._cold_motor_move(FEEDL_1_2, full_speed_regs=False,
+                              label=f"{self.session.phase} move 1/3 (feed)")
 
         # ---- resync between move 1 and move 2 --------------------------
         self.io.write_regs([(0x09, 0x00)])
@@ -1236,10 +1286,12 @@ class Scanner:
             log.debug("cold_init: resync status word %#06x (want 0xf855)", w)
 
         # ---- move 2 (full speed-profile rewrite) ------------------------
-        self._cold_motor_move(FEEDL_1_2, full_speed_regs=True)
+        self._cold_motor_move(FEEDL_1_2, full_speed_regs=True,
+                              label=f"{self.session.phase} move 2/3 (feed)")
 
         # ---- move 3 ------------------------------------------------------
-        self._cold_motor_move(FEEDL_3, full_speed_regs=False)
+        self._cold_motor_move(FEEDL_3, full_speed_regs=False,
+                              label=f"{self.session.phase} move 3/3 (eject)")
 
         # ---- settle: motor disable, poll 0x35/0x32 until stable ---------
         self.io.write_regs([(0x09, 0x00)])

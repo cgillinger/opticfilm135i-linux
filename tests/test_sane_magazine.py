@@ -26,8 +26,9 @@ It drives the REAL public flow (sane_open -> sane_control_option ->
 sane_start) against the BUILT backend in genesys's test mode, through
 tests/gl126_magazine_probe.cpp. In that mode every control IN reads as
 zeroes, so a program that does reach the wire stops at its first
-unacknowledged register write -- which is exactly the observation for the
-paths that are SUPPOSED to reach it.
+unacknowledged register write (or, for the cold start, at its first
+fail-closed motor completion) -- which is exactly the observation for
+the paths that are SUPPOSED to reach it.
 
 Needs g++, the sane-backends checkout (SANE_BACKENDS_DIR, else a sibling
 `sane-backends/`), and a built backend/.libs/libsane-genesys.so. Skips
@@ -144,7 +145,8 @@ def _run(probe, *args, lock_dir=None):
         env["OF135I_LOCK_FILE"] = str(Path(lock_dir or tmp) / "of135i.lock")
         # The mock never answers a poll, so every best-effort site would
         # otherwise burn its real budget -- the cold-start program alone
-        # carries the driver's 15 s and 30 s waits at nineteen sites. The
+        # carries the driver's 1.5 s and 30 s waits at nineteen poll sites (ten
+        # best-effort, nine fail-closed motor completions). The
         # cap only ever shortens a wait (sane/gl126_ops.h RunPolicy).
         env["OF135I_SANE_POLL_CAP_MS"] = "5"
         r = subprocess.run([probe, *args], capture_output=True, text=True,
@@ -373,24 +375,49 @@ def test_release_from_idle_runs_the_open_and_jog_programs():
           "(reached the wire, failed closed)")
 
 
-def test_release_from_cold_verifies_the_bring_up():
-    """A cold unit is brought up first, and the cold-start sequence is
-    only believed when reg 0x01 reads the idle-homed 0x22 afterwards --
-    exactly as the driver's cold_init() requires. On the mock the
-    register stays 0x00, so the verification fires."""
+def test_release_from_cold_stops_at_the_first_motor_completion():
+    """A cold unit is brought up first -- and the cold-start program's
+    motor completions are fail-closed (offline 2026-09-15): on the test
+    interface the status word never reads the done value 0xf8, so the
+    program must stop at its FIRST motor completion, with the op index
+    the generator says that wait sits at, the session failed and no
+    pending load left behind. The reg 0x01 = 0x22 check after a
+    completed cold start is four lines further down in gl126.cpp and is
+    pinned on the Python driver's identical check
+    (tests/test_safety.py); it cannot be reached on a mock that answers
+    no poll.
+
+    Before 2026-09-15 the same scenario ran all nine moves against the
+    silent mock and only the closing reg 0x01 check refused -- which is
+    precisely the gap: eight motor starts after an unconfirmed one."""
     probe = _build_probe()
     if probe is None:
-        return _skip("test_release_from_cold_verifies_the_bring_up")
+        return _skip("test_release_from_cold_stops_at_the_first_motor_completion")
+
+    sys.path.insert(0, str(REPO / "tools"))
+    import gen_sane_tables
+    prog = gen_sane_tables.build_cold_init_program()
+    masked = [i for i, e in enumerate(prog) if e.kind == "PollMasked"]
+    assert len(masked) == 9, masked
+    first = masked[0]
+    # The first completion follows the first execute pulse (0x0f = 0x01)
+    # and only best-effort waits precede it.
+    execs = [i for i, e in enumerate(prog)
+             if e.kind == "Write" and e.data == bytes([0x0F, 0x01])]
+    assert execs[0] < first < execs[1], (execs[:2], first)
+    assert all(e.kind != "PollMasked" for e in prog[:first])
 
     r = _run(probe, "scenario", "release-cold")
     status, msg = r["statuses"][0]
-    assert status == SANE_STATUS_IO_ERROR, r["statuses"]
-    assert "cold-start sequence completed" in msg, msg
-    assert "not the idle-homed 0x22" in msg, msg
-    assert "new observation" in msg, msg
+    assert status == SANE_STATUS_DEVICE_BUSY, r["statuses"]
+    assert "a motor move did not complete" in msg, msg
+    assert f"cold_init sequence at op {first} " in msg, (first, msg)
+    assert "Nothing further was written" in msg, msg
+    assert "cold-start sequence completed" not in msg, msg
     assert r["text"].startswith("failed"), r["text"]
-    print("test_release_from_cold_verifies_the_bring_up OK "
-          "(cold path taken, verified, refused)")
+    assert r["mark"] == "absent", r["mark"]
+    print("test_release_from_cold_stops_at_the_first_motor_completion OK "
+          f"(PollTimeout at op {first}, the first of nine; failed, no mark)")
 
 
 def test_a_usb_failure_mid_sequence_fails_the_session():
@@ -402,9 +429,11 @@ def test_a_usb_failure_mid_sequence_fails_the_session():
     failure, so the next scan would have driven the loader again.
 
     Injected through genesys's own test checkpoint (a no-op on the USB
-    interface), thrown after the device-open program has written and
-    before the sequence is finished. Whatever the exception, the session
-    must end up failed and any pending load must be gone."""
+    interface): for the release, at the moment the guard is armed (the
+    cold-start program no longer completes on the silent mock, see
+    test_release_from_cold_stops_at_the_first_motor_completion); for the
+    eject, after the eject program has written. Whatever the exception,
+    the session must end up failed and any pending load must be gone."""
     probe = _build_probe()
     if probe is None:
         return _skip("test_a_usb_failure_mid_sequence_fails_the_session")
@@ -660,7 +689,7 @@ def main() -> int:
         test_a_scan_after_eject_is_refused,
         test_release_refuses_an_unknown_start_state,
         test_release_from_idle_runs_the_open_and_jog_programs,
-        test_release_from_cold_verifies_the_bring_up,
+        test_release_from_cold_stops_at_the_first_motor_completion,
         test_a_failed_sequence_is_terminal,
         test_a_usb_failure_mid_sequence_fails_the_session,
         test_an_impossible_scan_request_never_moves_the_magazine,

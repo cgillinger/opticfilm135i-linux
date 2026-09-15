@@ -384,7 +384,7 @@ struct Script {
     std::map<std::size_t, std::vector<std::array<std::uint8_t, 2>>> masked_poll_at;
     std::map<std::size_t, std::uint8_t> rmw_read_at;
     // docs/sane-wp4-magazine.md section 3: the magazine programs carry
-    // many PollBestEffort sites (19 in cold_init alone), so these are
+    // many PollBestEffort sites (10 in cold_init alone, next to its nine PollMasked completions), so these are
     // occurrence-indexed like the PollMasked ones.
     std::map<std::size_t, std::vector<std::array<std::uint8_t, 2>>> best_effort_at;
 };

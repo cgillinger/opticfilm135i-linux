@@ -201,13 +201,17 @@ programs never needed:
   magazine programs carry `Sleep` ops; the scan programs are
   unchanged.
 - **`PollBestEffort`** — a poll that logs and continues on timeout,
-  with its own per-op budget. The Python cold start (`poll_status_word`)
-  and eject (`_eject_body`'s completion loop) are *non-raising* by
-  design: with a latched magazine the cold start shows a status-word
-  timeout every time (Tests 45/51) and still completes, and a strict
-  poll there would refuse exactly the case the standing requirement is
-  about. `PollMasked` (fail-closed) stays for the motor completions the
-  driver runs strictly.
+  with its own per-op budget. The Python cold start's ready and settle
+  reads (`poll_status_word`'s default form) and the eject
+  (`_eject_body`'s completion loop) are *non-raising* by design: the
+  cold start's opening ready poll times out on every cold start (Test
+  78 — the engine is not yet in the class it waits for), a latched
+  magazine (Tests 45/51/77) adds nothing to that, and a strict poll
+  there would refuse exactly the case the standing requirement is
+  about. `PollMasked` (fail-closed) is used for every motor completion:
+  the cold start's nine (since 2026-09-15, see the offline entry of
+  that date in the test log — a completion is the only wait between one
+  motor start and the next), JOG's four and LOAD's two.
 
 ### 3.1 `cold_init` (hand-built, like `park`)
 
@@ -217,7 +221,8 @@ table + end-of-access + AFE bring-up (125 pairs in 4 batches, the
 EEPROM reads as logged reads of 3 and 19 bytes), the reg 0x31
 read-modify-write pair, then three homing rounds (feed 6690 / feed
 6690 / eject 3090 with the loader slope table to both RAM addresses,
-each completion polled for 0xf8 best-effort with a 30 s budget) with
+each completion polled for 0xf8 FAIL-CLOSED with the driver's 30 s
+budget — `PollMasked`, since 2026-09-15) with
 the table + AFE rewritten between rounds, and the settle poll on regs
 0x35/0x32. 9 motor moves. Deviations from the Python, all in the
 non-gating direction and listed in `build_cold_init_program()`'s
@@ -355,7 +360,10 @@ Marks cleared → Ejected.
    register value on both sides so the computed write payloads agree.
 2. **The new op kinds:** `Sleep` advances the fake clock and sends
    nothing; `PollBestEffort` settles, or times out and continues with
-   the next op (recorded), never throws.
+   the next op (recorded), never throws. The cold start's nine motor
+   completions are `PollMasked`: fed a busy value that never clears,
+   the program stops at that op with no further transfer and no next
+   execute pulse (pinned at the first move and at round 2's first).
 3. **No captured chunk is emitted twice / none missing** — the
    structural `program_info` check on the five programs (slope-table
    BulkOuts carry their data; there are no injections).
@@ -435,10 +443,12 @@ tools, as always. `docs/sane-wp4-hardware-plan.md`.
 4. **The load flow keeps the replayer's pacing (`Sleep` ops)**; hook
    5's "poll from t = 0" was a choice for a rewritten PARK, not a
    rule. The scan programs are untouched.
-5. **Cold start and eject polls are best-effort, as in the driver**
-   (`PollBestEffort`); JOG/LOAD motor completions are fail-closed
-   under the driver's mask. Cold start's completion is verified by
-   reg 0x01 = 0x22 afterwards, as in the driver.
+5. **Cold start ready/settle polls and the eject poll are best-effort,
+   as in the driver** (`PollBestEffort`); every motor completion —
+   the cold start's nine (revised 2026-09-15, both implementations),
+   JOG's four, LOAD's two — is fail-closed. Cold start's completion is
+   additionally verified by reg 0x01 = 0x22 afterwards, as in the
+   driver.
 6. **Eject is never run from cold** (Python's `eject()` does
    `cold_init` first; the SANE flow sends the operator to Load film
    instead, whose jog is the vendor's own release). One less motor

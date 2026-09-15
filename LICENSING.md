@@ -13,7 +13,7 @@ Copyright (c) 2026 Christian Gillinger.
 
 SPDX identifiers used: `GPL-2.0-or-later`, `MIT`, `CC-BY-4.0`.
 
-## For a proprietary product (for example VueScan)
+## For a proprietary scanning application
 
 The documentation (CC BY 4.0) and the protocol facts are usable directly, and
 the standalone driver code may be used under MIT — in both cases with credit to

@@ -587,7 +587,9 @@ def validate_op_program(phase_name: str, entries: list[OpEntry]) -> None:
             raise ValueError(
                 f"{phase_name}: BulkOut op(s) {missing} carry no payload; the "
                 f"magazine flow injects nothing")
-        want_masked = {"jog": 4, "load": 2}.get(phase_name, 0)
+        # cold_init: its nine motor completions (three rounds of three),
+        # fail-closed since 2026-09-15; jog: four; load: feed + traverse.
+        want_masked = {"jog": 4, "load": 2, "cold_init": 9}.get(phase_name, 0)
         n_masked = count("PollMasked")
         if n_masked != want_masked:
             raise ValueError(
@@ -838,7 +840,14 @@ _REG_WRITE_CHUNK = 64     # usbio._WRITE_CHUNK: 64 B = 32 (reg, val) pairs
 #: 1.5 s on 2026-09-13 after Test 77 measured the opening one as dead time
 #: (see the driver's own comment for the evidence).
 _COLD_READY_TIMEOUT_MS = round(_device.COLD_READY_TIMEOUT * 1000)
-_COLD_MOVE_TIMEOUT_MS = 30000
+#: Each of the nine cold-start motor completions. Taken FROM the driver
+#: (device.COLD_MOVE_TIMEOUT, 30 s) for the same no-drift reason. These
+#: nine waits are PollMasked -- fail-closed -- since 2026-09-15: a
+#: completion is the only thing between one motor start and the next,
+#: and a best-effort one would have let the next move start on an engine
+#: not known to be done (the driver's own comment on that constant has
+#: the evidence; docs/test-log.md "Offline 2026-09-15").
+_COLD_MOVE_TIMEOUT_MS = round(_device.COLD_MOVE_TIMEOUT * 1000)
 #: _cold_homing_round's closing settle check. Taken FROM the driver
 #: (device.COLD_SETTLE_TIMEOUT) so the two implementations cannot drift;
 #: shortened from 1.5 s on 2026-09-13 -- see the driver's comment for why
@@ -885,6 +894,12 @@ def _rmw(entries: list[OpEntry], reg: int, and_mask: int, or_mask: int) -> None:
 def _poll_best_effort(entries: list[OpEntry], value: int, index: int,
                       mask: int, want: int, timeout_ms: int) -> None:
     entries.append(OpEntry("PollBestEffort", REQ_WRITE, value, index, b"", 2, 0,
+                           mask=mask, want=want, timeout_ms=timeout_ms))
+
+
+def _poll_masked(entries: list[OpEntry], value: int, index: int,
+                 mask: int, want: int, timeout_ms: int) -> None:
+    entries.append(OpEntry("PollMasked", REQ_WRITE, value, index, b"", 2, 0,
                            mask=mask, want=want, timeout_ms=timeout_ms))
 
 
@@ -939,12 +954,15 @@ def _cold_motor_move(entries: list[OpEntry], feedl: int, full_speed_regs: bool) 
     for addr in (0x1000C000, 0x10010000):
         _buf_write(entries, addr, tables_base.SLOPE_TABLE_LOADER)
     _write_regs(entries, [(0x0F, 0x01)])
-    # poll_status_word(mask=0xffff, value=0xf855): the driver compares the
-    # whole word; PollBestEffort compares the status byte, so the constant
-    # 0x55 ack is not re-checked here (a strictly more permissive rule, and
-    # the ack byte is checked by read_reg()'s own handling everywhere else).
-    _poll_best_effort(entries, WV_EXT_STATUS, WI_DATAENB, 0xFF, 0xF8,
-                      _COLD_MOVE_TIMEOUT_MS)
+    # poll_status_word(mask=0xffff, value=0xf855, strict=True): the driver
+    # compares the whole word; PollMasked compares the status byte, so the
+    # constant 0x55 ack is not re-checked here (a strictly more permissive
+    # rule, and the ack byte is checked by read_reg()'s own handling
+    # everywhere else). FAIL-CLOSED like the driver: a timeout throws
+    # OpsError{PollTimeout}, nothing further is sent, and in particular
+    # the next motor move is never started (see _COLD_MOVE_TIMEOUT_MS).
+    _poll_masked(entries, WV_EXT_STATUS, WI_DATAENB, 0xFF, 0xF8,
+                 _COLD_MOVE_TIMEOUT_MS)
 
 
 def _cold_homing_round(entries: list[OpEntry]) -> None:
@@ -1002,12 +1020,26 @@ def build_cold_init_program() -> list[OpEntry]:
         replies nothing consumes -- exactly what the driver does with
         them (it logs them and moves on).
 
-    Every poll here is best-effort, as in the driver: a cold start with a
-    LATCHED magazine shows a status-word timeout every time (Tests 45,
-    51) and still completes, and the standing requirement is precisely
-    that this case stay supported. What makes the sequence verified is
-    the reg 0x01 = 0x22 read the hook does afterwards, as cold_init()
-    does."""
+    Two kinds of wait, as in the driver since 2026-09-15:
+
+      * the opening ready poll, the per-round ready polls and the settle
+        checks are best-effort. A cold start with a LATCHED magazine
+        shows a status-word timeout every time at the OPENING poll (Tests
+        45, 51, 77 -- and Test 78 showed it is dead time on every cold
+        start), and the reg 0x32 settle never reaches its value (Test
+        79); both must not stop the sequence, since the latched case is
+        a supported operation;
+      * the NINE motor completions are PollMasked, fail-closed. Each is
+        the only wait between one motor start and the next; a timeout
+        there ends the program with nothing further sent, exactly as the
+        driver's strict poll_status_word does. No logged cold start has
+        ever timed out at one (they settle at 0xf8 in 1.0-1.9 s, latched
+        or not), so this changes no observed run -- only the never-seen
+        case, where continuing would have started up to eight more moves
+        on an engine not known to be done.
+
+    The reg 0x01 = 0x22 read the hook does afterwards, as cold_init()
+    does, remains the closing check -- it is no longer the only one."""
     entries: list[OpEntry] = []
 
     # 1: GL chip handshake.
@@ -1087,13 +1119,9 @@ def best_effort_reason(phase_name: str, e: "OpEntry") -> str:
                     "engine is not in the done class, so the opening one "
                     "cannot settle (Test 77); the per-round ones settle on "
                     "the first read; the driver's cold_init continues either way")
-        if (e.value, e.index) == status and e.mask == 0xFF:
-            return ("cold-start motor completion, observed 1.0-1.9 s (Test 78); "
-                    "non-raising like the driver's cold_init because the "
-                    "pre-homing transport state is undefined by design -- a "
-                    "timeout is not the gate: cold_init reads reg 0x01 = 0x22 "
-                    "afterwards (gl126.cpp) and fails the session if homing did "
-                    "not reach idle-homed, before any load")
+        # (No entry for the motor completions, mask 0xff / want 0xf8: they
+        # are PollMasked since 2026-09-15 and never reach this function; a
+        # best-effort one would fall through to the ValueError below.)
         if e.index == 0x3522 or e.index == 0x3222:
             return ("round-closing settle read of reg 0x%02x; reg 0x32 cannot "
                     "reach its target here (the round's own last write clears "
@@ -1154,6 +1182,9 @@ def emit_op_program(key: str, phase_name: str, entries: list[OpEntry],
             # engineering to see the difference between a motor-completion
             # wait (PollMasked, fail-closed) and one of these.
             line += f"  // best-effort: {best_effort_reason(phase_name, e)}"
+        elif e.kind == "PollMasked" and phase_name.lower() in _MAGAZINE_PROGRAM_NAMES:
+            line += ("  // fail-closed motor completion: a timeout ends the "
+                     "sequence, nothing further sent")
         c.append(line)
     c.append("};\n")
 

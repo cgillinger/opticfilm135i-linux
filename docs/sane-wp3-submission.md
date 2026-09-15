@@ -191,24 +191,37 @@ Earlier work covering the profiles, geometry and image path is in
 > hardware has a documented history of stalling when driven from an
 > undefined state.
 >
-> The waits inside the vendor's power-on sequence and the eject are
-> best-effort: a timeout is recorded and the sequence continues, mirroring
-> the companion driver's own non-raising status reads. This is not a
-> relaxation of the rule above but a consequence of it. A cold start with
-> a latched magazine times out on those polls every single time and must
-> still complete — that is a required, supported operation — and the eject
-> completion is deliberately checked against the eject-done state rather
-> than full idle, which a successful eject never re-enters. What makes
-> these safe is that they are not the gate. The gates are downstream and
-> hard: after the power-on sequence the backend reads reg 0x01 and fails
-> the session unless it is the idle-homed 0x22, so a homing move that did
-> not finish is caught before anything else runs; before the load it
-> re-reads reg 0x01, the loader sensor and the base-table registers and
-> refuses unless the unit is idle-homed with the magazine present; and
-> every session opens with the same start-state check. So a best-effort
-> timeout never reaches a film-bearing move — it leaves the transport in a
-> state the next start-state check evaluates, and the recovery is a power
-> cycle, never an automatic retry.
+> The nine motor completions inside the vendor's power-on sequence fail
+> closed as well (since 2026-09-15; the companion driver's own wait there
+> is strict too). Each is the only wait between one motor start and the
+> next, and a timeout that continued would start the following move — up
+> to eight of them before the closing check — on an engine not known to
+> have finished; nothing about this hardware makes that safe, and the one
+> recorded command sent on top of a running engine hung the firmware.
+> Every logged cold start, with the magazine latched or loose, has
+> completed each of the nine moves in 1.0–1.9 s, so this rule changes no
+> observed run — only the never-observed one.
+>
+> The remaining waits inside the power-on sequence — its opening ready
+> poll, the per-round ready polls and the settle reads — and the eject
+> completion are best-effort: a timeout is recorded and the sequence
+> continues, mirroring the companion driver's own non-raising status
+> reads. This is not a relaxation of the rule above but a consequence of
+> it. The opening ready poll times out on every cold start (at power-on
+> the engine is not yet in the class it waits for), a latched magazine
+> adds nothing to that, and the sequence must still complete — that is a
+> required, supported operation. The eject completion is deliberately
+> checked against the eject-done state rather than full idle, which a
+> successful eject never re-enters. What makes these safe is that none of
+> them separates one motor start from the next, and that the gates are
+> downstream and hard: after the power-on sequence the backend reads
+> reg 0x01 and fails the session unless it is the idle-homed 0x22; before
+> the load it re-reads reg 0x01, the loader sensor and the base-table
+> registers and refuses unless the unit is idle-homed with the magazine
+> present; and every session opens with the same start-state check. So a
+> best-effort timeout never reaches a film-bearing move — it leaves the
+> transport in a state the next check evaluates, and the recovery is a
+> power cycle, never an automatic retry.
 >
 > Testing: one unit, over an extended bring-up. Every resolution the
 > vendor's captures cover, plus the infrared pass, has been scanned
@@ -294,14 +307,18 @@ functions, and nothing can without that hardware: for the gated hunks the
 argument is the gate itself, for the `Extract` fix it is the analysis
 above. That is the honest extent of the regression evidence.
 
-**Best-effort waits, at the site.** The generated tables now carry a
+**Best-effort waits, at the site.** The generated tables carry a
 trailing comment on every `PollBestEffort` op saying why that wait may
-time out and continue (22 sites: the cold start's ready and settle polls,
-its motor completions, the device-open status read, one lenient reg 0x32
-read in LOAD, and the eject completion loop). Motor completions in JOG
-and LOAD are `PollMasked` and fail closed. `gl126_ops.h` documents the
-kinds; `tools/gen_sane_tables.py` refuses to emit a best-effort site it
-has no reason for.
+time out and continue (13 sites: the cold start's opening ready poll,
+its per-round ready polls and settle reads, the device-open status
+read, one lenient reg 0x32 read in LOAD, and the eject completion loop).
+Every motor completion — the cold start's nine, JOG's four, LOAD's two —
+is `PollMasked` and fails closed, and each of those sites is marked so
+too. `gl126_ops.h` documents the kinds; `tools/gen_sane_tables.py`
+refuses to emit a best-effort site it has no reason for. (Until
+2026-09-15 the cold start's nine completions were best-effort as well,
+22 sites in all; the exported package in `sane/wp3-package/` still
+carries that form — see §7.)
 
 ## 7. What remains before anything could be submitted
 
@@ -343,6 +360,14 @@ Listed so the decision is informed, not to schedule it.
    `ImagePipelineNodeExtract` fix into its own first commit; rebuilt
    standalone (0 warnings, 107 gl126 symbols), the three backend suites
    pass against it, and it is re-exported to `sane/wp3-package/`.
+5. **The exported package predates the cold-start change of
+   2026-09-15.** The repository's `sane/` now runs the cold start's nine
+   motor completions as `PollMasked` (fail-closed) and carries the new
+   `gl126_magazine_armed` test checkpoint; the series in
+   `sane/wp3-package/` (tip tree `65a7b8bd…`) still has them best-effort.
+   Before anything is submitted the series has to be refreshed from the
+   current `sane/` and re-exported — a submission-time step, not done
+   here, since the submission is paused.
 5. **Decide how much of the magazine machinery to offer.** Items 6 and 7
    of §6 are the two most likely to be challenged; the file handling
    behind them is hardened and documented in `gl126_lock.h`.

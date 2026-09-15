@@ -5836,3 +5836,100 @@ the images.
    owner, which led directly to Test 82 the next day. The colour question
    was then parked as outside the driver's scope (2026-09-15); the raw
    data from this run is unchanged and healthy by the measurements above.
+
+## 2026-09-15 — Offline: the cold start's nine motor completions made fail-closed (review of the safety argument)
+
+No hardware. A reviewer (Astra) pointed out that the cold-start safety
+argument — "the reg 0x01 = 0x22 check after the whole sequence catches a
+homing move that did not finish" — explained the *end* of the sequence
+but not the continuation *between* its motor steps: a best-effort
+completion could time out and be followed by further motor starts before
+that check was reached. The failure path was traced in both
+implementations, and the argument turned out to be incomplete in exactly
+that way. It is now closed by code, not by wording.
+
+**The path, as it was.** The cold start (`Scanner._cold_init_body()`,
+`build_cold_init_program()`) runs three homing rounds of three loader
+moves each: enable (0x09 = 0x08), feed length, the loader slope table to
+both RAM addresses, execute (0x0f = 0x01), then a wait for the status
+word 0xf855 with a 30 s budget. That wait was non-raising in the Python
+driver (`poll_status_word`, "log and continue") and `PollBestEffort` in
+the generated SANE program. After a timeout the sequence wrote, in
+order: motor disable, the reg 0x32/0x35 read-modify-writes, a best-effort
+ready poll (class F, 1.5 s — after move 1 only; nothing at all between
+moves 2 and 3, and only the settle reads plus the table rewrite between
+rounds), and then the next move's enable and execute. Up to eight
+further motor starts could follow an unconfirmed one before the closing
+reg 0x01 check. No register condition and no hardware property makes
+starting a move on an engine not known to be done safe; the one recorded
+command sent on top of a running engine hung the firmware (2026-09-04).
+
+**The two kinds of wait, separated.** The polls that *do* time out on a
+successful cold start are the opening ready poll (static 0x48 for its
+whole budget on every cold start, Tests 77/78 — the engine is not in the
+done class until the first homing move has run) and the three reg 0x32
+settle reads (0x1d against a wanted 0x1f, every run, Test 79). Those are
+not motor completions and stay best-effort. The nine motor completions
+themselves have settled at 0xf8 in 1.0–1.9 s (busy 0xd9 first) in every
+cold start ever logged — Tests 45, 51 and 77 with the magazine latched,
+75, 78 and 79 with it loose. The "status-word timeout every time with a
+latched magazine" that the best-effort form was justified by was the
+opening poll, never a completion. So the latched case, the standing
+requirement, does not depend on a lenient completion.
+
+**The change.** Both implementations now fail closed at a motor
+completion, with the same condition and budget as before:
+
+- Python: `poll_status_word(..., strict=True)` at the nine sites raises
+  `StrictPollTimeoutError`; `_cold_motor_move` re-raises it with the
+  move named (`cold_init:homing-N move k/3`), "no further motor move is
+  started", the new-observation request and the power-cycle instruction;
+  the session is FAILED and nothing further is written. Budget
+  `COLD_MOVE_TIMEOUT` = 30 s, unchanged.
+- SANE: the nine sites are `PollMasked` (mask 0xff, want 0xf8, 30 000 ms
+  taken from the driver's constant); a timeout is `OpsError{PollTimeout}`
+  → the magazine hook's "a motor move did not complete ... at op N",
+  `SANE_STATUS_DEVICE_BUSY`, session Failed, pending-load mark cleared.
+  The generated table diff is exactly nine op kinds (22 → 13
+  best-effort sites) plus a fail-closed comment on each motor
+  completion. Every other best-effort site is untouched; no timing
+  changed; no new register condition.
+
+**Verified offline.**
+
+- Python (`tests/test_safety.py`,
+  `test_cold_init_motor_completion_timeout_fails_closed`): the fake
+  answers 0x48 before the first pulse and 0xd9 from a chosen move on.
+  Failing at move 1: exactly one execute pulse, the last OUT transfer is
+  that pulse, then only status-word reads; failing at round 2 move 1
+  (after the round boundary's table rewrite): exactly four pulses. Both
+  end FAILED, further `initialize()`/`eject()`/`cold_init()` refused
+  with zero transfers. Control: 0x48 opening poll + 0xf8 completions →
+  nine pulses, armed.
+- SANE op runner (`tests/test_sane_ops.py`,
+  `test_cold_init_motor_completion_timeout_is_fatal`): the cold-start
+  program with the first, then the fourth, completion fed 0xd9 stops
+  with `FAIL PollTimeout` at op 43 and op 108 — the very op numbers Test
+  78's hardware ledger lists for those completions — with one and four
+  execute pulses on the wire and nothing but that site's reads after the
+  last one. Control: 0x48 opening poll, 0x1d settles, completions at 0xf8
+  → DONE, nine pulses.
+- Built backend (`tests/test_sane_magazine.py`,
+  `test_release_from_cold_stops_at_the_first_motor_completion`): Load
+  film on a cold unit against the zero-answering test interface fails at
+  op 43 with `DEVICE_BUSY`, state failed, mark absent. (The earlier form
+  of that test ran all nine moves against the silent mock and only the
+  closing reg 0x01 check refused — the gap made visible.)
+- Wire equality of the cold-start program against the Python body:
+  unchanged, 218 transfers. `gen_sane_tables.py --check` clean; backend
+  rebuilt, 0 warnings; integration patch unchanged.
+
+**What remains, stated exactly.** The no-timeout path is byte-for-byte
+what every logged cold start already did, so the next cold start on
+hardware exercises it as before — nothing new to verify there. The
+timeout path itself cannot be provoked on hardware without inducing a
+motor fault and is therefore not hardware-verified; it is the same rule
+LOAD's completions already run under (the feed's 0xfc55 stop, Test 51
+exit) and it changes only a case never observed. The exported WP-3
+package still carries the best-effort form and must be refreshed before
+any submission (`docs/sane-wp3-submission.md` §7, item 5).

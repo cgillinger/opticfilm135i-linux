@@ -414,13 +414,20 @@ void do_poll_masked(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
 }
 
 // docs/sane-wp4-magazine.md section 3: a poll the DRIVER does not fail
-// on. usbio.poll_status_word() and _eject_body()'s completion loop log a
-// warning and carry on with the last value read, and device.py's
-// _poll_one() does the same for every non-strict poll -- which is what
-// keeps a cold start with a LATCHED magazine (a status-word timeout every
-// time, Tests 45/51) a supported operation rather than a failed session.
-// Reproducing that faithfully means this poll never throws: it records
-// what it saw, like a settled one, and the program continues.
+// on. usbio.poll_status_word()'s default form and _eject_body()'s
+// completion loop log a warning and carry on with the last value read,
+// and device.py's _poll_one() does the same for every non-strict poll --
+// which is what keeps a cold start with a LATCHED magazine (the OPENING
+// ready poll times out every time, Tests 45/51/77, and on every cold
+// start at all, Test 78) a supported operation rather than a failed
+// session. Reproducing that faithfully means this poll never throws: it
+// records what it saw, like a settled one, and the program continues.
+//
+// It is never used for a motor completion. The generated tables carry
+// those -- the cold start's nine, JOG's four, LOAD's two -- as PollMasked,
+// because a completion is the only wait between one motor start and the
+// next, and continuing past it would start the next move on an engine
+// not known to be done (docs/test-log.md "Offline 2026-09-15").
 void do_poll_best_effort(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
                          const RunPolicy& policy)
 {

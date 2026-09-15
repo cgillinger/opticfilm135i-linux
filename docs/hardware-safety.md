@@ -170,7 +170,7 @@ Every public path that can cause a USB write or physical movement:
 | `of135i scan` / `Scanner.scan()` | operation; requires `initialize()` first, before every frame |
 | `of135i eject` / `Scanner.eject()` | operation; cold-init first only from `0x00`; refused read-only (`UnejectableStateError`) if regs 0x3b/0x3c read 0xff/0xff, the base-table-only state the eject stalled from (Test 44/46) |
 | `Scanner.initialize()` | operation; cold-init first only from `0x00` |
-| `Scanner.cold_init()` | operation; only from `0x00`, only once per session, post-verified |
+| `Scanner.cold_init()` | operation; only from `0x00`, only once per session; each of its nine motor completions is strict (a timeout stops the sequence before the next motor start, `StrictPollTimeoutError`, power cycle); post-verified by reg 0x01 = 0x22 |
 | `Scanner.load_magazine()` / `tools/load_magazine.py` | operation; requires `initialize()` first |
 | `of135i watch` (button-triggered eject) | writing session; start state checked before the poll loop; a failed eject ends the watch |
 | `Scanner.home()` | operation (kept for completeness; used by no tool or flow) |

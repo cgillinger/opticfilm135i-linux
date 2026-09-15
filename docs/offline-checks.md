@@ -30,22 +30,29 @@ scanning tests, and those are not offline — they live in
 .venv/bin/python tools/release_check.py
 ```
 
-Runs every offline suite and reports each as **PASSED**, **FAILED**, or
-**SKIPPED** (a precondition -- a compiler or a built backend -- is
-absent). It does **not** count a mandatory suite as done just because its
-script exited cleanly: a suite that ran no tests because its precondition
-was missing is reported skipped, and the run is then **PARTIAL**, never
-full verification. Verdict and exit code:
+Runs every offline suite and reports each as **PASS** (ran every test,
+all passed), **PARTIAL** (ran, but skipped some of its tests), **SKIP**
+(ran none of its tests -- a precondition such as a compiler or a built
+backend is absent) or **FAIL**. It does **not** count a mandatory suite
+as done just because its script exited cleanly: a skipped test is a test
+that was not run, and a suite reporting zero tests run proved nothing
+(that is a FAIL, never a pass). Verdict and exit code:
 
-- **FULL VERIFICATION** (exit 0) when every mandatory suite ran and passed;
-- **PARTIAL** (exit 1) when any suite failed, or a mandatory suite skipped
-  for a missing precondition;
-- **LIMITED** (exit 0) under `--no-backend`, which makes the three backend
-  suites' absence an acknowledged, limited run (core + compiler must still
-  pass). `--allow-dirty` drops the clean-checkout requirement.
+- **FULL VERIFICATION PASSED** (exit 0) only when every suite ran every
+  one of its tests and all passed -- nothing skipped anywhere;
+- **PARTIAL** (exit 1) when a mandatory suite skipped any test, entirely
+  or in part; **FAILED** (exit 1) when any suite failed;
+- **LIMITED RUN PASSED** (exit 0) under `--no-backend`, which excuses
+  skips in the three backend suites only -- a skip in a core or compiler
+  suite is still PARTIAL. `--allow-dirty` drops the clean-checkout
+  requirement.
+
+The parser and the verdict are pure functions pinned by
+`tests/test_release_check.py` (mixed passed/skipped, entirely skipped,
+zero tests, normal success, failure, and the `--no-backend` scope).
 
 Substantiated: a full local run on 2026-09-15, against a built backend,
-reported **FULL VERIFICATION, 325 tests**. Run it where the backend is
+reported **FULL VERIFICATION PASSED, 338 tests, 0 skipped** (a later run the same day, after the parser fix and the cold-start change). Run it where the backend is
 built (the development clone) for full verification, or with
 `--no-backend` for the buildless subset.
 

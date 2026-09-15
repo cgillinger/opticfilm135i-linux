@@ -37,7 +37,8 @@ jobs:
           set -e
           for t in test_safety test_calibrate test_hwblock test_park \
                    test_offline test_diag test_dpi test_ir test_image_probe \
-                   test_aperture_crop test_overscan test_dual_overscan; do
+                   test_aperture_crop test_overscan test_dual_overscan \
+                   test_release_check; do
             echo "== $t"
             python tests/$t.py
           done
