@@ -328,12 +328,16 @@ the model is already the place to hang it off; until then, an unknown
 holder must be treated as the strip holder or refused, not guessed at.
 
 The mounted-slide holder that ships in the same box has four openings by
-inspection of the part. Nothing about it has been captured, measured or
-loaded: no FEEDL, no pitch, no aperture geometry, no load behaviour. It
-is `NEEDS HARDWARE` in every respect, and its imaging is
-`NEEDS ACTUAL SLIDE` on top of that. `of135i/holder.py` defines it with
-a frame count and no geometry, so that nothing can position with it by
-accident.
+inspection of the part. It was characterised 2026-09-17 with an empty
+holder (`docs/slide-holder-analysis.md`): it loads, latches and ejects
+exactly like the strip holder — byte-identical load flow — but the vendor
+does **not** position it frame by frame. There is no per-frame FEEDL grid
+and no pitch: every pass scans in place after the one load traverse, and
+the whole holder is captured in a single sweep that the vendor crops into
+four slides **in software**. So the "four positions" are software crops,
+not motor targets. Its imaging is still `NEEDS ACTUAL SLIDE`, and so is the
+crop step's real behaviour. `of135i/holder.py` defines it with a frame
+count and no geometry, so that nothing can position with it by accident.
 
 ## 10. What changed in the driver from this analysis
 

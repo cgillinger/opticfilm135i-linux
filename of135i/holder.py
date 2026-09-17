@@ -121,15 +121,20 @@ STRIP = Holder(
                     "FEEDL grid (docs/holder-geometry.md)",
 )
 
-#: The mounted-slide holder that ships in the same box. Four openings
-#: by inspection of the part; nothing about it has been captured,
-#: measured or driven, so it carries no geometry. It is defined here
-#: only so that a future holder option has somewhere to land -- the
-#: driver does not select it and has never positioned with it.
+#: The mounted-slide holder that ships in the same box. Four openings by
+#: inspection of the part. Characterised 2026-09-17 with an empty holder
+#: (docs/slide-holder-analysis.md): it loads, latches and ejects exactly
+#: like the strip holder (identical load flow), but the vendor does NOT
+#: position it frame by frame -- it scans the whole holder in one sweep at
+#: a fixed position and crops the four openings in software. So it carries
+#: no per-frame geometry because there is none to carry, not because it is
+#: unmeasured. The driver still does not select it; a slide scan needs a
+#: sweep mode plus an image-side crop, not a FEEDL table.
 SLIDE = Holder(
     name="mounted-slide holder",
     frames=4,
-    geometry_source="none: no capture, no measurement, never loaded",
+    geometry_source="none: vendor scans one sweep and crops in software; "
+                    "no per-frame grid exists (docs/slide-holder-analysis.md)",
 )
 
 #: What the driver assumes when nothing says otherwise. There is no

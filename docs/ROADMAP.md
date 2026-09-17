@@ -151,8 +151,12 @@ Each is outside the promised function or has a verified safe handling:
   production default, hardware-verified across all six frames and every
   profile, and the six-frame production workflow is accepted
   (Tests 55–61; `docs/holder-position-design.md`). **The four-slide
-  holder that ships with the scanner is not supported yet** — its frame
-  pitch and load flow are uncaptured and it has never been run (C2, a
+  holder that ships with the scanner is not supported yet** — its empty-holder
+  mechanics are characterised (S1+S2, 2026-09-17,
+  `docs/slide-holder-analysis.md`: load flow identical to the strip holder,
+  no per-frame pitch — the vendor sweeps the whole holder and crops in
+  software), but a driver slide scan (a sweep mode plus an image-side crop)
+  and its imaging are unbuilt and untested, pending a physical slide (C2, a
   planned separate milestone); panorama is a vendor software mode (one
   continuous scan, the holder encodes as the strip holder) that needs
   its own capture. (The 1–6 work was delivered under milestone C.)
@@ -293,15 +297,21 @@ the whole overscan window — the host-side coverage check and crop are not
 ported, by design (submission limitation 2). No C1 criterion is open for
 the backend beyond that documented limitation, and none is a B2 blocker.
 
-**C2 — the mounted-slide holder.** An empty original holder can establish
-identification, load and transport, frame count, pitch, the four aperture
-positions, scan geometry, repeatability and park/eject. It cannot
-establish focus at the film plane inside a mount, sharpness, positive-film
-colour or tonal rendering, infrared behaviour on a real slide, or dust
-removal. Done when the first list is verified on hardware and the second
-is documented as separately unverified, pending a physical slide.
-**Scheduled after B2 (2026-09-15); the criteria are unchanged** — a
-reduction of them would be an explicit scope decision.
+**C2 — the mounted-slide holder.** The empty-holder mechanics were
+characterised 2026-09-17 (S1 + S2, `docs/slide-holder-analysis.md`): load
+and transport, holder identification and park/eject are established, and
+the driver's own load and eject ran on the real holder. Two of the original
+criteria — *pitch* and *the four aperture positions* — turned out **not to
+exist**: the vendor does not position the slide holder frame by frame; it
+scans the whole holder in one sweep and crops the four slides in software
+(the panorama mechanism). This is an explicit scope note, not a silent
+reduction: those two criteria are replaced by the sweep-plus-software-crop
+finding. What still cannot be established without a physical slide — focus
+at the film plane inside a mount, sharpness, positive-film colour or tonal
+rendering, infrared on a real slide, dust removal, **and** whether the
+image-side crop actually works (edge contrast, position stability) — is
+documented as separately unverified. C2 is done when that imaging-and-crop
+list is verified on a mounted slide. **Scheduled after B2.**
 
 ---
 
@@ -402,7 +412,8 @@ reduction of them would be an explicit scope decision.
     2026-09-12 (Test 64: two consecutive no-flag scans on one load, the second
     with the compatible .cal cache present, both calibrated and completed).
     --force-calibration is no longer required for an ordinary scan.
-  - Slide holder: PENDING
+  - Slide holder: empty-holder mechanics characterised 2026-09-17 (S1+S2,
+    docs/slide-holder-analysis.md); imaging + crop pending a physical slide
 - **A6 note** (Test 44/46): the driver's eject stalled from a state only
   the backend's first `init()` produced; that `init()` now writes nothing.
   No CLI workflow was ever affected. The stall mechanism itself is an

@@ -231,10 +231,22 @@ improvised fixing -- if it does not sit properly, skip it.
 
 ## Part 2 — the mounted-slide holder
 
-Nothing is known about this holder: no capture, no FEEDL, no pitch, no
-aperture geometry, no load behaviour. The strip holder's numbers must not
-be assumed to carry over, and until something is captured **the driver
-must not be pointed at it at all**. The order below is therefore strict.
+**Status: S1 and S2 done 2026-09-17** with an empty holder — see
+`docs/slide-holder-analysis.md`. The load flow turned out byte-identical to
+the strip holder, there is no readable holder identification, and — the
+main result — there is **no per-frame FEEDL grid**: the vendor scans the
+whole holder in one sweep and crops the four slides in software (the
+panorama mechanism). So S3's premise has changed: there is no grid or pitch
+to measure and enter into `of135i/holder.py`. A driver slide scan would be
+the (already verified) load flow plus one long sweep plus an image-side
+crop, not four `POSITION` moves. The original step plan below is kept as the
+record of how this was established.
+
+Nothing was known about this holder when the plan was written: no capture,
+no FEEDL, no pitch, no aperture geometry, no load behaviour. The strip
+holder's numbers were not assumed to carry over, and until something was
+captured **the driver was not pointed at it at all**. The order below was
+therefore strict.
 
 ### S1. Vendor capture with the empty slide holder (no driver involvement)
 
