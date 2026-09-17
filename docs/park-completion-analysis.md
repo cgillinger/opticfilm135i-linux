@@ -105,3 +105,20 @@ Test 23 verified that the fail-closed timeout stops safely; it did not
 verify a complete semantic PARK, and neither does this analysis. Verbatim
 PARK remains the default; `--park semantic` stays experimental until a
 hardware A/B with the new rule has been approved and run.
+
+**Update, 2026-09-17: semantic is now the default.** The A/B this
+section asked for happened indirectly, not as a dedicated hwblock run:
+the SANE backend's PARK program (`sane/gl126.cpp`) was built from these
+exact park_semantic steps and this exact PARK_COMPLETE rule, and it has
+completed in every SANE scan since Test 52 (docs/test-log.md),
+including the dual-light profile runs of Tests 65-71 (scanimage,
+600/1200/7200/ir3600). The Python driver's own dual parks have only
+run verbatim (Test 61, ~65-67 s including captured pacing); those
+durations are why `device._PARK_WAIT_TIMEOUT`/`_PARK_WAIT_B_TIMEOUT`
+were raised the same day (90 s / 100 s, from 15 s / 30 s) rather than
+left at the plain-3600 figures this document was written against --
+the split between the two waits on dual tables is unmeasured, so each
+budget alone covers the longest observed total. Measured plain-3600
+duration: 3.7-3.8 s against verbatim's captured 13.6-16.9 s.
+"verbatim" remains selectable (`--park verbatim`) for A/B comparison;
+`tools/hwblock.py`'s own diagnostic default is unchanged.

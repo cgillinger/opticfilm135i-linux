@@ -264,6 +264,10 @@ def _run_sequence(dpi):
 
     mock = MockUsbIo([t.PREP, t.AFE_BASE] + order, cal_buffers)
     scanner = Scanner(mock)
+    # This fake replays PARK's captured op queue verbatim (see
+    # test_calibrate.py's same note); semantic (default since
+    # 2026-09-17) has no scripted register state here.
+    scanner.park_mode = "verbatim"
     scanner.initialize(ir=True, dpi=dpi)   # required before every scan (safety pass)
     mock.writes.clear()
     raw, width, meta = scanner.scan(frame=1, ir=True, dpi=dpi, lines=n_lines)

@@ -394,6 +394,10 @@ def _expected_stream():
 def test_scan_sequence_matches_trace_ir():
     mock = MockUsbIo(_build_cal_buffers())
     scanner = Scanner(mock)
+    # Verbatim: this test compares the wire stream to PARK's own captured
+    # op list; semantic (default since 2026-09-17) emits real
+    # read-modify-write bytes instead (test_park.py covers that).
+    scanner.park_mode = "verbatim"
     scanner.initialize(ir=True)   # required before every scan (safety pass); not under test
     mock.writes.clear()
     raw, width, meta = scanner.scan(frame=1, ir=True)
@@ -538,6 +542,7 @@ def test_cal_capture_offon_identical_write_stream_dual():
         try:
             mock = MockUsbIo(_build_cal_buffers())
             with Scanner(mock) as scanner:
+                scanner.park_mode = "verbatim"  # see test_scan_sequence_matches_trace_ir
                 scanner.initialize(ir=True)
                 mock.writes.clear()
                 scanner.scan(frame=1, ir=True)

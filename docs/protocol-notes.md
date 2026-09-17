@@ -969,3 +969,67 @@ cassette), then on reinsert the load (32=1d, feed 6690, traverse 71490
 with 02=1c), then the idle loop. The vendor never writes the base
 register table at app open, and never ejects a latched magazine "in
 place": the jog is the eject. Timeline in docs/test-log.md, Test 46.
+
+### Pass 14 addendum 3 (2026-09-17): frame-4 skip-calibration rewrite — exact ops
+
+Offline, no hardware touched. Re-examined `20260829-silverfast-ramval.pcap`
+(compiled trace `~/Dokument/plustek-135i-analys/traces/20260829-silverfast-
+ramval.trace.json.gz`, ops 21217-21270) to get the EXACT op list of frame
+4's calibration skip mentioned in pass 14, item 4 ("just rewrites the AFE
+gain/offset codes from frame 3 (2e/22/29) before positioning"). That
+sentence turns out to be imprecise about "offset" — see below.
+
+Between the re-init's exposure setup and the frame's POSITION batch
+(mode 0x18), frame 4 issues exactly 27 control writes, in order:
+
+1. `03=20`, `03=30` (lamp toggle).
+2. `read reg 0x32` (got 0x8f) then `32=8d` — NOT a read-modify-write:
+   the written byte differs from the one just read, so this is a plain
+   captured constant (meaning unknown), kept verbatim like PARK's own
+   per-table 0x8b payloads — not the session-variable-value bug class
+   PARK's reg-0x32 handling was fixed for (Test 23/park-completion-
+   analysis.md), because nothing here *waits* for reg 0x32 to equal
+   this value; it is only set.
+3. Three writes to the `0x51`(channel)/`0x5d`(bank)/`0x5e`(value)
+   register triplet on channels 5, 6, 7, bank 0x5d=0x00, values
+   0x01/0x05/0x00. This is NOT frame 3's calibrated offset: the same
+   channel/bank pattern with an almost identical constant tail
+   (0x01/0x05/0x01) opens `tables.CAL_SHADING_VERIFY` completely
+   unparameterised, before every exposure-block run regardless of
+   context (checked in of135i/tables.py and tables_ir.py) — this is a
+   fixed precondition of the exposure block, not per-frame data.
+4. Three writes to the SAME triplet on channels 2, 3, 4, bank
+   0x5d=0x00, values `0x2e`/`0x22`/`0x29` — byte-for-byte
+   `tables.CAL_GAIN_CHECK_A`'s gain_r/g/b injection pattern. THESE are
+   frame 3's real AFE gain codes, and the only per-frame data in the
+   whole sequence.
+5. `0a=48`, then the exposure block regs `0xd0`-`0xf8`, byte-for-byte
+   identical to this table's own copy of the same block in
+   `CAL_SHADING_MEASURE`/`CAL_SHADING_VERIFY`.
+6. One status-word read (wValue 0x018e), then POSITION.
+
+**No per-frame OFFSET rewrite exists in this range.** The register
+pattern the full calibration uses for offset (same channels 5/6/7, but
+bank 0x5d=0x01, 16-bit hi/lo — `CAL_SHADING_MEASURE`'s offset_r/g/b_hi/lo
+injections, which land on frame 3's actual computed offset, e.g.
+0x0109/0x0109/0x010c in this capture) is never written between re-init
+and POSITION on the skipped frame. Neither the gain nor the offset
+register triplet is ever written by POSITION or SCAN (checked against
+both tables' full op lists) — so the rewrite above is what actually
+restores the AFE gain state that the re-init's own exposure defaults
+(0x1c on channels 2/3/4, 0x80 on channels 5/6/7) just clobbered; it is
+not cosmetic. The shading table itself — which this capture already
+showed surviving PARK in scanner RAM (pass 14, item 4) — is presumably
+what carries the calibrated offset forward instead of a register.
+
+Implemented as `tables.CAL_REWRITE` (of135i/tables.py, hand-added,
+deliberately kept out of the `PHASES` list so `tools/gen_sane_tables.py`
+never sees it — this is a Python-driver-only optimisation with no SANE
+counterpart) and `Scanner._calibration_rewrite()` (of135i/device.py),
+used by the new per-session calibration cache on the plain 3600 path
+only. The dual/IR path is NOT covered: its own `CAL_SHADING_VERIFY`
+preamble (tables_ir.py) has TWO extra ops (a `19=08` write and a live
+`32` read-modify-write) not present in this plain capture, and no
+SilverFast dual-light skip-calibration capture exists to confirm what a
+dual rewrite should look like — reported rather than guessed, per
+driver-design.md's calibration-cache section.

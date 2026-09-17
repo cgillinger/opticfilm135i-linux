@@ -155,18 +155,34 @@ _WARMUP_STABLE_PCT = 3.0      # consecutive peaks must agree within this
 # Semantic PARK (see park_semantic() and docs/replay-analysis.md's
 # "Conversion order" step 1): timeout and poll interval for the two
 # condition waits that replace the captured trace's pacing.
-_PARK_WAIT_TIMEOUT = 15.0
-# Wait B (status word idle after the carriage return): the longest observed
-# return is the frame-4 park, 15.6 s in the verbatim phase incl. captured
-# pacing; 30 s is a generous, explicit hard stop (park-completion-analysis.md).
-_PARK_WAIT_B_TIMEOUT = 30.0
-# Both budgets above were set from parks after frames 1-4. A park returns
-# the carriage from wherever the frame was, so the return grows with the
+#
+# Raised 2026-09-17 when semantic became the CLI/library default (was
+# 15/30 s, sized only from the plain-3600 frame-1-4 parks). Test 61
+# (docs/test-log.md, hardware, 2026-09-10) measured full park duration
+# under verbatim pacing across every table: dual 600/1200/2400/7200
+# ~65-67 s, IR3600 ~14 s, plain 3600 ~5 s. Semantic has never been
+# hardware-timed on dual/IR (only plain, Test 52-77's SANE runs and the
+# 3.7-3.8 s plain figure above), so the split between Wait A (carriage-
+# home) and Wait B (status-word-idle after the return) for those tables
+# is unknown -- each budget below is sized to cover the longest observed
+# total (dual's ~67 s) ALONE, so a timeout is never spurious regardless
+# of which wait ends up carrying most of that time. This can only
+# lengthen the fail-closed bound, never shorten it (Test 52-77's plain
+# parks finished in 3.7-3.8 s, far inside either budget).
+_PARK_WAIT_TIMEOUT = 90.0
+# Wait B (status word idle after the carriage return): sized the same way
+# as Wait A above, plus headroom over the dual ~65-67 s maximum.
+_PARK_WAIT_B_TIMEOUT = 100.0
+# Both budgets above were set from parks after frames 1-4 on the plain
+# table's own timing; dual/IR headroom is carried by the raised constants
+# themselves (comment above), not by this scale. A park returns the
+# carriage from wherever the frame was, so the return grows with the
 # frame's distance from home: frame 6 is 1.55x frame 4. The two waits are
-# therefore scaled by the same linear factor POSITION uses
+# therefore ALSO scaled by the same linear factor POSITION uses
 # (position_timeout_scale of the frame last positioned to), which can only
 # lengthen them -- the factor is never below 1, so a park after frame 1 is
-# bounded exactly as before. Fail-closed is unchanged; only the patience is.
+# bounded exactly at the constants above. Fail-closed is unchanged; only
+# the patience is.
 _PARK_POLL_INTERVAL = 0.02
 
 # cold_init()'s "engine reached the done class" wait, at both of its sites
@@ -462,11 +478,23 @@ class Scanner:
         self._diag_park_waits: dict | None = None
 
         # PARK phase implementation switch (see park_semantic() and
-        # docs/replay-analysis.md): "verbatim" (default) replays the
-        # captured op stream exactly, byte for byte; "semantic" issues
-        # the same register writes with real read-modify-write and
-        # condition waits instead of captured pacing. See _park().
-        self.park_mode: str = "verbatim"
+        # docs/replay-analysis.md): "semantic" (default since 2026-09-17)
+        # issues the same motor sequence as "verbatim" -- the captured
+        # PARK op stream, byte for byte, register for register -- and
+        # only replaces the captured trace's fixed pacing with real
+        # read-modify-write plus condition waits (park_complete_status_
+        # matches(): (byte & 0xe3) == 0xe0). That condition is hardware-
+        # confirmed, not just offline-derived: the SANE backend's PARK
+        # program (sane/gl126.cpp) was built from these same
+        # park_semantic steps and has run in every SANE scan since
+        # Test 52 (docs/test-log.md). Measured 3.7-3.8 s against
+        # verbatim's captured 13.6-16.9 s (docs/park-completion-
+        # analysis.md) -- semantic finishes as soon as the hardware
+        # reports done instead of waiting out the capture's pauses.
+        # "verbatim" remains selectable (CLI --park verbatim) for A/B
+        # comparison; tools/hwblock.py keeps its own --park default for
+        # that purpose.
+        self.park_mode: str = "semantic"
 
         # Calibration-buffer capture (see _CalCapture / DUMP_CAL_ENV):
         # active only when the env var names an output directory. Held for
@@ -481,6 +509,37 @@ class Scanner:
         # frame-independent, so reusing a healthy one is a proven fix, not
         # a cover-up. Reset naturally per Scanner (a new session = None).
         self._last_good_dark_b: np.ndarray | None = None
+
+        # Per-session calibration cache (see _scan_plain, _calibration_
+        # rewrite(), docs/driver-design.md's calibration-cache section).
+        # Vendor evidence: docs/protocol-notes.md pass 14 + its
+        # frame-4-rewrite addendum -- SilverFast scanning frames 3, 4, 1
+        # in one session runs full calibration on 3 and 1 but has frame 4
+        # skip it entirely, re-applying frame 3's AFE gain codes with a
+        # short rewrite instead (the uploaded shading table survives PARK
+        # in scanner RAM, so it needs no re-upload either). "recalibrate"
+        # forces today's full-calibration-every-frame behaviour (CLI:
+        # --recalibrate); the cache is otherwise used by DEFAULT since
+        # 2026-09-17.
+        #
+        # None = no cached calibration yet (or invalidated). Set to a dict
+        # {"key": (dpi, dual), "gain": (r,g,b), "offset": (r,g,b), plus
+        # the calibration-descriptive diag fields (dark means, warmup
+        # summary, shading stats) so a cache-hit's diag sidecar stays
+        # informative} immediately after a full calibration sequence
+        # succeeds -- see _scan_plain. Cleared (never trusted by a later
+        # frame): on any exception escaping a scan (a failed scan must
+        # never leave a cache the next frame relies on -- see the
+        # try/except around position/scan/park in _scan_plain), by
+        # eject() and load_magazine() (the transport state calibration
+        # was measured against no longer holds), and implicitly by a
+        # (dpi, dual) key mismatch. A dual scan's own full calibration
+        # (never itself cached -- see _scan_dual) ALSO clears this: its
+        # shading upload overwrites whatever plain shading table is in
+        # scanner RAM, which would silently invalidate a same-key plain
+        # cache from earlier in the same session.
+        self.recalibrate: bool = False
+        self._cal_cache: dict | None = None
 
     @classmethod
     def open(cls) -> "Scanner":
@@ -836,7 +895,8 @@ class Scanner:
           - exactly ONE idle-loop round afterwards (heartbeat only,
             no 2 s pause), instead of five.
 
-        Both waits are bounded (15 s each, _PARK_WAIT_TIMEOUT) and
+        Both waits are bounded (_PARK_WAIT_TIMEOUT / _PARK_WAIT_B_TIMEOUT,
+        raised 2026-09-17 to cover Test 61's dual/IR park durations) and
         FAIL CLOSED: a timeout records the wait in the diagnostics and
         raises safety.StrictPollTimeoutError inside the "park"
         operation -- the session is FAILED, nothing further is written
@@ -1467,6 +1527,10 @@ class Scanner:
         been hardware-verified as a load.
         """
         from . import tables_load
+        # A new load is a new piece of film in the gate -- any cached
+        # calibration (see __init__'s _cal_cache comment) was measured
+        # against whatever was there before and must not be reused.
+        self._cal_cache = None
         self.session.write_allowed_or_final()
         if not (self._base_initialized or self._vendor_open):
             raise OperationNotAllowedError(
@@ -1521,6 +1585,10 @@ class Scanner:
           UnejectableStateError. The eject stalled twice from that state
           (Test 44) and no vendor flow ejects from it (Test 46).
         """
+        # The film is leaving the gate -- any cached calibration (see
+        # __init__'s _cal_cache comment) no longer applies to whatever
+        # comes next, refused or not.
+        self._cal_cache = None
         with self._operation("eject", cold_ok=True):
             if not self.is_magazine_present():
                 log.info("eject: no magazine detected — nothing to do")
@@ -1803,6 +1871,24 @@ class Scanner:
                 session=self.session.snapshot())
         return self._last_good_dark_b, True
 
+    def _calibration_rewrite(self, gain_r: int, gain_g: int, gain_b: int) -> None:
+        """Re-apply cached AFE gain codes without a full recalibration.
+
+        Runs tables.CAL_REWRITE (see its module-level comment and
+        docs/protocol-notes.md's pass 14 addendum 3 for exactly which ops
+        this is and isn't): a lamp toggle, a fixed register rewrite of
+        unknown meaning kept verbatim, then the three AFE gain-code
+        writes patched with the cached codes, then the same exposure
+        block CAL_SHADING_MEASURE/CAL_SHADING_VERIFY already carry. No
+        offset rewrite -- the capture this was decoded from does not
+        have one; the uploaded shading table is what the vendor's own
+        capture shows surviving PARK in scanner RAM.
+        """
+        self._run_phase(
+            tables.CAL_REWRITE,
+            gain_r=bytes([gain_r]), gain_g=bytes([gain_g]), gain_b=bytes([gain_b]),
+        )
+
     def _scan_plain(self, frame: int,
                     overscan_mm: float = holder.OVERSCAN_MM) -> tuple[bytes, int]:
         # No homing move here. The vendor flow has none (protocol-notes.md
@@ -1824,123 +1910,177 @@ class Scanner:
         started_utc = datetime.now(timezone.utc).isoformat()
         t_start = time.monotonic()
 
-        # ---- dark pair (offset bracket, gain=0) ------------------------
-        dark_a_raw = self._run_phase(tables.CAL_DARK_A)[0]
-        if self._cal_capture is not None:
-            self._cal_capture.note_buffer("dark_a", tables.CAL_DARK_A.name, dark_a_raw)
-        dark_b_raw = self._run_phase(tables.CAL_DARK_B)[0]
-        if self._cal_capture is not None:
-            self._cal_capture.note_buffer("dark_b", tables.CAL_DARK_B.name, dark_b_raw)
-        dark_a = np.frombuffer(dark_a_raw, dtype="<u2").reshape(-1, 3)
-        dark_b = np.frombuffer(dark_b_raw, dtype="<u2").reshape(-1, 3)
-        dark_b, dark_b_substituted = self._healthy_dark_b(dark_b)
+        # ---- calibration: fresh measurement, or this session's cache ----
+        # See docs/protocol-notes.md pass 14 + addendum 3, and the
+        # _cal_cache comment in __init__. The cache key is (dpi, dual);
+        # this path is always (3600, False) -- dual has its own
+        # calibration and is never cached (_scan_dual).
+        cal_key = (3600, False)
+        cache = self._cal_cache
+        if not self.recalibrate and cache is not None and cache["key"] == cal_key:
+            calibration = "cached"
+            gain_r, gain_g, gain_b = cache["gain"]
+            off_r, off_g, off_b = cache["offset"]
+            dark_a_mean = cache["dark_a_mean"]
+            dark_b_mean = cache["dark_b_mean"]
+            dark_b_substituted = cache["dark_b_substituted"]
+            warmup = cache["warmup"]
+            shading_stats = cache["shading_stats"]
+            shading2_stats = cache["shading2_stats"]
+            log.info("calibration: reusing cached codes (gain R=%#04x G=%#04x B=%#04x, "
+                     "offset R=%#06x G=%#06x B=%#06x)", gain_r, gain_g, gain_b,
+                     off_r, off_g, off_b)
+            self._calibration_rewrite(gain_r, gain_g, gain_b)
+        else:
+            calibration = "fresh"
+            # ---- dark pair (offset bracket, gain=0) ---------------------
+            dark_a_raw = self._run_phase(tables.CAL_DARK_A)[0]
+            if self._cal_capture is not None:
+                self._cal_capture.note_buffer("dark_a", tables.CAL_DARK_A.name, dark_a_raw)
+            dark_b_raw = self._run_phase(tables.CAL_DARK_B)[0]
+            if self._cal_capture is not None:
+                self._cal_capture.note_buffer("dark_b", tables.CAL_DARK_B.name, dark_b_raw)
+            dark_a = np.frombuffer(dark_a_raw, dtype="<u2").reshape(-1, 3)
+            dark_b = np.frombuffer(dark_b_raw, dtype="<u2").reshape(-1, 3)
+            dark_b, dark_b_substituted = self._healthy_dark_b(dark_b)
 
-        # ---- white line (gain=0) -> compute AFE gain -------------------
-        gain_r, gain_g, gain_b = self._gain_with_warmup(
-            tables.CAL_WHITE,
-            lambda raw: np.frombuffer(raw, dtype="<u2").reshape(-1, 3),
-        )
-        log.info("computed gain codes: R=%#04x G=%#04x B=%#04x", gain_r, gain_g, gain_b)
+            # ---- white line (gain=0) -> compute AFE gain -----------------
+            gain_r, gain_g, gain_b = self._gain_with_warmup(
+                tables.CAL_WHITE,
+                lambda raw: np.frombuffer(raw, dtype="<u2").reshape(-1, 3),
+            )
+            log.info("computed gain codes: R=%#04x G=%#04x B=%#04x", gain_r, gain_g, gain_b)
 
-        # ---- gain-check pair (offset bracket, gain=computed) -----------
-        self._run_phase(
-            tables.CAL_GAIN_CHECK_A,
-            gain_r=bytes([gain_r]), gain_g=bytes([gain_g]), gain_b=bytes([gain_b]),
-        )
-        self._run_phase(tables.CAL_GAIN_CHECK_B)
+            # ---- gain-check pair (offset bracket, gain=computed) ---------
+            self._run_phase(
+                tables.CAL_GAIN_CHECK_A,
+                gain_r=bytes([gain_r]), gain_g=bytes([gain_g]), gain_b=bytes([gain_b]),
+            )
+            self._run_phase(tables.CAL_GAIN_CHECK_B)
 
-        # ---- shading measurement (offset=computed final) ---------------
-        off_r, off_g, off_b = calibrate.offset_codes(dark_a, dark_b)
-        log.info("offset codes: R=%#06x G=%#06x B=%#06x", off_r, off_g, off_b)
-        shading_meas_raw = self._run_phase(
-            tables.CAL_SHADING_MEASURE,
-            offset_r_hi=bytes([off_r >> 8]), offset_r_lo=bytes([off_r & 0xFF]),
-            offset_g_hi=bytes([off_g >> 8]), offset_g_lo=bytes([off_g & 0xFF]),
-            offset_b_hi=bytes([off_b >> 8]), offset_b_lo=bytes([off_b & 0xFF]),
-        )[0]
-        shading_meas = np.frombuffer(shading_meas_raw, dtype="<u2").reshape(128, 3762, 3)
-        shading = calibrate.shading_table(shading_meas)
+            # ---- shading measurement (offset=computed final) -------------
+            off_r, off_g, off_b = calibrate.offset_codes(dark_a, dark_b)
+            log.info("offset codes: R=%#06x G=%#06x B=%#06x", off_r, off_g, off_b)
+            shading_meas_raw = self._run_phase(
+                tables.CAL_SHADING_MEASURE,
+                offset_r_hi=bytes([off_r >> 8]), offset_r_lo=bytes([off_r & 0xFF]),
+                offset_g_hi=bytes([off_g >> 8]), offset_g_lo=bytes([off_g & 0xFF]),
+                offset_b_hi=bytes([off_b >> 8]), offset_b_lo=bytes([off_b & 0xFF]),
+            )[0]
+            shading_meas = np.frombuffer(shading_meas_raw, dtype="<u2").reshape(128, 3762, 3)
+            shading = calibrate.shading_table(shading_meas)
 
-        # ---- upload + verify (re-measure, re-upload once) ---------------
-        self._run_phase(tables.CAL_SHADING_UPLOAD, shading_table=shading)
+            # ---- upload + verify (re-measure, re-upload once) -------------
+            self._run_phase(tables.CAL_SHADING_UPLOAD, shading_table=shading)
 
-        # cal_shading_verify genuinely re-measures then re-uploads a
-        # shading table computed from *that* read, so it can't be run
-        # as a single _run_phase() call: shading_table2 depends on data
-        # only available after the phase's own read completes. Run its
-        # ops up to (not including) the re-upload's buffer-write
-        # descriptor (split_at), compute, then run the rest patched.
-        verify_phase = tables.CAL_SHADING_VERIFY
-        self.session.phase = verify_phase.name
-        _t0 = time.monotonic()
-        verify_raw = self._exec_ops(verify_phase.ops[:verify_phase.split_at])[0]
-        verify_meas = np.frombuffer(verify_raw, dtype="<u2").reshape(128, 3762, 3)
-        shading2 = calibrate.shading_table2(verify_meas, shading_meas)
-        remaining = verify_phase.patched(shading_table2=shading2)[verify_phase.split_at:]
-        self._exec_ops(remaining)
-        self._diag_phase_seconds["cal_shading_verify"] = (
-            self._diag_phase_seconds.get("cal_shading_verify", 0.0) + (time.monotonic() - _t0)
-        )
+            # cal_shading_verify genuinely re-measures then re-uploads a
+            # shading table computed from *that* read, so it can't be run
+            # as a single _run_phase() call: shading_table2 depends on data
+            # only available after the phase's own read completes. Run its
+            # ops up to (not including) the re-upload's buffer-write
+            # descriptor (split_at), compute, then run the rest patched.
+            verify_phase = tables.CAL_SHADING_VERIFY
+            self.session.phase = verify_phase.name
+            _t0 = time.monotonic()
+            verify_raw = self._exec_ops(verify_phase.ops[:verify_phase.split_at])[0]
+            verify_meas = np.frombuffer(verify_raw, dtype="<u2").reshape(128, 3762, 3)
+            shading2 = calibrate.shading_table2(verify_meas, shading_meas)
+            remaining = verify_phase.patched(shading_table2=shading2)[verify_phase.split_at:]
+            self._exec_ops(remaining)
+            self._diag_phase_seconds["cal_shading_verify"] = (
+                self._diag_phase_seconds.get("cal_shading_verify", 0.0) + (time.monotonic() - _t0)
+            )
 
-        # ---- geometry: overscan sizes FEEDL and the line/chunk count -----
-        # The corrected mean mapping (option A, holder.STRIP_FIDUCIAL)
-        # plus a leading/trailing margin (option C), docs/holder-
-        # position-design.md sections 4-5 -- the single runtime geometry
-        # for the plain path since Test 58's acceptance (section 9 step
-        # 2). The furthest motor position is range-checked inside
-        # overscan_geometry(); the stop FEEDL is checked here as well.
-        geom = holder.overscan_geometry(
-            frame,
-            res_units_per_line=7200 // 3600,
-            chunk_lines=tables.IMAGE_CHUNK_LINES,
-            colour_crop_lines=image_mod.align_shift(3600),
-            overscan_mm=overscan_mm,
-        )
-        feedl = holder.check_feedl(geom.feedl)
-        scan_phase = tables.scan_phase(geom.chunks)
-        n_chunks = geom.chunks
-        n_lines = tables.scan_lines_for_chunks(geom.chunks)
-        log.info("overscan frame %d: FEEDL=%d chunks=%d lines=%d "
-                 "margins lead=%.3f trail=%.3f mm", frame, feedl, n_chunks,
-                 n_lines, geom.leading_margin_mm, geom.trailing_margin_mm)
+            dark_a_mean = [float(x) for x in dark_a.astype(np.float64).mean(axis=0)]
+            dark_b_mean = [float(x) for x in dark_b.astype(np.float64).mean(axis=0)]
+            warmup = self._diag_warmup or {}
+            shading_stats = _shading_stats(shading)
+            shading2_stats = _shading_stats(shading2)
 
-        # ---- position: relative feed from current carriage position ------
-        self._park_scale = position_timeout_scale(tables, feedl)
-        log.info("positioning to frame %d (FEEDL=%d)", frame, feedl)
-        # Strict completion (class F, budget scaled with FEEDL): never
-        # start SCAN on a moving transport (Test 18, frame 4).
-        self._run_phase(
-            tables.POSITION,
-            strict_polls=self._strict_status_polls(tables.POSITION),
-            strict_mask=POSITION_STATUS_MASK,
-            poll_timeout_scale=position_timeout_scale(tables, feedl),
-            feedl_hi=bytes([(feedl >> 16) & 0xFF]),
-            feedl_mid=bytes([(feedl >> 8) & 0xFF]),
-            feedl_lo=bytes([feedl & 0xFF]),
-        )
+            # Cache immediately on success -- see __init__'s _cal_cache
+            # comment and (d) in the design: a LATER failure (position/
+            # scan/park below) must not leave this trusted by the next
+            # frame, so the try/except below clears it again if anything
+            # from here on raises.
+            self._cal_cache = {
+                "key": cal_key,
+                "gain": (gain_r, gain_g, gain_b),
+                "offset": (off_r, off_g, off_b),
+                "dark_a_mean": dark_a_mean,
+                "dark_b_mean": dark_b_mean,
+                "dark_b_substituted": dark_b_substituted,
+                "warmup": warmup,
+                "shading_stats": shading_stats,
+                "shading2_stats": shading2_stats,
+            }
 
-        # ---- scan: 3 slope tables, line count, execute, image data ------
-        if n_lines > 0xFFFFFF:
-            raise Of135iError(f"line count {n_lines} does not fit the 24-bit register")
-        buffers = self._run_phase(
-            scan_phase,
-            lines_hi=bytes([(n_lines >> 8) & 0xFF]),
-            lines_lo=bytes([n_lines & 0xFF]),
-        )
-        # buffers[:n_chunks] are the image data (capture fidelity: the
-        # first image descriptor carries wIndex=8, subsequent ones 0 --
-        # meaning unknown, baked into tables.py). The trailing buffer
-        # (buffers[-1]) is a drain of unclear purpose (not part of the
-        # documented image size); already read verbatim above, discarded
-        # here.
-        image = b"".join(buffers[:n_chunks])
+        try:
+            # ---- geometry: overscan sizes FEEDL and the line/chunk count -
+            # The corrected mean mapping (option A, holder.STRIP_FIDUCIAL)
+            # plus a leading/trailing margin (option C), docs/holder-
+            # position-design.md sections 4-5 -- the single runtime geometry
+            # for the plain path since Test 58's acceptance (section 9 step
+            # 2). The furthest motor position is range-checked inside
+            # overscan_geometry(); the stop FEEDL is checked here as well.
+            geom = holder.overscan_geometry(
+                frame,
+                res_units_per_line=7200 // 3600,
+                chunk_lines=tables.IMAGE_CHUNK_LINES,
+                colour_crop_lines=image_mod.align_shift(3600),
+                overscan_mm=overscan_mm,
+            )
+            feedl = holder.check_feedl(geom.feedl)
+            scan_phase = tables.scan_phase(geom.chunks)
+            n_chunks = geom.chunks
+            n_lines = tables.scan_lines_for_chunks(geom.chunks)
+            log.info("overscan frame %d: FEEDL=%d chunks=%d lines=%d "
+                     "margins lead=%.3f trail=%.3f mm", frame, feedl, n_chunks,
+                     n_lines, geom.leading_margin_mm, geom.trailing_margin_mm)
 
-        # ---- park ---------------------------------------------------------
-        # PARK's own first op is the captured end-of-access control
-        # write (cw wv=0x8d) -- no separate call needed here.
-        self._park(tables, ir=False)
+            # ---- position: relative feed from current carriage position --
+            self._park_scale = position_timeout_scale(tables, feedl)
+            log.info("positioning to frame %d (FEEDL=%d)", frame, feedl)
+            # Strict completion (class F, budget scaled with FEEDL): never
+            # start SCAN on a moving transport (Test 18, frame 4).
+            self._run_phase(
+                tables.POSITION,
+                strict_polls=self._strict_status_polls(tables.POSITION),
+                strict_mask=POSITION_STATUS_MASK,
+                poll_timeout_scale=position_timeout_scale(tables, feedl),
+                feedl_hi=bytes([(feedl >> 16) & 0xFF]),
+                feedl_mid=bytes([(feedl >> 8) & 0xFF]),
+                feedl_lo=bytes([feedl & 0xFF]),
+            )
 
-        warmup = self._diag_warmup or {}
+            # ---- scan: 3 slope tables, line count, execute, image data ----
+            if n_lines > 0xFFFFFF:
+                raise Of135iError(f"line count {n_lines} does not fit the 24-bit register")
+            buffers = self._run_phase(
+                scan_phase,
+                lines_hi=bytes([(n_lines >> 8) & 0xFF]),
+                lines_lo=bytes([n_lines & 0xFF]),
+            )
+            # buffers[:n_chunks] are the image data (capture fidelity: the
+            # first image descriptor carries wIndex=8, subsequent ones 0 --
+            # meaning unknown, baked into tables.py). The trailing buffer
+            # (buffers[-1]) is a drain of unclear purpose (not part of the
+            # documented image size); already read verbatim above, discarded
+            # here.
+            image = b"".join(buffers[:n_chunks])
+
+            # ---- park -------------------------------------------------------
+            # PARK's own first op is the captured end-of-access control
+            # write (cw wv=0x8d) -- no separate call needed here.
+            self._park(tables, ir=False)
+        except Exception:
+            # A calibration this scan cached (or reused) may no longer be
+            # trustworthy after a failure this far in -- the transport/
+            # engine state a later frame would rely on is unknown (see
+            # __init__'s _cal_cache comment, design point (d)). Never
+            # leave a cache a failed scan didn't earn.
+            self._cal_cache = None
+            raise
+
         self.last_diag = {
             "dpi": 3600,
             "frame": frame,
@@ -1950,8 +2090,9 @@ class Scanner:
             "raw_bytes": len(image),
             "chunk_count": n_chunks,
             "overscan_mm": overscan_mm,
-            "dark_a_mean": [float(x) for x in dark_a.astype(np.float64).mean(axis=0)],
-            "dark_b_mean": [float(x) for x in dark_b.astype(np.float64).mean(axis=0)],
+            "calibration": calibration,
+            "dark_a_mean": dark_a_mean,
+            "dark_b_mean": dark_b_mean,
             "dark_b_substituted": dark_b_substituted,
             "white_mean": warmup.get("white_mean"),
             "white_max": warmup.get("white_max"),
@@ -1962,8 +2103,8 @@ class Scanner:
             "warmup_peak_history": warmup.get("peak_history"),
             "warmup_measurement_times_s": warmup.get("measurement_times_s"),
             "offset_codes": [off_r, off_g, off_b],
-            "shading": _shading_stats(shading),
-            "shading2": _shading_stats(shading2),
+            "shading": shading_stats,
+            "shading2": shading2_stats,
             "feedl": feedl,
             "phase_seconds": dict(self._diag_phase_seconds),
             "total_seconds": time.monotonic() - t_start,
@@ -2018,6 +2159,17 @@ class Scanner:
         # No homing move -- see scan().
         W = t.IMAGE_WIDTH
         dpi = t.DPI
+
+        # Dual is never cached (docs/protocol-notes.md pass 14 addendum 3:
+        # no vendor capture of a dual-light skip-calibration exists, and
+        # its own CAL_SHADING_VERIFY preamble differs from plain's --
+        # reported, not guessed; see tables.CAL_REWRITE's module comment).
+        # It ALWAYS runs a full calibration below, which uploads its own
+        # shading table to scanner RAM -- overwriting whatever the plain
+        # path's cache (if any) left there. Clear it unconditionally so a
+        # later plain scan in this session never trusts a shading table
+        # that is no longer the one it was cached against.
+        self._cal_cache = None
 
         # ---- per-scan diagnostics: reset recording state (see diag.py) --
         self._diag_phase_seconds = {}
@@ -2194,6 +2346,9 @@ class Scanner:
             "chunk_count": n_chunks,
             "overscan_mm": (overscan_mm if overscan_mm is not None
                             else holder.OVERSCAN_MM) if geom is not None else None,
+            # Dual has no skip-calibration path (see _scan_dual's opening
+            # comment) -- always a fresh measurement.
+            "calibration": "fresh",
             "dark_a_mean": [float(x) for x in dark_a.astype(np.float64).mean(axis=0)],
             "dark_b_mean": [float(x) for x in dark_b.astype(np.float64).mean(axis=0)],
             "dark_b_substituted": dark_b_substituted,

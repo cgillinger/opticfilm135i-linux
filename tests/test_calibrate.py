@@ -682,6 +682,10 @@ def test_warmup_ctrl_c_and_usb_errors_propagate():
 def test_scan_sequence_matches_trace():
     mock = MockUsbIo(_build_cal_buffers())
     scanner = Scanner(mock)
+    # Verbatim: _expected_stream() below is PARK's own captured op list,
+    # byte for byte; semantic (default since 2026-09-17) would emit real
+    # read-modify-write bytes instead and is covered by test_park.py.
+    scanner.park_mode = "verbatim"
     scanner.initialize()          # base table + PREP + AFE_BASE (not under test here)
     mock.writes.clear()
     raw, width = scanner.scan(frame=1)
@@ -738,6 +742,12 @@ def _plain_scan(env_dir, read_hook=None):
         mock = MockUsbIo(_build_cal_buffers())
         fake = mock.dev  # the _FakeDev, before Scanner wraps it in GuardedDevice
         scanner = Scanner(mock)
+        # This fake replays PARK's captured op queue verbatim; it has no
+        # scripted register state for semantic PARK's live condition
+        # waits (that is test_park.py's own fake). Pin verbatim so this
+        # helper's calibration-focused tests are unaffected by park_mode's
+        # 2026-09-17 default change.
+        scanner.park_mode = "verbatim"
         with scanner:
             if read_hook is not None:
                 real = fake.read
@@ -901,6 +911,7 @@ def test_cal_capture_no_disk_io_during_scan():
         try:
             mock = MockUsbIo(_build_cal_buffers())
             with Scanner(mock) as scanner:
+                scanner.park_mode = "verbatim"  # see test_scan_sequence_matches_trace
                 scanner.initialize()
                 scanner.scan(frame=1)
                 assert os.listdir(d) == [], "wrote to disk during the scan"

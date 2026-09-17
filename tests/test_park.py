@@ -19,7 +19,8 @@ Covers:
   - Timeouts on both waits log-and-continue rather than raising, and
     are reported in the per-scan diagnostics.
   - Scanner._park() dispatch: "verbatim"/"semantic" plus a ValueError
-    on anything else; Scanner.park_mode defaults to "verbatim".
+    on anything else; Scanner.park_mode defaults to "semantic"
+    (changed 2026-09-17; "verbatim" remains selectable).
 """
 
 from __future__ import annotations
@@ -454,11 +455,13 @@ def test_wait_b_rejects_stuck_and_wrong_states():
         assert exc.last == bytes.fromhex(value) and "wait B" in str(exc) and "Power the scanner OFF" in str(exc), (label, str(exc))
         assert scanner._diag_park_waits["b_timed_out"] is True and scanner._diag_park_waits["b_last"] == value, label
     # 16) total budget: with a real-ish clock stepping 1 s per call, the
-    # 30 s budget ends after a bounded number of reads, never a hang.
+    # 100 s budget (raised 2026-09-17 for Test 61's dual-park headroom,
+    # see device._PARK_WAIT_B_TIMEOUT) ends after a bounded number of
+    # reads, never a hang.
     io, scanner, exc = _run_park([b"\xa9\x55"], clock=_FakeClock(step=1.0))
     _assert_park_failed_closed(io, scanner, exc, safety.StrictPollTimeoutError)
     n_reads = len(io.status_reads())
-    assert 2 <= n_reads <= 40, n_reads
+    assert 2 <= n_reads <= 110, n_reads
     print("test_wait_b_rejects_stuck_and_wrong_states OK")
 
 
@@ -501,7 +504,8 @@ def test_wait_b_for_every_table_and_wait_a_unchanged():
     observed a1 -> a9 -> e8 sequence (regression: the table-specific
     0x8b payloads / 0x19 write are untouched), Wait A is still the
     bounded 0x35 bit-0x40 wait (fails closed on its own), and
-    park_mode still defaults to verbatim."""
+    park_mode still defaults to semantic (changed 2026-09-17;
+    "verbatim" remains selectable for A/B comparison)."""
     import importlib
     from of135i import safety
     mods = [tables, tables_ir] + [importlib.import_module(f"of135i.tables_dpi{d}") for d in (600, 1200, 2400, 7200)]
@@ -523,7 +527,7 @@ def test_wait_b_for_every_table_and_wait_a_unchanged():
         else:
             raise AssertionError("wait A did not fail closed")
     assert io.status_reads() == [] and scanner.session.state is SessionState.FAILED
-    assert Scanner(_FakeIo()).park_mode == "verbatim"
+    assert Scanner(_FakeIo()).park_mode == "semantic"
     print("test_wait_b_for_every_table_and_wait_a_unchanged OK (6 tables)")
 
 
@@ -533,7 +537,7 @@ def test_wait_b_for_every_table_and_wait_a_unchanged():
 def test_park_mode_default_and_dispatch():
     io = _FakeIo()
     scanner = Scanner(io)
-    assert scanner.park_mode == "verbatim", scanner.park_mode
+    assert scanner.park_mode == "semantic", scanner.park_mode
 
     scanner.park_mode = "bogus"
     try:

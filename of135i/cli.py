@@ -314,6 +314,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # session, matching the vendor.
     def body(scanner: Scanner) -> int:
         scanner.park_mode = args.park
+        scanner.recalibrate = bool(getattr(args, 'recalibrate', False))
         if getattr(args, 'warmup_budget', None) is not None:
             scanner.warmup_budget_s = float(args.warmup_budget)
         # Read-only start-state check up front, so an unsafe scanner
@@ -867,6 +868,7 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
 
     def body(scanner: Scanner) -> int:
         scanner.park_mode = args.park
+        scanner.recalibrate = bool(getattr(args, "recalibrate", False))
         if getattr(args, "warmup_budget", None) is not None:
             scanner.warmup_budget_s = float(args.warmup_budget)
         scanner.check_start_state()
@@ -905,6 +907,7 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
             _write_diag_sidecar(args, scanner, out, frame, coverage=cov)
             d = scanner.last_diag or {}
             entry.update(stage=None,
+                         calibration=d.get("calibration"),
                          gain_codes=d.get("gain_codes"),
                          offset_codes=d.get("offset_codes"),
                          dark_b_substituted=d.get("dark_b_substituted"))
@@ -1071,11 +1074,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--warmup-budget", type=float, default=None, metavar="SECONDS",
                         help="total time to wait for the lamp after a cold start before "
                              "failing the scan (default: the driver's bounded default, 60 s)")
-    p_scan.add_argument("--park", choices=("verbatim", "semantic"), default="verbatim",
-        help="PARK phase implementation: verbatim replays the captured stream "
-             "(default); semantic issues the same writes with real "
-             "read-modify-write and condition waits instead of captured "
-             "pacing (A/B test in progress, see docs/replay-analysis.md)")
+    p_scan.add_argument("--park", choices=("verbatim", "semantic"), default="semantic",
+        help="PARK phase implementation: semantic issues the same motor "
+             "sequence as verbatim but replaces the captured trace's fixed "
+             "pacing with real read-modify-write and condition waits "
+             "(default since 2026-09-17: 3.7-3.8 s vs verbatim's captured "
+             "13.6-16.9 s; hardware-confirmed via the SANE backend's PARK "
+             "program, docs/park-completion-analysis.md); verbatim replays "
+             "the captured op stream byte for byte, for A/B comparison")
+    p_scan.add_argument("--recalibrate", action="store_true",
+        help="force a full dark/white/gain/shading calibration on every "
+             "frame (today's behaviour). Default since 2026-09-17: reuse "
+             "this session's first successful calibration on later frames "
+             "of the same (dpi, dual) kind, re-applying only the AFE gain "
+             "codes -- the vendor does the same on a skip-calibration "
+             "frame (docs/protocol-notes.md pass 14) and the shading table "
+             "survives in scanner RAM across PARK. Plain 3600 dpi only; "
+             "dual/IR always recalibrates (docs/driver-design.md)")
     p_scan.add_argument("-o", "--output", required=True, help="output file path (.tiff or .pnm)")
     p_scan.set_defaults(func=_cmd_scan)
 
@@ -1150,8 +1165,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip IR-based dust/scratch removal on the visible image")
     p_dig.add_argument("--no-diag", action="store_true",
         help="skip writing per-frame .diag.json sidecars")
-    p_dig.add_argument("--park", choices=("verbatim", "semantic"), default="verbatim",
-        help="PARK implementation (default verbatim)")
+    p_dig.add_argument("--park", choices=("verbatim", "semantic"), default="semantic",
+        help="PARK implementation: semantic (default since 2026-09-17, "
+             "3.7-3.8 s, hardware-confirmed via the SANE backend) or "
+             "verbatim (replays the captured stream byte for byte)")
+    p_dig.add_argument("--recalibrate", action="store_true",
+        help="force a full calibration on every frame (today's behaviour) "
+             "instead of reusing this roll's first successful plain-3600 "
+             "calibration on later frames (default since 2026-09-17; the "
+             "vendor does the same, docs/protocol-notes.md pass 14). "
+             "Dual/IR always recalibrates")
     p_dig.add_argument("--warmup-budget", type=float, default=None, metavar="SECONDS",
         help="lamp warmup budget after a cold start (default 60 s)")
     p_dig.set_defaults(func=_cmd_digitize, ir=True)

@@ -126,6 +126,45 @@ single USB operation the driver would otherwise perform:
       Hardware-verified: sensor polarity confirmed, eject button (0x48)
       triggers `eject()` via `of135i watch`.
 
+## Calibration cache (2026-09-17)
+
+Policy, not a hardware requirement: by default the driver runs a full
+dark/white/gain/shading calibration only on the FIRST frame of a
+plain-3600 session and, on later frames, re-applies only the AFE gain
+codes (`Scanner._calibration_rewrite()`, `tables.CAL_REWRITE`).
+`--recalibrate` (CLI) / `Scanner.recalibrate = True` (library) restores
+the previous every-frame behaviour.
+
+Vendor evidence: docs/protocol-notes.md pass 14, and its "frame-4
+rewrite" addendum (2026-09-17) which decoded the exact ops. SilverFast
+scanning frames 3, 4, 1 in one session runs the full calibration on 3
+and 1, but frame 4 skips it entirely and just rewrites the AFE gain
+codes from frame 3 before positioning -- the uploaded shading table
+survives PARK in scanner RAM, so it never needs re-uploading either.
+No matching per-frame OFFSET rewrite exists in that capture; only gain
+is per-frame data there (see the addendum for why this is not the same
+as the earlier, looser "gain/offset" phrasing in pass 14 itself).
+
+Scope: plain 3600 dpi only, cached per `Scanner` instance (a new CLI
+invocation always calibrates fresh) and keyed on `(dpi, dual)`.
+Invalidated on a key change, on `eject()`, on `load_magazine()`, on any
+exception escaping the rest of a scan after the cache was set (a failed
+scan must never leave a cache a later frame trusts), and by a dual scan
+running in the same session (its own calibration overwrites the shared
+shading table). Dual/IR always recalibrates -- no vendor capture of a
+dual-light skip-calibration exists, and its own re-init preamble has
+two extra ops (a `19=08` write and a live `32` read-modify-write) not
+present in the plain capture, so guessing at a dual rewrite was
+avoided rather than attempted.
+
+Risk carried forward, not resolved here: within a single load the lamp
+may not have as long to stabilise as it does across separate CLI
+invocations (each of which re-runs the full warmup-aware gain
+measurement). This is the same risk the vendor itself accepts in its
+own capture; image-quality follow-up belongs in production use
+(`diag.json`'s `"calibration": "fresh"/"cached"` field lets a later
+pass correlate quality against cache hits), not in more driver logic.
+
 ## Publication rules (M3)
 
 Never publish: vendor ini/plist/framework files, pcaps, decoded
