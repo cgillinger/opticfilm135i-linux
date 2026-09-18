@@ -85,12 +85,35 @@ The last step is not new reverse engineering: `of135i/aperture.py` and
 `of135i/aperture_crop.py` already find aperture edges and crop for the strip
 holder's overscan path, and can be adapted to the slide frame's geometry.
 
-## 5. What still needs a physical slide
+## 5. With a real slide (Test 84, 2026-09-18) — what changed
 
-Everything imaging: focus at the film plane inside a mount, sharpness,
-positive-film colour and tonal rendering, infrared on a real slide, dust
-removal — and, just as important, whether the crop step actually works: the
-edge contrast at a mount opening, whether the four openings are uniform
-enough to detect, and whether their positions are stable between loads.
-None of that can be measured on an empty holder. It is the concrete next
-step, and it waits on a mounted slide to feed in.
+A mounted slide in holder position 1 was scanned with the strip holder's
+frames 1–6 at 600 dpi (dual-light, IR), with no slide-specific code
+(`docs/test-log.md`, Test 84). Findings:
+
+- **Load, six POSITION moves and eject all ran normally** on the slide
+  holder with existing code; calibration identical to the strip holder.
+- **The slide's image is whole and unclipped** inside window 1: mount
+  aperture 35.1 × 22.7 mm, i.e. the long side runs along the transport,
+  the same orientation as a strip frame. The slide is IR-transparent, so
+  the IR frame is a clean dust map.
+- **The holder does have a grid** — the vendor simply chooses not to use
+  it. Windows 2–6 caught the three empty openings as light straight
+  through: openings 38.05 × 25.5 mm on a 62.6 mm pitch, starting at
+  ≈ 23.5 / 86.1 / 148.7 / 211.4 mm (600-dual coordinate, n = 1 load),
+  the last ending just inside the 71490 FEEDL ceiling. The vendor's
+  257 mm sweep length (section 3) matches that span.
+
+**Consequence for the driver.** Section 4's "one long sweep" is no longer
+the only route: the four openings sit inside the FEEDL range the
+POSITION mechanism is already verified on, so a driver slide scan can be
+load + POSITION to the opening + the usual pass + PARK, per slide, reusing
+everything the strip path has. The crop step should key on the IR frame
+where available (the mount is opaque to IR, the film is not; visible-light
+thresholds were fooled by dark image content).
+
+**Still open:** focus and sharpness at the film plane (needs a
+3600-class run), dust cleaning at a tuned resolution (`remove_dust` is
+dpi-blind — Test 84), the crop step in code, positive-film rendering
+(raw data healthy; rendering is the application's), and grid stability
+across loads.

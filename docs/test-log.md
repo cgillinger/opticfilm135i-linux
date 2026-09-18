@@ -5933,3 +5933,81 @@ LOAD's completions already run under (the feed's 0xfc55 stop, Test 51
 exit) and it changes only a case never observed. The exported WP-3
 package still carries the best-effort form and must be refreshed before
 any submission (`docs/sane-wp3-submission.md` §7, item 5).
+
+### Test 84: the mounted-slide holder with a real slide — six strip-holder windows at 600 dpi, no new motor code (2026-09-18)
+
+2026-09-18, ~22:50–22:58, driver at master `b5f38ac`, Python driver
+unchanged. First run of the four-slide holder with a **mounted slide** in
+it (holder position 1). The point of the design: use only verified
+transports — `load`, the strip holder's frames 1–6 at 600 dpi (dual-light,
+`--ir --no-clean`), `--eject` — and let the six windows tile the holder
+so the slide lands somewhere in them. No slide-specific code existed and
+none was written. Raw frames and diagnostics are archived privately in
+`plustek-135i-analys/dia-20260918/`; review images in the owner's review
+folder.
+
+**Transport.** Idle 0x01 = 0x22, magazine loose in the well; `load`
+normal; six POSITION moves (FEEDL 6519 / 17272 / 28031 / 38809 / 49541 /
+60256, the 600 dpi dual ledger) each with a full transfer of 1862
+alternating lines; semantic PARK each frame (wait B `f855`, 3.8 s);
+two benign poll deviations (`9c55` vs `ad55`); eject normal. Calibration
+gain 44/33/39, offset 266/265/266 — identical to the strip holder's.
+The coverage check reported *no aperture found* on all six, as expected
+(it looks for the strip holder's plastic edges); the CLI kept the six
+full overscan frames plus IR and exited 4. The first POSITION moves ever
+made with this holder in the transport; the owner reported nothing
+abnormal.
+
+**The slide (frame 1).** Whole image inside window 1: the mount's
+aperture measures 35.1 × 22.7 mm (found on the IR frame, where the mount
+is opaque and the film is not), starting 26.2 mm along the transport in
+the 600-dual coordinate. No channel clips (max 60672; p99 R/G/B
+45k/56k/40k, p1 ~2000). Dust and hairline scratches are sharp at 600 dpi;
+600 dpi says nothing about focus at the film plane. The slide is
+IR-transparent (E6 dye film; IR mean 48306, p5 41512): the IR frame is a
+clean dust map. Owner's eye verdict on the review images: the per-channel
+normalised preview (black/white points at p0.5/p99.5) is the closest to
+the slide as remembered; the raw+gamma rendering is paler and greener.
+Raw data healthy; rendering is the application's job, unchanged.
+
+**The holder's grid, measured despite the vendor's sweep.** Windows 2–6
+caught the three empty openings as light straight through (~46000
+against plastic ~1670), so the geometry the empty-holder capture could
+not give is now measured (n = 1 load, 600-dual coordinate, 12 motor
+steps per line):
+
+| opening | start | end | length |
+|---|---|---|---|
+| 2 | 86.12 mm (f2 line 595) | 124.20 mm (f3 line 598) | 38.1 mm |
+| 3 | 148.68 mm (f4 line 278) | 186.75 mm (f5 line 283) | 38.1 mm |
+| 4 | 211.35 mm (f5 line 864) | 249.36 mm (f6 line 869) | 38.0 mm |
+
+Pitch 62.56 / 62.67 mm (starts), 62.55 / 62.61 mm (ends); lateral opening
+5.3–30.8 mm = 25.5 mm; opening 1 (hidden by the slide) at ≈ 23.5 mm if
+the pitch holds, which puts the slide's aperture 2.6 mm inside it — a
+mount border, consistent. Opening 4 ends at FEEDL 60256 + 869·12 = 70684,
+just inside the 71490 ceiling. Cross-check against S1: the vendor's sweep
+of 36386 wire lines at 1800 dpi dual = 18193 visible lines = 257 mm,
+covering the span to 249 mm. Consistent.
+
+**Dust removal, tried offline on the saved pair — a real finding.** The
+physics works (raw speck mask 1.5 % of the aperture, evenly spread: a
+genuinely dusty slide). But `image.remove_dust` is **dpi-blind**: the
+64 px background box, the 6 px mask dilation and the 5/17/49 px inpaint
+kernels are pixel constants tuned at 3600 dpi. At 600 dpi (6× larger
+pixels) the dilated mask covers 52.6 % of the aperture (1 iteration:
+6.3 %, 2: 14 %), inpainting goes blotchy, and the 32 px border halo
+leaves 1.4 mm inside the mount edge uncleaned. This applies equally to
+negatives at 600/1200 dpi; no low-dpi clean has ever been eye-checked, so
+it had not shown. At 3600 dpi the constants are right (Test 73). No code
+changed.
+
+**What this settles and what it does not.** The slide holder loads,
+positions and ejects on the existing code; the slide's image is whole,
+unclipped and IR-cleanable in principle; the holder's four openings form
+a measured 62.6 mm grid inside the verified FEEDL range, so slide
+positions can be reached with the existing POSITION mechanism rather than
+a new sweep mode. Not established: focus and sharpness (needs a 3600-class
+run), dust cleaning at a tuned resolution, the crop step in code (IR-based
+edge finding worked here; visible-light thresholds were fooled by dark
+image content), and grid stability across loads (n = 1).

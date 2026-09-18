@@ -175,10 +175,12 @@ should know about:
   the same contract in visible-line units, hardware-verified one run
   per profile (Test 61; see
   [`docs/ROADMAP.md`](docs/ROADMAP.md) milestone C). **Mounted slides — not supported yet.** The
-  scanner ships with a four-slide holder. **Neither the driver nor the SANE
-  backend covers it:** its frame pitch and load flow are uncaptured and it has
-  never been run. It is a planned, separate milestone (C2 in the roadmap), not
-  part of what works today.
+  scanner ships with a four-slide holder. Its load flow is the strip
+  holder's, a mounted slide scans whole through the strip-holder windows
+  and the four openings form a measured grid (Test 84), but **neither the
+  driver nor the SANE backend has a slide path yet** (positioning, crop,
+  positive handling). It is a planned, separate milestone (C2 in the
+  roadmap), not part of what works today.
   **Panorama:** Plustek's optional panoramic holder (frames up to
   226 mm) carries the same identification tab encoding as the strip
   holder (35mmc's review), so "panorama" is a software mode — one
