@@ -305,12 +305,20 @@ frames 1–6 at 600 dpi on existing code: load, six POSITION moves, PARK
 and eject normal; the slide's image whole and unclipped; IR usable; the
 holder's four openings measured as a 62.6 mm grid inside the verified
 FEEDL range (the vendor sweeps instead of positioning, but the grid is
-there). What remains for C2, all on that evidence: a slide profile in the
-driver (POSITION to the opening, crop keyed on IR, positive handling
-without inversion, dust removal scaled by dpi), focus and sharpness at a
-3600-class resolution, and grid stability across loads. C2 is done when
-that list is verified on a mounted slide. **Brought forward 2026-09-18 (owner's
-decision, slides are in scope for the driver): in progress.**
+there). Test 85 (2026-09-19) then answered the imaging questions at
+3600 dpi dual, twice over: the film plane is in focus and 3600 dpi is the
+right sampling (a lower resolution loses 3.8 % of the detail at 1800 dpi,
+7.1 % at 600; the spectrum reaches the noise floor at ~1200–1500 lp/in),
+a dual profile is required laterally (plain 3600's 26.5 mm clips a
+mounted slide), and `remove_dust` is correct at 3600 — its dpi-blindness
+is a low-resolution problem. The aperture measured the same across three
+loads (35.06 × 22.75 mm, moving 0.13 mm). What remains for C2: a slide
+profile in the driver (POSITION to the opening on the measured grid, crop
+keyed on IR, positive handling without inversion, dust removal scaled by
+dpi for the low resolutions) and grid stability beyond two loads. C2 is
+done when that list is verified on a mounted slide. **Brought forward
+2026-09-18 (owner's decision, slides are in scope for the driver): in
+progress.**
 
 ---
 

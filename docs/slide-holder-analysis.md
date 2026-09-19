@@ -112,8 +112,37 @@ everything the strip path has. The crop step should key on the IR frame
 where available (the mount is opaque to IR, the film is not; visible-light
 thresholds were fooled by dark image content).
 
-**Still open:** focus and sharpness at the film plane (needs a
-3600-class run), dust cleaning at a tuned resolution (`remove_dust` is
-dpi-blind — Test 84), the crop step in code, positive-film rendering
-(raw data healthy; rendering is the application's), and grid stability
-across loads.
+**Still open after Test 84:** focus and sharpness at the film plane
+(needs a 3600-class run), dust cleaning at a tuned resolution
+(`remove_dust` is dpi-blind — Test 84), the crop step in code,
+positive-film rendering (raw data healthy; rendering is the
+application's), and grid stability across loads.
+
+## 6. At 3600 dpi (Test 85, 2026-09-19) — focus and cleaning settled
+
+The same slide was run twice through frame 1 at 3600 dpi dual, dirty and
+then cleaned with an antistatic brush and a blower (`docs/test-log.md`,
+Test 85). Both runs: FEEDL 6326, 697 chunks, normal PARK and eject, no
+channel clipping, aperture 35.06 × 22.75 mm — the same as the 600 dpi
+measurement, and stable to 0.13 mm across the two loads.
+
+- **Use a dual profile for mounted slides.** Plain 3600 covers 26.5 mm
+  laterally and the slide's aperture reaches 29.7 mm across the frame, so
+  plain clips it; dual 3600 covers 36.58 mm and fits, with 6.9 mm of
+  margin on each side.
+- **The film plane is in focus, and 3600 dpi is the right sampling.**
+  Downsampling the frame loses 3.8 % of its detail at 1800 dpi, 5.0 % at
+  1200 and 7.1 % at 600, equally on both axes; the power spectrum reaches
+  the noise floor at ~1200–1500 lp/in. 7200 dpi would not recover more.
+- **`remove_dust` is right at its design resolution.** At 3600 dpi the
+  clean is visually clean — specks and hairs gone, outlines and grain
+  intact — where the same slide at 600 dpi went blotchy. The dpi-blindness
+  found in Test 84 is a low-resolution problem, not a broken algorithm.
+- **Brushing and the IR clean are complementary.** A brush and a blower
+  removed 79 % of the dust (dark specks 3.23 % → 0.68 % of the aperture);
+  the IR pass then has little enough left to inpaint that the result is
+  clean to the eye.
+
+**Still open:** the crop step in code (IR-keyed), a holder model carrying
+the measured 62.6 mm grid, positive-film rendering, and grid stability
+beyond two loads.

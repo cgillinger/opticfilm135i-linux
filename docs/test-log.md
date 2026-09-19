@@ -6011,3 +6011,91 @@ a new sweep mode. Not established: focus and sharpness (needs a 3600-class
 run), dust cleaning at a tuned resolution, the crop step in code (IR-based
 edge finding worked here; visible-light thresholds were fooled by dark
 image content), and grid stability across loads (n = 1).
+
+### Test 85: the same slide at 3600 dpi, then brushed and scanned again — focus, and a dust-removal before/after (2026-09-19)
+
+2026-09-19, ~11:26 and ~11:47, driver at master `6657dec`, Python driver
+unchanged; no new code and no new motor sequence. Two runs of the same
+mounted slide (Test 84's, holder position 1) through the strip holder's
+frame 1, identical commands apart from the output directory:
+`scan --frame 1 --dpi 3600 --ir --no-clean --overscan 1.5 --eject`. The
+slide was deliberately left dirty for the first run and cleaned with an
+antistatic brush and a blower between the two, so the pair isolates what
+cleaning removes. Raw frames and measurements are archived privately in
+`plustek-135i-analys/dia-3600-20260919{,-rengjord}/`; review images in
+the owner's review folder.
+
+**The profile choice is not free.** Plain 3600 covers 26.5 mm laterally,
+but the slide's aperture reaches 29.7 mm across the frame — plain would
+have clipped it. The dual 3600 profile (`--ir`) covers 36.58 mm and was
+computed to fit before the run; the outcome confirmed it. The dual
+profiles are the ones to use for mounted slides.
+
+**Transport.** Both runs: FEEDL 6326, 697 chunks, 11152 wire lines,
+margins lead 1.500 / trail 1.553 mm, completion poll `f455` exact,
+semantic PARK, normal eject, 1 min 9 s each. Gain 0x2c/0x20/0x27 and
+0x2c/0x21/0x27 (±1 in green), offset 0x010a/0x0109/0x010a both times.
+Three poll timeouts and 12–13 cr mismatches per run, all in the known
+benign families. Coverage reported *no aperture found* and the CLI exited
+4 both times, as in Test 84 — the detector looks for the strip holder's
+plastic edges.
+
+**Geometry, now over three loads.** The mount aperture measured in the IR
+frame is 35.06 × 22.75 mm, against 35.1 × 22.7 mm at 600 dpi in Test 84 —
+the same to measurement accuracy. Its position moved 18 lines (0.13 mm)
+between the two loads today, inside the ±0.24 mm load-to-load variation
+measured in Test 56. No channel clips in either run (max 64234 of 65535,
+0.0000 % at both ends).
+
+**Focus at the film plane — the question 600 dpi could not answer.**
+Downsampling the 3600 frame and comparing it against itself (green
+channel, whole aperture) gives the detail a lower resolution would lose:
+
+| simulated resolution | detail lost (RMS) |
+|---|---|
+| 1800 dpi | 3.8 % (rows) / 3.6 % (columns) |
+| 1200 dpi | 5.0 % / 5.0 % |
+| 600 dpi | 7.1 % / 7.1 % |
+
+Isotropic — neither axis is softer. (The mount edge's 10–90 % width
+measures 77–87 µm along the transport but 329–344 µm laterally; that is
+the edge's own geometry and the illumination, not the optics, as the
+content measure above shows no anisotropy.) The radial power spectrum
+falls continuously and reaches the noise floor at ~1200–1500 line pairs
+per inch, so the real optical resolution sits there and 3600 dpi sampling
+covers it with margin. **3600 dual is the right working resolution for
+mounted slides; 7200 would not recover more.** Dust speck FWHM: median
+71 µm, p10 35 µm.
+
+**Dust removal at its design resolution — it works.** Before cleaning,
+dark specks (below 80 % of the local IR background) covered 3.23 % of the
+aperture and `image.remove_dust` dilated that to a 24.98 % mask, changing
+23.75 % of the aperture's pixels. That is a lot of the frame, but the
+result is visually clean: hairs and specks gone, tree outlines and grain
+structure intact, no blotching — against the blotchy 600 dpi result of
+Test 84 on the same slide. This confirms Test 84's diagnosis precisely:
+`remove_dust` is not broken, it is **bound to 3600 dpi**. The mm-scaling
+work is needed for 600/1200, not here.
+
+**What brushing removes.** Registered on the mount aperture, the same
+slide after an antistatic brush and a blower:
+
+| | dark specks (<80 % bg) | (<88 % bg) | dilated mask |
+|---|---|---|---|
+| before | 3.23 % | 7.36 % | 24.98 % |
+| after | 0.68 % | 1.97 % | 9.99 % |
+
+Brushing removed 79 % of the dust. Physical cleaning and the IR clean are
+complementary, not alternatives: brushing takes the bulk, and the IR pass
+then has little enough left to inpaint that the cleaned frame is
+indistinguishable from an undusted one by eye.
+
+**Owner's eye verdict: ACCEPTED** on the 3600 dpi frames — the IR clean
+"funkade bra", and the before/after pair was accepted as the basis for
+the conclusions above.
+
+**Still open after this.** The crop step in code (IR-keyed, per
+section 5 of `docs/slide-holder-analysis.md`), a slide holder model with
+the measured 62.6 mm grid, positive-film rendering (raw data is healthy;
+rendering stays the application's job), and grid stability beyond n = 2
+loads.
