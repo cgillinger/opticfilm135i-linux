@@ -1,6 +1,11 @@
 # Proposal: 110 (Pocket Instamatic) support in the strip holder
 
-Status: PROPOSAL for review, 2026-09-19. Nothing here is implemented.
+Status: PROPOSAL, 2026-09-19 — **implemented offline the same evening**
+(`docs/film-110.md` is the as-built description; where the two differ the
+as-built one is right: the hole sits *inside* the film edge behind a
+0.6 mm rim, every hole predicts both neighbouring images with lead 2.3 /
+trail 3.4 mm, the film edge is tracked per line, and the lateral offset
+is 2.0 mm). Hardware verification on a second strip (Test 87) is pending.
 The measurements are from one evening with one strip (n = 1) and are
 marked as such. No motor sequence, wait, profile or calibration changes
 are proposed; everything below is image-side and workflow.

@@ -50,6 +50,7 @@ SUITES = (
     ("test_dpi", "core"), ("test_ir", "core"), ("test_image_probe", "core"),
     ("test_aperture_crop", "core"), ("test_overscan", "core"),
     ("test_dual_overscan", "core"), ("test_calibration_cache", "core"),
+    ("test_film110", "core"),
     ("test_release_check", "core"),
     ("test_sane_lock", "compiler"), ("test_sane_ops", "compiler"),
     ("test_sane_geometry", "compiler"), ("test_sane_install", "compiler"),

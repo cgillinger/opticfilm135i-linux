@@ -678,6 +678,26 @@ change; further timing work; repeats of accepted profiles.
   changed blind (which would also churn the WP-3 package). Observed on digiKam
   9.1.0 / KSane 26.08 (Test 76).
 
+## C3 — 110 (Pocket Instamatic) film in the strip holder (added 2026-09-19)
+
+Image-side only: no motor, wait, calibration or geometry change
+(`docs/film-110-proposal.md` §2). Definition of done:
+
+1. Film model + perforation-anchored detector + `scan --film 110`,
+   offline-tested on synthetic fixtures and on the real strip's saved
+   scans — **DONE 2026-09-19** (Test 86: 22 of 22 apertures give the
+   eye-read verdict; edges within 0.5 mm; `docs/film-110.md` §9).
+2. **Test 87:** a *second* 110 strip through the two-placement protocol
+   with no manual cropping: every image delivered once as a whole
+   product, sizes 17.2 x 13.0 ± 0.3 mm, no image missing an edge by eye,
+   the survey's placement advice right, the free-end warning raised
+   exactly where a strip end is. — **PENDING** (needs the strip and one
+   hardware evening).
+3. Only after 2: README says "supported", with n = 2 stated.
+
+Not in scope: a 110 FEEDL grid, 126 Instamatic, holder-ID detection,
+`digitize --film 110` (follow-up once 2 passes).
+
 ## Candidates, not scheduled (2026-09-13)
 
 Recorded so they are not lost. None is committed work; each needs a

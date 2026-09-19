@@ -6099,3 +6099,56 @@ section 5 of `docs/slide-holder-analysis.md`), a slide holder model with
 the measured 62.6 mm grid, positive-film rendering (raw data is healthy;
 rendering stays the application's job), and grid stability beyond n = 2
 loads.
+
+### Test 86: a 110 (Pocket Instamatic) strip in the 35 mm strip holder — three placements, the two-placement rule, and a free strip end that sags (2026-09-19)
+
+**Setup.** A four-frame 110 colour-negative strip (16 mm film, one
+perforation per frame) in the standard strip holder, film against the
+lower rail. Three loads, one placement each; every load: `status &&
+load` in a terminal, a 600 dpi survey over apertures 1–6 (first
+placement) or 1–4, then 3600 dpi with IR (`--ir --no-clean`) on the
+apertures holding whole images, then eject. No motor, wait, profile or
+calibration change; every transport was a verified one. Coverage
+verified on all 14 survey apertures and all 8 production apertures;
+gain 0x2d–0x2e / 0x22 / 0x27 and offset 0x010a/0x0109–0x010a/0x010a–b
+on every frame, as for 35 mm.
+
+**What was in the machine** (asked, not assumed): 110, not 126. Film
+16.0 mm wide, images 17.2 x 13.0 mm, pitch 25.5 mm, hole 2.3 mm before
+each image; frames numbered in ink beside the holes. Whole film width
+inside the 24 mm aperture, so no lateral clipping.
+
+**Placements.** (1) First placement, strip ~13 mm into aperture 1:
+images 1, 2, 4 whole (apertures 1, 2, 3), image 3 under bar 2/3, exactly
+the owner's observation that started the evening. (2) *Placement A* by
+the owner's rule — image 1's left edge at aperture 1's left edge, like a
+35 mm strip: images 1, 3, 4 whole, image 2 under bar 1/2. (3)
+*Placement B* — bar 1 between images 1 and 2, bar 3 right of image 4
+(a 12.5 mm shift): images 2 and 4 whole, image 3 under bar 2/3. The rule
+holds for any 110 strip because the film pitch is fixed: with image 1
+edge-aligned, images 2, 5, 8 need placement B.
+
+**The sag.** In placement A the strip's free end lies 25.4 mm into
+aperture 3 with nothing holding it. Image 4 there measured roughly half
+the edge sharpness of the same frame in placement B (Laplacian mean per
+third of the frame: 2004/1775/1556 vs 2780/3765/3399), softening toward
+the free end; grain resolved in B, not in A. In B the end reaches bar
+3/4. Rule: the last image is taken where the strip end sits under a
+bar, the first where its start does.
+
+**Products.** Four finished images (edge-cropped by hand from 1 mm
+rulers, IR-cleaned, upright) from placements A and B; owner's eye: the
+first three positives accepted as "110-kvalitet". Raw and survey frames
+are the fixture set for the 110 detector (`docs/film-110.md` §9).
+
+**Two mistakes on the way, kept.** I first took the strip for 126 (35 mm
+wide) and warned of lateral clipping that does not exist; and I wrote
+"yesterday" about the first placement, which was the same evening —
+folders renamed. The 19 mm spacer rule I proposed for placement B was
+correct but was rejected by the owner as fiddly; his visual rule is what
+the documentation carries.
+
+**Offline afterwards, same evening:** `Film` model, `of135i/film110.py`,
+`scan --film 110`, `tests/test_film110.py` (12), `tools/film110_check.py`;
+22 of 22 apertures give the eye-read verdict. Hardware verification on a
+second strip is Test 87, not run.

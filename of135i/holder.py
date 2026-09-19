@@ -197,6 +197,72 @@ def frames(holder: Holder = DEFAULT) -> range:
     return range(1, holder.frames + 1)
 
 
+@dataclass(frozen=True)
+class Film:
+    """Image-side geometry for a film format, consumed only by the frame
+    detector (of135i/film110.py). This is NOT holder geometry: the
+    transport still positions on the strip holder's own fiducial grid
+    (``STRIP_FIDUCIAL`` via ``overscan_geometry``), one physical aperture
+    at a time, unchanged by which ``Film`` is in play. A ``Film`` only
+    tells the detector what an image and its perforation look like
+    *inside* an already aperture-registered crop -- it never feeds a
+    FEEDL, a wait or a calibration step.
+
+    All lengths are millimetres. ``image_mm`` is ``(along transport,
+    lateral)`` -- axis 0 of the aperture-registered image is the
+    along-transport (line) axis, axis 1 the lateral (column) axis, the
+    same convention ``aperture_crop``/``aperture`` use.
+
+    ``geometry_source`` states where the numbers came from (measured on
+    hardware vs. nominal), the same honesty convention as
+    ``Holder.geometry_source`` above.
+    """
+
+    name: str
+    width_mm: float
+    image_mm: tuple[float, float]        # (along transport, lateral)
+    pitch_mm: float
+    perforation_lead_mm: float           # hole trailing edge -> next image start
+    image_lateral_offset_mm: float       # perforated film edge -> image edge
+    geometry_source: str
+    perforation_trail_mm: float = 0.0    # previous image end -> hole leading edge
+
+
+#: The 35 mm strip: the image fills the whole aperture (today's
+#: behaviour, unchanged), so this model is nominal and carries no real
+#: perforation geometry -- the 35 mm path never runs the film110
+#: detector; it crops to the aperture itself, exactly as it always has.
+#: It exists only so callers can look up a ``Film`` by name uniformly.
+FILM_135 = Film(
+    name="35 mm",
+    width_mm=35.0,
+    image_mm=(36.0, 24.0),
+    pitch_mm=38.0,
+    perforation_lead_mm=0.0,
+    image_lateral_offset_mm=0.0,
+    geometry_source="nominal; the 35 mm path never uses this model",
+)
+
+#: 110 (Pocket Instamatic), measured on one strip, 2026-09-19 (Test 86,
+#: docs/film-110-proposal.md section 1.1): a four-frame colour-negative
+#: strip scanned in the standard 35 mm strip holder, three placements.
+#: n = 1 -- a second strip is required before these figures are called
+#: general (project rule: never build on one reference).
+FILM_110 = Film(
+    name="110 Pocket Instamatic",
+    width_mm=16.0,
+    image_mm=(17.2, 13.0),
+    pitch_mm=25.5,
+    perforation_lead_mm=2.3,
+    image_lateral_offset_mm=2.0,
+    perforation_trail_mm=3.4,
+    geometry_source="one strip, 2026-09-19 (Test 86), n=1",
+)
+
+#: Films the detector knows, by the --film CLI value.
+FILMS = {"135": FILM_135, "110": FILM_110}
+
+
 
 #: The six apertures' measured lengths, in millimetres, frame 1..6, from
 #: the vendor whole-holder sweep (docs/holder-geometry.md section 2). The

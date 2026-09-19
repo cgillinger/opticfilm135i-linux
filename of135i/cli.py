@@ -329,6 +329,9 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                   "and run load_magazine.py first", file=sys.stderr)
             return 1
         incomplete: list[int] = []
+        # --film 110: one running counter/state object for the WHOLE
+        # command (shared across every aperture scanned), not per frame.
+        film110_state = Film110State() if getattr(args, "film", "135") == "110" else None
         for frame in frames:
             scanner.initialize(ir=dual, dpi=args.dpi)
             out = _frame_output(args.output, frame) if multi else args.output
@@ -339,11 +342,13 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                 raw, width, _meta = scanner.scan(
                     frame=frame, ir=True, dpi=args.dpi,
                     overscan_mm=getattr(args, "overscan", None))
-                cov = _finish_dual_scan(args, raw, width, out, write_ir=args.ir)
+                cov = _finish_dual_scan(args, raw, width, out, write_ir=args.ir,
+                                        frame=frame, film110_state=film110_state)
             else:
                 raw, width = scanner.scan(
                     frame=frame, overscan_mm=getattr(args, "overscan", None))
-                cov = _finish_plain_scan(args, raw, width, out)
+                cov = _finish_plain_scan(args, raw, width, out, frame=frame,
+                                         film110_state=film110_state)
             del raw
             if cov is not None and not cov.verified:
                 incomplete.append(frame)
@@ -381,6 +386,127 @@ def _orient_plain(args: argparse.Namespace, arr):
     return arr
 
 
+def _orient_pair(args: argparse.Namespace, vis, irr):
+    """Like `_orient_plain`, applied identically to a visible/IR pair so
+    they stay pixel-aligned through the transform (`irr` may be None, in
+    which case it passes through unchanged). Used by the dual-scan path
+    and by the --film 110 hook, which needs the SAME transform the
+    aperture product gets, on each individual 110 image crop."""
+    import numpy as _np
+    if args.positive:
+        vis = _np.ascontiguousarray(_np.rot90(vis, 3)[:, ::-1])
+        if irr is not None:
+            irr = _np.ascontiguousarray(_np.rot90(irr, 3)[:, ::-1])
+        vis = image.to_positive(vis)
+    if args.rotate:
+        vis = _np.ascontiguousarray(_np.rot90(vis, k=args.rotate // 90))
+        if irr is not None:
+            irr = _np.ascontiguousarray(_np.rot90(irr, k=args.rotate // 90))
+    return vis, irr
+
+
+class Film110State:
+    """Per-scan-command running state for --film 110: the image counter
+    is shared across every aperture of the command (a running number,
+    not per-aperture), and the "numbering is relative to the first
+    scanned aperture" note is printed at most once."""
+
+    def __init__(self):
+        self.next_index = 1
+        self.first_aperture: "int | None" = None
+        self.printed_relative_note = False
+
+
+def _film110_image_path(out: str, n: int, ir: bool = False) -> str:
+    """<stem>-image<N>.tiff / <stem>-image<N>-ir.tiff beside `out`, always
+    .tiff regardless of -o's own extension -- the same convention the
+    dual path's -ir.tiff sidecar already uses."""
+    p = Path(out)
+    suffix = f"-image{n}-ir.tiff" if ir else f"-image{n}.tiff"
+    return str(p.with_name(f"{p.stem}{suffix}"))
+
+
+def _film110_hook(args: argparse.Namespace, state: "Film110State | None",
+                  aperture: int, out: str, vis_crop, ir_crop) -> None:
+    """--film 110: detect 110 images inside one aperture-registered crop
+    and write a product per WHOLE one. Called from both
+    `_finish_plain_scan` and `_finish_dual_scan`, on the SAME
+    aperture-registered arrays those write their own product from
+    (before orientation -- the strip runs along axis 0 here), so the
+    plain and dual paths cannot drift apart. A no-op when --film is not
+    "110" (state is None in that case) or when coverage did not verify
+    (the caller only invokes this once it has).
+
+    `ir_crop` is None on the plain path and when --ir was not given on
+    the dual path -- the 110 IR sidecar is then simply not written,
+    matching the aperture product's own --ir behaviour.
+    """
+    if state is None:
+        return
+    from . import film110, holder as _holder
+
+    if state.first_aperture is None:
+        state.first_aperture = aperture
+    if state.first_aperture != 1 and not state.printed_relative_note:
+        print("110: numbering is relative to the first scanned aperture")
+        state.printed_relative_note = True
+
+    find = film110.detect(vis_crop, dpi=args.dpi, film=_holder.FILM_110)
+    if find.empty:
+        print(f"110: aperture {aperture} — empty")
+        return
+    if not find.frames:
+        print(f"110: aperture {aperture} — {find.reason or 'no images predicted'}")
+        return
+
+    parts = []
+    for fr in find.frames:
+        if fr.split == "leading":
+            # The tail of an image that started in the previous aperture:
+            # it was numbered there (as a trailing split), so it is not
+            # counted again here.
+            parts.append("leading lines continue the previous aperture's "
+                         "split image (already counted)")
+            continue
+        n = state.next_index
+        state.next_index += 1
+        if fr.whole:
+            # Grown by PRODUCT_PAD_MM: the refined edges sit 0.2-0.5 mm
+            # inside the hand-read picture edge on the 2026-09-19 strip
+            # (a soft camera-gate edge), and a hair of gap beats a lost
+            # sliver of picture.
+            pad = film110.PRODUCT_PAD_MM
+            vis_img = film110.crop(vis_crop, fr, dpi=args.dpi, pad_mm=pad)
+            ir_img = (film110.crop(ir_crop, fr, dpi=args.dpi, pad_mm=pad)
+                      if ir_crop is not None else None)
+            vis_img, ir_img = _orient_pair(args, vis_img, ir_img)
+            vis_path = _film110_image_path(out, n)
+            image.write_tiff16(vis_img, vis_path,
+                               icc=image.srgb_icc() if args.positive else None,
+                               dpi=_axis_dpi(args, args.positive))
+            print(f"wrote {vis_path} ({vis_img.shape[1]}x{vis_img.shape[0]}, "
+                  f"16-bit RGB, 110 image {n})")
+            if ir_img is not None:
+                import numpy as _np
+                ir_path = _film110_image_path(out, n, ir=True)
+                image.write_tiff16(_np.stack([ir_img, ir_img, ir_img], axis=-1),
+                                   ir_path, dpi=_axis_dpi(args, args.positive))
+                print(f"wrote {ir_path} ({ir_img.shape[1]}x{ir_img.shape[0]}, "
+                      f"16-bit, 110 image {n} IR channel)")
+            parts.append(f"image {n} whole ({fr.size_mm[0]:.1f} x {fr.size_mm[1]:.1f} mm)")
+        else:
+            side = fr.split or "an aperture edge"
+            parts.append(f"image {n} split by the {side} bar -> "
+                         f"take it in the other placement")
+        if fr.free_end_near:
+            parts[-1] += " [free strip end nearby: sharpness untrusted]"
+
+    print(f"110: aperture {aperture} — " + "; ".join(parts))
+    if find.leading_continuation:
+        print(f"110: aperture {aperture} — leading lines continue a split "
+              f"image from the previous aperture")
+
+
 def _overscan_raw_path(out: str) -> str:
     """The filename for the preserved full overscan frame beside `out`."""
     p = Path(out)
@@ -388,7 +514,7 @@ def _overscan_raw_path(out: str) -> str:
 
 
 def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
-                       out: str):
+                       out: str, frame: int = 1, film110_state=None):
     """Write a plain scan's output.
 
     Without --overscan: `out` is the channel-aligned delivered image, as
@@ -404,6 +530,10 @@ def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
          so nothing that looks like a finished scan exists for an
          unverified frame (fail closed on image integrity).
     Returns the ApertureCoverage in the overscan case.
+
+    `film110_state`, when not None (--film 110), runs the 110 hook on
+    the SAME aperture-registered crop right after it is computed, before
+    orientation -- see `_film110_hook`.
     """
     arr = image.assemble(raw, width)
     arr = image.align_channels(arr, dpi=args.dpi)
@@ -429,6 +559,7 @@ def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
     if cov.verified:
         # (3) the aperture-registered product, cropped to the detected edges.
         crop = aperture_crop.crop_to_aperture(arr, cov, dpi=args.dpi)
+        _film110_hook(args, film110_state, frame, out, crop, None)
         crop = _orient_plain(args, crop)
         _write_image(crop, out, positive=args.positive, dpi=_axis_dpi(args, args.positive))
         print(f"aperture coverage: VERIFIED — margins lead "
@@ -442,7 +573,8 @@ def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
 
 
 def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
-                      out: str, write_ir: bool = True):
+                      out: str, write_ir: bool = True, frame: int = 1,
+                      film110_state=None):
     """Split a dual-light scan's raw buffer into visible/IR images and
     write <out> (visible, color) and, with write_ir, <out stem>-ir.tiff
     (the IR channel, replicated into R=G=B so it opens in any RGB
@@ -469,6 +601,10 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
     given. Without --ir (a non-3600 dpi scan, which is always a dual-
     light pass on the wire) the IR channel is discarded and the
     visible image written as-is.
+
+    `film110_state`, when not None (--film 110), runs the 110 hook on
+    the SAME aperture-registered visible/IR crop pair right after they
+    are computed, before orientation -- see `_film110_hook`.
     """
     import numpy as _np
 
@@ -497,22 +633,9 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
     from . import aperture_crop
     cov = aperture_crop.measure_coverage(visible, dpi=args.dpi)
 
-    def _orient_pair(vis, irr):
-        # Same orientation fix as the plain path, applied identically to
-        # both channels; rot90/[:, ::-1] work unchanged on ir's 2D
-        # (lines, width) shape too. to_positive is a visible-only
-        # preview inversion; real colour work starts from the raw
-        # negative written without --positive.
-        if args.positive:
-            vis = _np.ascontiguousarray(_np.rot90(vis, 3)[:, ::-1])
-            if irr is not None:
-                irr = _np.ascontiguousarray(_np.rot90(irr, 3)[:, ::-1])
-            vis = image.to_positive(vis)
-        if args.rotate:
-            vis = _np.ascontiguousarray(_np.rot90(vis, k=args.rotate // 90))
-            if irr is not None:
-                irr = _np.ascontiguousarray(_np.rot90(irr, k=args.rotate // 90))
-        return vis, irr
+    # _orient_pair is the module-level helper above (shared with the
+    # --film 110 hook): same orientation fix as the plain path, applied
+    # identically to both channels so they stay pixel-aligned.
 
     def _write_ir_file(arr, path):
         # The IR channel is oriented IDENTICALLY to the visible image by
@@ -530,7 +653,7 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
     # Preserve the full overscan frame(s) regardless of the verdict
     # (raw-data principle), oriented like the products.
     raw_out = _overscan_raw_path(out)
-    ov_vis, ov_ir = _orient_pair(visible, ir if write_ir else None)
+    ov_vis, ov_ir = _orient_pair(args, visible, ir if write_ir else None)
     _write_image(ov_vis, raw_out, positive=args.positive, dpi=_axis_dpi(args, args.positive))
     print(f"wrote {raw_out} ({ov_vis.shape[1]}x{ov_vis.shape[0]}, full "
           f"overscan frame, visible)")
@@ -552,7 +675,8 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
           f"{cov.leading_margin_mm:.3f} mm, trail {cov.trailing_margin_mm:.3f} mm")
     vis_c = aperture_crop.crop_to_aperture(visible, cov, dpi=args.dpi)
     ir_c = aperture_crop.crop_to_aperture(ir, cov, dpi=args.dpi) if write_ir else None
-    vis_c, ir_c = _orient_pair(vis_c, ir_c)
+    _film110_hook(args, film110_state, frame, out, vis_c, ir_c)
+    vis_c, ir_c = _orient_pair(args, vis_c, ir_c)
 
     _write_image(vis_c, out, positive=args.positive, dpi=_axis_dpi(args, args.positive))
     print(f"wrote {out} ({vis_c.shape[1]}x{vis_c.shape[0]}, 16-bit RGB, "
@@ -1091,6 +1215,13 @@ def build_parser() -> argparse.ArgumentParser:
              "frame (docs/protocol-notes.md pass 14) and the shading table "
              "survives in scanner RAM across PARK. Plain 3600 dpi only; "
              "dual/IR always recalibrates (docs/driver-design.md)")
+    p_scan.add_argument("--film", choices=("135", "110"), default="135",
+        help="film format inside the strip holder (default 135, today's "
+             "behaviour, byte-identical). 110 (Pocket Instamatic) runs the "
+             "110 frame detector on each aperture-registered crop and "
+             "writes <out>-image<N>.tiff per whole image found (plus "
+             "-ir.tiff with --ir); the aperture product and overscan are "
+             "still written exactly as today. docs/film-110.md")
     p_scan.add_argument("-o", "--output", required=True, help="output file path (.tiff or .pnm)")
     p_scan.set_defaults(func=_cmd_scan)
 
