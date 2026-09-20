@@ -181,8 +181,8 @@ should know about:
   driver nor the SANE backend has a slide path yet** (positioning, crop,
   positive handling). It is a planned, separate milestone (C2 in the
   roadmap), not part of what works today.
-  **110 (Pocket Instamatic) film in the strip holder — implemented, not
-  yet hardware-verified end to end.** A 16 mm 110 strip lies in the
+  **110 (Pocket Instamatic) film in the strip holder — supported, two
+  strips from two cameras (n = 2).** A 16 mm 110 strip lies in the
   35 mm holder against one rail; its 13 x 17 mm images fit inside the
   24 x 36 mm apertures but their 25.5 mm pitch means every third image
   falls under a crossbar, so a strip is scanned in two placements
@@ -194,8 +194,13 @@ should know about:
   need the other placement. Built and checked offline against one
   strip's saved scans (Test 86, 22 apertures, all verdicts right; a
   review then found and fixed a crop that cut up to 0.4 mm of picture,
-  `docs/film-110.md` §9.1); the acceptance run on a second strip (Test 87) has
-  not happened yet, so this is not claimed as supported.
+  `docs/film-110.md` §9.1). The acceptance run on a second strip from
+  another camera (Test 87, 2026-09-20) passed: protocol, numbering and
+  the sag rule held exactly, and the one thing that did not — the
+  lateral edge model, which met a *lighter* side border on this film —
+  was caught by the edge check and fixed the same evening
+  (`docs/film-110.md` §9.2). Every new film still goes through
+  `tools/film110_check.py --edge-check` before its products are trusted.
   **Panorama:** Plustek's optional panoramic holder (frames up to
   226 mm) carries the same identification tab encoding as the strip
   holder (35mmc's review), so "panorama" is a software mode — one

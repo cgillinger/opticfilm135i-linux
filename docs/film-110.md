@@ -7,9 +7,9 @@ identity across placements was not implemented). `--film 110` runs on
 saved data and on synthetic fixtures (`tests/test_film110.py`, in
 `tools/release_check.py`'s core group) and has been checked against one
 real hardware strip's saved scans (`tools/film110_check.py`, private
-fixtures). **Hardware verification (Test 87, a second strip, run end to
-end with no manual cropping) is pending** — see
-docs/film-110-proposal.md §6 for the acceptance plan. Nothing here
+fixtures). **Hardware verification passed 2026-09-20: Test 87, a second
+strip from another camera, end to end with no manual cropping** (§9.2;
+acceptance plan in docs/film-110-proposal.md §6). Supported on n = 2. Nothing here
 changes the motor side: positioning, waits, calibration and the FEEDL/
 overscan geometry are exactly as for 35 mm (docs/film-110-proposal.md
 §2/§5).
@@ -23,7 +23,7 @@ strip holder, three placements, one load each (docs/test-log.md Test 86).
 |---|---|---|
 | Film width | 16.0 mm (15.7–16.0 across 3 loads) | lateral edge of the film band, 600 dpi survey |
 | Image, along transport | 17.2 mm (17.0–17.5, four images) | 1 mm rulers, 3600 dpi frames |
-| Image, lateral | 13.0 mm (one image read 13.7; unexplained, see proposal §4.3) | same |
+| Image, lateral | 13.0 mm (one image read 13.7; unexplained, see proposal §4.3). **The second strip's gate is 13.3–13.7 mm wide with a 0.5 mm fogged margin on each side that is *lighter* than the picture (§9.2)** — the lateral edge is the camera's, not the format's | same |
 | Frame pitch | 25.5 mm (25.0/25.8/25.7 between consecutive images) | 600 dpi survey |
 | Perforation | one rectangular hole per frame, ~1.5 x 2 mm, punched 0.6–2.1 mm inside the film edge that faces the open side of the aperture (the edge itself stays continuous through the hole); hole trailing edge 2.3 mm before the next image start, previous image end 3.4 mm before the hole leading edge | 600 dpi rulers, column profiles |
 | Dark printed border | ~1.2 mm wide along the perforated edge, 0.8–2.0 mm inside it, reading 0.066 x air (the rail plastic reads 0.033 x air) | column profiles |
@@ -231,7 +231,15 @@ survey and the 3600 dpi production frames alike:
    image's own lines, on **both** sides — the rail side stopping 0.4 mm
    short of the rail's bright rim, the perforated side kept 1.0 mm inside
    the tracked film edge so the film's own rim and the hole never enter
-   the window.
+   the window. **Laterally the step's direction is not assumed at all**
+   (§9.2: the first strip's side border is darker than the picture, the
+   second's is lighter): the candidates are the local maxima of |step|
+   in the window that reach half the window's strongest step and 3 x the
+   neighbourhood's median step; the **innermost** candidate whose levels
+   0.1–0.4 mm on either side differ by ≥ 4 % wins — a border's outer
+   edge (border → clear film) can be the stronger step, picture-content
+   steps have picture on both sides and fail the contrast test — and is
+   walked outward to its foot. `crop` never pads past the film band.
 8. A find is *whole* with ≥ 0.3 mm inside both aperture boundaries,
    *split* (leading/trailing) otherwise; *free_end_near* when a strip end
    lies within one pitch. The CLI grows a whole image's crop by 0.25 mm
@@ -282,9 +290,10 @@ neighbourhood has a tiny median. The 0.25 mm pad hid most of it.
 side of the predicted edge; the perforated-side lateral edge is refined
 too (its 2.0 mm model offset sat 0.2 mm inside the picture's foot on all
 four frames). **Result**, `tools/film110_check.py --edge-check`, which
-re-measures every edge independently of the detector (the foot of the
-density ramp = where its slope falls below 10 % of the peak, so the
-rail's second step is never mistaken for the surround):
+re-measures every edge independently of the detector (the foot = the
+start of the first flat plateau beyond the picture, at another level or
+reached through a step; a flat sky can trip it into a false LOSS, which
+errs towards a human look, never towards a missed cut):
 
 | Frame | line0 | line1 | col0 | col1 | Size (mm) |
 |---|---|---|---|---|---|
@@ -309,7 +318,57 @@ aperture at 600 and 3600 dpi agrees within 0.05 mm.
   estimate from). All three are structural and are what steps 4, 5 and
   8 above encode.
 
+### 9.2 The second strip (Test 87, 2026-09-20): a lighter side border
+
+A four-frame strip from another 110 camera, placed by the §3 rule with
+image 1 starting 1.0 mm into aperture 1 (2.5 mm earlier than the first
+strip's 3.5 mm — well inside the ±6 mm phase tolerance; the numbering
+gave 1, 3, 4 directly). Survey verdicts A: image 1 whole, image 2 split
+by bar 1/2, image 3 whole, image 4 whole with the strip end free at
+25.4 mm (flagged), aperture 4 empty; B: image 1 whole with the free
+start flagged, image 2 whole, image 3 split, image 4 whole with the end
+under bar 3 — exactly the first strip's pattern, all 8 survey verdicts
+and both productions (apertures 1–2 in A, 2–3 in B; coverage verified,
+ejected) as the rule predicts, and the same photograph numbered the
+same in `a-` and `b-` products.
+
+**The first products cut 0.2–0.5 mm of picture on the rail side of
+three images and 0.2 mm on the perforated side of one**, caught by
+`--edge-check`. This film differs from the first in one thing a
+one-strip model cannot know: beside the picture, on both sides, lies a
+~0.5 mm fogged margin of density ~0.8 that is **lighter** than the
+picture (density 0.9–1.05 on these dense frames), where the first
+strip's printed border (1.13) is darker than its pictures (0.5–0.7).
+The lateral refinement had assumed a fixed step direction and checked
+contrast in bands around the *prediction*, which for a prediction 0.4 mm
+off straddled border and picture: it then found nothing and fell back
+to the 13.0 mm model, or locked onto a picture-content step. On the way
+to the fix two wrong readings were made and are kept here: the check
+tool's foot was walking through that light border to the rail (its
+scatter threshold was inflated by the ramp itself), which made the
+picture look 14 mm wide "with no side border", and a "picture runs to
+the rail" rule built on that reading was implemented and then removed
+once the profiles were read properly — a uniform strip of one density
+on both sides of every frame is a border, and the close-ups agree.
+
+Fix (§8 step 7): direction-free lateral refinement, innermost contrasted
+step; the check tool's foot is now the first plateau beyond the picture.
+Re-measured on all eight production frames of both strips: every edge at
+or outside the foot (worst +0.08 mm, image 4's perforated side, where
+the border and the picture share a density and only the step between
+them marks the edge); the first strip's four frames unchanged. Sizes on
+this strip: 17.3 x 13.3, 16.9 x 13.4, 17.1 x 13.7, 16.9 x 13.4 mm. The
+products were re-cut from the saved aperture frames; both earlier cuts
+are kept beside them as evidence.
+
 ## 10. Limitations
+
+- **Lateral size and border polarity are the camera's and the film's,
+  not the format's**: 13.1 mm inside a darker border on the first strip,
+  13.3–13.7 mm inside a lighter one on the second. The model's 13.0 mm
+  is only where the search starts; the crop follows the data (§8 step
+  7). A fixed "13.0 ± 0.3 mm" is therefore not an acceptance criterion —
+  the edge check is.
 
 - **n = 1 strip.** Pitch 25.5, the 2.3/3.4 mm hole offsets, the 2.0 mm
   lateral offset and the 0.6 mm rim are one strip's. Refinement absorbs

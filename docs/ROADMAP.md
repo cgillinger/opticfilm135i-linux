@@ -694,13 +694,18 @@ Image-side only: no motor, wait, calibration or geometry change
    placements; `docs/film-110.md` §5, §9.1).
 2. **Test 87:** a *second* 110 strip through the two-placement protocol
    with no manual cropping: every photograph delivered as a whole
-   product, sizes 17.2 x 13.0 ± 0.3 mm, `film110_check.py --edge-check`
+   product, 17.2 ± 0.4 mm along the transport (lateral = the camera's
+   own gate, 13.1 / 13.3–13.7 mm so far), `film110_check.py --edge-check`
    reports no lost picture on any production edge, no image missing an
    edge by eye, the same number for the same photograph in A and B, the
    survey's placement advice right, the free-end warning raised exactly
-   where a strip end is. — **PENDING** (needs the strip and one
-   hardware evening).
-3. Only after 2: README says "supported", with n = 2 stated.
+   where a strip end is. — **DONE 2026-09-20** (Test 87: a second strip
+   from another camera; protocol, numbering and sag rule held exactly;
+   the lateral edge model failed on this film's *lighter* side border
+   and was fixed the same evening, every production edge of both strips
+   then at or outside the independently measured foot; owner's eye:
+   whole picture present on all four, a little overscan).
+3. README says "supported", with n = 2 stated — **DONE 2026-09-20**.
 
 Not in scope: a 110 FEEDL grid, 126 Instamatic, holder-ID detection,
 `digitize --film 110` (follow-up once 2 passes).

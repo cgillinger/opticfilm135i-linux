@@ -6177,3 +6177,77 @@ the declared `--placement A|B` (worked example over all eight measured
 positions in `docs/film-110.md` §5), an off-phase strip and an existing
 product are refused with exit 5. No hardware touched; motor code,
 waits, profiles and calibration unchanged.
+
+### Test 87: a second 110 strip through the two-placement protocol, no manual cropping — the lighter side border (2026-09-20)
+
+**Setup.** A four-frame 110 colour-negative strip from another camera
+(frame numbers 8–11 in ink), standard strip holder, film against the
+lower rail; the day's driver (edge refinement corrected and numbering by
+strip position, both from Astra's review the same day, docs/film-110.md
+§5/§9.1). Placement A by the §3 rule: `scan --frames 1-4 --dpi 600 --film
+110 --placement A --ir --no-clean` (survey), then `scan --frames 1-2
+--dpi 3600 --ir --film 110 --placement A --eject`; the strip re-seated in
+placement B, `status && load`, survey, then production on apertures 2–3
+with `--placement B --eject`. Every transport a verified one; no motor,
+wait, profile or calibration change.
+
+**One refused start, no hardware harm.** The first B survey was refused
+by the lamp check before any motor command: the magazine had been
+re-inserted without the load flow, so the calibration surface saw no
+light (R 0, G 25, B 50 in eleven measurements). Power cycle, `status &&
+load`, and the survey ran. The driver's fail-closed lamp gate did exactly
+what it is for.
+
+**Verdicts.** Coverage verified on all 8 survey and 4 production
+apertures. Survey A: image 1 whole (starting 1.0 mm into aperture 1 —
+2.5 mm earlier than the first strip, inside the ±6 mm phase tolerance),
+image 2 split by bar 1/2, image 3 whole, image 4 whole with the strip
+end free at 25.4 mm and flagged, aperture 4 empty. Survey B: image 1
+whole with the free start flagged, image 2 whole, image 3 split by bar
+2/3, image 4 whole with the end under bar 3, aperture 4 empty. Numbering
+by strip position gave 1/2/3/4 with no phase refusal in either
+placement, so `a-f1-image1`, `a-f2-image3`, `b-f2-image2`, `b-f3-image4`
+name the four photographs once each. Exactly the first strip's pattern:
+the two-placement rule and the sag rule hold on n = 2.
+
+**The crop cut picture again, differently — found by the new edge
+check, fixed offline the same evening.** `film110_check.py --edge-check`
+on the first A products reported the rail side cut; the first B products
+lost 0.2–0.3 mm on the rail side of images 2 and 4 and 0.2 mm on the
+perforated side of image 4. This film has, on both sides of the picture,
+a ~0.5 mm fogged margin of density ~0.8 that is *lighter* than its dense
+pictures (0.9–1.05), where the first strip's printed border (1.13) is
+darker than its pictures — the lateral refinement had assumed a step
+direction and read contrast around a prediction that was 0.4 mm off.
+Two wrong readings on the way are kept in docs/film-110.md §9.2: the
+check tool's foot walked through that light border to the rail (its
+scatter threshold was inflated by the ramp), which made the picture look
+14 mm wide "with no side border", and a "picture runs to the rail" rule
+built on that reading was implemented and removed within the hour once
+the lateral profiles were read at 0.1 mm: a uniform strip of one
+density on both sides of every frame is a border. Fix: direction-free
+lateral refinement (innermost contrasted step, film-110.md §8 step 7)
+and a plateau-based foot in the tool. All eight production frames of
+both strips then pass the edge check (worst margin +0.08 mm, image 4's
+perforated side, where border and picture share a density); all 30
+survey/production verdicts of both strips unchanged; the first strip's
+four frames' edges unchanged to 0.01 mm. The four products were re-cut
+from the saved aperture frames; both earlier cuts are kept as evidence
+(`fel-beskurna-forsta-passet/`, `fel-beskurna-andra-passet/`).
+
+**Products.** a-image1 17.3 x 13.3 mm, b-image2 17.1 x 13.7, a-image3
+16.9 x 13.4, b-image4 16.9 x 13.4 (this camera's gate; the first
+strip's was 13.1 wide), all with their IR sidecars. Positives for the
+owner's eye check in ~/Bilder/opticfilm-granskning/instamatic-20260920/
+(LASMIG.txt). **Owner's eye verdict (same evening): the whole picture is
+present on all four, with a little overscan on every side** — the
+0.25 mm product pad showing as a rim of this film's light margin; image
+quality deliberately not judged (colour is the application's). That is
+the acceptance criterion met: **Test 87 PASSED.** 110 in the strip
+holder is now supported on n = 2 strips from two cameras.
+
+**What this evening settled.** The protocol, the numbering and the sag
+rule generalise to a second strip and camera; the detector's *lateral*
+model did not, twice, and the acceptance instrument caught both. The
+edge check stays part of the 110 acceptance for every new film.
+

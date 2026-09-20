@@ -10,10 +10,11 @@ lost" (Astra's review, 2026-09-20): for every WHOLE image it measures
 each of the four edges INDEPENDENTLY of the detector -- the mean density
 profile across the edge over the middle 80 % of the perpendicular extent,
 the picture level 0.3-1.0 mm inside and the surround level 0.3-1.0 mm
-outside, and the transition FOOT = the outermost sample still less than
-FOOT_FRAC of the way from the picture level to the surround level -- and
+outside, and the transition FOOT = the start of the first flat plateau
+beyond the picture (at another level, or reached through a step) -- and
 prints how far the padded product edge lies OUTSIDE that foot. A
-negative margin means the product cuts picture: LOSS.
+negative margin means the product cuts picture: LOSS. A flat sky inside
+the picture can give a false LOSS; that errs towards a human look.
 
 Skips files ending in "-ir.tiff" (the IR channel, not what `detect`
 takes) and files named "*.overscan.tiff" (the full overscan frame, not
@@ -51,7 +52,11 @@ RAMP_STOP_FRAC = 0.10    # the foot: where the outward slope falls below this fr
 LEVEL_NEAR_MM, LEVEL_FAR_MM = 0.3, 1.0
 SPAN_MM = 1.5            # profile extent either side of the product edge
 SMOOTH_MM = 0.05
+PLATEAU_MIN_MM = 0.15     # a flat run at least this long is a plateau ...
+PLATEAU_SLOPE = 0.0025    # ... when every per-pixel density step is below this (3600 dpi: 0.035/0.1 mm)
+PLATEAU_MIN_STEP = 0.04   # ... and it sits at least this far from the picture level
 LOSS_TOLERANCE_MM = 0.03  # ~4 px at 3600 dpi: sampling, not picture
+FILM_EDGE_TOLERANCE_MM = 0.1  # at the film's cut edge (air beyond): the blend into the gap
 
 
 def _density(g):
@@ -77,12 +82,15 @@ def edge_check(image, fr, px_per_mm, pad_mm):
     """
     import numpy as np
     g = image[:, :, 1]
-    pad = pad_mm * px_per_mm
     n_lines, n_cols = g.shape
     li = int(fr.line0 + 0.1 * (fr.line1 - fr.line0)), int(fr.line1 - 0.1 * (fr.line1 - fr.line0))
     ci = int(fr.col0 + 0.1 * (fr.col1 - fr.col0)), int(fr.col1 - 0.1 * (fr.col1 - fr.col0))
-    edges = (("line0", fr.line0 - pad, -1), ("line1", fr.line1 + pad, +1),
-             ("col0", fr.col0 - pad, -1), ("col1", fr.col1 + pad, +1))
+    # The product edges exactly as `film110.crop` writes them (pad, film
+    # band clamp, array bounds).
+    p_l0, p_l1, p_c0, p_c1 = film110.product_bounds(
+        fr, dpi=px_per_mm * 25.4, pad_mm=pad_mm, shape=image.shape)
+    edges = (("line0", float(p_l0), -1), ("line1", float(p_l1), +1),
+             ("col0", float(p_c0), -1), ("col1", float(p_c1), +1))
     box = max(1, int(round(SMOOTH_MM * px_per_mm)))
     for name, product, outward in edges:
         span = int(SPAN_MM * px_per_mm)
@@ -105,29 +113,37 @@ def edge_check(image, fr, px_per_mm, pad_mm):
         inside = prof[(rel <= -near) & (rel >= -far)]
         if inside.size < 2:
             continue
-        pic, scatter = float(np.median(inside)), float(np.std(inside))
-        thresh = max(4.0 * scatter, 0.02)
-        start = np.searchsorted(rel, -near)
-        ramp0 = None
-        for k in range(start, len(prof)):
-            if abs(prof[k] - pic) > thresh:
-                ramp0 = k
-                break
-        if ramp0 is None:
-            # No transition within the span: the product edge lies more
-            # than SPAN_MM inside the picture?? -- or the whole span is
-            # picture-level, which for an edge is a LOSS of unknown size.
+        pic = float(np.median(inside))
+        # The foot: walking outward from LEVEL_NEAR_MM inside the product
+        # edge, the start of the first FLAT run (>= PLATEAU_MIN_MM long,
+        # |slope| < PLATEAU_SLOPE per px) whose level differs from the
+        # picture level by more than PLATEAU_MIN_STEP density -- the first
+        # plateau beyond the picture (a border, clear film, the light gap
+        # or air). A flat sky inside the picture can trip this and give a
+        # false LOSS; that errs on the side of a human look, never of a
+        # missed cut. (The first version used a scatter threshold that the
+        # ramp itself inflated, and walked through the border to the rail.)
+        start = int(np.searchsorted(rel, -near))
+        slope = np.abs(np.diff(prof))
+        run_px = max(2, int(round(PLATEAU_MIN_MM * px_per_mm)))
+        foot_k = None
+        k = start
+        back = max(1, int(round(0.15 * px_per_mm)))
+        while k + run_px < len(prof):
+            if (slope[k:k + run_px] < PLATEAU_SLOPE).all():
+                # A plateau: at a level other than the picture's, OR
+                # reached through a step from what lies 0.15 mm inside
+                # it (a border that happens to share the picture's level
+                # at this edge, 2026-09-20 image 4's perforated side).
+                inner = prof[max(0, k - back)]
+                if abs(prof[k] - pic) > PLATEAU_MIN_STEP or abs(prof[k] - inner) > PLATEAU_MIN_STEP:
+                    foot_k = k
+                    break
+            k += 1
+        if foot_k is None:
             yield name, product / px_per_mm, None, None, pic, None
             continue
-        direction = 1.0 if prof[min(ramp0 + 1, len(prof) - 1)] >= prof[ramp0] else -1.0
-        slope = np.diff(prof) * direction
-        peak = 0.0
-        k = ramp0
-        while k + 1 < len(prof):
-            peak = max(peak, slope[k])
-            if peak > 0 and slope[k] < RAMP_STOP_FRAC * peak:
-                break
-            k += 1
+        k = foot_k
         foot = pos[k]
         margin = (product - foot) * outward / px_per_mm
         yield name, product / px_per_mm, foot / px_per_mm, margin, pic, float(prof[k])
@@ -190,9 +206,19 @@ def main(argv=None) -> int:
                               f"{SPAN_MM} mm (picture level {pic:.2f} density) -- LOSS?")
                         worst = -SPAN_MM if worst is None else min(worst, -SPAN_MM)
                         continue
-                    verdict = "LOSS" if margin < -LOSS_TOLERANCE_MM else "ok"
+                    # At the film's own cut edge (air beyond it, or the
+                    # light gap before the rail) the ramp's foot lies in
+                    # the blend past the last film column; the film ends
+                    # there, so up to FILM_EDGE_TOLERANCE_MM is the edge
+                    # itself, not picture.
+                    at_film_edge = sur < 0.1
+                    tol = FILM_EDGE_TOLERANCE_MM if at_film_edge else LOSS_TOLERANCE_MM
+                    verdict = "LOSS" if margin < -tol else "ok"
+                    note = "  [film edge, air beyond]" if at_film_edge else ""
                     print(f"    {e}: product {product:.2f} mm  foot {foot:.2f} mm  "
-                          f"margin {margin:+.2f} mm  (picture {pic:.2f} -> {sur:.2f} density)  {verdict}")
+                          f"margin {margin:+.2f} mm  (picture {pic:.2f} -> {sur:.2f} density)  {verdict}{note}")
+                    if at_film_edge and verdict == "ok":
+                        margin = max(margin, 0.0)   # the blend into the gap, not picture
                     worst = margin if worst is None else min(worst, margin)
                 if worst is not None:
                     print(f"    edge-check: worst margin {worst:+.2f} mm -> "

@@ -263,7 +263,10 @@ verdict with a reason, and the aperture product is still written.
    likewise with `--placement B -o b.tiff`. Acceptance (revised
    2026-09-20 after Astra's review, docs/film-110.md §5/§9.1):
    - every photograph on the strip delivered as a `whole` product at
-     least once, sizes 17.2 x 13.0 ±0.3 mm;
+     least once, 17.2 ±0.4 mm along the transport; the lateral size is
+     the camera's own gate (13.1 and 13.3–13.7 mm on the two strips so far,
+     docs/film-110.md §9.2), judged by the edge check below, not by a
+     fixed figure;
    - **no picture lost**: `tools/film110_check.py --dpi 3600 --edge-check`
      over every production aperture reports no `LOSS` (every padded
      product edge at or outside the independently measured foot), and

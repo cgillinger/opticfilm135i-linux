@@ -39,7 +39,7 @@ def _build_fixture(dpi, film=FILM_110, *, aperture_length_mm=36.0,
                    aperture_width_mm=24.0, perforated_side="lo",
                    holes_mm=(), images_mm=(), leading_dense_to_mm=None,
                    free_end_mm=None, seed=0, noise=120.0,
-                   printed_border=False):
+                   printed_border=False, light_border=False):
     """A synthetic aperture-registered crop: air on one side of the
     aperture width, a plastic rail on the other, and a `film.width_mm`
     band of clear-base film between them (with the perforated edge on
@@ -137,6 +137,13 @@ def _build_fixture(dpi, film=FILM_110, *, aperture_length_mm=36.0,
             arr[s:e, band_hi - rim_px - hole_w_px:band_hi - rim_px, :] = AIR
 
     dense_frac, thin_frac = (0.60, 0.90) if printed_border else (0.15, 0.85)
+    if light_border:
+        # The second real strip: a ~0.5 mm fogged margin on both lateral
+        # sides of the picture, LIGHTER than the picture (density ~0.8
+        # against ~0.9-1.05), so the picture halves are made denser than
+        # that margin; the along-transport border stays the dark one.
+        dense_frac, thin_frac = 0.30, 0.55
+    strip_px = int(round(0.5 * ppm))
     halo_px = max(1, int(round(0.1 * ppm)))
     for (l0_mm, l1_mm, c0_mm, c1_mm) in images_mm:
         l0, l1 = int(round(l0_mm * ppm)), int(round(l1_mm * ppm))
@@ -146,6 +153,10 @@ def _build_fixture(dpi, film=FILM_110, *, aperture_length_mm=36.0,
         if l1c <= l0c or c1c <= c0c:
             continue
         mid = (l0c + l1c) // 2
+        if light_border:
+            for ci, key in enumerate(CHANNELS):
+                arr[l0c:l1c, max(0, c0c - strip_px):c0c, ci] = CLEAR[key] * 0.75
+                arr[l0c:l1c, c1c:min(width, c1c + strip_px), ci] = CLEAR[key] * 0.75
         for ci, key in enumerate(CHANNELS):
             base = CLEAR[key]
             arr[l0c:mid, c0c:c1c, ci] = base * dense_frac   # sky: dense half
@@ -400,6 +411,36 @@ def test_refined_edges_land_on_the_foot_with_a_dark_printed_border():
         assert abs(_mm(w.col0, ppm) - col0) <= _FOOT_TOLERANCE_MM, (dpi, w.col0 / ppm)
         assert abs(_mm(w.col1, ppm) - col1) <= _FOOT_TOLERANCE_MM, (dpi, w.col1 / ppm)
         print(f"test_refined_edges_land_on_the_foot_with_a_dark_printed_border OK ({dpi} dpi)")
+
+
+def test_lateral_edges_found_with_a_lighter_border_too():
+    """The second real strip (2026-09-20) has a ~0.5 mm fogged margin on
+    both sides of the picture that is LIGHTER than the picture (density
+    ~0.8 against ~0.9-1.05), where the first strip's printed border is
+    darker; the rail-side refinement, given a fixed step direction and a
+    level check around a prediction 0.4 mm off, either found nothing or
+    a picture-content step, and the first cut lost 0.2 mm of picture on
+    two images. The lateral refinement is now direction-free: both
+    border polarities must land within 0.09 mm of the painted edge."""
+    for dpi in DPIS:
+        ppm = _px_per_mm(dpi)
+        lead, ilen = FILM_110.perforation_lead_mm, FILM_110.image_mm[0]
+        hole = (10.0, 11.5)
+        img = hole[1] + lead
+        col0 = 2.0 + FILM_110.image_lateral_offset_mm - 0.4   # 0.4 mm off the model, as on the real strip
+        col1 = col0 + FILM_110.image_mm[1] + 0.4
+        for light_border in (False, True):
+            arr, _, _, _ = _build_fixture(
+                dpi, holes_mm=[hole], printed_border=True, light_border=light_border,
+                images_mm=[(img, img + ilen, col0, col1)])
+            find = film110.detect(arr, dpi=dpi, film=FILM_110)
+            whole = [f for f in find.frames if f.whole]
+            assert len(whole) == 1, (dpi, light_border, find.frames)
+            w = whole[0]
+            assert w.refined["col0"] and w.refined["col1"], (dpi, light_border, w.refined)
+            assert abs(_mm(w.col0, ppm) - col0) <= 0.09, (dpi, light_border, w.col0 / ppm)
+            assert abs(_mm(w.col1, ppm) - col1) <= 0.09, (dpi, light_border, w.col1 / ppm)
+        print(f"test_lateral_edges_found_with_a_lighter_border_too OK ({dpi} dpi)")
 
 
 def test_image_number_is_the_strip_position_in_both_placements():
@@ -712,6 +753,7 @@ def main() -> int:
         test_perforated_edge_on_high_side,
         test_crop_matches_visible_and_ir_indices,
         test_refined_edges_land_on_the_foot_with_a_dark_printed_border,
+        test_lateral_edges_found_with_a_lighter_border_too,
         test_image_number_is_the_strip_position_in_both_placements,
         test_cli_hook_numbers_across_apertures_and_writes_whole_only,
         test_cli_hook_writes_ir_with_same_indices,

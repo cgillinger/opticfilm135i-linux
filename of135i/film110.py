@@ -123,6 +123,7 @@ class FrameFind:
     free_end_near: bool
     size_mm: tuple
     orientation: str
+    col_clamp: "tuple | None" = None   # (lo, hi): the film band minus RAIL_EDGE_INSET_MM; `crop` never pads past it
 
 
 @dataclass
@@ -295,6 +296,105 @@ def _refine_edge(profile: np.ndarray, predicted: float, px_per_mm: float,
     return float(pos) + 0.5, True
 
 
+LATERAL_CONTRAST_NEAR_MM = 0.1   # the bands beside a lateral step candidate ...
+LATERAL_CONTRAST_FAR_MM = 0.4    # ... run from NEAR to FAR on each side of it
+LATERAL_MIN_CONTRAST = 0.04      # relative level difference across the step (second strip: 0.05-0.12)
+LATERAL_CANDIDATE_FRAC = 0.5     # a lateral step candidate is at least this fraction of the window's strongest
+
+
+def _refine_lateral(profile: np.ndarray, predicted: float, px_per_mm: float,
+                    outward: int, limit_lo: float | None = None,
+                    limit_hi: float | None = None) -> tuple:
+    """Direction-free variant of `_refine_edge` for the lateral edges
+    (see the caller): the strongest step of either sign within
+    +/-REFINE_WINDOW_MM of `predicted` (clipped to the limits), accepted
+    when the median levels LATERAL_CONTRAST_NEAR_MM..FAR_MM on its two
+    sides differ by at least LATERAL_MIN_CONTRAST of the larger and the
+    step is >= REFINE_GRADIENT_RATIO x the neighbourhood's median step;
+    then walked outward to the foot exactly as `_refine_edge` does.
+    Returns (position, refined_bool)."""
+    n = len(profile)
+    if n == 0 or predicted < 0 or predicted > n - 1:
+        return predicted, False
+    box = max(1, round(REFINE_SMOOTH_MM * px_per_mm))
+    smoothed = _box_smooth(profile, box)
+    window_px = max(1, round(REFINE_WINDOW_MM * px_per_mm))
+    lo = max(0, int(np.floor(predicted)) - window_px)
+    hi = min(n - 1, int(np.ceil(predicted)) + window_px)
+    if limit_lo is not None:
+        lo = max(lo, int(np.ceil(limit_lo)))
+    if limit_hi is not None:
+        hi = min(hi, int(np.floor(limit_hi)))
+    if hi <= lo:
+        return predicted, False
+    grad = np.diff(smoothed[lo:hi + 1])
+    if grad.size == 0:
+        return predicted, False
+    peak = float(np.max(np.abs(grad)))
+    if peak <= 0:
+        return predicted, False
+
+    nb_px = max(2, round(REFINE_NEIGHBOURHOOD_MM * px_per_mm))
+    nlo = max(0, int(round(predicted - nb_px / 2)))
+    nhi = min(n - 1, int(round(predicted + nb_px / 2)))
+    nb_grad = np.abs(np.diff(smoothed[nlo:nhi + 1]))
+    scale = float(np.median(nb_grad)) if nb_grad.size else 0.0
+
+    # Candidates: local maxima of |step| at least LATERAL_CANDIDATE_FRAC of
+    # the strongest step in the window and REFINE_GRADIENT_RATIO x the
+    # neighbourhood's median step. Taken INNERMOST first (nearest the
+    # picture): a border's outer edge (border -> clear film) can be the
+    # stronger step, and the picture's edge is the first step outward
+    # from the picture that has real contrast on both sides. Picture
+    # content steps inside the frame fail the contrast test (their
+    # neighbourhoods are picture on both sides) and are passed over.
+    near = LATERAL_CONTRAST_NEAR_MM * px_per_mm
+    far = LATERAL_CONTRAST_FAR_MM * px_per_mm
+    order = range(grad.size) if outward > 0 else range(grad.size - 1, -1, -1)
+    candidate = None
+    for i in order:
+        g = float(grad[i])
+        if abs(g) < LATERAL_CANDIDATE_FRAC * peak:
+            continue
+        if scale > 0 and abs(g) < REFINE_GRADIENT_RATIO * scale:
+            continue
+        if (i > 0 and abs(grad[i - 1]) > abs(g)) or \
+                (i + 1 < grad.size and abs(grad[i + 1]) > abs(g)):
+            continue  # not a local maximum
+        c = lo + i
+        a_lo, a_hi = int(round(c - far)), int(round(c - near))
+        b_lo, b_hi = int(round(c + 1 + near)), int(round(c + 1 + far))
+        a_lo, b_hi = max(0, a_lo), min(n, b_hi)
+        if a_hi - a_lo < 2 or b_hi - b_lo < 2:
+            continue
+        level_a = float(np.median(smoothed[a_lo:a_hi]))
+        level_b = float(np.median(smoothed[b_lo:b_hi]))
+        if abs(level_b - level_a) < LATERAL_MIN_CONTRAST * max(level_a, level_b, 1.0):
+            continue
+        candidate = c
+        break
+    if candidate is None:
+        return predicted, False
+    g = float(grad[candidate - lo])
+    step_sign = 1 if g > 0 else -1
+
+    walk_px = max(1, round(FOOT_WALK_MM * px_per_mm))
+    floor = FOOT_STOP_FRAC * abs(g)
+    if outward < 0:
+        k = candidate
+        while k - 1 >= max(0, candidate - walk_px) and \
+                (smoothed[k] - smoothed[k - 1]) * step_sign >= floor:
+            k -= 1
+        pos = k
+    else:
+        k = candidate + 1
+        while k + 1 <= min(n - 1, candidate + 1 + walk_px) and \
+                (smoothed[k + 1] - smoothed[k]) * step_sign >= floor:
+            k += 1
+        pos = k
+    return float(pos) + 0.5, True
+
+
 # Per-line tracking of the film's air-facing edge. The band edge from the
 # column medians is the MEDIAN edge over the whole aperture; on real data
 # (2026-09-19, 3600 dpi) the free lateral edge of a 16 mm strip wandered
@@ -398,6 +498,9 @@ RIM_GUARD_MM = 1.0              # ... and this far inside the perforated film ed
 PRODUCT_PAD_MM = 0.25           # the CLI grows a whole image's crop by this on every side
 MIN_OVERLAP_MM = 1.0            # a window overlapping the aperture by less carries nothing
 MERGE_FRAC_OF_PITCH = 0.5       # two predictions closer than this are the same image
+
+
+RAIL_EDGE_INSET_MM = 0.05         # `crop` never pads past the film band minus this (rail rim, light gap, air)
 
 
 def _candidates(runs, film: Film, px_per_mm: float, reversed_: bool):
@@ -606,30 +709,34 @@ def detect(image, *, dpi: float, film: Film = FILM_110) -> ApertureFind:
                 col1 = edge_here - offset_px
                 col0 = col1 - lat_len_px
 
-            # Lateral refinement, both sides. The step direction is read
-            # from the levels either side (see _refine_edge), so the
-            # perforated side -- picture next to the dark printed border,
-            # with the film's bright rim and the hole further out -- is
-            # refined too, with the search kept RIM_GUARD_MM inside the
-            # tracked film edge so the rim never enters the window (the
-            # first version left this edge as the 2.0 mm model prediction,
-            # which sat 0.2 mm inside the picture's foot on all four
-            # production frames of 2026-09-19). On the rail side the
-            # search stops RAIL_GUARD_MM short of the band so the rail's
-            # own bright rim stays out.
+            # Lateral refinement, both sides, direction-free: the border
+            # beside the picture is DARKER than it on the first real strip
+            # (a pre-exposed printed border, 2026-09-19) and LIGHTER on the
+            # second (a ~0.5 mm fogged margin of density ~0.8 next to a
+            # denser picture, 2026-09-20), and a level comparison around
+            # the prediction straddles border and picture when the
+            # prediction is 0.4 mm off. So the strongest step of EITHER
+            # sign in the window is taken, its contrast checked in the
+            # bands right beside it, and the edge walked outward to the
+            # foot. The search stays RIM_GUARD_MM inside the perforated
+            # film edge (rim and hole) and RAIL_GUARD_MM short of the rail
+            # side of the band (the rail's bright rim).
             col_profile = np.median(green[clo:chi, :], axis=0)
             guard = RAIL_GUARD_MM * px_per_mm
             rim_guard = RIM_GUARD_MM * px_per_mm
             if edge_is_low:
-                r_col0, ok_c0 = _refine_edge(col_profile, col0, px_per_mm, outward=-1,
-                                             limit_lo=edge_here + rim_guard)
-                r_col1, ok_c1 = _refine_edge(col_profile, col1, px_per_mm, outward=+1,
-                                             limit_hi=hi - guard)
+                r_col0, ok_c0 = _refine_lateral(col_profile, col0, px_per_mm, outward=-1,
+                                                limit_lo=edge_here + rim_guard)
+                r_col1, ok_c1 = _refine_lateral(col_profile, col1, px_per_mm, outward=+1,
+                                                limit_hi=hi - guard)
             else:
-                r_col0, ok_c0 = _refine_edge(col_profile, col0, px_per_mm, outward=-1,
-                                             limit_lo=lo + guard)
-                r_col1, ok_c1 = _refine_edge(col_profile, col1, px_per_mm, outward=+1,
-                                             limit_hi=edge_here - rim_guard)
+                r_col0, ok_c0 = _refine_lateral(col_profile, col0, px_per_mm, outward=-1,
+                                                limit_lo=lo + guard)
+                r_col1, ok_c1 = _refine_lateral(col_profile, col1, px_per_mm, outward=+1,
+                                                limit_hi=edge_here - rim_guard)
+
+            inset = RAIL_EDGE_INSET_MM * px_per_mm
+            col_clamp = (lo + inset, hi - inset)
 
             whole = (r_line0 >= whole_margin_px) and (r_line1 <= n_lines - whole_margin_px)
             if r_line0 < 0:
@@ -658,6 +765,7 @@ def detect(image, *, dpi: float, film: Film = FILM_110) -> ApertureFind:
                 free_end_near=free_end_near,
                 size_mm=size_mm,
                 orientation="hole-before-image" if not reversed_ else "hole-after-image",
+                col_clamp=col_clamp,
             ))
         return out, score
 
@@ -673,28 +781,48 @@ def detect(image, *, dpi: float, film: Film = FILM_110) -> ApertureFind:
                          leading_continuation, frames_out, "")
 
 
-def crop(image, find: FrameFind, *, dpi: float | None = None, pad_mm: float = 0.0):
-    """Slice `image` to [find.line0:find.line1, find.col0:find.col1],
-    grown outward by `pad_mm` on every side (needs `dpi`; both axes use
-    dpi/25.4 px per mm, as `detect` does), clamped to the array bounds.
-    Works on a 3-channel visible array and a 2-D IR array alike -- the
-    SAME indices apply to both, which is what keeps a visible/IR pair
-    registered through the crop (the dual scan path already relies on
-    this: same crop indices, same grid).
+def product_bounds(find: FrameFind, *, dpi: float | None = None, pad_mm: float = 0.0,
+                   shape=None) -> tuple:
+    """The integer slice bounds (line_lo, line_hi, col_lo, col_hi) `crop`
+    uses: [find.line0:find.line1, find.col0:find.col1] grown outward by
+    `pad_mm` on every side (needs `dpi`; both axes use dpi/25.4 px per
+    mm, as `detect` does), the columns never padded past
+    `find.col_clamp` (the film band minus RAIL_EDGE_INSET_MM: beyond it
+    lie the rail's bright rim, the light gap at the film's cut edge, or
+    air -- nothing a picture can contain), and everything clamped to
+    `shape` (lines, cols) when given. Shared by `crop` and by
+    tools/film110_check.py --edge-check so the check measures the
+    product that is actually written.
     """
     if pad_mm and dpi is None:
         raise ValueError("pad_mm needs dpi")
     pad = pad_mm * dpi / MM_PER_INCH if pad_mm else 0.0
-    arr = np.asarray(image)
-    n_lines, n_cols = arr.shape[0], arr.shape[1]
     lo_l = int(np.floor(find.line0 - pad))
     hi_l = int(np.ceil(find.line1 + pad))
     lo_c = int(np.floor(find.col0 - pad))
     hi_c = int(np.ceil(find.col1 + pad))
-    lo_l = min(max(lo_l, 0), n_lines)
-    hi_l = min(max(hi_l, lo_l), n_lines)
-    lo_c = min(max(lo_c, 0), n_cols)
-    hi_c = min(max(hi_c, lo_c), n_cols)
+    if find.col_clamp is not None:
+        c_lo, c_hi = find.col_clamp
+        lo_c = max(lo_c, int(np.ceil(c_lo)))
+        hi_c = min(hi_c, int(np.floor(c_hi)))
+    if shape is not None:
+        n_lines, n_cols = shape[0], shape[1]
+        lo_l = min(max(lo_l, 0), n_lines)
+        hi_l = min(max(hi_l, lo_l), n_lines)
+        lo_c = min(max(lo_c, 0), n_cols)
+        hi_c = min(max(hi_c, lo_c), n_cols)
+    return lo_l, hi_l, lo_c, hi_c
+
+
+def crop(image, find: FrameFind, *, dpi: float | None = None, pad_mm: float = 0.0):
+    """Slice `image` to `product_bounds(find, dpi, pad_mm)`. Works on a
+    3-channel visible array and a 2-D IR array alike -- the SAME indices
+    apply to both, which is what keeps a visible/IR pair registered
+    through the crop (the dual scan path already relies on this: same
+    crop indices, same grid).
+    """
+    arr = np.asarray(image)
+    lo_l, hi_l, lo_c, hi_c = product_bounds(find, dpi=dpi, pad_mm=pad_mm, shape=arr.shape)
     return arr[lo_l:hi_l, lo_c:hi_c]
 
 
