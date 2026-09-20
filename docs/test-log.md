@@ -6152,3 +6152,28 @@ the documentation carries.
 `scan --film 110`, `tests/test_film110.py` (12), `tools/film110_check.py`;
 22 of 22 apertures give the eye-read verdict. Hardware verification on a
 second strip is Test 87, not run.
+
+**Offline, 2026-09-20 — Astra's review of the implementation, two
+points, both right.** (1) *Does the crop lose picture?* Yes, it did.
+The four hand-cropped images were located in their source frames by
+cross-correlation and every edge profiled: image 1's trailing product
+edge ended 0.15 mm before the picture's transition, with texture in the
+lost band; image 3 lost ≤ 0.08 mm; image 4's leading edge sat mid-ramp.
+Cause: the edge refinement assumed a *brighter* surround (35 mm clear
+film — and the synthetic fixtures) and locked onto the fall-off of the
+bright gate-edge halo just inside the picture, 0.1–0.4 mm in, on every
+along-transport edge; the 0.25 mm pad had hidden most of it and been
+explained as "a soft gate edge". Fixed by reading the step direction
+from the levels either side of the predicted edge (110's printed border
+is *darker* than the picture on all four sides) and refining the
+perforated-side lateral edge too (its 2.0 mm model offset sat 0.2 mm
+inside the foot). Re-measured independently with the new
+`film110_check.py --edge-check`: all 16 production edges +0.19 to
++0.26 mm outside the foot (= the pad), sizes 16.8–17.3 x 13.0–13.1 mm,
+the 22 verdicts unchanged (`docs/film-110.md` §9.1). (2) *Image
+identity* was not implemented — a per-command counter, and the same
+`-o` stem in A and B overwrote. Now numbered by strip position under
+the declared `--placement A|B` (worked example over all eight measured
+positions in `docs/film-110.md` §5), an off-phase strip and an existing
+product are refused with exit 5. No hardware touched; motor code,
+waits, profiles and calibration unchanged.

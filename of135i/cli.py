@@ -247,9 +247,28 @@ def _frame_output(out: str, frame: int) -> str:
     return str(p.with_name(f"{p.stem}-f{frame}{p.suffix}"))
 
 
+def _validate_film110_args(args: argparse.Namespace) -> "str | None":
+    """--film 110 and --placement must be given together: images are
+    numbered by their position on the strip (of135i.film110.image_number),
+    which needs to know which of the two placements (docs/film-110.md §3)
+    the strip is in. Checked before any device I/O, like the neighbouring
+    --dpi/--overscan checks."""
+    film = getattr(args, "film", "135")
+    placement = getattr(args, "placement", None)
+    if film == "110" and placement is None:
+        return "--film 110 needs --placement A or B (docs/film-110.md §3)"
+    if film != "110" and placement is not None:
+        return "--placement only applies with --film 110"
+    return None
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
     if args.dpi not in SUPPORTED_DPIS:
         print(f"error: --dpi must be one of {', '.join(map(str, SUPPORTED_DPIS))}", file=sys.stderr)
+        return 2
+    err = _validate_film110_args(args)
+    if err is not None:
+        print(f"error: {err}", file=sys.stderr)
         return 2
     # Every resolution other than 3600 exists only as a dual-light
     # (alternating IR/visible line) capture, so those always run the
@@ -366,6 +385,14 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                   f"and the .overscan raw file(s); no registered product was "
                   f"written for them", file=sys.stderr)
             return 4
+        if film110_state is not None and film110_state.problems:
+            # A refused overwrite or an image off the chosen placement's
+            # phase grid: the aperture/overscan products above are fine,
+            # but at least one 110 product was NOT written -- fail closed,
+            # the same way an unverified aperture does.
+            print("error: 110 products refused for: " +
+                  "; ".join(film110_state.problems), file=sys.stderr)
+            return 5
         return 0
 
     return _run_writing_session(body)
@@ -406,15 +433,18 @@ def _orient_pair(args: argparse.Namespace, vis, irr):
 
 
 class Film110State:
-    """Per-scan-command running state for --film 110: the image counter
-    is shared across every aperture of the command (a running number,
-    not per-aperture), and the "numbering is relative to the first
-    scanned aperture" note is printed at most once."""
+    """Per-scan-command state for --film 110. Images are numbered by their
+    position on the strip (of135i.film110.image_number, docs/film-110.md
+    §3), not by a running counter, so the same photograph gets the same
+    number whether it was scanned in placement A or B -- there is
+    therefore nothing to carry between apertures except the refusals:
+    `problems` collects every 110 product this command declined to write
+    (an off-phase image, or a file that already exists), and `_cmd_scan`
+    turns a non-empty list into a failing exit code once the whole
+    command has finished."""
 
     def __init__(self):
-        self.next_index = 1
-        self.first_aperture: "int | None" = None
-        self.printed_relative_note = False
+        self.problems: list = []
 
 
 def _film110_image_path(out: str, n: int, ir: bool = False) -> str:
@@ -429,13 +459,23 @@ def _film110_image_path(out: str, n: int, ir: bool = False) -> str:
 def _film110_hook(args: argparse.Namespace, state: "Film110State | None",
                   aperture: int, out: str, vis_crop, ir_crop) -> None:
     """--film 110: detect 110 images inside one aperture-registered crop
-    and write a product per WHOLE one. Called from both
-    `_finish_plain_scan` and `_finish_dual_scan`, on the SAME
-    aperture-registered arrays those write their own product from
-    (before orientation -- the strip runs along axis 0 here), so the
+    and write a product per WHOLE one, numbered by strip position
+    (of135i.film110.image_number, docs/film-110.md §3) so the same
+    photograph gets the same number whether it was scanned in placement A
+    or B. Called from both `_finish_plain_scan` and `_finish_dual_scan`,
+    on the SAME aperture-registered arrays those write their own product
+    from (before orientation -- the strip runs along axis 0 here), so the
     plain and dual paths cannot drift apart. A no-op when --film is not
     "110" (state is None in that case) or when coverage did not verify
     (the caller only invokes this once it has).
+
+    `args.placement` ("A" or "B") is required whenever `state` is not
+    None -- `_validate_film110_args` refuses the command before this is
+    ever called otherwise. An image that does not land on that
+    placement's phase grid, or whose product file already exists, writes
+    nothing and is recorded in `state.problems`; `_cmd_scan` turns a
+    non-empty list into a failing exit code once the whole command has
+    finished.
 
     `ir_crop` is None on the plain path and when --ir was not given on
     the dual path -- the 110 IR sidecar is then simply not written,
@@ -444,12 +484,6 @@ def _film110_hook(args: argparse.Namespace, state: "Film110State | None",
     if state is None:
         return
     from . import film110, holder as _holder
-
-    if state.first_aperture is None:
-        state.first_aperture = aperture
-    if state.first_aperture != 1 and not state.printed_relative_note:
-        print("110: numbering is relative to the first scanned aperture")
-        state.printed_relative_note = True
 
     find = film110.detect(vis_crop, dpi=args.dpi, film=_holder.FILM_110)
     if find.empty:
@@ -468,19 +502,37 @@ def _film110_hook(args: argparse.Namespace, state: "Film110State | None",
             parts.append("leading lines continue the previous aperture's "
                          "split image (already counted)")
             continue
-        n = state.next_index
-        state.next_index += 1
+
+        n, residual = film110.image_number(aperture, fr.line0, args.dpi,
+                                           args.placement)
+        if (abs(residual) > film110.PLACEMENT_PHASE_TOLERANCE_MM
+                or n < 1):
+            pos_mm = fr.line0 / (args.dpi / film110.MM_PER_INCH)
+            msg = (f"image at {pos_mm:.1f} mm is not at placement "
+                  f"{args.placement}'s phase (off by {residual:+.1f} mm) "
+                  f"-> check the placement; no 110 product written")
+            parts.append(msg)
+            state.problems.append(msg)
+            continue
+
         if fr.whole:
-            # Grown by PRODUCT_PAD_MM: the refined edges sit 0.2-0.5 mm
-            # inside the hand-read picture edge on the 2026-09-19 strip
-            # (a soft camera-gate edge), and a hair of gap beats a lost
-            # sliver of picture.
+            vis_path = _film110_image_path(out, n)
+            if Path(vis_path).exists():
+                msg = (f"{vis_path} exists -> not overwritten (use one -o "
+                      f"stem per placement, docs/film-110.md §7)")
+                parts.append(msg)
+                state.problems.append(msg)
+                continue
+            # Grown by PRODUCT_PAD_MM: a safety margin of dark printed
+            # border around an edge that lies within 0.06 mm of the
+            # independently measured foot (docs/film-110.md §9.1) -- not a
+            # correction for a biased edge, which is what it was papering
+            # over before the 2026-09-20 fix.
             pad = film110.PRODUCT_PAD_MM
             vis_img = film110.crop(vis_crop, fr, dpi=args.dpi, pad_mm=pad)
             ir_img = (film110.crop(ir_crop, fr, dpi=args.dpi, pad_mm=pad)
                       if ir_crop is not None else None)
             vis_img, ir_img = _orient_pair(args, vis_img, ir_img)
-            vis_path = _film110_image_path(out, n)
             image.write_tiff16(vis_img, vis_path,
                                icc=image.srgb_icc() if args.positive else None,
                                dpi=_axis_dpi(args, args.positive))
@@ -495,9 +547,12 @@ def _film110_hook(args: argparse.Namespace, state: "Film110State | None",
                       f"16-bit, 110 image {n} IR channel)")
             parts.append(f"image {n} whole ({fr.size_mm[0]:.1f} x {fr.size_mm[1]:.1f} mm)")
         else:
-            side = fr.split or "an aperture edge"
-            parts.append(f"image {n} split by the {side} bar -> "
-                         f"take it in the other placement")
+            # The only other split value reaching here is "trailing" (a
+            # leading split was handled above): the tail of this image
+            # runs under the next aperture's bar.
+            other = "B" if args.placement == "A" else "A"
+            parts.append(f"image {n} split by the trailing bar -> take it "
+                         f"in placement {other}")
         if fr.free_end_near:
             parts[-1] += " [free strip end nearby: sharpness untrusted]"
 
@@ -1222,6 +1277,11 @@ def build_parser() -> argparse.ArgumentParser:
              "writes <out>-image<N>.tiff per whole image found (plus "
              "-ir.tiff with --ir); the aperture product and overscan are "
              "still written exactly as today. docs/film-110.md")
+    p_scan.add_argument("--placement", choices=("A", "B"), default=None,
+        help="which of the two 110 placements the strip is in "
+             "(docs/film-110.md §3); required with --film 110: images are "
+             "numbered by their position on the strip, so the same "
+             "photograph gets the same number in both placements")
     p_scan.add_argument("-o", "--output", required=True, help="output file path (.tiff or .pnm)")
     p_scan.set_defaults(func=_cmd_scan)
 

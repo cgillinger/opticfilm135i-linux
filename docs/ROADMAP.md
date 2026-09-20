@@ -685,13 +685,20 @@ Image-side only: no motor, wait, calibration or geometry change
 
 1. Film model + perforation-anchored detector + `scan --film 110`,
    offline-tested on synthetic fixtures and on the real strip's saved
-   scans — **DONE 2026-09-19** (Test 86: 22 of 22 apertures give the
-   eye-read verdict; edges within 0.5 mm; `docs/film-110.md` §9).
+   scans — **DONE 2026-09-19, corrected 2026-09-20** (Test 86: 22 of 22
+   apertures give the eye-read verdict; the review found the crop cut
+   0.1–0.4 mm of picture — edge refinement assumed a clear surround —
+   now every production edge is within 0.06 mm of its independently
+   measured foot, and images are numbered by strip position with
+   `--placement A|B` so the same photograph has the same number in both
+   placements; `docs/film-110.md` §5, §9.1).
 2. **Test 87:** a *second* 110 strip through the two-placement protocol
-   with no manual cropping: every image delivered once as a whole
-   product, sizes 17.2 x 13.0 ± 0.3 mm, no image missing an edge by eye,
-   the survey's placement advice right, the free-end warning raised
-   exactly where a strip end is. — **PENDING** (needs the strip and one
+   with no manual cropping: every photograph delivered as a whole
+   product, sizes 17.2 x 13.0 ± 0.3 mm, `film110_check.py --edge-check`
+   reports no lost picture on any production edge, no image missing an
+   edge by eye, the same number for the same photograph in A and B, the
+   survey's placement advice right, the free-end warning raised exactly
+   where a strip end is. — **PENDING** (needs the strip and one
    hardware evening).
 3. Only after 2: README says "supported", with n = 2 stated.
 

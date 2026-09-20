@@ -154,6 +154,10 @@ aperture verdict.
    1 is in aperture 1 in both placements, so A and B yield the same
    numbers by construction. If the strip does not start in aperture 1
    the survey says "numbering relative to the first visible frame".
+   *(Superseded 2026-09-20 after review: a per-command counter gave the
+   same photograph different numbers in A and B. As built, the number
+   is the image's position on the strip under the declared
+   `--placement` — docs/film-110.md §5.)*
 
 Never raises on image content; a frame that cannot be resolved returns a
 verdict with a reason, and the aperture product is still written.
@@ -254,12 +258,22 @@ verdict with a reason, and the aperture product is still written.
    right whole/split/empty verdict on all 14 survey apertures.
 2. Hardware, **Test 87**: a *second* 110 strip through the full protocol
    with no manual cropping - placement A: `scan --frames 1-4 --dpi 600
-   --film 110` (survey) then `scan --frames <whole> --dpi 3600 --ir
-   --film 110 --eject`; placement B likewise. Acceptance: every image on
-   the strip delivered once as a `whole` product, sizes 17.2 x 13.0
-   ±0.3 mm, no image missing an edge under eye inspection, the survey's
-   A/B advice correct, and the sag warning raised exactly where a free
-   end is.
+   --film 110 --placement A` (survey) then `scan --frames <whole> --dpi
+   3600 --ir --film 110 --placement A --eject -o a.tiff`; placement B
+   likewise with `--placement B -o b.tiff`. Acceptance (revised
+   2026-09-20 after Astra's review, docs/film-110.md §5/§9.1):
+   - every photograph on the strip delivered as a `whole` product at
+     least once, sizes 17.2 x 13.0 ±0.3 mm;
+   - **no picture lost**: `tools/film110_check.py --dpi 3600 --edge-check`
+     over every production aperture reports no `LOSS` (every padded
+     product edge at or outside the independently measured foot), and
+     no image is missing an edge under eye inspection;
+   - **identity**: a photograph present in both placements carries the
+     same number in `a-image<N>.tiff` and `b-image<N>.tiff`; no phase
+     refusal on a correctly seated strip; the operator's final choice
+     per photograph follows the sag rule;
+   - the survey's A/B advice correct, and the sag warning raised
+     exactly where a free end is.
 3. Only then: README/ROADMAP say "110 in the strip holder: supported,
    two placements", with n = 2 stated.
 

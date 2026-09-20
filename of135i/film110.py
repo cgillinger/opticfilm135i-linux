@@ -38,7 +38,7 @@ import warnings
 
 import numpy as np
 
-from .holder import Film, FILM_110
+from .holder import Film, FILM_110, STRIP
 
 MM_PER_INCH = 25.4
 
@@ -73,6 +73,9 @@ REFINE_NEIGHBOURHOOD_MM = 3.0
 REFINE_GRADIENT_RATIO = 3.0
 FOOT_WALK_MM = 0.6              # how far a refined edge may walk out to the transition's foot
 FOOT_STOP_FRAC = 0.10           # ... while the step per pixel stays above this fraction of the peak
+LEVEL_NEAR_MM = 0.3             # the inside/outside levels that decide an edge's step direction
+LEVEL_FAR_MM = 1.0              # ... are medians over this band either side of the predicted edge
+LEVEL_MIN_CONTRAST = 0.08       # below this relative level difference nothing is refined (real 110 edges: > 0.6)
 WHOLE_MARGIN_MM = 0.3
 LEADING_CONTINUATION_MM = 1.0
 LEADING_CONTINUATION_FRAC = 0.8
@@ -183,27 +186,62 @@ def _box_smooth(profile: np.ndarray, box: int) -> np.ndarray:
 
 
 def _refine_edge(profile: np.ndarray, predicted: float, px_per_mm: float,
-                  sign: int, limit_lo: float | None = None,
-                  limit_hi: float | None = None) -> tuple:
+                 outward: int, limit_lo: float | None = None,
+                 limit_hi: float | None = None) -> tuple:
     """Refine one edge within +/-REFINE_WINDOW_MM of `predicted` against
-    `profile` (a 1-D line- or column-level profile). `sign` < 0 expects a
-    negative gradient (entering the image, darker); > 0 expects positive
-    (leaving the image, brighter). `limit_lo`/`limit_hi` clip the search
-    window. Returns (position, refined_bool).
+    `profile` (a 1-D line- or column-level profile). `outward` says on
+    which side of the edge the OUTSIDE of the image lies: < 0 at lower
+    indices (the image starts here), > 0 at higher indices (the image
+    ends here). `limit_lo`/`limit_hi` clip the search window. Returns
+    (position, refined_bool).
+
+    The direction of the step is NOT assumed -- it is read from the
+    profile itself: the median level LEVEL_NEAR_MM..LEVEL_FAR_MM inside
+    the predicted edge against the same band outside it. On 110 film the
+    picture sits inside a pre-exposed dark printed border on all four
+    sides, so leaving the picture gets DARKER; on a 35 mm-like clear
+    surround it gets brighter. The first version of this function assumed
+    the clear case and, on the real 110 strip, locked onto the fall-off
+    of the bright gate-edge halo just INSIDE the picture on every edge
+    (0.1-0.4 mm of picture cut on the trailing edges; found by Astra's
+    review, measured 2026-09-20). If the two levels do not differ by at
+    least LEVEL_MIN_CONTRAST of the larger one there is no edge to refine
+    and the prediction stands.
 
     The position returned is the OUTER FOOT of the transition, not its
-    steepest point: from the strongest gradient the search walks towards
-    the clear side while the profile keeps changing in the same
-    direction, for at most FOOT_WALK_MM. A camera-gate edge on 110 film
-    is soft over a few tenths of a millimetre, and a crop at the steepest
-    point loses that much picture on every side (measured 0.3-0.5 mm
-    against hand-read edges, 2026-09-19).
+    steepest point: from the strongest step of the expected direction the
+    search walks outward while the profile keeps changing that way, for
+    at most FOOT_WALK_MM, so the soft camera-gate ramp stays inside the
+    crop.
     """
     n = len(profile)
     if n == 0 or predicted < 0 or predicted > n - 1:
         return predicted, False
     box = max(1, round(REFINE_SMOOTH_MM * px_per_mm))
     smoothed = _box_smooth(profile, box)
+
+    # Which way does the profile step at this edge? Compare the level a
+    # little way inside the predicted edge with the level the same
+    # distance outside it.
+    near = LEVEL_NEAR_MM * px_per_mm
+    far = LEVEL_FAR_MM * px_per_mm
+    if outward > 0:
+        in_lo, in_hi = predicted - far, predicted - near
+        out_lo, out_hi = predicted + near, predicted + far
+    else:
+        in_lo, in_hi = predicted + near, predicted + far
+        out_lo, out_hi = predicted - far, predicted - near
+    in_lo, in_hi = max(0, int(round(in_lo))), min(n, int(round(in_hi)))
+    out_lo, out_hi = max(0, int(round(out_lo))), min(n, int(round(out_hi)))
+    if in_hi - in_lo < 2 or out_hi - out_lo < 2:
+        return predicted, False
+    inside = float(np.median(smoothed[in_lo:in_hi]))
+    outside = float(np.median(smoothed[out_lo:out_hi]))
+    contrast = abs(outside - inside)
+    if contrast < LEVEL_MIN_CONTRAST * max(inside, outside, 1.0):
+        return predicted, False
+    # Expected sign of the step along increasing index.
+    step_sign = (1 if outside > inside else -1) * (1 if outward > 0 else -1)
 
     window_px = max(1, round(REFINE_WINDOW_MM * px_per_mm))
     lo = max(0, int(np.floor(predicted)) - window_px)
@@ -214,11 +252,13 @@ def _refine_edge(profile: np.ndarray, predicted: float, px_per_mm: float,
         hi = min(hi, int(np.floor(limit_hi)))
     if hi <= lo:
         return predicted, False
-    grad = np.diff(smoothed[lo:hi + 1])
+    grad = np.diff(smoothed[lo:hi + 1]) * step_sign
     if grad.size == 0:
         return predicted, False
-    i = int(np.argmin(grad)) if sign < 0 else int(np.argmax(grad))
+    i = int(np.argmax(grad))
     g = float(grad[i])
+    if g <= 0:
+        return predicted, False
     candidate = lo + i  # index of the steepest step (between i and i+1)
 
     nb_px = max(2, round(REFINE_NEIGHBOURHOOD_MM * px_per_mm))
@@ -232,24 +272,24 @@ def _refine_edge(profile: np.ndarray, predicted: float, px_per_mm: float,
     scale = float(np.median(nb_grad))
     if scale <= 0:
         return predicted, False
-    if abs(g) < REFINE_GRADIENT_RATIO * scale:
+    if g < REFINE_GRADIENT_RATIO * scale:
         return predicted, False
 
-    # Walk to the outer foot. Entering the image (sign < 0) the clear side
-    # is at lower indices and the profile falls with increasing index, so
-    # outward the profile rises; leaving (sign > 0) the clear side is at
-    # higher indices and the profile rises with increasing index.
+    # Walk to the outer foot: keep going outward while the profile keeps
+    # stepping in the expected direction by at least FOOT_STOP_FRAC of
+    # the peak step.
     walk_px = max(1, round(FOOT_WALK_MM * px_per_mm))
-    floor = FOOT_STOP_FRAC * abs(g)
-    pos = candidate
-    if sign < 0:
+    floor = FOOT_STOP_FRAC * g
+    if outward < 0:
         k = candidate
-        while k - 1 >= max(0, candidate - walk_px) and (smoothed[k - 1] - smoothed[k]) >= floor:
+        while k - 1 >= max(0, candidate - walk_px) and \
+                (smoothed[k] - smoothed[k - 1]) * step_sign >= floor:
             k -= 1
         pos = k
     else:
         k = candidate + 1
-        while k + 1 <= min(n - 1, candidate + 1 + walk_px) and (smoothed[k + 1] - smoothed[k]) >= floor:
+        while k + 1 <= min(n - 1, candidate + 1 + walk_px) and \
+                (smoothed[k + 1] - smoothed[k]) * step_sign >= floor:
             k += 1
         pos = k
     return float(pos) + 0.5, True
@@ -354,6 +394,7 @@ def _hole_runs(green: np.ndarray, lo: int, hi: int, width: int, air: float,
 IMAGE_DENSITY_FRAC = 0.85
 IMAGE_VARIATION_FRAC = 0.10       # std/mean of the profile inside a window that is image, not base
 RAIL_GUARD_MM = 0.4             # lateral refinement stays this far from the rail-side band edge
+RIM_GUARD_MM = 1.0              # ... and this far inside the perforated film edge (rim 0.6 mm, hole 0.6-2.1 mm)
 PRODUCT_PAD_MM = 0.25           # the CLI grows a whole image's crop by this on every side
 MIN_OVERLAP_MM = 1.0            # a window overlapping the aperture by less carries nothing
 MERGE_FRAC_OF_PITCH = 0.5       # two predictions closer than this are the same image
@@ -543,8 +584,8 @@ def detect(image, *, dpi: float, film: Film = FILM_110) -> ApertureFind:
                     and seg_std < IMAGE_VARIATION_FRAC * max(seg_mean, 1.0)):
                 continue
 
-            r_line0, ok_l0 = _refine_edge(interior_profile, line0, px_per_mm, sign=-1)
-            r_line1, ok_l1 = _refine_edge(interior_profile, line1, px_per_mm, sign=+1)
+            r_line0, ok_l0 = _refine_edge(interior_profile, line0, px_per_mm, outward=-1)
+            r_line1, ok_l1 = _refine_edge(interior_profile, line1, px_per_mm, outward=+1)
             score += int(ok_l0) + int(ok_l1)
 
             # Lateral prediction from the LOCAL film edge over this image's
@@ -565,26 +606,30 @@ def detect(image, *, dpi: float, film: Film = FILM_110) -> ApertureFind:
                 col1 = edge_here - offset_px
                 col0 = col1 - lat_len_px
 
-            # Lateral refinement, rail side only. On the perforated side
-            # the profile is ambiguous (dark printed border, a bright sliver
-            # of rebate, then the image, all within ~0.5 mm on the real
-            # film), so that edge is the model prediction from the tracked
-            # film edge and is reported as not refined. On the rail side
-            # the image is left into clear rebate: brighter with increasing
-            # column when the rail is on the high side (perforated edge
-            # low), darker when the rail is on the low side.
-            # The rail's own bright rim lies just beyond the film's rail
-            # edge, so the search must stop RAIL_GUARD_MM short of the band.
+            # Lateral refinement, both sides. The step direction is read
+            # from the levels either side (see _refine_edge), so the
+            # perforated side -- picture next to the dark printed border,
+            # with the film's bright rim and the hole further out -- is
+            # refined too, with the search kept RIM_GUARD_MM inside the
+            # tracked film edge so the rim never enters the window (the
+            # first version left this edge as the 2.0 mm model prediction,
+            # which sat 0.2 mm inside the picture's foot on all four
+            # production frames of 2026-09-19). On the rail side the
+            # search stops RAIL_GUARD_MM short of the band so the rail's
+            # own bright rim stays out.
             col_profile = np.median(green[clo:chi, :], axis=0)
             guard = RAIL_GUARD_MM * px_per_mm
+            rim_guard = RIM_GUARD_MM * px_per_mm
             if edge_is_low:
-                r_col0, ok_c0 = col0, False
-                r_col1, ok_c1 = _refine_edge(col_profile, col1, px_per_mm, sign=+1,
+                r_col0, ok_c0 = _refine_edge(col_profile, col0, px_per_mm, outward=-1,
+                                             limit_lo=edge_here + rim_guard)
+                r_col1, ok_c1 = _refine_edge(col_profile, col1, px_per_mm, outward=+1,
                                              limit_hi=hi - guard)
             else:
-                r_col0, ok_c0 = _refine_edge(col_profile, col0, px_per_mm, sign=-1,
+                r_col0, ok_c0 = _refine_edge(col_profile, col0, px_per_mm, outward=-1,
                                              limit_lo=lo + guard)
-                r_col1, ok_c1 = col1, False
+                r_col1, ok_c1 = _refine_edge(col_profile, col1, px_per_mm, outward=+1,
+                                             limit_hi=edge_here - rim_guard)
 
             whole = (r_line0 >= whole_margin_px) and (r_line1 <= n_lines - whole_margin_px)
             if r_line0 < 0:
@@ -651,3 +696,51 @@ def crop(image, find: FrameFind, *, dpi: float | None = None, pad_mm: float = 0.
     lo_c = min(max(lo_c, 0), n_cols)
     hi_c = min(max(hi_c, lo_c), n_cols)
     return arr[lo_l:hi_l, lo_c:hi_c]
+
+
+# ---------------------------------------------------- numbering (protocol)
+# Under the two-placement protocol (docs/film-110.md §3) image 1's start
+# sits PLACEMENT_A_PHASE_MM inside aperture 1 in placement A, and half a
+# film pitch further on in placement B. An image's number is then its
+# position along the strip, whichever placement and apertures it was
+# scanned in -- so the same photograph gets the same number in A and B.
+# Measured on the 2026-09-19 strip (n = 1 strip, one operator): A image 1
+# at 3.53 / 3.58 mm (3600 / 600 dpi); B image 1 at 15.73 mm against the
+# derived 16.25. Rounding tolerates +/- PLACEMENT_PHASE_TOLERANCE_MM.
+PLACEMENT_A_PHASE_MM = 3.5
+PLACEMENT_PHASE_TOLERANCE_MM = 6.0
+
+
+def placement_phase_mm(placement: str, film: Film = FILM_110) -> float:
+    """Image 1's start inside aperture 1 for placement "A" or "B"
+    (docs/film-110.md §3): A is the strip loaded flush (a hair of clear
+    film before image 1, exactly like a 35 mm strip); B is shifted half a
+    film pitch further on, so the bar that split image 2 in A falls
+    between images 1 and 2 instead."""
+    if placement == "A":
+        return PLACEMENT_A_PHASE_MM
+    if placement == "B":
+        return PLACEMENT_A_PHASE_MM + film.pitch_mm / 2
+    raise ValueError(f'placement must be "A" or "B", got {placement!r}')
+
+
+def image_number(aperture: int, line0: float, dpi: float, placement: str,
+                 film: Film = FILM_110, holder=STRIP) -> tuple:
+    """Strip-position number of the image whose start is `line0` (px,
+    aperture-registered) in `aperture` (1-based), and the residual in mm
+    between that position and the nearest phase-grid position (signed,
+    |residual| <= pitch/2). The caller refuses when |residual| >
+    PLACEMENT_PHASE_TOLERANCE_MM or the number is < 1.
+
+    `global_mm` is `line0`'s position measured from aperture 1's own
+    start, along the holder's own aperture grid (`holder.pitch_mm`) --
+    NOT the film's pitch, since apertures and film images do not share
+    one grid. `k` is then how many film pitches past this placement's
+    phase that position is; the image number is `k` rounded to the
+    nearest integer, offset by one (image 1 is k == 0)."""
+    px_per_mm = dpi / MM_PER_INCH
+    global_mm = (aperture - 1) * holder.pitch_mm + line0 / px_per_mm
+    k = (global_mm - placement_phase_mm(placement, film)) / film.pitch_mm
+    n = round(k) + 1
+    residual = (k - round(k)) * film.pitch_mm
+    return n, residual

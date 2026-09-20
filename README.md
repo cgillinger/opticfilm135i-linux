@@ -186,12 +186,15 @@ should know about:
   35 mm holder against one rail; its 13 x 17 mm images fit inside the
   24 x 36 mm apertures but their 25.5 mm pitch means every third image
   falls under a crossbar, so a strip is scanned in two placements
-  (`docs/film-110.md`). `scan --film 110` detects the images inside each
-  verified aperture from the film's own perforations and writes one
-  cropped product per whole image; the 600 dpi survey prints which
-  images are whole and which need the other placement. Built and checked
-  offline against one strip's saved scans (Test 86, 22 apertures, all
-  verdicts right); the acceptance run on a second strip (Test 87) has
+  (`docs/film-110.md`). `scan --film 110 --placement A|B` detects the
+  images inside each verified aperture from the film's own perforations
+  and writes one cropped product per whole image, numbered by position
+  on the strip so the same photograph has the same number in both
+  placements; the 600 dpi survey prints which images are whole and which
+  need the other placement. Built and checked offline against one
+  strip's saved scans (Test 86, 22 apertures, all verdicts right; a
+  review then found and fixed a crop that cut up to 0.4 mm of picture,
+  `docs/film-110.md` §9.1); the acceptance run on a second strip (Test 87) has
   not happened yet, so this is not claimed as supported.
   **Panorama:** Plustek's optional panoramic holder (frames up to
   226 mm) carries the same identification tab encoding as the strip
