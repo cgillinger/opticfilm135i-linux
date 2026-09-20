@@ -6242,7 +6242,9 @@ owner's eye check in ~/Bilder/opticfilm-granskning/instamatic-20260920/
 (LASMIG.txt). **Owner's eye verdict (same evening): the whole picture is
 present on all four, with a little overscan on every side** — the
 0.25 mm product pad showing as a rim of this film's light margin; image
-quality deliberately not judged (colour is the application's). That is
+quality not formally judged (colour is the application's), though the
+owner's remark was that it is "surprisingly good at heart" and that
+post-processing belongs to the separate digitising workflow. That is
 the acceptance criterion met: **Test 87 PASSED.** 110 in the strip
 holder is now supported on n = 2 strips from two cameras.
 
