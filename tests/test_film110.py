@@ -776,7 +776,12 @@ def test_strip2_starts_clear_of_strip1_and_fits_the_holder():
     strip 1's physical length and still end inside the holder's last
     aperture. Four images of 110 run 3*pitch + image of pictures and about
     4*pitch of film; the holder spans 5*aperture-pitch + aperture 1."""
-    ap_pitch = STRIP.pitch_mm
+    # The MEASURED aperture grid, not Holder.pitch_mm (the nominal
+    # command pitch): this is a question about where the plastic actually
+    # is. The two differ by 0.084 mm per aperture -- immaterial to
+    # numbering's +/-6 mm tolerance, but a third of the sub-millimetre
+    # clearance checked below, which is itself the point.
+    ap_pitch = holder_mod.STRIP_FIDUCIAL.pitch_hwdpi / 7200 * 25.4
     film_len_mm = 4 * FILM_110.pitch_mm
     start_mm = (film110.STRIP2_ORIGIN_APERTURE - 1) * ap_pitch
     holder_span_mm = 5 * ap_pitch + holder_mod.STRIP_APERTURE_MM[0]
@@ -787,6 +792,21 @@ def test_strip2_starts_clear_of_strip1_and_fits_the_holder():
     # Aperture 3 (the aperture before strip 2's) would collide.
     earlier_mm = (film110.STRIP2_ORIGIN_APERTURE - 2) * ap_pitch
     assert earlier_mm < film_len_mm, (earlier_mm, film_len_mm)
+
+    # Placement B is the tight case: strip 1 shifts half a film pitch on,
+    # so its END moves toward strip 2's first aperture (docs/film-110.md
+    # §11.1). §4's measured behaviour puts the test strip at 98.9-100.8 mm
+    # -- that clears, but by under a millimetre, and a longer strip does
+    # not. This pins the boundary so a change to the origin aperture or
+    # the pitch cannot silently erase the margin.
+    half = FILM_110.pitch_mm / 2
+    for strip_len_mm, clears in ((99.0, True), (100.0, True),
+                                 (101.0, False), (102.0, False)):
+        end_b_mm = half + strip_len_mm
+        assert (end_b_mm < start_mm) is clears, (strip_len_mm, end_b_mm)
+
+    margin_mm = start_mm - (half + 100.0)
+    assert 0.5 < margin_mm < 1.5, margin_mm
     print("test_strip2_starts_clear_of_strip1_and_fits_the_holder OK")
 
 

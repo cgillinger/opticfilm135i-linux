@@ -419,13 +419,37 @@ time.
 | 110 strip, 4 images: pictures | 93.7 mm | 3 × 25.5 + 17.2 |
 | 110 strip, 4 images: film | ~102 mm | 4 × `FILM_110.pitch_mm` |
 
-Strip 2 must start past strip 1's ~102 mm of film and still end inside
-aperture 6. Aperture 3 (75.7 mm along) collides; **aperture 4** (113.6 mm)
-is the first that clears, and leaves strip 2's end near 215.6 mm, inside
+Strip 2 must start past strip 1's film and still end inside aperture 6.
+Aperture 3 (75.7 mm along) collides; **aperture 4** (113.6 mm) is the
+first that clears, and leaves strip 2's end near 215.6 mm, inside
 aperture 6. Two strips of 102 mm fit in 225.4 mm; three (306 mm) never do.
 `STRIP2_ORIGIN_APERTURE = 4` and `film110.strip_origin` encode this, and
 `test_strip2_starts_clear_of_strip1_and_fits_the_holder` asserts both
 bounds so the constant cannot drift away from the geometry.
+
+**The clearance is not generous, and placement B is the tight case.**
+Strip 1 shifts half a pitch on in B, so its film end moves with it:
+
+| Strip 1 film length | End in placement B | Against aperture 4's edge (113.59 mm) |
+|---|---|---|
+| 99 mm | 111.8 mm | 1.8 mm clear, under bar 3/4 |
+| 100 mm | 112.8 mm | **0.8 mm clear**, under bar 3/4 |
+| 101 mm | 113.8 mm | **crosses into aperture 4** |
+| 102 mm | 114.8 mm | crosses into aperture 4 |
+
+The margin is small enough that the *choice of pitch* moves it: the
+measured grid (`STRIP_FIDUCIAL`, 37.863 mm) puts aperture 4's edge at
+113.59 mm, the nominal one (`Holder.pitch_mm`, 37.947 mm) at 113.84 mm —
+0.25 mm apart, a third of the clearance. The table uses the measured
+grid, since this is a question about where the plastic is.
+
+§4's measured behaviour (strip 1's end under bar 3/4 in B) puts the test
+strip at 98.9–100.8 mm, so a four-image strip is expected to clear — but
+by under a millimetre, and a strip cut with more leader will not. A
+strip 1 that reaches into aperture 4 puts foreign film at the leading
+edge of strip 2's first aperture. Test 88 criterion 8 checks exactly
+this; if it fails, strip 2's origin aperture is the thing to change, not
+the detector.
 
 ### 11.2 Both strips are in the same placement
 
@@ -528,7 +552,7 @@ of135i scan --frames <whole-image apertures> --dpi 3600 --ir --film 110 --strips
 
 ### 12.3 Definition of done
 
-Test 88 passes when **all six** hold. Each is decided from the two runs
+Test 88 passes when **all eight** hold. Each is decided from the two runs
 above; none needs a third load.
 
 1. **The strips do not collide.** Strip 2 seats at aperture 4 with
@@ -551,18 +575,56 @@ above; none needs a third load.
 6. **No picture is lost at an edge.** `film110_check.py --edge-check`
    reports no negative margin on any production edge of either strip —
    the same instrument and the same bar as Test 87, no new threshold.
+7. **Both strips' last images are sharp in placement B.** §4's rule must
+   carry to strip 2: its image 4 in run 2, whose film end lies past
+   aperture 6's trailing edge, is judged against its own image 4 from
+   run 1 (free end) — supported should be visibly the sharper, as
+   2780/3765/3399 against 2004/1775/1556 was in Test 86. §12.4.
+8. **Strip 1's tail does not reach into aperture 4.** In placement B
+   strip 1's film end sits at ~112.8 mm against aperture 4's leading
+   edge at 113.59 mm — **0.8 mm of margin on a ~100 mm strip**, and a
+   strip 101 mm or longer crosses into strip 2's first aperture. Run 2's
+   aperture 4 must show strip 2's image 1 and no foreign film at its
+   leading edge. §11.1.
 
-### 12.4 Sag is measured, not iterated
+### 12.4 Sag is a gate, and the protocol is what clears it
 
-§11.5 predicts strip 2's free end sits inside aperture 6 rather than
-under a bar, so its **last image** is the one at risk. Test 88 records
-what happens — the free-end warning raised or not, and the owner's eye
-on that image — as a **finding, not a gate**.
+An earlier revision of this section called sag "a finding, not a gate",
+on the reasoning that `--strips 1` stays available. That was wrong, and
+it misread §4. The two placements are not only about bars splitting
+images — **the placement that gives a strip its end under plastic is the
+placement that gives that strip a sharp last image.** Sag is what the
+protocol is *for*. A layout that cannot clear it has not delivered the
+strip.
 
-The mode passes with a soft strip-2 last image, documented in §11.5,
-because `--strips 1` remains available for any strip whose last image
-matters. Re-seating the strips to chase sharpness on that one frame is
-explicitly **not** part of this test.
+Laid out, at the measured constants and a ~100 mm four-image strip:
+
+| | image 1 | image 2 | image 3 | image 4 | film end |
+|---|---|---|---|---|---|
+| **A** | whole ap1 | **split** | whole ap2 | whole ap3 | free at 100.0 mm — **sags** |
+| **B** | whole ap1 | whole ap2 | **split** | whole ap3 | 112.8 mm, under bar 3/4 — supported |
+
+So B is the run that delivers both the recovered image 2 *and* a sharp
+image 4; A contributes image 3. Strip 2 at aperture 4 repeats the
+pattern one strip along (ap4/5/6, split at bar 4/5 in A and 5/6 in B).
+
+**The open question Test 88 must answer** is strip 2's end in placement
+B. It lands at 226.3 mm — 1.16 mm *past* aperture 6's trailing plastic
+edge at 225.17 mm. There is no bar 6/7; what would support it is the
+holder's own end plastic beyond the last aperture. That the holder body
+continues there is near-certain physically, but *how far*, and whether
+1.16 mm of overlap is enough to hold the film flat the way a 1.9 mm bar
+does, is not something this repo has measured. It is a hardware
+observation, and it is criterion 7 below — **a gate, not a note**.
+
+If strip 2's end is not supported, the honest outcome is that the
+two-strip layout delivers strip 1 fully and strip 2 with a soft last
+image. That is a real cost to weigh against halving the runs, and it is
+the owner's call, not a detail to bury.
+
+What is still **not** part of this test: re-seating the strips to hunt
+sharpness frame by frame. The protocol either clears sag at its two
+declared placements or it does not, and that is what gets recorded.
 
 ### 12.5 Not in scope — do not add these to Test 88
 

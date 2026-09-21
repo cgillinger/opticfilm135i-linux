@@ -723,13 +723,16 @@ Definition of done:
    `<stem>-s<S>-image<N>.tiff`, offline-tested — **DONE 2026-09-21**
    (`docs/film-110.md` §11; `--strips 1` byte-identical to C3).
 2. **Test 88:** one hardware load with two strips, through both
-   placements — the six criteria of `docs/film-110.md` §12.3: strips do
-   not collide, every aperture reads its own strip, one `--placement`
+   placements — the eight criteria of `docs/film-110.md` §12.3: strips
+   do not collide, every aperture reads its own strip, one `--placement`
    right for both, numbering restarts per strip and is stable across
-   placements, both strips' products written without collision, and
-   `film110_check.py --edge-check` shows no lost picture. Sag on strip
-   2's free end is recorded as a finding, not a gate (§12.4). — **NOT
-   RUN.**
+   placements, both strips' products written without collision,
+   `film110_check.py --edge-check` shows no lost picture, **both strips'
+   last images are sharp in placement B** (§4's sag rule must carry to
+   strip 2, whose end falls past aperture 6's trailing edge rather than
+   under a bar — §12.4), and **strip 1's tail does not reach into
+   aperture 4** (0.8 mm of clearance in placement B on a ~100 mm strip;
+   §11.1). — **NOT RUN.**
 3. README says "supported" for two strips once Test 88 passes.
 
 Not in scope, and not to be added to Test 88 (`docs/film-110.md` §12.5):
