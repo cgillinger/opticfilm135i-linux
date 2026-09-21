@@ -710,6 +710,34 @@ Image-side only: no motor, wait, calibration or geometry change
 Not in scope: a 110 FEEDL grid, 126 Instamatic, holder-ID detection,
 `digitize --film 110` (follow-up once 2 passes).
 
+## C4 — two 110 strips in one load (`--strips 2`, added 2026-09-21)
+
+Image-side only, like C3: no motor, wait, calibration or geometry
+change. Two 110 strips fit the holder end to end (strip 2 at aperture
+4), so the two-placement protocol costs two runs for the pair instead
+of two runs each — half the transport travel and half the lamp time.
+Definition of done:
+
+1. Layout constant, per-strip numbering (`image_number(...,
+   origin_aperture=…)`), `--strips 1|2`, per-strip product names
+   `<stem>-s<S>-image<N>.tiff`, offline-tested — **DONE 2026-09-21**
+   (`docs/film-110.md` §11; `--strips 1` byte-identical to C3).
+2. **Test 88:** one hardware load with two strips, through both
+   placements — the six criteria of `docs/film-110.md` §12.3: strips do
+   not collide, every aperture reads its own strip, one `--placement`
+   right for both, numbering restarts per strip and is stable across
+   placements, both strips' products written without collision, and
+   `film110_check.py --edge-check` shows no lost picture. Sag on strip
+   2's free end is recorded as a finding, not a gate (§12.4). — **NOT
+   RUN.**
+3. README says "supported" for two strips once Test 88 passes.
+
+Not in scope, and not to be added to Test 88 (`docs/film-110.md` §12.5):
+three strips (arithmetically impossible), re-validating the C3 detector,
+new film types, or image-quality judgement beyond "the whole picture is
+there". A failed criterion names its fix and the test is re-run once,
+not broadened.
+
 ## Candidates, not scheduled (2026-09-13)
 
 Recorded so they are not lost. None is committed work; each needs a

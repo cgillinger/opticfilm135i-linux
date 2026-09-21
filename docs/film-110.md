@@ -486,6 +486,98 @@ of135i scan --frames 1-6 --dpi 3600 --ir --film 110 --strips 2 --placement B --e
   constants; no two-strip load has been scanned. Aperture 3 and 6 each
   carry only one image of their strip, so there is slack to shift the
   strips if a real load wants it.
-- **`FILM_110.pitch_mm = 25.5` is still n = 1** (Test 86, one strip, one
-  operator). Every figure here rests on it. Test 87 (ROADMAP C3) is the
-  measurement that would make these numbers general.
+- **The constants are n = 2** (Test 86 and Test 87, two strips from two
+  cameras). Pitch, protocol, numbering and the sag rule generalised to
+  the second strip; the *lateral* edge model did not and was fixed. The
+  arithmetic above rests on `FILM_110.pitch_mm` and the aperture grid,
+  both of which Test 87 exercised — but never with two strips in the
+  holder at once, which is Test 88 (§12).
+
+## 12. Test 88 — the hardware acceptance for `--strips 2`
+
+§11 is arithmetic on measured constants. No two-strip load has ever been
+in the scanner. Test 88 is the one hardware test that closes that gap,
+and it is **closed by construction**: the criteria below are the whole
+list, they are checked in the two runs the mode itself costs, and
+nothing here re-validates what Test 86/87 already settled.
+
+### 12.1 Setup
+
+Two four-image 110 strips, the standard strip holder, film against the
+lower rail (perforations toward the open side of the aperture, §10).
+Strip 1 seated at aperture 1 by the §3 placement rule, strip 2 seated
+the same way at **aperture 4**.
+
+Prefer the Test 86 and Test 87 strips: their images are already known
+good, so any new defect is the layout's, not the film's.
+
+### 12.2 The runs — two, not more
+
+```
+# Run 1 — both strips in placement A
+of135i scan --frames 1-6 --dpi 600 --film 110 --strips 2 --placement A --ir --no-clean -o t88-a600.tiff
+of135i scan --frames <whole-image apertures> --dpi 3600 --ir --film 110 --strips 2 --placement A --eject -o t88-a.tiff
+
+# re-seat BOTH strips half a pitch on (§3 placement B), status && load
+# Run 2 — both strips in placement B
+of135i scan --frames 1-6 --dpi 600 --film 110 --strips 2 --placement B --ir --no-clean -o t88-b600.tiff
+of135i scan --frames <whole-image apertures> --dpi 3600 --ir --film 110 --strips 2 --placement B --eject -o t88-b.tiff
+
+.venv/bin/python tools/film110_check.py --dpi 3600 --edge-check t88-*-s*-image*.tiff
+```
+
+### 12.3 Definition of done
+
+Test 88 passes when **all six** hold. Each is decided from the two runs
+above; none needs a third load.
+
+1. **The strips do not collide.** Strip 2 seats at aperture 4 with
+   strip 1 in place, neither strip is bent or lifted by the other, and
+   the holder closes normally. *Observation, before any scan.*
+2. **Every aperture reads its own strip.** The 600 dpi survey finds
+   images in apertures 1–3 attributed to strip 1 and in 4–6 attributed
+   to strip 2, with no aperture reporting "no 110 film band" where a
+   strip is.
+3. **One `--placement` is right for both.** No image on either strip is
+   refused as off-phase (§5's ±6 mm) in either run. A refusal here falsifies
+   §11.2 and is the finding the test exists to catch.
+4. **Numbering restarts per strip and is stable across placements.**
+   Each strip's first picture is image 1, and the same photograph carries
+   the same number in run 1 and run 2 — checked per strip, the §5 rule.
+5. **Both strips' products are written and none collides.** The
+   `-s1-` and `-s2-` products exist for every whole image found, nothing
+   is refused as already existing, and the eight photographs are
+   accounted for across the two runs.
+6. **No picture is lost at an edge.** `film110_check.py --edge-check`
+   reports no negative margin on any production edge of either strip —
+   the same instrument and the same bar as Test 87, no new threshold.
+
+### 12.4 Sag is measured, not iterated
+
+§11.5 predicts strip 2's free end sits inside aperture 6 rather than
+under a bar, so its **last image** is the one at risk. Test 88 records
+what happens — the free-end warning raised or not, and the owner's eye
+on that image — as a **finding, not a gate**.
+
+The mode passes with a soft strip-2 last image, documented in §11.5,
+because `--strips 1` remains available for any strip whose last image
+matters. Re-seating the strips to chase sharpness on that one frame is
+explicitly **not** part of this test.
+
+### 12.5 Not in scope — do not add these to Test 88
+
+- **Three strips.** 306 mm of film in a 225.4 mm holder. Settled by
+  arithmetic (§11.1); no test can change it.
+- **Re-validating the detector, the edge model, the crop or the sag
+  rule.** Test 86 and Test 87 settled those at n = 2. Test 88 uses the
+  edge check as a regression bar only (criterion 6).
+- **New film types** (positive, B&W), a third camera, or more strips
+  through the layout. The layout is geometry, not film chemistry; it
+  does not inherit §10's per-film questions.
+- **Image quality judgements** beyond "the whole picture is there".
+  Colour and tone belong to the digitising workflow, as in Test 87.
+
+If Test 88 passes, `--strips 2` is supported and README says so. If a
+criterion fails, the failure names the fix — a collision means the origin
+aperture is wrong, an off-phase refusal means §11.2 is wrong — and the
+test is re-run once after that fix, not broadened.
