@@ -838,6 +838,43 @@ def crop(image, find: FrameFind, *, dpi: float | None = None, pad_mm: float = 0.
 PLACEMENT_A_PHASE_MM = 3.5
 PLACEMENT_PHASE_TOLERANCE_MM = 6.0
 
+# ------------------------------------------------------- two-strip layout
+# Two 110 strips fit in the 35 mm strip holder end to end, each seated at
+# an aperture's own leading edge, so a load covers two strips instead of
+# one and the two-placement protocol costs two runs for both rather than
+# two runs each (docs/film-110.md section 11).
+#
+# Where strip 2 starts is set by the strip's length against the holder's:
+# a four-image strip runs 3 * pitch + image = 93.7 mm of pictures and
+# about 4 * pitch = 102 mm of film, and the holder's six apertures span
+# 5 * 37.86 + 36.12 = 225.4 mm. Aperture 4 (3 * 37.86 = 113.6 mm along)
+# is the first aperture that clears strip 1's physical length, and it
+# leaves strip 2 ending near 215.6 mm, inside aperture 6.
+#
+# Each strip is seated independently, so BOTH strips are in the same
+# declared placement -- the phase drift between the film pitch (25.5 mm)
+# and the aperture pitch (37.86 mm) binds a single continuous strip, not
+# two separately placed ones. That is what keeps one --placement per run
+# correct for both strips.
+STRIP2_ORIGIN_APERTURE = 4
+
+
+def strip_origin(aperture: int, strips: int = 1) -> tuple[int, int]:
+    """Which strip `aperture` belongs to and which aperture that strip is
+    numbered from, as ``(strip, origin_aperture)`` (both 1-based).
+
+    With ``strips == 1`` every aperture belongs to strip 1, numbered from
+    aperture 1 -- today's behaviour exactly. With ``strips == 2`` the
+    apertures from ``STRIP2_ORIGIN_APERTURE`` on belong to strip 2 and
+    are numbered from that aperture, so each strip's own first image is
+    image 1 and the numbers do not run on across the strip boundary.
+    """
+    if strips not in (1, 2):
+        raise ValueError(f"strips must be 1 or 2, got {strips!r}")
+    if strips == 2 and aperture >= STRIP2_ORIGIN_APERTURE:
+        return 2, STRIP2_ORIGIN_APERTURE
+    return 1, 1
+
 
 def placement_phase_mm(placement: str, film: Film = FILM_110) -> float:
     """Image 1's start inside aperture 1 for placement "A" or "B"
@@ -853,21 +890,24 @@ def placement_phase_mm(placement: str, film: Film = FILM_110) -> float:
 
 
 def image_number(aperture: int, line0: float, dpi: float, placement: str,
-                 film: Film = FILM_110, holder=STRIP) -> tuple:
+                 film: Film = FILM_110, holder=STRIP,
+                 origin_aperture: int = 1) -> tuple:
     """Strip-position number of the image whose start is `line0` (px,
     aperture-registered) in `aperture` (1-based), and the residual in mm
     between that position and the nearest phase-grid position (signed,
     |residual| <= pitch/2). The caller refuses when |residual| >
     PLACEMENT_PHASE_TOLERANCE_MM or the number is < 1.
 
-    `global_mm` is `line0`'s position measured from aperture 1's own
-    start, along the holder's own aperture grid (`holder.pitch_mm`) --
-    NOT the film's pitch, since apertures and film images do not share
-    one grid. `k` is then how many film pitches past this placement's
+    `global_mm` is `line0`'s position measured from `origin_aperture`'s
+    own start, along the holder's own aperture grid (`holder.pitch_mm`)
+    -- NOT the film's pitch, since apertures and film images do not share
+    one grid. `origin_aperture` is 1 for a single strip and, in the
+    two-strip layout, `STRIP2_ORIGIN_APERTURE` for strip 2, so each strip
+    is numbered from its own start (see `strip_origin`). `k` is then how many film pitches past this placement's
     phase that position is; the image number is `k` rounded to the
     nearest integer, offset by one (image 1 is k == 0)."""
     px_per_mm = dpi / MM_PER_INCH
-    global_mm = (aperture - 1) * holder.pitch_mm + line0 / px_per_mm
+    global_mm = (aperture - origin_aperture) * holder.pitch_mm + line0 / px_per_mm
     k = (global_mm - placement_phase_mm(placement, film)) / film.pitch_mm
     n = round(k) + 1
     residual = (k - round(k)) * film.pitch_mm

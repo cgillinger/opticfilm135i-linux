@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 
 from of135i import cli, film110
+from of135i import holder as holder_mod
 from of135i.holder import FILM_110, STRIP
 
 DPIS = (600, 3600)
@@ -477,10 +478,10 @@ def test_image_number_is_the_strip_position_in_both_placements():
 # --------------------------------------------------------------------- CLI
 
 
-def _hook_args(dpi=600, positive=False, rotate=0, placement="A"):
+def _hook_args(dpi=600, positive=False, rotate=0, placement="A", strips=1):
     import types
     return types.SimpleNamespace(dpi=dpi, positive=positive, rotate=rotate,
-                                 placement=placement)
+                                 placement=placement, strips=strips)
 
 
 def test_cli_hook_numbers_across_apertures_and_writes_whole_only():
@@ -743,6 +744,162 @@ def test_cli_scan_parser_defaults_to_135():
     print("test_cli_scan_parser_defaults_to_135 OK")
 
 
+# ------------------------------------------------- two-strip layout (§4)
+
+
+def test_strip_origin_maps_apertures_to_strips():
+    """One load, two strips (docs/film-110.md §4): with --strips 1 every
+    aperture is strip 1 numbered from aperture 1 (today's behaviour); with
+    --strips 2 apertures 1-3 are strip 1 and 4-6 are strip 2, each
+    numbered from its own first aperture."""
+    for aperture in range(1, STRIP.frames + 1):
+        assert film110.strip_origin(aperture, 1) == (1, 1), aperture
+
+    for aperture in (1, 2, 3):
+        assert film110.strip_origin(aperture, 2) == (1, 1), aperture
+    for aperture in (4, 5, 6):
+        assert film110.strip_origin(aperture, 2) == (2, 4), aperture
+
+    assert film110.STRIP2_ORIGIN_APERTURE == 4
+
+    for bad in (0, 3, -1):
+        try:
+            film110.strip_origin(1, bad)
+            assert False, f"strips={bad} must raise ValueError"
+        except ValueError:
+            pass
+    print("test_strip_origin_maps_apertures_to_strips OK")
+
+
+def test_strip2_starts_clear_of_strip1_and_fits_the_holder():
+    """The geometry that puts strip 2 at aperture 4: it must start past
+    strip 1's physical length and still end inside the holder's last
+    aperture. Four images of 110 run 3*pitch + image of pictures and about
+    4*pitch of film; the holder spans 5*aperture-pitch + aperture 1."""
+    ap_pitch = STRIP.pitch_mm
+    film_len_mm = 4 * FILM_110.pitch_mm
+    start_mm = (film110.STRIP2_ORIGIN_APERTURE - 1) * ap_pitch
+    holder_span_mm = 5 * ap_pitch + holder_mod.STRIP_APERTURE_MM[0]
+
+    assert start_mm > film_len_mm, (start_mm, film_len_mm)
+    assert start_mm + film_len_mm <= holder_span_mm, (start_mm, holder_span_mm)
+
+    # Aperture 3 (the aperture before strip 2's) would collide.
+    earlier_mm = (film110.STRIP2_ORIGIN_APERTURE - 2) * ap_pitch
+    assert earlier_mm < film_len_mm, (earlier_mm, film_len_mm)
+    print("test_strip2_starts_clear_of_strip1_and_fits_the_holder OK")
+
+
+def test_both_strips_number_from_one_in_the_same_placement():
+    """Each strip is seated independently, so one --placement per run is
+    correct for both: strip 2's first image sits at the SAME phase inside
+    aperture 4 that strip 1's sits at inside aperture 1, and both are
+    numbered 1."""
+    for dpi in DPIS:
+        ppm = _px_per_mm(dpi)
+        for placement in ("A", "B"):
+            phase = film110.placement_phase_mm(placement)
+            n1, r1 = film110.image_number(1, phase * ppm, dpi, placement,
+                                          origin_aperture=1)
+            n2, r2 = film110.image_number(
+                film110.STRIP2_ORIGIN_APERTURE, phase * ppm, dpi, placement,
+                origin_aperture=film110.STRIP2_ORIGIN_APERTURE)
+            assert n1 == 1 and n2 == 1, (dpi, placement, n1, n2)
+            assert abs(r1) < 1e-6 and abs(r2) < 1e-6, (dpi, placement, r1, r2)
+
+            # ... and the second image of each strip, one film pitch on.
+            pos = (phase + FILM_110.pitch_mm) * ppm
+            m2, _ = film110.image_number(
+                film110.STRIP2_ORIGIN_APERTURE, pos, dpi, placement,
+                origin_aperture=film110.STRIP2_ORIGIN_APERTURE)
+            assert m2 == 2, (dpi, placement, m2)
+    print("test_both_strips_number_from_one_in_the_same_placement OK")
+
+
+def test_cli_hook_writes_per_strip_paths_without_collision():
+    """The same image number on both strips must not collide on one -o
+    stem: --strips 2 tags the product with its strip, --strips 1 keeps
+    today's names byte-identical."""
+    assert (cli._film110_image_path("/t/a.tiff", 3)
+            == "/t/a-image3.tiff")
+    assert (cli._film110_image_path("/t/a.tiff", 3, strip=1, strips=1)
+            == "/t/a-image3.tiff")
+    assert (cli._film110_image_path("/t/a.tiff", 3, strip=1, strips=2)
+            == "/t/a-s1-image3.tiff")
+    assert (cli._film110_image_path("/t/a.tiff", 3, strip=2, strips=2)
+            == "/t/a-s2-image3.tiff")
+    assert (cli._film110_image_path("/t/a.tiff", 3, ir=True, strip=2, strips=2)
+            == "/t/a-s2-image3-ir.tiff")
+
+    one = cli._film110_image_path("/t/a.tiff", 1, strip=1, strips=2)
+    two = cli._film110_image_path("/t/a.tiff", 1, strip=2, strips=2)
+    assert one != two, (one, two)
+    print("test_cli_hook_writes_per_strip_paths_without_collision OK")
+
+
+def test_cli_hook_end_to_end_two_strips_on_one_stem():
+    """One load, two strips, one run: the same photograph position on each
+    strip is image 1 of that strip, both products are written, and they do
+    not overwrite each other on a single -o stem. Aperture 1 carries strip
+    1's first image, aperture 4 carries strip 2's."""
+    dpi = 600
+    lead, ilen = FILM_110.perforation_lead_mm, FILM_110.image_mm[0]
+    col0 = 2.0 + FILM_110.image_lateral_offset_mm
+    col1 = col0 + FILM_110.image_mm[1]
+    phase = film110.PLACEMENT_A_PHASE_MM
+
+    def one_image_aperture(seed):
+        h = (phase - lead - 1.5, phase - lead)
+        ap, _, _, _ = _build_fixture(
+            dpi, holes_mm=[h],
+            images_mm=[(phase, phase + ilen, col0, col1)], seed=seed)
+        return ap
+
+    with tempfile.TemporaryDirectory() as d:
+        out = str(Path(d) / "f.tiff")
+        args = _hook_args(dpi=dpi, placement="A", strips=2)
+        state = cli.Film110State()
+        cli._film110_hook(args, state, 1, out, one_image_aperture(11), None)
+        cli._film110_hook(args, state, film110.STRIP2_ORIGIN_APERTURE, out,
+                          one_image_aperture(12), None)
+
+        s1 = cli._film110_image_path(out, 1, strip=1, strips=2)
+        s2 = cli._film110_image_path(out, 1, strip=2, strips=2)
+        assert Path(s1).exists(), s1
+        assert Path(s2).exists(), s2
+        assert state.problems == [], state.problems
+
+    # The same two apertures declared as ONE strip put aperture 4's image
+    # far down strip 1's phase grid -- a different number, not image 1.
+    ppm = _px_per_mm(dpi)
+    n, _ = film110.image_number(film110.STRIP2_ORIGIN_APERTURE, phase * ppm,
+                                dpi, "A", origin_aperture=1)
+    assert n > 1, n
+    print("test_cli_hook_end_to_end_two_strips_on_one_stem OK")
+
+
+def test_validate_strips_argument():
+    parser = cli.build_parser()
+
+    args = parser.parse_args(["scan", "--film", "110", "--placement", "A",
+                              "--strips", "2", "-o", "x.tiff"])
+    assert args.strips == 2
+    assert cli._validate_film110_args(args) is None
+
+    args = parser.parse_args(["scan", "--film", "110", "--placement", "A",
+                              "-o", "x.tiff"])
+    assert args.strips == 1, args.strips
+
+    args = parser.parse_args(["scan", "-o", "x.tiff"])
+    assert args.strips == 1
+
+    # --strips 2 without --film 110 is refused, not silently ignored.
+    args = parser.parse_args(["scan", "--strips", "2", "-o", "x.tiff"])
+    err = cli._validate_film110_args(args)
+    assert err is not None and "--strips" in err, err
+    print("test_validate_strips_argument OK")
+
+
 def main() -> int:
     tests = [
         test_whole_and_trailing_split,
@@ -763,6 +920,12 @@ def main() -> int:
         test_cli_hook_is_noop_for_film_135,
         test_cli_scan_parser_defaults_to_135,
         test_validate_film110_args,
+        test_strip_origin_maps_apertures_to_strips,
+        test_strip2_starts_clear_of_strip1_and_fits_the_holder,
+        test_both_strips_number_from_one_in_the_same_placement,
+        test_cli_hook_writes_per_strip_paths_without_collision,
+        test_cli_hook_end_to_end_two_strips_on_one_stem,
+        test_validate_strips_argument,
     ]
     passed = 0
     for t in tests:

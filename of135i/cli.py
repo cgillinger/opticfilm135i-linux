@@ -259,6 +259,11 @@ def _validate_film110_args(args: argparse.Namespace) -> "str | None":
         return "--film 110 needs --placement A or B (docs/film-110.md §3)"
     if film != "110" and placement is not None:
         return "--placement only applies with --film 110"
+    strips = getattr(args, "strips", 1)
+    if film != "110" and strips != 1:
+        return "--strips only applies with --film 110"
+    if strips not in (1, 2):
+        return "--strips must be 1 or 2 (docs/film-110.md §11)"
     return None
 
 
@@ -447,13 +452,20 @@ class Film110State:
         self.problems: list = []
 
 
-def _film110_image_path(out: str, n: int, ir: bool = False) -> str:
+def _film110_image_path(out: str, n: int, ir: bool = False,
+                        strip: int = 1, strips: int = 1) -> str:
     """<stem>-image<N>.tiff / <stem>-image<N>-ir.tiff beside `out`, always
     .tiff regardless of -o's own extension -- the same convention the
-    dual path's -ir.tiff sidecar already uses."""
+    dual path's -ir.tiff sidecar already uses.
+
+    In the two-strip layout the stem carries the strip as well
+    (<stem>-s<S>-image<N>.tiff), since both strips number their own
+    images from 1 and would otherwise collide on one stem. A single-strip
+    scan keeps today's names byte-identical."""
     p = Path(out)
+    tag = f"-s{strip}" if strips > 1 else ""
     suffix = f"-image{n}-ir.tiff" if ir else f"-image{n}.tiff"
-    return str(p.with_name(f"{p.stem}{suffix}"))
+    return str(p.with_name(f"{p.stem}{tag}{suffix}"))
 
 
 def _film110_hook(args: argparse.Namespace, state: "Film110State | None",
@@ -493,6 +505,13 @@ def _film110_hook(args: argparse.Namespace, state: "Film110State | None",
         print(f"110: aperture {aperture} — {find.reason or 'no images predicted'}")
         return
 
+    # Which strip this aperture belongs to, and which aperture that strip
+    # numbers its images from: (1, 1) for every aperture of a single-strip
+    # load, so the numbering below is unchanged there.
+    strips = getattr(args, "strips", 1)
+    strip, origin = film110.strip_origin(aperture, strips)
+    where = f"strip {strip}: " if strips > 1 else ""
+
     parts = []
     for fr in find.frames:
         if fr.split == "leading":
@@ -504,11 +523,12 @@ def _film110_hook(args: argparse.Namespace, state: "Film110State | None",
             continue
 
         n, residual = film110.image_number(aperture, fr.line0, args.dpi,
-                                           args.placement)
+                                           args.placement,
+                                           origin_aperture=origin)
         if (abs(residual) > film110.PLACEMENT_PHASE_TOLERANCE_MM
                 or n < 1):
             pos_mm = fr.line0 / (args.dpi / film110.MM_PER_INCH)
-            msg = (f"image at {pos_mm:.1f} mm is not at placement "
+            msg = (f"{where}image at {pos_mm:.1f} mm is not at placement "
                   f"{args.placement}'s phase (off by {residual:+.1f} mm) "
                   f"-> check the placement; no 110 product written")
             parts.append(msg)
@@ -516,7 +536,7 @@ def _film110_hook(args: argparse.Namespace, state: "Film110State | None",
             continue
 
         if fr.whole:
-            vis_path = _film110_image_path(out, n)
+            vis_path = _film110_image_path(out, n, strip=strip, strips=strips)
             if Path(vis_path).exists():
                 msg = (f"{vis_path} exists -> not overwritten (use one -o "
                       f"stem per placement, docs/film-110.md §7)")
@@ -537,22 +557,24 @@ def _film110_hook(args: argparse.Namespace, state: "Film110State | None",
                                icc=image.srgb_icc() if args.positive else None,
                                dpi=_axis_dpi(args, args.positive))
             print(f"wrote {vis_path} ({vis_img.shape[1]}x{vis_img.shape[0]}, "
-                  f"16-bit RGB, 110 image {n})")
+                  f"16-bit RGB, 110 {where}image {n})")
             if ir_img is not None:
                 import numpy as _np
-                ir_path = _film110_image_path(out, n, ir=True)
+                ir_path = _film110_image_path(out, n, ir=True,
+                                               strip=strip, strips=strips)
                 image.write_tiff16(_np.stack([ir_img, ir_img, ir_img], axis=-1),
                                    ir_path, dpi=_axis_dpi(args, args.positive))
                 print(f"wrote {ir_path} ({ir_img.shape[1]}x{ir_img.shape[0]}, "
-                      f"16-bit, 110 image {n} IR channel)")
-            parts.append(f"image {n} whole ({fr.size_mm[0]:.1f} x {fr.size_mm[1]:.1f} mm)")
+                      f"16-bit, 110 {where}image {n} IR channel)")
+            parts.append(f"{where}image {n} whole "
+                         f"({fr.size_mm[0]:.1f} x {fr.size_mm[1]:.1f} mm)")
         else:
             # The only other split value reaching here is "trailing" (a
             # leading split was handled above): the tail of this image
             # runs under the next aperture's bar.
             other = "B" if args.placement == "A" else "A"
-            parts.append(f"image {n} split by the trailing bar -> take it "
-                         f"in placement {other}")
+            parts.append(f"{where}image {n} split by the trailing bar -> "
+                         f"take it in placement {other}")
         if fr.free_end_near:
             parts[-1] += " [free strip end nearby: sharpness untrusted]"
 
@@ -1282,6 +1304,13 @@ def build_parser() -> argparse.ArgumentParser:
              "(docs/film-110.md §3); required with --film 110: images are "
              "numbered by their position on the strip, so the same "
              "photograph gets the same number in both placements")
+    p_scan.add_argument("--strips", type=int, choices=(1, 2), default=1,
+        help="how many 110 strips are in the holder (default 1). 2 seats a "
+             "second strip at aperture 4, so one load covers both and the "
+             "two-placement protocol costs two runs for the pair instead "
+             "of two runs each; each strip is numbered from its own first "
+             "image and its products are written <out>-s<S>-image<N>.tiff. "
+             "Only with --film 110. docs/film-110.md §11")
     p_scan.add_argument("-o", "--output", required=True, help="output file path (.tiff or .pnm)")
     p_scan.set_defaults(func=_cmd_scan)
 

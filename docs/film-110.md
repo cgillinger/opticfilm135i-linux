@@ -401,3 +401,91 @@ are kept beside them as evidence.
 - **`digitize` integration is deferred** (its roll/manifest model assumes
   one frame per aperture and one load per strip; 110 needs two loads per
   strip) — docs/film-110-proposal.md §3.3.
+
+## 11. Two strips in one load (`--strips 2`)
+
+§3's protocol costs two runs per strip. Two strips fit in the holder end
+to end, so one load covers both and the pair costs two runs instead of
+four — the same pictures for half the transport travel and half the lamp
+time.
+
+### 11.1 Why two, and why aperture 4
+
+| Quantity | Value | Source |
+|---|---|---|
+| Aperture pitch | 37.86 mm | `STRIP_FIDUCIAL.pitch_hwdpi` (10732.7 / 7200 in) |
+| Bar (pitch − aperture) | 1.74–2.07 mm | against `STRIP_APERTURE_MM` |
+| Holder span, aperture 1 leading → 6 trailing | 225.4 mm | 5 × 37.86 + 36.12 |
+| 110 strip, 4 images: pictures | 93.7 mm | 3 × 25.5 + 17.2 |
+| 110 strip, 4 images: film | ~102 mm | 4 × `FILM_110.pitch_mm` |
+
+Strip 2 must start past strip 1's ~102 mm of film and still end inside
+aperture 6. Aperture 3 (75.7 mm along) collides; **aperture 4** (113.6 mm)
+is the first that clears, and leaves strip 2's end near 215.6 mm, inside
+aperture 6. Two strips of 102 mm fit in 225.4 mm; three (306 mm) never do.
+`STRIP2_ORIGIN_APERTURE = 4` and `film110.strip_origin` encode this, and
+`test_strip2_starts_clear_of_strip1_and_fits_the_holder` asserts both
+bounds so the constant cannot drift away from the geometry.
+
+### 11.2 Both strips are in the same placement
+
+The film pitch (25.5 mm) and the aperture pitch (37.86 mm) do not go
+evenly into one another, so a **single continuous** strip drifts out of
+phase against the apertures — 3 apertures along is 4.454 film pitches,
+11.6 mm off. That drift is what §2 is about.
+
+It does **not** bind two separate strips. Each is seated by hand against
+its own aperture's leading edge, so each gets the phase the operator gives
+it, and both sit at §3's placement A phase in their own first aperture.
+One `--placement` per run stays correct for the pair:
+
+| Run | Strip 1 | Strip 2 |
+|---|---|---|
+| 1 | A | A |
+| 2 (re-seat both, half a pitch on) | B | B |
+
+Per strip and placement, one image lands on a bar and the other placement
+recovers it, exactly as §2–3 describe — the bar pattern at aperture 4 is
+the same as at aperture 1.
+
+### 11.3 Numbering and products
+
+Each strip is numbered from **its own** first image, so strip 2's first
+picture is image 1, not image 5: `image_number(..., origin_aperture=…)`
+measures along the aperture grid from that strip's origin aperture rather
+than from aperture 1. Because both strips then produce an image 1, the
+product name carries the strip:
+
+```
+<stem>-s1-image<N>.tiff        <stem>-s2-image<N>.tiff
+<stem>-s1-image<N>-ir.tiff     <stem>-s2-image<N>-ir.tiff
+```
+
+`--strips 1` (the default) keeps today's `<stem>-image<N>.tiff` names
+byte-identical. The §5 phase check and the §7 overwrite refusal are
+unchanged and now report which strip they are about.
+
+### 11.4 Commands
+
+```
+of135i scan --frames 1-6 --dpi 3600 --ir --film 110 --strips 2 --placement A --eject -o a.tiff
+# re-seat BOTH strips half a pitch on (§3, placement B), load, then
+of135i scan --frames 1-6 --dpi 3600 --ir --film 110 --strips 2 --placement B --eject -o b.tiff
+```
+
+`--strips` is refused without `--film 110`, and only 1 or 2 are accepted.
+
+### 11.5 Limitations
+
+- **Sag.** Strip 2's free end falls inside aperture 6, not under a bar.
+  §4's measurement (1556 against 3399 for a supported end) says its last
+  image is the one at risk. The free-end warning already raised per image
+  applies unchanged, but the two-strip layout cannot give strip 2's end
+  bar support the way re-seating a single strip can.
+- **Untested on hardware.** The geometry above is arithmetic on measured
+  constants; no two-strip load has been scanned. Aperture 3 and 6 each
+  carry only one image of their strip, so there is slack to shift the
+  strips if a real load wants it.
+- **`FILM_110.pitch_mm = 25.5` is still n = 1** (Test 86, one strip, one
+  operator). Every figure here rests on it. Test 87 (ROADMAP C3) is the
+  measurement that would make these numbers general.
