@@ -864,3 +864,8 @@ directly. **Test 89 PASSED the same day (n = 1):** one `--next-strip`
 load right after a driver eject engaged on the first poll and the next
 frame positioned like the strip before it; docs/test-log.md has the
 numbers. Production use in the owner's scanning app from that day.
+Brought into the SANE backend the same day too (docs/sane-wp4-
+magazine.md §10): an eject now leaves a next-strip load pending, and
+`load_document()` completes it with `open` then `load`, no jog —
+offline-tested only (25/25, tests/test_sane_magazine.py); **Test 90,
+hardware verification, is pending.**

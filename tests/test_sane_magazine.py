@@ -277,28 +277,164 @@ def test_the_status_line_reports_a_load_pending_from_another_process():
     print("test_the_status_line_reports_a_load_pending_from_another_process OK")
 
 
-def test_a_scan_after_eject_is_refused():
-    """The vendor refuses a scan with "Please insert the film holder" when
-    nothing is seated (observed 2026-09-13). We used to scan an empty
-    transport and hand the frontend an image of nothing, silently. Now the
-    one case we can be sure about — we ejected it ourselves — refuses.
+def test_a_scan_after_eject_runs_open_then_load():
+    """Section 10 (2026-09-25): an eject is no longer a dead end for the
+    next scan. The vendor's own between-strip load (docs/protocol-notes.md
+    Pass 14 addendum 4) just swaps the strip, pushes it to the stop, and
+    loads -- no jog, no reinsert prompt -- so the backend now does the
+    same: ejected is a PENDING next-strip load, of the Ejected kind.
 
-    Unknown is deliberately NOT refused: `of135i load` is still a
-    documented way to load the magazine, and a fresh process cannot tell
-    that apart from nothing being loaded."""
+    That kind replays the device-open table first (nothing has written it
+    since the eject), then the bare load. On the test interface "open"
+    reaches the wire and stops at its first unacknowledged write -- the
+    same proof-of-reaching-the-wire the release path's "open" run gives
+    (test_release_from_idle_runs_the_open_and_jog_programs) -- which fails
+    the session closed exactly as every other magazine-sequence failure
+    does: nothing further written, no recovery, mark dropped."""
     probe = _build_probe()
     if probe is None:
-        return _skip("test_a_scan_after_eject_is_refused")
+        return _skip("test_a_scan_after_eject_runs_open_then_load")
 
-    r = _run(probe, "scenario", "scan-after-eject")
+    r = _run(probe, "scenario", "load-after-eject")
+    assert len(r["statuses"]) == 2, r["statuses"]
+    eject, load = r["statuses"]
+    assert eject[0] == SANE_STATUS_GOOD, eject
+    assert load[0] == SANE_STATUS_IO_ERROR, load
+    assert "magazine open sequence" in load[1], load[1]
+    assert "register write not acknowledged" in load[1], load[1]
+    # Failed closed like every other magazine-sequence failure: the
+    # pending load is gone and the status line says so.
+    assert r["mark"] == "absent", r["mark"]
+    assert r["text"].startswith("failed"), r["text"]
+    print("test_a_scan_after_eject_runs_open_then_load OK "
+          "(open reached the wire, failed closed)")
+
+
+def test_a_scan_after_eject_without_a_magazine_refuses_and_keeps_the_mark():
+    """The strip has not been pushed back in yet (or was never taken out)
+    -- the loader sensor still reads clear. Read-only NO_DOCS, worded for
+    a strip swap rather than the Released kind's reseat wording, and the
+    mark is KEPT: pushing the magazine in and scanning again is the whole
+    fix, exactly as it is for the Released kind's equivalent refusal."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_a_scan_after_eject_without_a_magazine_refuses_and_keeps_the_mark")
+
+    r = _run(probe, "scenario", "load-after-eject-no-magazine")
     assert len(r["statuses"]) == 2, r["statuses"]
     eject, load = r["statuses"]
     assert eject[0] == SANE_STATUS_GOOD, eject
     assert load[0] == SANE_STATUS_NO_DOCS, load
-    assert "no film is loaded" in load[1], load[1]
-    assert "Load film" in load[1], load[1]
+    assert "no magazine in the slot" in load[1], load[1]
+    assert "mechanical stop" in load[1], load[1]
     assert "Nothing was written" in load[1], load[1]
-    print("test_a_scan_after_eject_is_refused OK (NO_DOCS, nothing written)")
+    assert r["mark"].startswith("present"), r["mark"]
+    assert r["text"].startswith("ejected"), r["text"]
+    print("test_a_scan_after_eject_without_a_magazine_refuses_and_keeps_the_mark OK "
+          "(NO_DOCS, mark kept)")
+
+
+def test_a_scan_after_eject_on_a_cold_scanner_refuses_and_clears_the_mark():
+    """A power cycle happened between the eject and the next scan. A
+    next-strip load assumes the transport is still homed and positioned
+    from the same power-on -- of135i/loadflow.py's --next-strip makes
+    exactly this assumption and refuses the same way (NEXT_STRIP_COLD_MSG).
+    Nothing was written (this is a register read), so the mark is cleared
+    as stale but the session is NOT failed: state drops to Unknown, and
+    the documented way out (Load film's jog, or a fresh `of135i load`)
+    remains available -- unlike the wrong-state refusal below it in
+    gl126.cpp, which does fail the session."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_a_scan_after_eject_on_a_cold_scanner_refuses_and_clears_the_mark")
+
+    r = _run(probe, "scenario", "load-after-eject-cold")
+    assert len(r["statuses"]) == 2, r["statuses"]
+    eject, load = r["statuses"]
+    assert eject[0] == SANE_STATUS_GOOD, eject
+    assert load[0] == SANE_STATUS_INVAL, load
+    assert "power-cycled after the eject" in load[1], load[1]
+    assert "Load film" in load[1], load[1]
+    assert "same power-on" in load[1], load[1]
+    assert "Nothing was written" in load[1], load[1]
+    assert r["mark"] == "absent", r["mark"]
+    # Unknown, not failed: nothing was written, so the session is not
+    # terminal the way a real motor-sequence failure is.
+    assert r["text"].startswith("unknown"), r["text"]
+    print("test_a_scan_after_eject_on_a_cold_scanner_refuses_and_clears_the_mark OK "
+          "(INVAL, mark cleared, session not failed)")
+
+
+def test_an_ejected_mark_from_another_process_runs_open_then_load():
+    """The cross-process case the Released mark was built for in the
+    first place: `scanimage --eject-film=yes` in one process, a plain
+    scan in the next. Two SEPARATE probe invocations sharing one
+    OF135I_LOCK_FILE -- the first writes an Ejected mark and exits (no
+    in-process state survives that), the second knows nothing except what
+    it reads from disk.
+
+    This also proves the mark's device key round-trips a name WITH SPACES
+    for the Ejected kind specifically (the backend's own test-mode device
+    is named "test device:0x07b3:0x1436"): if the space truncated the key
+    on either write or read, the second run's key would not match its own
+    device and the load would never be attempted at all -- it would
+    return GOOD with nothing touched, not reach "open". (The Released
+    kind's equivalent round trip is covered by tests/test_sane_lock.py's
+    test_magazine_mark_round_trip, unaffected by this change.)"""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_an_ejected_mark_from_another_process_runs_open_then_load")
+
+    with tempfile.TemporaryDirectory() as lock_dir:
+        r1 = _run(probe, "scenario", "state-mark-ejected-pending", lock_dir=lock_dir)
+        assert r1["mark"].startswith("present ejected"), r1["mark"]
+        assert " " in r1["key"], r1["key"]   # the test device's name has a space
+
+        r2 = _run(probe, "scenario", "load-mark-ejected-crossproc", lock_dir=lock_dir)
+    assert r2["key"] == r1["key"], (r1["key"], r2["key"])
+    status, msg = r2["statuses"][0]
+    assert status == SANE_STATUS_IO_ERROR, r2["statuses"]
+    assert "magazine open sequence" in msg, msg
+    assert r2["mark"] == "absent", r2["mark"]
+    print("test_an_ejected_mark_from_another_process_runs_open_then_load OK "
+          "(two processes, one shared mark, key with spaces round-tripped)")
+
+
+def test_an_ejected_mark_for_another_device_is_ignored_and_cleared():
+    """Mirrors test_a_mark_for_another_device_is_ignored_and_cleared for
+    the Ejected kind: a mark naming a different device (or this one under
+    a pre-power-cycle address) is not ours and never will be -- ignored,
+    removed, and the scan proceeds normally into calibration."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_an_ejected_mark_for_another_device_is_ignored_and_cleared")
+
+    r = _run(probe, "scenario", "start-mark-ejected-other-device")
+    assert r["progress"] == "offset_calibration", r
+    assert r["mark"] == "absent", r["mark"]
+    print("test_an_ejected_mark_for_another_device_is_ignored_and_cleared OK")
+
+
+def test_load_film_from_ejected_still_runs_the_open_and_jog_programs():
+    """An eject does not narrow what Load film can do -- only what a
+    plain scan can skip. Pressed again after an eject, the full release
+    path (cold-init-if-needed, device-open table, jog) still runs exactly
+    as it does from any other non-Failed state; this is the fallback the
+    cold-power-cycle refusal above points the operator to."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_load_film_from_ejected_still_runs_the_open_and_jog_programs")
+
+    r = _run(probe, "scenario", "release-after-eject")
+    assert len(r["statuses"]) == 2, r["statuses"]
+    eject, release = r["statuses"]
+    assert eject[0] == SANE_STATUS_GOOD, eject
+    assert release[0] == SANE_STATUS_IO_ERROR, release
+    assert "magazine open sequence" in release[1], release[1]
+    assert r["mark"] == "absent", r["mark"]
+    assert r["text"].startswith("failed"), r["text"]
+    print("test_load_film_from_ejected_still_runs_the_open_and_jog_programs OK "
+          "(Load film unaffected by a prior eject)")
 
 
 def test_magazine_text_starts_unknown():
@@ -686,7 +822,12 @@ def main() -> int:
         test_magazine_text_starts_unknown,
         test_the_status_line_is_readable_and_comes_first,
         test_the_status_line_reports_a_load_pending_from_another_process,
-        test_a_scan_after_eject_is_refused,
+        test_a_scan_after_eject_runs_open_then_load,
+        test_a_scan_after_eject_without_a_magazine_refuses_and_keeps_the_mark,
+        test_a_scan_after_eject_on_a_cold_scanner_refuses_and_clears_the_mark,
+        test_an_ejected_mark_from_another_process_runs_open_then_load,
+        test_an_ejected_mark_for_another_device_is_ignored_and_cleared,
+        test_load_film_from_ejected_still_runs_the_open_and_jog_programs,
         test_release_refuses_an_unknown_start_state,
         test_release_from_idle_runs_the_open_and_jog_programs,
         test_release_from_cold_stops_at_the_first_motor_completion,

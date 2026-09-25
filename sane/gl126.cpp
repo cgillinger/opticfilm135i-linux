@@ -941,7 +941,16 @@ void magazine_release_impl(Genesys_Device* dev)
 }
 
 /** The load half, run from sane_start before calibration -- but only when
-    a release is actually pending, and only after the hardware agrees.
+    a load is actually pending, and only after the hardware agrees.
+
+    Section 10 (2026-09-25): a load can be pending in two KINDS now.
+    Released (the original) means Load film's jog already ran; only the
+    bare "load" program is needed. Ejected means an eject completed and
+    the operator swapped the strip and pushed it to the stop; nothing has
+    replayed the device-open table since the eject, so this half also
+    runs "open" first -- a next-strip load, no jog, no reinsert prompt,
+    mirroring of135i/loadflow.py's --next-strip (docs/protocol-notes.md
+    Pass 14 addendum 4, docs/test-log.md Test 89).
 
     The mark alone never authorises a motor move: a power cycle
     re-enumerates the unit under a new address AND leaves reg 0x01 cold,
@@ -962,40 +971,40 @@ void magazine_load_if_pending(Genesys_Device* dev)
                             "the transport state is unknown and a scan is not started on top "
                             "of it. Power-cycle the scanner. Nothing was written.");
     }
-    if (state == MagazineState::Ejected) {
-        /* We ejected it ourselves in this session, so we know there is
-           nothing loaded. Scanning from here drives the transport with no
-           film in front of the sensor and hands the frontend an image of
-           nothing -- silently, until now. The vendor refuses the
-           equivalent case with "Please insert the film holder" (observed
-           2026-09-13); this is our version of that refusal.
-
-           Only the state we are SURE about is refused. Unknown is left
-           alone deliberately: `of135i load` remains a documented way to
-           load the magazine, and a fresh frontend process has no way to
-           tell that from nothing being loaded at all. Refusing there
-           would break the CLI workflow to catch a mistake we cannot
-           actually detect. */
-        throw SaneException(SANE_STATUS_NO_DOCS,
-                            "gl126: no film is loaded -- the magazine was ejected. Press "
-                            "Load film, take the magazine fully out and push it back in to "
-                            "the mechanical stop, then scan. Nothing was written.");
-    }
     if (state == MagazineState::Unknown) {
         DBG(DBG_info, "gl126: no magazine state known in this session; if nothing is "
             "loaded this scan will deliver an unusable image\n");
     }
-    bool pending = (state == MagazineState::Released);
-    std::string marked_key;
-    if (!pending && gl126::magazine_mark_read(&marked_key)) {
-        if (marked_key == magazine_device_key(dev)) {
-            pending = true;
-        } else {
-            // Another unit, or the same one under a pre-power-cycle
-            // address: not ours, and never will be.
-            DBG(DBG_info, "gl126: magazine mark names %s, this device is %s -- ignored\n",
-                marked_key.c_str(), magazine_device_key(dev).c_str());
-            gl126::magazine_mark_clear();
+
+    // What is pending, and its KIND. In-process state takes precedence,
+    // exactly as before Ejected became a second pending kind; the
+    // cross-process mark is consulted only when nothing is known in this
+    // process. Unlike before 2026-09-25, an in-process Ejected state is
+    // no longer an unconditional refusal -- it is the Ejected kind of
+    // pending, subject to the same hardware preconditions as Released.
+    bool pending = false;
+    gl126::MagazineMarkKind kind = gl126::MagazineMarkKind::Released;
+    if (state == MagazineState::Released) {
+        pending = true;
+        kind = gl126::MagazineMarkKind::Released;
+    } else if (state == MagazineState::Ejected) {
+        pending = true;
+        kind = gl126::MagazineMarkKind::Ejected;
+    }
+    if (!pending) {
+        gl126::MagazineMarkKind marked_kind = gl126::MagazineMarkKind::Released;
+        std::string marked_key;
+        if (gl126::magazine_mark_read(&marked_kind, &marked_key)) {
+            if (marked_key == magazine_device_key(dev)) {
+                pending = true;
+                kind = marked_kind;
+            } else {
+                // Another unit, or the same one under a pre-power-cycle
+                // address: not ours, and never will be.
+                DBG(DBG_info, "gl126: magazine mark names %s, this device is %s -- ignored\n",
+                    marked_key.c_str(), magazine_device_key(dev).c_str());
+                gl126::magazine_mark_clear();
+            }
         }
     }
     if (!pending) {
@@ -1010,13 +1019,50 @@ void magazine_load_if_pending(Genesys_Device* dev)
     // The mark stays: the request is wrong, the magazine is not.
     (void) validate_scan_request(dev);
 
-    // Preconditions, reads only (docs/sane-wp4-magazine.md section 3.3).
+    // Preconditions, reads only (docs/sane-wp4-magazine.md section 3.3,
+    // section 10 for the Ejected kind).
     std::uint8_t reg01 = dev->interface->read_register(REG_0x01);
+    if (kind == gl126::MagazineMarkKind::Ejected && reg01 == 0x00) {
+        // A power cycle happened after the eject: reg 0x01 goes cold on
+        // one (on top of the re-enumeration the mark's key already
+        // guards against), and a next-strip load assumes the transport
+        // is still homed and positioned from earlier in THIS power-on --
+        // the same assumption of135i/loadflow.py's --next-strip makes.
+        // Only the full jog path is valid from a fresh power-on. Nothing
+        // was written, so this is a refusal, not a failure: the mark is
+        // stale and is cleared, but the state goes to Unknown, not
+        // Failed -- `of135i load`/Load film remain the documented way
+        // out, exactly as a fresh Unknown session already allows.
+        gl126::magazine_mark_clear();
+        set_magazine_state(dev, MagazineState::Unknown);
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: the scanner was power-cycled after the eject; press "
+                            "Load film (jog + reseat) -- the next-strip load is only valid "
+                            "in the same power-on. Nothing was written.");
+    }
     MagazineSensor sensor = read_magazine_sensor(dev);
     if (!sensor.present()) {
-        // The magazine is out of the slot: the operator is mid-reseat, or
-        // forgot. Keep the mark -- inserting it and scanning again is the
-        // whole fix -- and refuse without writing anything.
+        // The magazine is out of the slot: the operator is mid-swap (or
+        // mid-reseat), or forgot. Keep the mark either way -- pushing it
+        // in and scanning again is the whole fix -- and refuse without
+        // writing anything.
+        //
+        // A scan started after an eject WITHOUT pushing the magazine
+        // back to the stop first reaches here too, but only once the
+        // sensor genuinely reads clear; if it reads present but is only
+        // resting against the mechanism rather than seated, the sensor
+        // cannot tell the difference (docs/sane-wp4-magazine.md section
+        // 10) -- the load below is then attempted on a magazine that is
+        // not actually engaged, the feed fails to grip (the documented
+        // benign 0xfc signature), the sequence fails closed, and a power
+        // cycle is required. This is the same trade-off the vendor app
+        // and of135i/loadflow.py's --next-strip already accept.
+        if (kind == gl126::MagazineMarkKind::Ejected) {
+            throw SaneException(SANE_STATUS_NO_DOCS,
+                                "gl126: no magazine in the slot -- swap the strip, push the "
+                                "magazine in to the mechanical stop, then scan again. "
+                                "Nothing was written.");
+        }
         throw SaneException(SANE_STATUS_NO_DOCS,
                             "gl126: no magazine in the slot (loader sensor clear). Push it "
                             "back in to the mechanical stop and scan again. Nothing was "
@@ -1027,18 +1073,34 @@ void magazine_load_if_pending(Genesys_Device* dev)
     if (reg01 != 0x22 || !sensor.idle_class() || reg3b != 0x00 || reg3c != 0x00) {
         set_magazine_state(dev, MagazineState::Failed);
         gl126::magazine_mark_clear();
+        const char* left_by = kind == gl126::MagazineMarkKind::Ejected
+                                  ? "the eject leaves it in" : "the jog leaves it in";
         throw SaneException(SANE_STATUS_INVAL,
-                            "gl126: the scanner is not in the state the jog leaves it in "
+                            "gl126: the scanner is not in the state %s "
                             "(reg 0x01 = 0x%02x, reg 0x101 = 0x%02x, regs 0x3b/0x3c = "
                             "0x%02x/0x%02x; expected 0x22, the idle class with the loader "
                             "sensor set, and 0x00/0x00). A load is not attempted from an "
                             "unverified state. Power-cycle the scanner, then press Load "
                             "film. Nothing was written.",
-                            reg01, sensor.status, reg3b, reg3c);
+                            left_by, reg01, sensor.status, reg3b, reg3c);
     }
 
     MagazineFailGuard guard(dev);
     guard.arm();
+
+    if (kind == gl126::MagazineMarkKind::Ejected) {
+        // Replay the vendor's device-open table before the load: nothing
+        // has written it since the eject. This mirrors of135i/loadflow.py's
+        // --next-strip choice -- the driver's own loader-profile "open"
+        // table, hardware-verified from the post-jog position (Tests
+        // 17-23) and again as the next-strip load itself (Test 89) --
+        // rather than the vendor's undocumented fallback of scanning with
+        // whatever speed registers the PRECEDING scan pass happened to
+        // leave behind (docs/protocol-notes.md Pass 14 addendum 4).
+        RunResult open_result;
+        run_magazine_program(dev, "open", open_result);
+        dev->interface->test_checkpoint("gl126_magazine_after_next_strip_open");
+    }
 
     RunResult load_result;
     std::size_t failed_op = static_cast<std::size_t>(-1);
@@ -1103,6 +1165,20 @@ void magazine_load_if_pending(Genesys_Device* dev)
     DBG(DBG_info, "gl126: magazine loaded (reg 0x101 = 0x%02x)\n", after.status);
 }
 
+/** Shared tail of every path that reaches state Ejected: write the
+    cross-process "ejected" mark (section 10), logging rather than failing
+    the session if it cannot be written -- exactly the Released mark's own
+    best-effort contract, since a frontend that stays open (digiKam) still
+    has the in-process record. */
+void write_ejected_mark(Genesys_Device* dev)
+{
+    if (!gl126::magazine_mark_write(gl126::MagazineMarkKind::Ejected, magazine_device_key(dev))) {
+        DBG(DBG_warn, "gl126: could not write the magazine mark at %s -- a next-strip load "
+            "from a separate process will not know one is pending\n",
+            gl126::magazine_mark_path().c_str());
+    }
+}
+
 /** The "Eject film" button, and eject_document(). */
 void magazine_eject_impl(Genesys_Device* dev)
 {
@@ -1148,7 +1224,7 @@ void magazine_eject_impl(Genesys_Device* dev)
     if (!sensor.present()) {
         DBG(DBG_info, "gl126: no magazine detected (loader sensor clear) -- nothing to do\n");
         set_magazine_state(dev, MagazineState::Ejected);
-        gl126::magazine_mark_clear();
+        write_ejected_mark(dev);
         return;
     }
 
@@ -1175,8 +1251,13 @@ void magazine_eject_impl(Genesys_Device* dev)
 
     guard.succeeded();
     set_magazine_state(dev, MagazineState::Ejected);
-    gl126::magazine_mark_clear();
-    DBG(DBG_info, "gl126: magazine ejected\n");
+    /* Section 10 (2026-09-25): an eject now marks "ejected", not "no mark",
+       so a SECOND process (`scanimage --eject-film=yes`, then a plain scan)
+       knows a next-strip load is pending -- the same cross-process need the
+       Released mark was written for. */
+    write_ejected_mark(dev);
+    DBG(DBG_info, "gl126: magazine ejected. Swap the strip, push the magazine in to the "
+        "mechanical stop, then scan -- or press Load film for the full jog path.\n");
 }
 
 /** A hook that has not been brought up against the hardware yet.
@@ -1978,17 +2059,21 @@ void magazine_eject(Genesys_Device* dev)
    SANE_CONSTRAINT_STRING_LIST: a constrained string draws as a plain
    combo showing its current value, instead of an edit box with Add and
    Remove buttons beside it. */
-const char* const kMagazineUnknown  = "unknown -- press Load film";
-const char* const kMagazinePending  = "reseat the magazine, then scan";
-const char* const kMagazineReleased = "released -- reseat, then scan";
-const char* const kMagazineLoaded   = "loaded -- scan, then Eject film";
-const char* const kMagazineEjected  = "ejected -- press Load film";
-const char* const kMagazineFailed   = "failed -- power-cycle the scanner";
+const char* const kMagazineUnknown       = "unknown -- press Load film";
+const char* const kMagazinePending       = "reseat the magazine, then scan";
+const char* const kMagazineReleased      = "released -- reseat, then scan";
+const char* const kMagazineLoaded        = "loaded -- scan, then Eject film";
+/* Section 10 (2026-09-25): an eject no longer means "press Load film" --
+   the next scan does a next-strip load on its own once the new strip is
+   pushed to the stop. Load film is still there as the fallback. */
+const char* const kMagazineEjected       = "ejected -- push in, then scan";
+const char* const kMagazineEjectedPending = "ejected earlier -- push in and scan";
+const char* const kMagazineFailed        = "failed -- power-cycle the scanner";
 
 const char* const* magazine_state_values()
 {
     static const char* const values[] = {
-        kMagazineUnknown, kMagazinePending, kMagazineReleased,
+        kMagazineUnknown, kMagazinePending, kMagazineEjectedPending, kMagazineReleased,
         kMagazineLoaded, kMagazineEjected, kMagazineFailed, nullptr,
     };
     return values;
@@ -2003,22 +2088,25 @@ std::string magazine_state_text(const Genesys_Device* dev)
     case MagazineState::Failed:   return kMagazineFailed;
     case MagazineState::Unknown:  break;
     }
-    /* Unknown in THIS process is not the whole truth: a release written by
-       an earlier one survives on disk, and `scanimage` reaches us in a
-       fresh process every invocation. Test 77 hit exactly this -- digiKam
-       was restarted between the release and the scan, and the status line
-       said "unknown" while a load was genuinely pending. Consult the mark,
-       the same way the load half does, so the line agrees with what will
-       actually happen at the next scan.
+    /* Unknown in THIS process is not the whole truth: a release OR an
+       eject written by an earlier one survives on disk, and `scanimage`
+       reaches us in a fresh process every invocation. Test 77 hit exactly
+       this for a release -- digiKam was restarted between the release and
+       the scan, and the status line said "unknown" while a load was
+       genuinely pending. Consult the mark, the same way the load half
+       does, and mirror its kind in the text so the line agrees with what
+       will actually happen at the next scan.
 
        The loader sensor is deliberately NOT read here: an option query
        should not put a register read on the wire, and that bit reports
        presence rather than whether the film is fed. */
+    gl126::MagazineMarkKind marked_kind = gl126::MagazineMarkKind::Released;
     std::string marked_key;
-    if (gl126::magazine_mark_read(&marked_key) &&
+    if (gl126::magazine_mark_read(&marked_kind, &marked_key) &&
         marked_key == magazine_device_key(dev))
     {
-        return kMagazinePending;
+        return marked_kind == gl126::MagazineMarkKind::Ejected
+                  ? kMagazineEjectedPending : kMagazinePending;
     }
     return kMagazineUnknown;
 }

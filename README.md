@@ -67,8 +67,12 @@ functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md]
   the infrared pass** each scan frame 1 with the delivered geometry
   accepted by eye (geometry and integrity only, not colour — Tests 62–71).
   The backend loads and ejects the magazine itself, including freeing a
-  latched magazine after a power cycle (Tests 75–77). Ordinary scanning
-  needs no `--force-calibration`. Install:
+  latched magazine after a power cycle (Tests 75–77), and since
+  2026-09-25 an eject also leaves a *next-strip* load pending — swap the
+  strip, push it to the stop, and the next scan loads it with no jog and
+  no reinsert step (implemented and offline-tested; Test 90, hardware
+  verification, is pending). Ordinary scanning needs no
+  `--force-calibration`. Install:
   **[docs/sane-install.md](docs/sane-install.md)**. A submission package
   for the SANE project is prepared and under review
   (**[docs/sane-wp3-submission.md](docs/sane-wp3-submission.md)**);

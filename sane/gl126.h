@@ -160,7 +160,14 @@ void push_dual_light_nodes(const ScanSession& session, ImagePipelineStack& pipel
     magazine_release() runs the release half (a cold unit's bring-up, the
     vendor device-open table, the jog that frees the cassette) and the
     LOAD runs from load_document() at the next sane_start, once the
-    hardware confirms the state the jog leaves behind. */
+    hardware confirms the state the jog leaves behind.
+
+    Section 10 (2026-09-25, docs/sane-wp4-magazine.md): load_document()
+    also completes a load pending from a plain eject -- no jog, no
+    reinsert prompt, just the strip swapped and pushed to the stop --
+    mirroring of135i/loadflow.py's --next-strip. Both kinds of pending
+    load are tracked by the same in-process state and the same
+    cross-process mark (gl126_lock.h MagazineMarkKind). */
 void magazine_release(Genesys_Device* dev);
 void magazine_eject(Genesys_Device* dev);
 std::string magazine_state_text(const Genesys_Device* dev);

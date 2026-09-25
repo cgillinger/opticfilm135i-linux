@@ -166,21 +166,51 @@ int process_lock_refs();
    (reg 0x01 idle-homed, the loader-sensor bit set, the device-open
    register state), and a power cycle both re-enumerates the unit under a
    new address and leaves reg 0x01 cold, so a stale mark cannot authorise
-   anything. The mark is a hint that survives a process, not a state. */
+   anything. The mark is a hint that survives a process, not a state.
+
+   Section 10 (2026-09-25) added a second KIND of pending mark: "released"
+   (the original -- Load film's jog already ran, only the bare "load"
+   program is needed) and "ejected" (an eject completed; the next scan
+   must also replay the device-open table first, since nothing has
+   written it since -- docs/protocol-notes.md Pass 14 addendum 4). The
+   kind is not a new field: it is the mark's existing first word, which
+   used to be the constant "released" and is now whichever of the two
+   names applies -- so a mark written by this WP still reads back byte-
+   identically to one written before it. */
+
+/** The two things a magazine mark can mean. */
+enum class MagazineMarkKind { Released, Ejected };
+
+/** "released" or "ejected" -- also the word the mark file leads with. */
+const char* magazine_mark_kind_name(MagazineMarkKind kind);
 
 /** Path of the magazine mark: the lock path plus ".magazine". */
 std::string magazine_mark_path();
 
 /** Record that `device_key` (the SANE device name, e.g.
     "libusb:001:007" -- it carries the USB address, which a power cycle
-    changes) has had its magazine released and is waiting for the load.
-    Returns false if the file could not be written; a mark that cannot
-    be written is not fatal (the in-process record still works for a
-    frontend that stays open), so callers log and continue. */
+    changes) is waiting for a load of the given kind. Returns false if the
+    file could not be written; a mark that cannot be written is not fatal
+    (the in-process record still works for a frontend that stays open),
+    so callers log and continue. */
+bool magazine_mark_write(MagazineMarkKind kind, const std::string& device_key);
+
+/** Back-compat convenience: writes a Released mark, byte-identical to
+    what this function always produced before the Ejected kind existed.
+    tests/gl126_lock_probe.cpp and tests/test_sane_lock.py call this form
+    and are outside this WP's edit scope -- they must keep working
+    unmodified. */
 bool magazine_mark_write(const std::string& device_key);
 
-/** The device key of a pending mark, or false when there is none (or it
-    could not be read). */
+/** The kind and device key of a pending mark, or false when there is none
+    (or it could not be read). */
+bool magazine_mark_read(MagazineMarkKind* kind, std::string* device_key);
+
+/** Back-compat convenience: true only for a Released mark -- what this
+    function always meant before the Ejected kind existed. An Ejected
+    mark reads as "no mark" through this overload, exactly as it would
+    have before that kind existed (kept for the same out-of-scope
+    callers as the write overload above). */
 bool magazine_mark_read(std::string* device_key);
 
 /** Remove the mark. No-op when there is none. */

@@ -14,8 +14,10 @@ one exists; "offline" means implemented and tested without the scanner.
   path was hardware-verified the same day (Test 89: feed and traverse
   complete on the first poll, next frame positions identically). Saves
   three motor moves and one reseat per strip. Refused on a cold scanner.
-- SANE backend: the same next-strip load after `eject-film` — in progress,
-  offline (Test 90 pending).
+- SANE backend: the same next-strip load happens automatically on the next
+  scan after `eject-film` (swap the strip, push it in, scan); the magazine
+  mark now records released vs ejected so it works across scanimage calls.
+  Offline only so far (Test 90 pending).
 - Cold start shortened: the 15 s initial wait that could never succeed is
   gone (Test 78); the nine motor completions of the cold start fail closed
   in both the Python driver and the backend.

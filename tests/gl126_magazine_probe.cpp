@@ -33,7 +33,7 @@
              STARTSTATUS <n> <message>    (scenarios that call sane_start)
              PROGRESS <msg>               (likewise)
              TEXT <the "magazine" option's value>
-             MARK <present|absent>[ <key>]
+             MARK <present <kind> <key>|absent>   (kind: released|ejected)
          Exit 0 whenever the scenario ran (a refusal is a valid outcome
          to assert on); 2 on a setup error.
 */
@@ -167,9 +167,10 @@ void print_text(SANE_Handle h)
 
 void print_mark()
 {
+    gl126::MagazineMarkKind kind;
     std::string key;
-    if (gl126::magazine_mark_read(&key)) {
-        std::printf("MARK present %s\n", key.c_str());
+    if (gl126::magazine_mark_read(&kind, &key)) {
+        std::printf("MARK present %s %s\n", gl126::magazine_mark_kind_name(kind), key.c_str());
     } else {
         std::printf("MARK absent\n");
     }
@@ -369,13 +370,77 @@ int cmd_scenario(int argc, char** argv)
         // A release written by an earlier PROCESS. The status line must
         // say a load is pending, not "unknown" (Test 77).
         gl126::magazine_mark_write(dev->file_name);
-    } else if (scenario == "scan-after-eject") {
-        // Ejected, then a scan attempted. The backend knows nothing is
-        // loaded and must refuse rather than scan an empty transport.
+    } else if (scenario == "load-after-eject-no-magazine") {
+        // Ejected ("nothing to do": sensor already clear), then a scan
+        // attempted before the new strip is pushed in. Section 10
+        // (2026-09-25): this no longer means "the magazine was ejected,
+        // press Load film" -- an eject is now a PENDING next-strip load,
+        // and the sensor-clear refusal is the same read-only NO_DOCS the
+        // Released kind already gives, worded for a strip swap.
         seed(dev, 0x01, 0x22);
         seed(dev, 0x101, 0xF0);        // loader sensor clear -> "nothing to do"
-        call_hook(dev, "eject");       // -> Ejected, no motor command
-        call_hook(dev, "load");        // must refuse
+        call_hook(dev, "eject");       // -> Ejected (mark: ejected), no motor command
+        call_hook(dev, "load");        // sensor still clear -> NO_DOCS, mark kept
+    } else if (scenario == "load-after-eject") {
+        // Ejected, then the strip is swapped and pushed to the stop
+        // (sensor present again), then a scan. The load half must run
+        // "open" before "load" -- on the test interface "open" reaches
+        // the wire and stops at its first unacknowledged write, exactly
+        // like the release path's "open" run (test_release_from_idle_
+        // runs_the_open_and_jog_programs), which is the proof that it
+        // ran at all.
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);        // eject with nothing to do -> Ejected
+        call_hook(dev, "eject");
+        seed(dev, 0x101, 0xF8);        // strip pushed in: sensor present again
+        seed(dev, 0x3B, 0x00);
+        seed(dev, 0x3C, 0x00);
+        call_hook(dev, "load");        // must run "open" (fails closed on the mock)
+    } else if (scenario == "load-after-eject-cold") {
+        // Ejected, then the scanner reads COLD (reg 0x01 = 0x00) at the
+        // next scan -- a power cycle happened after the eject. A next-
+        // strip load assumes the transport is still homed and positioned
+        // from the same power-on, so this refuses INVAL, clears the
+        // stale mark, and drops to Unknown (not Failed: nothing was
+        // written) rather than the sensor-clear or wrong-state refusals.
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);
+        call_hook(dev, "eject");       // -> Ejected (mark: ejected)
+        seed(dev, 0x01, 0x00);         // power-cycled since the eject
+        seed(dev, 0x101, 0xF8);        // irrelevant -- cold is checked first
+        call_hook(dev, "load");        // must refuse INVAL, no motor write
+    } else if (scenario == "release-after-eject") {
+        // Load film pressed again after an eject: the full jog path must
+        // still work exactly as it does from any other non-Failed state
+        // -- an eject does not narrow what Load film can do, only what a
+        // plain scan can skip.
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);
+        call_hook(dev, "eject");       // -> Ejected (mark: ejected)
+        call_hook(dev, "release");     // must still run "open" (then jog)
+    } else if (scenario == "state-mark-ejected-pending") {
+        // An Ejected mark written by an EARLIER PROCESS -- used with
+        // load-mark-ejected-crossproc under a shared OF135I_LOCK_FILE to
+        // prove the mark (not in-process state) carries the kind across
+        // a process boundary, device key with spaces included (the test
+        // device's own name, printed as KEY above).
+        gl126::magazine_mark_write(gl126::MagazineMarkKind::Ejected, dev->file_name);
+    } else if (scenario == "load-mark-ejected-crossproc") {
+        // Writes nothing: the mark must already be on disk from a prior
+        // invocation of state-mark-ejected-pending sharing the same lock
+        // path. Good preconditions, so a matched mark runs "open".
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF8);
+        seed(dev, 0x3B, 0x00);
+        seed(dev, 0x3C, 0x00);
+        call_hook(dev, "load");
+    } else if (scenario == "start-mark-ejected-other-device") {
+        // An Ejected mark for a foreign device (or this one under a
+        // pre-power-cycle address): ignored and cleared, same as the
+        // Released mark's equivalent, and the scan proceeds normally.
+        gl126::magazine_mark_write(gl126::MagazineMarkKind::Ejected, "libusb:999:999");
+        seed(dev, 0x01, 0x22);
+        do_start = true;
     } else if (scenario == "load-after-failure") {
         // A release that failed leaves the transport in a state nobody
         // can name -- and it cleared the mark, so the load half must

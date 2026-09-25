@@ -230,7 +230,16 @@ std::string magazine_mark_path()
     return process_lock_path() + ".magazine";
 }
 
-bool magazine_mark_write(const std::string& device_key)
+const char* magazine_mark_kind_name(MagazineMarkKind kind)
+{
+    switch (kind) {
+    case MagazineMarkKind::Released: return "released";
+    case MagazineMarkKind::Ejected:  return "ejected";
+    }
+    return "released";
+}
+
+bool magazine_mark_write(MagazineMarkKind kind, const std::string& device_key)
 {
     // Written atomically via a temp file + rename(), never by truncating
     // whatever already sits at the mark path in place: a truncate-in-
@@ -257,9 +266,10 @@ bool magazine_mark_write(const std::string& device_key)
     // backend's own test mode produces "test device:0x07b3:0x1436"), so a
     // space-delimited field would truncate it and silently look like a
     // mark for some other device. First line stays human-readable, since
-    // `cat` on this file should say what it is.
-    std::string line = "released " + now_iso8601_utc() + " (sane genesys gl126)\n" +
-                       device_key + "\n";
+    // `cat` on this file should say what it is -- and its FIRST WORD is
+    // the kind ("released" or "ejected"), not a fixed constant any more.
+    std::string line = std::string(magazine_mark_kind_name(kind)) + " " +
+                       now_iso8601_utc() + " (sane genesys gl126)\n" + device_key + "\n";
     ssize_t written = ::write(fd, line.data(), line.size());
     ::close(fd);
     if (written != static_cast<ssize_t>(line.size())) {
@@ -273,7 +283,12 @@ bool magazine_mark_write(const std::string& device_key)
     return true;
 }
 
-bool magazine_mark_read(std::string* device_key)
+bool magazine_mark_write(const std::string& device_key)
+{
+    return magazine_mark_write(MagazineMarkKind::Released, device_key);
+}
+
+bool magazine_mark_read(MagazineMarkKind* kind, std::string* device_key)
 {
     // O_NONBLOCK: this path is read unconditionally before every load, so
     // the open() itself must never block -- a FIFO planted here (no
@@ -301,11 +316,25 @@ bool magazine_mark_read(std::string* device_key)
     if (n <= 0) {
         return false;
     }
-    // Line 1: "released <timestamp> (sane genesys gl126)". Line 2: the
-    // device key, whole, spaces and all.
+    // Line 1: "<kind> <timestamp> (sane genesys gl126)", kind being the
+    // first word, "released" or "ejected". Line 2: the device key, whole,
+    // spaces and all.
     std::string text(buf, static_cast<std::size_t>(n));
     std::size_t eol = text.find('\n');
-    if (eol == std::string::npos || text.compare(0, 8, "released") != 0) {
+    if (eol == std::string::npos) {
+        return false;
+    }
+    std::string first_line = text.substr(0, eol);
+    std::size_t space = first_line.find(' ');
+    std::string word = space == std::string::npos ? first_line : first_line.substr(0, space);
+    MagazineMarkKind found_kind;
+    if (word == "released") {
+        found_kind = MagazineMarkKind::Released;
+    } else if (word == "ejected") {
+        found_kind = MagazineMarkKind::Ejected;
+    } else {
+        // Neither known kind (garbage, or a future/older format): treat
+        // exactly like "no mark", same as the old fixed "released" check.
         return false;
     }
     std::size_t key_end = text.find('\n', eol + 1);
@@ -315,10 +344,25 @@ bool magazine_mark_read(std::string* device_key)
     if (key.empty()) {
         return false;
     }
+    if (kind != nullptr) {
+        *kind = found_kind;
+    }
     if (device_key != nullptr) {
         *device_key = key;
     }
     return true;
+}
+
+bool magazine_mark_read(std::string* device_key)
+{
+    MagazineMarkKind kind = MagazineMarkKind::Released;
+    if (!magazine_mark_read(&kind, device_key)) {
+        return false;
+    }
+    // Back-compat: this overload only ever meant a Released mark, so an
+    // Ejected one reads as "no mark" through it -- exactly as it would
+    // have before that kind existed.
+    return kind == MagazineMarkKind::Released;
 }
 
 void magazine_mark_clear()

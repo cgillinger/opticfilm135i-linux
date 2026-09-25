@@ -6338,3 +6338,40 @@ owner's scanning app got its "Nästa remsa" button the same day. Open:
 the reg 0x32 literal (TODO in `Scanner.load_magazine()`) — harmless at
 n = 1, still the first place to look if a later next-strip feed fails.
 
+### Test 90 (pending): SANE backend next-strip load — plan
+
+**What.** `docs/sane-wp4-magazine.md` §10 (2026-09-25) brought Test
+88/89's evidence into the C++ backend: `Ejected` is now a second kind of
+pending load (alongside `Released`), so `load_document()` completes it
+automatically at the next `sane_start` — no `load-film` press, no
+reinsert prompt, just the strip swapped and pushed to the stop. Verified
+OFFLINE only so far (`tests/gl126_magazine_probe.cpp`,
+`tests/test_sane_magazine.py`, 25/25 in that suite): the state machine,
+the refusals, and that `open` reaches the wire before `load` on the
+zero-answering test interface. Nothing here has touched real hardware.
+
+**Run, from a SANE frontend (`scanimage`), same power-on throughout:**
+
+1. `--load-film=yes` (full jog path) → reseat the magazine to the stop.
+2. Scan frame 1 (600 dpi, `--mode Color`).
+3. `--eject-film=yes`.
+4. Swap the strip, push the new one in to the stop.
+5. Scan frame 1 again — **no `--load-film=yes` this time.**
+
+**Acceptance.** Step 5's backend log shows `open` then `load` (no jog):
+feed completion `0xf455`, traverse completion `0xdc55` (Test 89's
+values). The resulting frame positions like step 2's (FEEDL, POSITION
+time, gain/offset). Step 5's eject is normal. Failure signature: `0xfc`
+at the feed completion — same recovery as every other magazine-sequence
+failure, a power cycle followed by the full jog path (`--load-film=yes`
++ reseat), no other recovery attempted.
+
+**Cross-process variant**, also to run: `scanimage --eject-film=yes` in
+one process, a plain scan (no load option) in the next — proves the
+on-disk "ejected" mark (§10.1), not just in-process state, drives the
+next-strip load, exactly as the Released mark's cross-process case was
+proven in Test 77.
+
+**Not yet run.** This entry is the plan only; the result goes in a
+follow-up entry once the owner runs it.
+

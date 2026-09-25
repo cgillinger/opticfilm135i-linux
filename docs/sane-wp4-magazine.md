@@ -124,9 +124,18 @@ Per device, in `gl126.cpp`:
        ▲                      │  ▲                     │
        │            load-film │  │                     │ eject-film
        │            (jog again│  │                     ▼
-       │             = double │  └── eject-film ──► Ejected
-       │             jog)     │                         │
-       └───────── any failure (Failed: power cycle) ◄───┘
+       │             = double │  └── eject-film ──► Ejected ──┐
+       │             jog)     │            ▲                  │ sane_start
+       │                      │            │ load-film         │ (open + load,
+       │                      │            └── (open + jog,    │  no jog --
+       │                      │                same as from    │  next strip,
+       │                      │                any other state)│  §10)
+       │                      └────────────────────────────────┘
+       └───────── any failure (Failed: power cycle) ◄───────────────┘
+
+  (Ejected is now a pending load like Released -- two KINDS of pending,
+  tracked by the same in-process state and the same cross-process mark,
+  §10.)
 
 - **Unknown** is what `sane_open` starts in (it writes nothing; the
   hardware may be cold, idle, loaded — the backend does not know).
@@ -147,17 +156,26 @@ Per device, in `gl126.cpp`:
   code and none ever did. Writing the open table again is harmless —
   it is registers, no motor — so the document was wrong, not the
   implementation.)*
-- **sane_start from Released:** Stage B (§3.3). Success → Loaded;
-  failure → Failed, `sane_start` returns the error, nothing further
-  written.
+- **sane_start from Released:** Stage B (§3.3), the Released kind of
+  pending load -- the bare `load` program. Success → Loaded; failure →
+  Failed, `sane_start` returns the error, nothing further written.
+- **sane_start from Ejected (2026-09-25, §10):** Stage B again, the
+  Ejected kind -- `open` then `load`, no jog. Same preconditions, same
+  failure handling; the one addition is a cold check (reg 0x01 = 0x00
+  after the eject → refused, mark cleared, state → Unknown, not
+  Failed -- nothing was written).
 - **sane_start from any other state:** no magazine action; today's
   behaviour.
 - **eject-film from Loaded / Unknown (idle 0x22):** the eject program
-  (§3.4) with the Python driver's guards. → Ejected. From Released:
-  refused (the magazine is already loose; there is nothing to eject —
-  the jog was the eject). From cold: refused with "press Load film"
-  (the jog releases it; ejecting from an unhomed transport is not a
-  verified sequence).
+  (§3.4) with the Python driver's guards. → Ejected, and (§10) the
+  cross-process mark is now written as "ejected", not cleared. From
+  Released: refused (the magazine is already loose; there is nothing to
+  eject — the jog was the eject). From cold: refused with "press Load
+  film" (the jog releases it; ejecting from an unhomed transport is not
+  a verified sequence).
+- **load-film from Ejected:** unchanged -- OPEN + JOG, same as from any
+  other non-Failed, non-cold state (§10). This is the fallback after a
+  power cycle, since the next-strip load above is not valid across one.
 - **Failed** is terminal for the process: every magazine action
   refuses until the operator power-cycles; a new `sane_open` starts in
   Unknown again and the hardware check is the gate, exactly like the
@@ -299,7 +317,9 @@ reg 0x32 read-modify-write (|= 0x02), motor enable, the 19-register
 move batch (mode 0x18, FEEDL 3090, loader speed profile), the loader
 slope table to both addresses, GO, the completion poll ((status &
 0x21) == 0x20, 10 s, best-effort as in the driver), motor disable.
-Marks cleared → Ejected.
+→ Ejected. Since 2026-09-25 (§10) this WRITES the cross-process mark as
+"ejected" rather than clearing it, so a load pending from an eject
+survives a process boundary the same way a release's does.
 
 ## 4. Where the code lives
 
@@ -587,3 +607,135 @@ start over".
    reviewed and Christian has said what happens next. Cutting power on a
    bad noise stays unconditional, and is explicitly a way to stop rather
    than permission to start again.
+
+## 10. Next strip without the jog (2026-09-25)
+
+New evidence, not a redesign: a fresh vendor USB capture
+(`20260925-vendor-next-strip.pcap`, private analysis area) shows
+QuickScan running its app-start jog exactly ONCE per session, not once
+per strip (`docs/protocol-notes.md` Pass 14 addendum 4, `docs/test-
+log.md` Test 88). The between-strip load it runs after an eject button
+press — operator swaps the strip, pushes the new one in to the stop — is
+just the LOAD table again: no jog, no OPEN table replay, no reinsert
+prompt. `of135i load --next-strip` (`of135i/loadflow.py`) implements
+this offline the same day and Test 89 hardware-verifies it: feed
+completion `0xf455` and traverse completion `0xdc55` on the first poll,
+straight after a driver eject, and the following scan positions exactly
+like the strip before it.
+
+This section brings the same shortcut into the backend: **Ejected is now
+a second KIND of pending load**, alongside Released, so `load_document()`
+completes it automatically at the next `sane_start` — no `load-film`
+press, no reinsert prompt, just the strip swapped and pushed to the
+stop.
+
+### 10.1 The two kinds
+
+`gl126_lock.h`'s `MagazineMarkKind` names them, and the mark's format
+barely changed to carry it: the mark file's first word, which used to be
+the fixed string `"released"`, is now whichever of `"released"` or
+`"ejected"` applies — so a mark written before this section still reads
+back byte-identically, and `magazine_mark_write(device_key)` /
+`magazine_mark_read(device_key*)` (the old one-argument forms) keep
+meaning exactly what they always meant: a Released mark, full stop. They
+are kept, unchanged, only because `tests/gl126_lock_probe.cpp` and
+`tests/test_sane_lock.py` — outside this section's edit scope — call
+them and must keep working unmodified. `sane/gl126.cpp` uses the new
+two-argument, kind-aware overloads throughout.
+
+| kind | what already happened | what `load_document()` runs |
+|---|---|---|
+| Released | `load-film` ran OPEN + JOG; operator reseated the magazine | `load` only (§3.3, unchanged) |
+| Ejected | `eject-film` ran EJECT; operator swapped the strip and pushed it to the stop | `open` then `load` — no jog (new) |
+
+In-process `MagazineState` still takes precedence over the on-disk mark
+(unchanged rule); a `Released` state or an `Ejected` state each set the
+matching kind directly. When neither is known in this process, the mark
+is read with its kind, exactly as before but now returning which of the
+two it is.
+
+### 10.2 Why `open` has to run again
+
+The vendor's own between-strip load skips OPEN too — but it does so by
+scanning with whatever speed registers and slope table the PRECEDING
+scan pass happened to leave in scanner RAM, not the loader profile OPEN
+would set up. `of135i/loadflow.py`'s `--next-strip` deliberately does NOT
+replay that: it runs `Scanner.initialize(prep=False)` — the driver's own
+OPEN table, hardware-verified from the post-jog position in Tests 17-23
+and again as the next-strip load itself in Test 89 — rather than trust
+the vendor's undocumented "whatever is already there" fallback, because
+that is exactly the kind of leftover state that stalled the driver's
+other eject variant twice in the past (`docs/protocol-notes.md` Pass 14
+addendum 4). The backend's Ejected-kind load makes the same choice for
+the same reason: `run_magazine_program(dev, "open", ...)` before `run_
+magazine_program(dev, "load", ...)`, both under the same
+`MagazineFailGuard` the Released path already used only for `load`.
+
+### 10.3 Preconditions and refusals
+
+The same three hardware reads as the Released path (reg 0x01 == 0x22;
+loader-sensor bit set with the idle status class; regs 0x3b/0x3c ==
+0x00), plus one new check specific to the Ejected kind, in this order:
+
+1. **Cold (reg 0x01 == 0x00):** a power cycle happened between the eject
+   and this scan. A next-strip load assumes the transport is still homed
+   and positioned from earlier in the SAME power-on — the same
+   assumption `--next-strip` makes and refuses the same way. Refused
+   `SANE_STATUS_INVAL`, pointing at Load film (the jog + reseat path).
+   Nothing was written, so the mark is cleared as stale but the state
+   drops to **Unknown, not Failed** — this is a read-only refusal, not a
+   motor-sequence failure, and the documented ways out (Load film, or a
+   fresh `of135i load`) stay open exactly as a fresh Unknown session
+   already allows.
+2. **Loader sensor clear:** the strip has not been pushed to the stop
+   yet (mid-swap, or forgotten). Refused `SANE_STATUS_NO_DOCS`, worded
+   for a strip swap rather than the Released kind's "reseat" wording.
+   Mark KEPT — pushing the magazine in and scanning again is the whole
+   fix, same rule as the Released kind's equivalent refusal.
+3. **Anything else wrong** (idle class, regs 0x3b/0x3c): the generic
+   wrong-state refusal, unchanged in shape — `SANE_STATUS_INVAL`, state
+   → Failed, mark cleared — with one word changed in the message ("the
+   eject leaves it in" instead of "the jog leaves it in") so it stays
+   accurate for the kind that actually applied.
+
+**The trade-off this accepts, spelled out:** a scan started after an
+eject WITHOUT pushing the magazine to the stop first can still reach the
+sensor-present branch if the magazine is only resting against the
+mechanism rather than seated — the sensor cannot tell the difference.
+The load then runs on a magazine that is not actually engaged, the feed
+fails to grip (the documented benign `0xfc` completion signature, Tests
+48/49), the sequence fails closed (state → Failed, mark cleared,
+`MagazineFailGuard`), and a power cycle plus `Load film` is required to
+recover. This is not a new risk: it is the same trade-off the vendor
+app's own between-strip load and `of135i/loadflow.py`'s `--next-strip`
+already accept, in exchange for skipping the jog and the reinsert
+prompt. No code here tries to distinguish "seated" from "merely
+present" — the sensor genuinely cannot.
+
+### 10.4 The status line
+
+`kMagazineEjected` changed from "ejected -- press Load film" to
+"ejected -- push in, then scan" (still under the 40-character widget
+limit, Test 76), because an eject is no longer a dead end for the next
+scan. A new value, `kMagazineEjectedPending`, is `magazine_state_text`'s
+cross-process analogue of `kMagazinePending` for the Ejected kind:
+"ejected earlier -- push in and scan", shown when this process's state
+is Unknown but the on-disk mark names this device with kind Ejected —
+mirroring exactly how `kMagazinePending` already worked for a Released
+mark (Test 77).
+
+### 10.5 What is NOT yet verified
+
+This section is implemented and tested OFFLINE only — the built backend
+in test mode (`tests/gl126_magazine_probe.cpp`,
+`tests/test_sane_magazine.py`), which proves the state machine, the
+refusals, and that `open` really does reach the wire before `load`, but
+proves nothing about what the real hardware does with a next-strip
+load run from C++. **Test 90 is pending** (see `docs/test-log.md`): a
+SANE-frontend equivalent of Test 89 — Load film, reseat, scan, Eject
+film, swap the strip, push it in, scan again with NO Load film press —
+comparing the second load's timing and the resulting frame against the
+first, exactly as Test 89 compared the Python driver's two strips. Until
+Test 90 runs, "Ejected is a pending load" is a design carried over from
+Test 89's evidence about the Python driver, not a claim about this
+backend's own hardware behaviour.
