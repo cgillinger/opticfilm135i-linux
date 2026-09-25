@@ -797,12 +797,18 @@ def _cmd_load(args: argparse.Namespace) -> int:
     """The magazine load flow (of135i.loadflow). Interactive: it asks the
     operator to take the magazine out and reinsert it to the stop, so it
     needs a real terminal (a piped stdin ends it at the prompt, exit 130).
-    ``--release`` stops after the jog and never asks."""
+    ``--release`` stops after the jog and never asks. ``--next-strip``
+    loads the next strip after an eject in the same power-on: no jog, no
+    reinsert prompt, and it never asks either."""
     from . import loadflow
     if args.release and args.double_jog:
         print("error: --release and --double-jog exclude each other", file=sys.stderr)
         return 2
-    return loadflow.run(ask=input, release_only=args.release, double_jog=args.double_jog)
+    if args.next_strip and (args.release or args.double_jog):
+        print("error: --next-strip excludes --release and --double-jog", file=sys.stderr)
+        return 2
+    return loadflow.run(ask=input, release_only=args.release, double_jog=args.double_jog,
+                        next_strip=args.next_strip)
 
 
 def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
@@ -1300,6 +1306,11 @@ def build_parser() -> argparse.ArgumentParser:
              "jog and reinsert, run the app-start jog a second time from the loose "
              "position and reinsert again before loading -- the A/B for loading in one "
              "power cycle from a latched magazine")
+    p_load.add_argument("--next-strip", action="store_true",
+        help="load the next strip after an eject in the same power-on: no jog, no "
+             "reinsert prompt; the magazine must already be pushed in to the stop with "
+             "the new strip. Refused on a cold (power-cycled) scanner. Not yet "
+             "hardware-verified (Test 89)")
 
     p_version = sub.add_parser("version", help="print the driver version and git revision")
     p_version.set_defaults(func=_cmd_version)

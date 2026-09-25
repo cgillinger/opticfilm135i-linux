@@ -330,6 +330,15 @@ the vendor application does it.
 .venv/bin/python -m of135i eject
 ```
 
+**Next strip, same power-on:** after an eject, swap the strip and push
+it in to the stop, then `of135i load --next-strip` skips the jog and the
+reinsert prompt entirely — a vendor USB capture (2026-09-25,
+docs/protocol-notes.md Pass 14 addendum 4) shows QuickScan's own
+between-strip load doing the same. It refuses on a cold (power-cycled)
+scanner, where the full `of135i load` is required instead. **Not yet
+hardware-verified in this driver** (docs/test-log.md Test 89 is
+pending) — use the full `of135i load` until it is.
+
 Every scan runs the aperture-registered production contract: the
 scanner reads a window covering the whole aperture plus a 0.75 mm
 margin per side (`--overscan MM` tunes it), both plastic edges are

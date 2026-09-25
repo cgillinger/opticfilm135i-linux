@@ -1497,12 +1497,25 @@ class Scanner:
         14): loader-sensor ack, the engaging feed with the vendor's full
         register block, the prescan traverse and one idle housekeeping
         cycle. The cassette must already be pushed in by hand, fully,
-        to the stop (Test 14: the vendor loads from there), AFTER
-        jog_magazine() has run in this session -- the vendor's flow is
-        initialize(prep=False) -> jog -> operator reinserts -> load,
-        and a load without the jog has never engaged the cassette
-        (Tests 11b-15). Requires initialize() first in this session;
-        tools/load_magazine.py runs the whole flow.
+        to the stop (Test 14: the vendor loads from there).
+
+        The vendor's FIRST load of a power-on is always preceded by
+        jog_magazine() -- initialize(prep=False) -> jog -> operator
+        reinserts -> load -- and every load of ours attempted WITHOUT a
+        jog since power-on, or from an otherwise undefined transport
+        state, has failed to engage the cassette (Tests 11b-15). That is
+        not true of every load in a session, though: a vendor USB
+        capture made 2026-09-25 (docs/protocol-notes.md Pass 14 addendum
+        4) shows the vendor's own load of the NEXT strip, after an eject
+        button press later in the SAME power-on, running with no jog at
+        all -- just this table again -- and latching normally.
+        of135i.loadflow's ``next_strip`` mode
+        (``of135i load --next-strip``) relies on that: it calls this
+        method directly, with no preceding jog_magazine() call, and is
+        refused up front if the session is COLD. This method itself does
+        not track whether a jog ran -- only initialize() having run
+        first is enforced below. Requires initialize() first in this
+        session; tools/load_magazine.py runs the whole first-load flow.
 
         Completion is verified, not assumed, at three points, each with
         the masked test load_status_matches() (state class AND loader-
@@ -1538,6 +1551,28 @@ class Scanner:
                 f"{safety.NO_COMMANDS_SENT}", session=self.session.snapshot())
         expected = load_completion_target()
         with self._operation("load_magazine"):
+            # TODO(next-strip, deferred 2026-09-25): tables_load.LOAD's
+            # second op writes reg 0x32 as the literal constant 0x1d
+            # (captured from a fresh, jog-then-reinsert load). The
+            # 2026-09-25 vendor capture (docs/protocol-notes.md Pass 14
+            # addendum 4) shows the vendor writing this register as a
+            # read-modify-write, read & ~0x02 (the same clear-bit-0x02 ack
+            # jog_magazine()/eject() already do inline), in BOTH situations
+            # it was seen in (0x1f->0x1d fresh, 0x9f->0x9d after a scan,
+            # bits 0x80/0x10 preserved) -- so a literal 0x1d is only
+            # byte-correct when the read happens to be 0x1f. Phase.injections/patched() (of135i/tables.py) is the
+            # existing per-op override mechanism and would fit this
+            # (byte injection at LOAD.ops[1], offset 1), but tables_load.py
+            # is auto-generated (tools/gen_load_table.py) with NO support
+            # for emitting injections -- hand-adding one here would be
+            # silently lost on the next regeneration unless the generator
+            # is extended too, which is out of scope for next-strip mode.
+            # LOAD stays byte-identical (the constant 0x1d) for now; it is
+            # exactly what Scanner.load_magazine() replays 7/7 hardware-
+            # verified from the post-jog position. If Test 89 (next-strip
+            # on hardware) fails specifically at this feed with reg 0x32
+            # reading something other than 0x1f beforehand, this is the
+            # first place to look.
             self._run_phase(tables_load.LOAD,
                             strict_polls=self._strict_status_polls(tables_load.LOAD))
             self.session.phase = "load_verify"

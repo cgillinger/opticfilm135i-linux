@@ -1033,3 +1033,74 @@ preamble (tables_ir.py) has TWO extra ops (a `19=08` write and a live
 SilverFast dual-light skip-calibration capture exists to confirm what a
 dual rewrite should look like — reported rather than guessed, per
 driver-design.md's calibration-cache section.
+
+### Pass 14 addendum 4 (2026-09-25): next-strip load — the vendor does not repeat the jog between strips
+
+A fresh vendor USB capture (`20260925-vendor-next-strip.pcap`, private
+analysis area, not in this repo — captures never are) settles a question
+the driver's own flow had left open by construction: does the vendor
+repeat its app-start jog (feed 6690, feed 6690, eject 3090 — the JOG
+table, addendum above) before every strip, or only once when QuickScan
+opens? Setup: QuickScan opened once, one strip loaded, one 600 dpi scan,
+the eject button pressed, the strip swapped by hand, the new strip
+inserted to the stop, eject button pressed again — usbmon running on the
+host throughout, one continuous app session.
+
+| host time | event | motor moves on the wire |
+|---|---|---|
+| 09:53:45 | QuickScan opened: OPEN register table + app-start jog | feed 6690, feed 6690, eject 3090 (loader profile 7e/7f = 0x75/0x30, loader slope table) |
+| 09:54:10 | first insert to the stop → LOAD | reg 0x32 ack 0x1f→0x1d, feed 6690, traverse 71490 (loader profile) |
+| 09:54:46–09:55:38 | one 600 dpi scan, then PARK (0x02=0x30) | — |
+| 09:56:28 | eject button | eject 3090 (short batch, scan-flow speed regs 7e/7f = 0x36/0xb0 left in place) |
+| 09:57:22 | strip swapped, insert to the stop → LOAD | reg 0x32 ack 0x9f→0x9d, feed 6690, traverse 71490 — **no jog, no OPEN table, no base register table** |
+| 09:57:56 | eject button | eject 3090 |
+
+Three things this settles:
+
+1. **The app-open jog runs once per app session, not once per strip.**
+   The second LOAD (09:57:22) is preceded by nothing but the eject at
+   09:56:28 — no jog, no OPEN replay. It is the LOAD table again, full
+   stop.
+2. **The second LOAD ran with the wrong-for-a-fresh-load speed
+   registers, and still worked.** The vendor never rewrote 0x7e/0x7f
+   (the loader motor profile) or the slope table back from the scan
+   pass's values before this LOAD; it ran with the SCAN flow's speed
+   regs (0x36/0xb0) and whatever slope table the scan/eject left in
+   scanner RAM, not the loader profile the jog would have set up. It
+   latched normally regardless — the owner heard the same motor sound
+   as on the first load, and no stall.
+3. **Reg 0x32's ack write is read-modify-write, not a constant.** Both
+   LOADs write `0x32 = (read & ~0x02)` — the same clear-bit-0x02 ack the
+   jog and the eject use (`Scanner.jog_magazine()`/`eject()` already do
+   it as a read-modify-write): 0x1f→0x1d fresh (matches
+   `tables_load.LOAD`'s captured literal, since that capture's reg 0x32
+   read 0x1f), 0x9f→0x9d after a scan+eject (bits 0x80 and 0x10, set by
+   the scan flow, are preserved). A literal 0x1d, as `tables_load.LOAD`
+   carries today, is only byte-correct when the pre-write read is 0x1f;
+   after a scan it would also clear 0x80 — effect unknown, never
+   captured.
+
+**Driver consequence:** `of135i load --next-strip` (of135i/loadflow.py,
+`_run_next_strip`) runs `Scanner.initialize(prep=False)` (replays
+`tables_load.OPEN` — our own loader-profile register context, the same
+one the jog path already uses and the one hardware-verified 7/7 from the
+post-jog position) followed directly by `Scanner.load_magazine()` — no
+jog, no reinsert prompt. This is a deliberate choice, not a literal
+replay of the vendor's post-scan variant: the vendor's own
+"whatever-the-scan-left-behind" speed-register state is exactly what
+stalled the driver's OTHER eject variant twice in the past
+(`Scanner.eject()`'s docstring, 2026-09-02) when issued against
+leftover scan-flow state, so `--next-strip` uses the table our own
+hardware testing has already covered rather than the vendor's
+undocumented-until-now fallback. If `--next-strip` fails to engage on
+real hardware (Test 89), the vendor's own post-scan variant — OPEN
+skipped, loader profile NOT rewritten, LOAD run on top of whatever the
+prior scan left — is the documented fallback to try next.
+
+The reg 0x32 read-modify-write is NOT implemented: `tables_load.LOAD` is
+auto-generated (`tools/gen_load_table.py`) as a flat, byte-literal op
+list with no support for emitting a computed injection point, and the
+generator would silently discard a hand-added one on the next
+regeneration. `of135i/device.py`'s `Scanner.load_magazine()` carries a
+TODO at the call site; `tables_load.LOAD` stays byte-identical (the
+constant `0x1d`) until the generator is extended to support it.

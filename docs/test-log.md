@@ -6253,3 +6253,43 @@ rule generalise to a second strip and camera; the detector's *lateral*
 model did not, twice, and the acceptance instrument caught both. The
 edge check stays part of the 110 acceptance for every new film.
 
+### Test 88: vendor capture — loading the next strip after an eject, same session (2026-09-25)
+
+**Setup.** QuickScan in the Win11 VM, usbmon on the Linux host, one
+continuous app session: QuickScan opened (app-start jog), one strip
+loaded to the stop, one 600 dpi scan, eject button, strip swapped by
+hand, the new strip inserted to the stop, eject button again.
+
+**Result.**
+
+| host time | event | motor moves on the wire |
+|---|---|---|
+| 09:53:45 | QuickScan opened: OPEN table + app-start jog | feed 6690, feed 6690, eject 3090 (loader profile, loader slope table) |
+| 09:54:10 | first insert to the stop → LOAD | reg 0x32 ack 0x1f→0x1d, feed 6690, traverse 71490 (loader profile) |
+| 09:54:46–09:55:38 | one 600 dpi scan, then PARK | — |
+| 09:56:28 | eject button | eject 3090 (scan-flow speed regs 0x36/0xb0 left in place) |
+| 09:57:22 | strip swapped, insert to the stop → LOAD | reg 0x32 ack 0x9f→0x9d, feed 6690, traverse 71490 — no jog, no OPEN table |
+| 09:57:56 | eject button | eject 3090 |
+
+The magazine latched normally on the second load (owner: same motor
+sound as the first load). Full analysis, wire differences and
+the reg 0x32 read-modify-write: docs/protocol-notes.md Pass 14 addendum
+4.
+
+**Verdict.** The vendor's between-strip load, within one app session, is
+the LOAD table alone — no jog, no OPEN replay, no reinsert step beyond
+pushing the new strip to the stop. `of135i load --next-strip` was
+implemented offline the same day from this evidence
+(of135i/loadflow.py, of135i/cli.py): `initialize(prep=False)` then
+`load_magazine()` directly, refused up front on a COLD scanner. **NOT
+hardware-verified in this driver** — this test proves the vendor's own
+behaviour, not ours.
+
+**Test 89 (pending, driver A/B on hardware):** one `of135i load
+--next-strip` run immediately after an `of135i eject` on a warm scanner
+(same power-on, no power cycle in between). Acceptance: feed completion
+0xf455, traverse completion 0xdc55, magazine latched (checked by hand),
+and a following scan positions normally. Failure signature: 0xfc55 at
+the feed — recovery is a power cycle followed by the full `of135i load`
+(with the jog and the reinsert prompt); no other recovery is attempted.
+

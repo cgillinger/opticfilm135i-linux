@@ -1043,6 +1043,183 @@ def test_loadflow_skipped_reinsert_gets_a_human_message():
     print("test_loadflow_skipped_reinsert_gets_a_human_message OK")
 
 
+def test_loadflow_next_strip_skips_jog_and_reinsert():
+    """--next-strip on a warm scanner loads directly: initialize(prep=False)
+    then load_magazine(), in that order -- jog_magazine() and the reinsert
+    prompt (``ask``) are never called (docs/protocol-notes.md Pass 14
+    addendum 4: the vendor's own between-strip load skips the jog too)."""
+    import contextlib, io as _io
+    from of135i import loadflow, safety
+
+    class _FakeSession:
+        state = safety.SessionState.ARMED
+
+    class _FakeIo:
+        def drain_events(self): return []
+        def read_reg(self, reg): return 0x1F
+
+    class _FakeScanner:
+        io = _FakeIo()
+        session = _FakeSession()
+
+        def __init__(self): self.calls = []
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def is_magazine_present(self): return True
+        def check_start_state(self): self.calls.append("check_start_state")
+        def initialize(self, prep=True): self.calls.append(("initialize", prep))
+        def jog_magazine(self): self.calls.append("jog_magazine")
+        def load_magazine(self): self.calls.append("load_magazine")
+
+    def _forbid_ask(prompt):
+        raise AssertionError("ask must not be called in --next-strip mode")
+
+    orig = loadflow.Scanner
+    scanner = _FakeScanner()
+    try:
+        loadflow.Scanner = type("S", (), {"open": staticmethod(lambda: scanner)})
+        with contextlib.redirect_stdout(_io.StringIO()), contextlib.redirect_stderr(_io.StringIO()):
+            rc = loadflow.run(ask=_forbid_ask, next_strip=True)
+    finally:
+        loadflow.Scanner = orig
+    assert rc == 0, rc
+    assert scanner.calls == ["check_start_state", ("initialize", False), "load_magazine"], scanner.calls
+    print("test_loadflow_next_strip_skips_jog_and_reinsert OK")
+
+
+def test_loadflow_next_strip_refuses_when_cold():
+    """--next-strip refuses before any write when the scanner reads COLD
+    (a power cycle happened): exit 1, a message naming the full `of135i
+    load`, and initialize()/load_magazine()/jog_magazine() are never
+    called."""
+    import contextlib, io as _io
+    from of135i import loadflow, safety
+
+    class _FakeSession:
+        state = safety.SessionState.COLD
+
+    class _FakeIo:
+        def drain_events(self): return []
+        def read_reg(self, reg): return 0x1F
+
+    class _FakeScanner:
+        io = _FakeIo()
+        session = _FakeSession()
+
+        def __init__(self): self.calls = []
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def is_magazine_present(self): return True
+        def check_start_state(self): self.calls.append("check_start_state")
+        def initialize(self, prep=True): self.calls.append(("initialize", prep))
+        def jog_magazine(self): self.calls.append("jog_magazine")
+        def load_magazine(self): self.calls.append("load_magazine")
+
+    def _forbid_ask(prompt):
+        raise AssertionError("ask must not be called when refused for cold")
+
+    orig = loadflow.Scanner
+    scanner = _FakeScanner()
+    err = _io.StringIO()
+    try:
+        loadflow.Scanner = type("S", (), {"open": staticmethod(lambda: scanner)})
+        with contextlib.redirect_stdout(_io.StringIO()), contextlib.redirect_stderr(err):
+            rc = loadflow.run(ask=_forbid_ask, next_strip=True)
+    finally:
+        loadflow.Scanner = orig
+    text = err.getvalue()
+    assert rc == 1, rc
+    assert scanner.calls == ["check_start_state"], scanner.calls
+    assert "cold" in text.lower() and "power cycle" in text.lower(), text
+    assert "of135i load" in text, text
+    print("test_loadflow_next_strip_refuses_when_cold OK")
+
+
+def test_loadflow_next_strip_feed_not_engaged_names_full_load():
+    """A feed that fails to engage in --next-strip mode gets a message
+    that names the FULL `of135i load` (jog + reinsert prompt) as the
+    recovery -- not the plain flow's reinsert-focused message, since
+    --next-strip never asked for a reinsert in the first place."""
+    import contextlib, io as _io
+    from of135i import loadflow, safety
+
+    class _FakeSession:
+        state = safety.SessionState.ARMED
+
+    class _FakeIo:
+        def drain_events(self): return []
+        def read_reg(self, reg): return 0x1F
+
+    class _FakeScanner:
+        io = _FakeIo()
+        session = _FakeSession()
+
+        def __init__(self): self.calls = []
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def is_magazine_present(self): return True
+        def check_start_state(self): self.calls.append("check_start_state")
+        def initialize(self, prep=True): self.calls.append(("initialize", prep))
+        def jog_magazine(self): self.calls.append("jog_magazine")
+        def load_magazine(self):
+            self.calls.append("load_magazine")
+            raise safety.LoadIncompleteError(
+                "magazine load did NOT complete: status word 0xfc55, want class "
+                "0xf455. The session stops here.",
+                status_word=0xFC55, expected=0xF455)
+
+    def _forbid_ask(prompt):
+        raise AssertionError("ask must not be called in --next-strip mode")
+
+    orig = loadflow.Scanner
+    scanner = _FakeScanner()
+    err = _io.StringIO()
+    try:
+        loadflow.Scanner = type("S", (), {"open": staticmethod(lambda: scanner)})
+        with contextlib.redirect_stdout(_io.StringIO()), contextlib.redirect_stderr(err):
+            rc = loadflow.run(ask=_forbid_ask, next_strip=True)
+    finally:
+        loadflow.Scanner = orig
+    text = err.getvalue()
+    assert rc == 1, rc
+    assert scanner.calls == ["check_start_state", ("initialize", False), "load_magazine"], scanner.calls
+    assert "did not engage" in text, text
+    assert "of135i load" in text and "reinsert prompt" in text, text
+    assert "technical cause: LoadIncompleteError" in text, text
+    print("test_loadflow_next_strip_feed_not_engaged_names_full_load OK")
+
+
+def test_cli_load_next_strip_excludes_release_and_double_jog():
+    """`of135i load --next-strip` combined with `--release` or
+    `--double-jog` is refused at the CLI (exit 2) before loadflow.run is
+    ever called -- mirrors the existing --release/--double-jog check."""
+    import contextlib, io as _io
+    from of135i import cli, loadflow
+
+    called = []
+
+    def _stub_run(**kw):
+        called.append(kw)
+        return 0
+
+    orig = loadflow.run
+    err1 = _io.StringIO()
+    err2 = _io.StringIO()
+    try:
+        loadflow.run = _stub_run
+        with contextlib.redirect_stdout(_io.StringIO()), contextlib.redirect_stderr(err1):
+            rc1 = cli.main(["load", "--next-strip", "--release"])
+        with contextlib.redirect_stdout(_io.StringIO()), contextlib.redirect_stderr(err2):
+            rc2 = cli.main(["load", "--next-strip", "--double-jog"])
+    finally:
+        loadflow.run = orig
+    assert rc1 == 2 and rc2 == 2, (rc1, rc2)
+    assert called == [], called
+    assert "--next-strip" in err1.getvalue(), err1.getvalue()
+    assert "--next-strip" in err2.getvalue(), err2.getvalue()
+    print("test_cli_load_next_strip_excludes_release_and_double_jog OK")
+
+
 def main() -> int:
     tests = [
         test_assemble_shape_and_endianness,
@@ -1072,6 +1249,10 @@ def main() -> int:
         test_clear_roll_outputs_only_frame_files,
         test_digitize_records_partial_frame_progress,
         test_loadflow_skipped_reinsert_gets_a_human_message,
+        test_loadflow_next_strip_skips_jog_and_reinsert,
+        test_loadflow_next_strip_refuses_when_cold,
+        test_loadflow_next_strip_feed_not_engaged_names_full_load,
+        test_cli_load_next_strip_excludes_release_and_double_jog,
         test_sane_tables_generated_and_current,
         test_sane_tables_injections_land_on_value_bytes,
         test_holder_geometry_measures_a_synthetic_holder,
