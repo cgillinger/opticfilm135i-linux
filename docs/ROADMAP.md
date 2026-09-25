@@ -869,3 +869,20 @@ magazine.md §10): an eject now leaves a next-strip load pending, and
 `load_document()` completes it with `open` then `load`, no jog —
 offline-tested only (25/25, tests/test_sane_magazine.py); **Test 90,
 hardware verification, is pending.**
+
+**digiKam dialog usability (owner report, 2026-09-25).** The owner tried
+the backend from digiKam and found the dialog too cluttered to get a scan
+started at all — the magazine buttons (`load-film`, `eject-film`), the
+`magazine` status line, `frame`, the source/mode/resolution controls and
+KSane's own preview/scan buttons are spread over two tabs with nothing
+that says what order they go in. Reported with the reservation that it
+may be unfamiliarity with digiKam, but the backend owns what it exposes
+and how. To review: which options really need to be visible, their
+titles and descriptions (KSane shows the SANE option `desc` as a
+tooltip only), their order and grouping, whether the `magazine` string
+can carry the next step more plainly, and whether a one-page "digiKam:
+load, scan, eject" walkthrough with screenshots belongs in
+docs/sane-install.md. Opening the dialog on a connected scanner writes
+nothing (sane_open writes no register), so a review session can look at
+the dialog without a motor move. Not scheduled; pairs naturally with
+Test 90.
