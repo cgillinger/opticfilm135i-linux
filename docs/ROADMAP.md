@@ -860,6 +860,7 @@ with no jog and no OPEN replay — just the LOAD table again
 (docs/protocol-notes.md Pass 14 addendum 4). Implemented offline the
 same day (of135i/loadflow.py, of135i/cli.py): refuses on a cold
 scanner, otherwise `initialize(prep=False)` then `load_magazine()`
-directly. **Test 89 is the pending driver A/B on hardware** — one
-`--next-strip` load right after an eject on a warm scanner; see
-docs/test-log.md for the acceptance criteria and failure signature.
+directly. **Test 89 PASSED the same day (n = 1):** one `--next-strip`
+load right after a driver eject engaged on the first poll and the next
+frame positioned like the strip before it; docs/test-log.md has the
+numbers. Production use in the owner's scanning app from that day.

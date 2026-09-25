@@ -1569,10 +1569,11 @@ class Scanner:
             # is extended too, which is out of scope for next-strip mode.
             # LOAD stays byte-identical (the constant 0x1d) for now; it is
             # exactly what Scanner.load_magazine() replays 7/7 hardware-
-            # verified from the post-jog position. If Test 89 (next-strip
-            # on hardware) fails specifically at this feed with reg 0x32
-            # reading something other than 0x1f beforehand, this is the
-            # first place to look.
+            # verified from the post-jog position. Test 89 (2026-09-25):
+            # next-strip engaged on the first poll with reg 0x32 reading
+            # 0xbf beforehand, so the literal did not matter for the grip
+            # (n=1). If a later next-strip load fails at this feed, this
+            # is still the first place to look.
             self._run_phase(tables_load.LOAD,
                             strict_polls=self._strict_status_polls(tables_load.LOAD))
             self.session.phase = "load_verify"

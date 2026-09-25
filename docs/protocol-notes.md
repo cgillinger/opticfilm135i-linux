@@ -1092,10 +1092,11 @@ stalled the driver's OTHER eject variant twice in the past
 (`Scanner.eject()`'s docstring, 2026-09-02) when issued against
 leftover scan-flow state, so `--next-strip` uses the table our own
 hardware testing has already covered rather than the vendor's
-undocumented-until-now fallback. If `--next-strip` fails to engage on
-real hardware (Test 89), the vendor's own post-scan variant — OPEN
-skipped, loader profile NOT rewritten, LOAD run on top of whatever the
-prior scan left — is the documented fallback to try next.
+undocumented-until-now fallback. Test 89 (2026-09-25) engaged on the
+first poll with this table (reg 0x32 read 0xbf beforehand); should a
+later `--next-strip` fail to engage, the vendor's own post-scan variant
+— OPEN skipped, loader profile NOT rewritten, LOAD run on top of
+whatever the prior scan left — is the documented fallback to try next.
 
 The reg 0x32 read-modify-write is NOT implemented: `tables_load.LOAD` is
 auto-generated (`tools/gen_load_table.py`) as a flat, byte-literal op

@@ -6285,11 +6285,56 @@ implemented offline the same day from this evidence
 hardware-verified in this driver** — this test proves the vendor's own
 behaviour, not ours.
 
-**Test 89 (pending, driver A/B on hardware):** one `of135i load
+**Test 89 (driver A/B on hardware):** one `of135i load
 --next-strip` run immediately after an `of135i eject` on a warm scanner
 (same power-on, no power cycle in between). Acceptance: feed completion
 0xf455, traverse completion 0xdc55, magazine latched (checked by hand),
 and a following scan positions normally. Failure signature: 0xfc55 at
 the feed — recovery is a power cycle followed by the full `of135i load`
 (with the jog and the reinsert prompt); no other recovery is attempted.
+Run the same day — next entry.
+
+### Test 89: `load --next-strip` on hardware — the next strip loads without the jog (2026-09-25)
+
+**Setup.** Owner's terminal, driver at d7e5db8. The scanner had been
+power-cycled just before (the owner's reflex), so the run starts from
+cold, which is the full path anyway: strip A, `status && load` (cold
+init, jog, remove-and-reseat, LOAD), `scan --frame 1 --dpi 600 --eject`;
+then strip B swapped in by hand and pushed to the stop, `load
+--next-strip`, and the same `scan --frame 1 --dpi 600 --eject` as the
+acceptance scan. Files in the private analysis area, `t89-20260925/`
+(a/b.tiff, overscan frames, diag JSON, `next-strip.log`).
+
+**Result — next-strip load (verbatim from the log):** start state 0x22
+idle-homed; feed completion `f455 (exact) after 0.00s`; traverse
+completion `dc55 (exact) after 0.05s`; `load_magazine: complete, status
+word 0xdc55`; reg 0x32 read **0xbf** before the load (LOAD's literal
+0x1d ack was written on top of it and the feed engaged regardless — the
+deferred read-modify-write did not matter for the grip, n = 1); no
+interrupt events. The magazine latched (checked by hand). Two motor
+moves, no operator step between eject and load beyond the strip swap.
+
+**Result — the acceptance scan, strip B against strip A:**
+
+| | strip A (after the full load) | strip B (after `--next-strip`) |
+|---|---|---|
+| FEEDL | 6519 | 6519 |
+| chunks (600 dpi dual) | 19 | 19 |
+| POSITION | 1.80 s | 1.80 s |
+| scan pass / PARK | 8.23 s / 3.93 s (`f855`) | 8.23 s / 3.93 s (`f855`) |
+| gain / offset | 45/34/39, 266/265/266 | 45/34/39, 266/265/266 |
+| coverage | VERIFIED, lead 0.62 / trail 2.51 mm | VERIFIED, lead 0.78 / trail 2.39 mm |
+| poll timeouts / cr mismatches | 2 / 25 | 3 / 24 |
+| eject | normal | normal |
+
+Both frames are whole, distinct pictures from two different strips, both
+aperture edges inside the overscan frame, no banding (session's look at
+a normalised positive of each; not a production eye check).
+
+**Verdict: PASS (n = 1).** The next-strip load behaves exactly like the
+full load's LOAD step, and the frame after it positions identically.
+Saves three motor moves and one remove-and-reseat per strip. The
+owner's scanning app got its "Nästa remsa" button the same day. Open:
+the reg 0x32 literal (TODO in `Scanner.load_magazine()`) — harmless at
+n = 1, still the first place to look if a later next-strip feed fails.
 

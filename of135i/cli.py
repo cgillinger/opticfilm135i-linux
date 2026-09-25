@@ -1309,8 +1309,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_load.add_argument("--next-strip", action="store_true",
         help="load the next strip after an eject in the same power-on: no jog, no "
              "reinsert prompt; the magazine must already be pushed in to the stop with "
-             "the new strip. Refused on a cold (power-cycled) scanner. Not yet "
-             "hardware-verified (Test 89)")
+             "the new strip. Refused on a cold (power-cycled) scanner. Hardware-"
+             "verified once (docs/test-log.md Test 89)")
 
     p_version = sub.add_parser("version", help="print the driver version and git revision")
     p_version.set_defaults(func=_cmd_version)

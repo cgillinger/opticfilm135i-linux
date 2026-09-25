@@ -56,9 +56,11 @@ next-strip mode assumes the transport is already homed and positioned
 from a prior load/scan/eject in this power-on, exactly as the vendor's
 between-strip load assumes.
 
-NOT yet hardware-verified in this driver -- the vendor capture proves
-the vendor's own behaviour, not ours; docs/test-log.md Test 89 is the
-pending driver A/B. Not combined with ``release_only`` or
+Hardware-verified once (docs/test-log.md Test 89, 2026-09-25): straight
+after a driver eject, feed completion 0xf455 and traverse 0xdc55 on the
+first poll, reg 0x32 read 0xbf beforehand (LOAD's literal 0x1d ack did
+not matter for the grip), and the following scan positioned exactly as
+the strip before it. Not combined with ``release_only`` or
 ``double_jog``.
 """
 
@@ -120,9 +122,9 @@ To recover:
   2. Run the FULL `of135i load` (with the jog and the reinsert prompt),
      not `--next-strip`.
 
---next-strip is NOT yet hardware-verified on this driver (docs/test-
-log.md Test 89 is pending); if the strip really was at the stop and this
-still happens, treat it as unverified and use the full load."""
+--next-strip has been hardware-verified once (docs/test-log.md Test
+89); if the strip really was at the stop and this still happens, report
+it and use the full load."""
 
 
 def run(ask=input, release_only: bool = False, double_jog: bool = False,
