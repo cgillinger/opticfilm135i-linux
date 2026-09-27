@@ -310,6 +310,52 @@ def test_a_scan_after_eject_runs_open_then_load():
           "(open reached the wire, failed closed)")
 
 
+def test_a_scan_after_eject_accepts_the_last_scan_profiles_regs_3b_3c():
+    """Test 90 (2026-09-27): the first hardware run of the Ejected kind
+    refused before writing anything because regs 0x3b/0x3c read 0x02/0x00
+    -- the values the 600 dpi scan profile leaves and an eject never
+    rewrites -- against a 0x00/0x00 requirement copied from the jog case.
+    The Ejected kind now refuses only the base-table 0xff/0xff (Test 44)
+    and runs "open", which rewrites both registers before "load"."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_a_scan_after_eject_accepts_the_last_scan_profiles_regs_3b_3c")
+
+    r = _run(probe, "scenario", "load-after-eject-scan-regs")
+    assert len(r["statuses"]) == 2, r["statuses"]
+    eject, load = r["statuses"]
+    assert eject[0] == SANE_STATUS_GOOD, eject
+    # Not the wrong-state refusal: "open" reached the wire (and failed
+    # closed on the mock, like every open run in this suite).
+    assert load[0] == SANE_STATUS_IO_ERROR, load
+    assert "magazine open sequence" in load[1], load[1]
+    assert "not in the state" not in load[1], load[1]
+    print("test_a_scan_after_eject_accepts_the_last_scan_profiles_regs_3b_3c OK "
+          "(0x02/0x00 accepted, open reached the wire)")
+
+
+def test_a_scan_after_eject_still_refuses_the_base_table_state():
+    """The one 0x3b/0x3c state the Ejected kind refuses: 0xff/0xff, the
+    base-table-only state eject itself refuses from (Test 44). Read-only
+    INVAL, Failed, mark cleared."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_a_scan_after_eject_still_refuses_the_base_table_state")
+
+    r = _run(probe, "scenario", "load-after-eject-base-table")
+    assert len(r["statuses"]) == 2, r["statuses"]
+    eject, load = r["statuses"]
+    assert eject[0] == SANE_STATUS_GOOD, eject
+    assert load[0] == SANE_STATUS_INVAL, load
+    assert "0xff/0xff" in load[1], load[1]
+    assert "the eject leaves it in" in load[1], load[1]
+    assert "Nothing was written" in load[1], load[1]
+    assert r["mark"] == "absent", r["mark"]
+    assert r["text"].startswith("failed"), r["text"]
+    print("test_a_scan_after_eject_still_refuses_the_base_table_state OK "
+          "(refused read-only)")
+
+
 def test_a_scan_after_eject_without_a_magazine_refuses_and_keeps_the_mark():
     """The strip has not been pushed back in yet (or was never taken out)
     -- the loader sensor still reads clear. Read-only NO_DOCS, worded for
@@ -823,6 +869,8 @@ def main() -> int:
         test_the_status_line_is_readable_and_comes_first,
         test_the_status_line_reports_a_load_pending_from_another_process,
         test_a_scan_after_eject_runs_open_then_load,
+        test_a_scan_after_eject_accepts_the_last_scan_profiles_regs_3b_3c,
+        test_a_scan_after_eject_still_refuses_the_base_table_state,
         test_a_scan_after_eject_without_a_magazine_refuses_and_keeps_the_mark,
         test_a_scan_after_eject_on_a_cold_scanner_refuses_and_clears_the_mark,
         test_an_ejected_mark_from_another_process_runs_open_then_load,

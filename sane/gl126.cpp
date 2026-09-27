@@ -1070,19 +1070,40 @@ void magazine_load_if_pending(Genesys_Device* dev)
     }
     std::uint8_t reg3b = dev->interface->read_register(0x3B);
     std::uint8_t reg3c = dev->interface->read_register(0x3C);
-    if (reg01 != 0x22 || !sensor.idle_class() || reg3b != 0x00 || reg3c != 0x00) {
+    // Regs 0x3b/0x3c differ by KIND. The jog leaves the OPEN table's
+    // 0x00/0x00 (Released). An eject rewrites neither register, so after
+    // an eject they still hold the LAST SCAN PROFILE's values: 0x02/0x00
+    // after a 600 dpi scan (Test 90, 2026-09-27 -- the first hardware run
+    // of the Ejected kind refused on exactly this, with the 0x00/0x00
+    // requirement copied from the jog case), 0x00/0x01 after every other
+    // profile (the profiles' own captured reads of 0x3b22/0x3c22). The
+    // only 0x3b/0x3c state any evidence marks unsafe is the base-table-
+    // only 0xff/0xff of Test 44 -- the state eject itself refuses from
+    // -- so the Ejected kind refuses that and nothing else here; the
+    // "open" run below rewrites both to 0x00/0x00 before "load" anyway.
+    bool regs_ok = kind == gl126::MagazineMarkKind::Ejected
+                       ? (reg3b != 0xff && reg3c != 0xff)
+                       : (reg3b == 0x00 && reg3c == 0x00);
+    if (kind == gl126::MagazineMarkKind::Ejected) {
+        DBG(DBG_info, "gl126: next-strip load: regs 0x3b/0x3c = 0x%02x/0x%02x "
+            "(left by the last scan profile; open rewrites them)\n", reg3b, reg3c);
+    }
+    if (reg01 != 0x22 || !sensor.idle_class() || !regs_ok) {
         set_magazine_state(dev, MagazineState::Failed);
         gl126::magazine_mark_clear();
         const char* left_by = kind == gl126::MagazineMarkKind::Ejected
                                   ? "the eject leaves it in" : "the jog leaves it in";
+        const char* regs_expected = kind == gl126::MagazineMarkKind::Ejected
+                                        ? "neither 0x3b nor 0x3c reading 0xff"
+                                        : "0x00/0x00";
         throw SaneException(SANE_STATUS_INVAL,
                             "gl126: the scanner is not in the state %s "
                             "(reg 0x01 = 0x%02x, reg 0x101 = 0x%02x, regs 0x3b/0x3c = "
                             "0x%02x/0x%02x; expected 0x22, the idle class with the loader "
-                            "sensor set, and 0x00/0x00). A load is not attempted from an "
+                            "sensor set, and %s). A load is not attempted from an "
                             "unverified state. Power-cycle the scanner, then press Load "
                             "film. Nothing was written.",
-                            left_by, reg01, sensor.status, reg3b, reg3c);
+                            left_by, reg01, sensor.status, reg3b, reg3c, regs_expected);
     }
 
     MagazineFailGuard guard(dev);

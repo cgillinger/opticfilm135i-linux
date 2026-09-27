@@ -17,7 +17,13 @@ one exists; "offline" means implemented and tested without the scanner.
 - SANE backend: the same next-strip load happens automatically on the next
   scan after `eject-film` (swap the strip, push it in, scan); the magazine
   mark now records released vs ejected so it works across scanimage calls.
-  Offline only so far (Test 90 pending).
+  Hardware-verified from scanimage 2026-09-27 (Test 90): open + load,
+  no jog, feed and traverse on the first poll, the frame positioned like
+  the one after a full load. The first run found and fixed a backend
+  bug: the post-eject precondition required regs 0x3b/0x3c = 0x00/0x00
+  (what the jog leaves), but an eject leaves the last scan profile's
+  values, so every next-strip load after a scan would have been refused;
+  now only the base-table 0xff/0xff is refused.
 - Cold start shortened: the 15 s initial wait that could never succeed is
   gone (Test 78); the nine motor completions of the cold start fail closed
   in both the Python driver and the backend.

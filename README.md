@@ -70,8 +70,8 @@ functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md]
   latched magazine after a power cycle (Tests 75–77), and since
   2026-09-25 an eject also leaves a *next-strip* load pending — swap the
   strip, push it to the stop, and the next scan loads it with no jog and
-  no reinsert step (implemented and offline-tested; Test 90, hardware
-  verification, is pending). Ordinary scanning needs no
+  no reinsert step (hardware-verified from scanimage, Test 90, n = 1).
+  Ordinary scanning needs no
   `--force-calibration`. Install:
   **[docs/sane-install.md](docs/sane-install.md)**. A submission package
   for the SANE project is prepared and under review

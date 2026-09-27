@@ -6338,40 +6338,105 @@ owner's scanning app got its "Nästa remsa" button the same day. Open:
 the reg 0x32 literal (TODO in `Scanner.load_magazine()`) — harmless at
 n = 1, still the first place to look if a later next-strip feed fails.
 
-### Test 90 (pending): SANE backend next-strip load — plan
+### Test 90: SANE backend next-strip load on hardware — a refusal bug found and fixed, then PASS (2026-09-27)
 
 **What.** `docs/sane-wp4-magazine.md` §10 (2026-09-25) brought Test
-88/89's evidence into the C++ backend: `Ejected` is now a second kind of
+88/89's evidence into the C++ backend: `Ejected` is a second kind of
 pending load (alongside `Released`), so `load_document()` completes it
 automatically at the next `sane_start` — no `load-film` press, no
-reinsert prompt, just the strip swapped and pushed to the stop. Verified
-OFFLINE only so far (`tests/gl126_magazine_probe.cpp`,
-`tests/test_sane_magazine.py`, 25/25 in that suite): the state machine,
-the refusals, and that `open` reaches the wire before `load` on the
-zero-answering test interface. Nothing here has touched real hardware.
+reinsert prompt, just the strip swapped and pushed to the stop. Until
+this run it was verified OFFLINE only (`tests/gl126_magazine_probe.cpp`,
+`tests/test_sane_magazine.py`).
 
-**Run, from a SANE frontend (`scanimage`), same power-on throughout:**
+**Setup.** Installed backend (`tools/sane_install.sh`, library identical
+to the clone build), `scanimage` throughout, `SANE_DEBUG_GENESYS=8`, one
+power-on for the whole run; every step its own process, so the on-disk
+magazine mark carried the state between steps (the cross-process case
+the plan asked for is therefore the main run, not a variant). The
+scanner started cold (reg 0x01 = 0x00), magazine loose in the slot with
+strip A. Files: private analysis area `t90-20260927/` (one log per
+step, `a-f1-600.tiff`, `b-f1-600.tiff`); previews for the owner in
+`~/Bilder/opticfilm-granskning/t90-20260927/`.
 
-1. `--load-film=yes` (full jog path) → reseat the magazine to the stop.
-2. Scan frame 1 (600 dpi, `--mode Color`).
-3. `--eject-film=yes`.
-4. Swap the strip, push the new one in to the stop.
-5. Scan frame 1 again — **no `--load-film=yes` this time.**
+A note on syntax first: the plan said `--load-film=yes`; scanimage
+rejects that ("option '--load-film' doesn't allow an argument") before
+`sane_start`, nothing written. The button options are `-n --load-film`
+and `-n --eject-film`.
 
-**Acceptance.** Step 5's backend log shows `open` then `load` (no jog):
-feed completion `0xf455`, traverse completion `0xdc55` (Test 89's
-values). The resulting frame positions like step 2's (FEEDL, POSITION
-time, gain/offset). Step 5's eject is normal. Failure signature: `0xfc`
-at the feed completion — same recovery as every other magazine-sequence
-failure, a power cycle followed by the full jog path (`--load-film=yes`
-+ reseat), no other recovery attempted.
+**Strip A (the full path).** `-n --load-film`: cold start (nine motor
+completions, all 0xf8, 18 s), OPEN, jog (four completions 0xf8 on the
+first poll), `magazine unknown -> released`, exit 0. Owner took the
+magazine out and pushed it in to the stop. Scan frame 1, 600 dpi,
+`--mode Color`: the Released mark drove the load — feed 0xf4 and
+traverse 0xdc on the first polls (28 ms), `-> loaded`; gain 0x2c/0x20/
+0x27; FEEDL 6519; POSITION 1433 ms; PARK normal; TIFF 876 x 927. `-n
+--eject-film`: 0xf8 after 0.94 s, `-> ejected`, mark file on disk reads
+`ejected … libusb:001:005`. Owner swapped in strip B and pushed it to
+the stop.
 
-**Cross-process variant**, also to run: `scanimage --eject-film=yes` in
-one process, a plain scan (no load option) in the next — proves the
-on-disk "ejected" mark (§10.1), not just in-process state, drives the
-next-strip load, exactly as the Released mark's cross-process case was
-proven in Test 77.
+**Strip B, first attempt — REFUSED before any write (the finding).**
+The plain scan read reg 0x01 = 0x22, reg 0x101 = 0xf8, then regs
+0x3b/0x3c = **0x02/0x00** and refused with the generic wrong-state
+`SANE_STATUS_INVAL` (state Failed, mark cleared, exit 4, four register
+reads and no write). The Ejected kind had inherited the Released kind's
+requirement 0x3b/0x3c == 0x00/0x00 — what the OPEN table writes and the
+jog leaves. But an eject rewrites neither register, so after an eject
+they hold the LAST SCAN PROFILE's values: 0x02/0x00 after 600 dpi
+(this run), 0x00/0x01 after 1200/2400/3600/7200/IR (the profiles' own
+captured reads of 0x3b22/0x3c22, `of135i/tables*.py`). The check would
+have refused every next-strip load after every scan, at any dpi; the
+offline suite never caught it because every Ejected scenario seeded
+0x00/0x00. The only 0x3b/0x3c state any evidence marks unsafe is the
+base-table-only 0xff/0xff of Test 44 — the state `eject` itself refuses
+from — and OPEN, which the Ejected path runs before LOAD precisely so
+the loader profile is re-established, rewrites both registers anyway.
 
-**Not yet run.** This entry is the plan only; the result goes in a
-follow-up entry once the owner runs it.
+**Fix (offline, same session, `sane/gl126.cpp`).** For the Ejected
+kind the 0x3b/0x3c precondition is now "neither reads 0xff"; the
+Released kind keeps 0x00/0x00; the refusal message states which
+expectation applied; the values are logged (`next-strip load: regs
+0x3b/0x3c = …`). Two new probe scenarios (`load-after-eject-scan-regs`:
+0x02/0x00 accepted, `open` reaches the wire; `load-after-eject-base-
+table`: 0xff/0xff still refused read-only, Failed, mark cleared), suite
+25 → 27, build 0 warnings, integration patch unchanged. Reinstalled by
+the owner (`sudo tools/sane_install.sh install`), library identical to
+the build. The scanner had not been touched by the refusal, so the
+hardware still stood in the post-eject state with strip B pushed in;
+only the mark was gone (Failed clears it), and the owner rewrote it by
+hand with the exact contents the eject had written. Status then read
+"ejected earlier -- push in and scan".
 
+**Strip B, second attempt — the next-strip load from C++.** The plain
+scan, no `--load-film`:
+
+| | strip A (after Load film + reseat) | strip B (after Eject film + swap, NO Load film) |
+|---|---|---|
+| programs run by `load_document` | `load` | `open`, then `load` — no jog |
+| regs 0x3b/0x3c before | — | 0x02/0x00 (logged) |
+| feed completion | 0xf4, first poll | 0xf4, first poll |
+| traverse completion | 0xdc, 4 polls / 28 ms | 0xdc, 8 polls / 58 ms |
+| gain codes | 0x2c / 0x20 / 0x27 | 0x2c / 0x21 / 0x27 |
+| FEEDL | 6519 | 6519 |
+| POSITION completion | 1433 ms | 1428 ms |
+| PARK (op 16) | 0xf8, 3837 ms | 0xf8, 3838 ms |
+| TIFF | 876 x 927, 16-bit | 876 x 927, 16-bit |
+| eject afterwards | 0xf8, 943 ms | 0xf8, 943 ms |
+| exit | 0 | 0 |
+
+Both frames are whole, distinct pictures from two different strips,
+both aperture edges inside the window, no banding (session's look at a
+normalised positive of each; not a production eye check). Owner's sound
+report for the next-strip load: nothing abnormal. The mark was
+consumed by the load and rewritten as `ejected` by the final eject, so
+the scanner ends ejected with a next-strip load pending, as designed.
+
+**Verdict: PASS (n = 1), with one real bug fixed on the way.** The
+backend's next-strip load runs `open` + `load` with no jog and no
+reinsert, engages on the first poll exactly like the Python driver's
+(Test 89: `f455`/`dc55`), and the frame after it positions identically
+to the frame after the full load. The refusal was in the backend's own
+precondition, not in the hardware or the sequence, and it was found by
+the first real eject-then-scan the backend ever ran — which is what the
+offline seeds could not model. Unverified as before: the reg 0x32
+literal in the LOAD table (harmless at n = 2 across both
+implementations).

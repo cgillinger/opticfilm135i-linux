@@ -867,8 +867,12 @@ numbers. Production use in the owner's scanning app from that day.
 Brought into the SANE backend the same day too (docs/sane-wp4-
 magazine.md §10): an eject now leaves a next-strip load pending, and
 `load_document()` completes it with `open` then `load`, no jog —
-offline-tested only (25/25, tests/test_sane_magazine.py); **Test 90,
-hardware verification, is pending.**
+**Test 90 PASSED 2026-09-27 (n = 1)** from scanimage: open + load, no
+jog, first-poll completions, identical positioning — after the first
+attempt exposed a backend bug (the post-eject precondition demanded the
+jog's 0x3b/0x3c = 0x00/0x00; an eject leaves the last scan profile's
+values) that was fixed offline in the same session (27/27 in the suite).
+The digiKam in-process variant has not been run.
 
 **digiKam dialog usability (owner report, 2026-09-25).** The owner tried
 the backend from digiKam and found the dialog too cluttered to get a scan
@@ -884,5 +888,5 @@ can carry the next step more plainly, and whether a one-page "digiKam:
 load, scan, eject" walkthrough with screenshots belongs in
 docs/sane-install.md. Opening the dialog on a connected scanner writes
 nothing (sane_open writes no register), so a review session can look at
-the dialog without a motor move. Not scheduled; pairs naturally with
-Test 90.
+the dialog without a motor move. Not scheduled. (Test 90 ran without it
+on 2026-09-27; the review is still open.)

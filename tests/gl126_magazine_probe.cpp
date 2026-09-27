@@ -396,6 +396,32 @@ int cmd_scenario(int argc, char** argv)
         seed(dev, 0x3B, 0x00);
         seed(dev, 0x3C, 0x00);
         call_hook(dev, "load");        // must run "open" (fails closed on the mock)
+    } else if (scenario == "load-after-eject-scan-regs") {
+        // Test 90's refusal (2026-09-27): after a real eject regs 0x3b/
+        // 0x3c hold the LAST SCAN PROFILE's values -- 0x02/0x00 after a
+        // 600 dpi scan on the device -- not the 0x00/0x00 the jog leaves,
+        // and the first hardware run of the Ejected kind refused on
+        // exactly that. The Ejected kind must accept them (only the
+        // base-table 0xff/0xff is refused) and run "open" -- which fails
+        // closed on the mock exactly like load-after-eject does.
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);
+        call_hook(dev, "eject");       // -> Ejected (mark: ejected)
+        seed(dev, 0x101, 0xF8);        // strip pushed in
+        seed(dev, 0x3B, 0x02);         // what the 600 dpi profile leaves
+        seed(dev, 0x3C, 0x00);
+        call_hook(dev, "load");        // must run "open" (fails closed on the mock)
+    } else if (scenario == "load-after-eject-base-table") {
+        // The one 0x3b/0x3c state the Ejected kind still refuses: Test
+        // 44's base-table-only 0xff/0xff. Read-only INVAL, state Failed,
+        // mark cleared -- the generic wrong-state refusal.
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);
+        call_hook(dev, "eject");       // -> Ejected (mark: ejected)
+        seed(dev, 0x101, 0xF8);
+        seed(dev, 0x3B, 0xFF);
+        seed(dev, 0x3C, 0xFF);
+        call_hook(dev, "load");        // must refuse INVAL, no motor write
     } else if (scenario == "load-after-eject-cold") {
         // Ejected, then the scanner reads COLD (reg 0x01 = 0x00) at the
         // next scan -- a power cycle happened after the eject. A next-

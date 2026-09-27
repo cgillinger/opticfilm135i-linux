@@ -674,8 +674,18 @@ magazine_program(dev, "load", ...)`, both under the same
 ### 10.3 Preconditions and refusals
 
 The same three hardware reads as the Released path (reg 0x01 == 0x22;
-loader-sensor bit set with the idle status class; regs 0x3b/0x3c ==
-0x00), plus one new check specific to the Ejected kind, in this order:
+loader-sensor bit set with the idle status class; regs 0x3b/0x3c),
+plus one new check specific to the Ejected kind, in this order — with
+one difference in what regs 0x3b/0x3c must read, learned on hardware
+(Test 90, 2026-09-27): the jog leaves the OPEN table's 0x00/0x00, but an
+eject rewrites neither register, so after an eject they hold the LAST
+SCAN PROFILE's values (0x02/0x00 after 600 dpi, 0x00/0x01 after every
+other profile). The first hardware run refused on exactly that, with
+the 0x00/0x00 requirement copied from the Released kind. The Ejected
+kind therefore requires only that neither register reads 0xff — the
+base-table-only state of Test 44, the one state `eject` itself refuses
+from — and `open` rewrites both to 0x00/0x00 before `load` anyway
+(§10.2). The Released kind keeps 0x00/0x00.
 
 1. **Cold (reg 0x01 == 0x00):** a power cycle happened between the eject
    and this scan. A next-strip load assumes the transport is still homed
@@ -692,11 +702,11 @@ loader-sensor bit set with the idle status class; regs 0x3b/0x3c ==
    for a strip swap rather than the Released kind's "reseat" wording.
    Mark KEPT — pushing the magazine in and scanning again is the whole
    fix, same rule as the Released kind's equivalent refusal.
-3. **Anything else wrong** (idle class, regs 0x3b/0x3c): the generic
-   wrong-state refusal, unchanged in shape — `SANE_STATUS_INVAL`, state
-   → Failed, mark cleared — with one word changed in the message ("the
-   eject leaves it in" instead of "the jog leaves it in") so it stays
-   accurate for the kind that actually applied.
+3. **Anything else wrong** (idle class, regs 0x3b/0x3c as above): the
+   generic wrong-state refusal, unchanged in shape — `SANE_STATUS_INVAL`,
+   state → Failed, mark cleared — with the message naming the kind that
+   applied ("the eject leaves it in" / "the jog leaves it in") and the
+   0x3b/0x3c expectation that applied.
 
 **The trade-off this accepts, spelled out:** a scan started after an
 eject WITHOUT pushing the magazine to the stop first can still reach the
@@ -724,18 +734,22 @@ is Unknown but the on-disk mark names this device with kind Ejected —
 mirroring exactly how `kMagazinePending` already worked for a Released
 mark (Test 77).
 
-### 10.5 What is NOT yet verified
+### 10.5 Hardware verification (Test 90, 2026-09-27)
 
-This section is implemented and tested OFFLINE only — the built backend
-in test mode (`tests/gl126_magazine_probe.cpp`,
-`tests/test_sane_magazine.py`), which proves the state machine, the
-refusals, and that `open` really does reach the wire before `load`, but
-proves nothing about what the real hardware does with a next-strip
-load run from C++. **Test 90 is pending** (see `docs/test-log.md`): a
-SANE-frontend equivalent of Test 89 — Load film, reseat, scan, Eject
-film, swap the strip, push it in, scan again with NO Load film press —
-comparing the second load's timing and the resulting frame against the
-first, exactly as Test 89 compared the Python driver's two strips. Until
-Test 90 runs, "Ejected is a pending load" is a design carried over from
-Test 89's evidence about the Python driver, not a claim about this
-backend's own hardware behaviour.
+Verified on the device from `scanimage`, one power-on, every step its
+own process (so the on-disk mark carried the kind across processes):
+Load film → reseat → scan frame 1 (600 dpi) → Eject film → strip swapped
+and pushed to the stop → scan frame 1 with NO Load film press. The
+second scan ran `open` then `load` with no jog, feed and traverse
+completing on the first polls (0xf4 / 0xdc), and positioned the frame
+identically to the first (FEEDL 6519, POSITION 1428 vs 1433 ms, gain
+within ±1 code). **PASS, n = 1** — after one real bug: the first
+attempt refused read-only on regs 0x3b/0x3c = 0x02/0x00 (§10.3), fixed
+offline in the same session and re-run on the untouched hardware.
+`docs/test-log.md` Test 90 has the numbers. What the offline suite
+proves is unchanged (state machine, refusals, `open` before `load` on
+the wire); what it could not model — the register state a real eject
+leaves — is now covered by two scenarios seeded with the measured
+values. The in-process case (digiKam: Eject film, swap, scan in one
+dialog session) has not been run; it goes through the same code with
+the in-process state instead of the mark.
