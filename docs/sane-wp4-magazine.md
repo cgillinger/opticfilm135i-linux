@@ -734,6 +734,34 @@ is Unknown but the on-disk mark names this device with kind Ejected —
 mirroring exactly how `kMagazinePending` already worked for a Released
 mark (Test 77).
 
+**Reworded again, 2026-09-27 (§10.8): all seven values now name "Scan".**
+The texts above were the wording live through Test 90/91; after the
+second digiKam session (§10.8) they were rewritten so every value ends
+by naming the frontend's actual button instead of a generic "scan" the
+operator had to interpret for themselves:
+
+| kind | before (Test 76/90/91) | after (this task) |
+|---|---|---|
+| `kMagazineUnknown` | `unknown -- press Load film` | `not loaded -- press Load film` |
+| `kMagazineReleased` | `released -- reseat, then scan` | `released -- take out, push in, Scan` |
+| `kMagazinePending` | `reseat the magazine, then scan` | `released earlier -- reseat, then Scan` |
+| `kMagazineLoaded` | `loaded -- scan, then Eject film` | `loaded -- press Scan, or Eject film` |
+| `kMagazineEjected` | `ejected -- push in, then scan` | `ejected -- swap strip, push in, Scan` |
+| `kMagazineEjectedPending` | `ejected earlier -- push in and scan` | `ejected earlier -- push in, then Scan` |
+| `kMagazineFailed` | `failed -- power-cycle the scanner` | `failed -- power-cycle, then Load film` |
+
+"Scan" is capitalised on purpose in each: it names digiKam's Basic-tab
+button by the word that button actually shows (KSaneCore labels it
+"Scan" in English, "Läs in" in Swedish — the button's own text, not
+this backend's, so this cannot make the two agree on every desktop, but
+it at least makes the STATUS LINE consistent with itself and with the
+new tooltip, §10.8). All seven stay under 40 characters and stay
+distinct (`tests/test_sane_magazine.py`,
+`test_the_status_line_is_readable_and_comes_first`), and `kMagazineUnknown`'s
+first word changed from "unknown" to "not loaded" — the internal
+`MagazineState::Unknown` name is unchanged, only the text an operator
+reads.
+
 ### 10.5 Hardware verification (Test 90, 2026-09-27)
 
 Verified on the device from `scanimage`, one power-on, every step its
@@ -807,3 +835,61 @@ widget checks for cannot occur. The state machine, the mark, and the
 five kinds of text `magazine_state_text()` can return are all unchanged
 by this — only whether a frontend has any chance of translating the
 result.
+
+### 10.8 The status line rendered disabled, and the owner's verdict (2026-09-27)
+
+A second live digiKam session ran the same evening as Test 91, after the
+English-only fix from §10.7 was installed. It passed on the mechanics —
+Load film, reseat, Scan, Eject film, swap strip, Scan again with no Load
+film (the next-strip load, this time in-process rather than across two
+`scanimage` invocations) all worked, and both the cross-process and
+in-process next-strip loads are now hardware-verified (`docs/test-log.md`
+Test 91, second paragraph). But the status line was still rendered
+DISABLED — KSaneWidgets' `LabeledCombo` greys out both the label and the
+value for any option that is `SANE_CAP_SOFT_DETECT` without
+`SANE_CAP_SOFT_SELECT`, which is what `magazine` had been since Test 76
+("read-only, so the widget can't be misused"). The operator needed to be
+walked through the sequence from outside the dialog to complete it. His
+verdict, verbatim: **"no one can do this process without a written
+manual."**
+
+That is a limitation of the KSane dialog surface, not a bug in it: SANE
+has no mechanism for a backend to pop up a prompt, so a status line and a
+written cheat sheet are the only channel a backend has at all — and a
+status line rendered in grey text nobody expects to be able to read is
+barely a channel. Three changes, all offline, all in this same change:
+
+1. **The option is now settable.** `cap` gains `SANE_CAP_SOFT_SELECT`
+   (`genesys.cpp`, `init_options`): `SANE_CAP_SOFT_SELECT |
+   SANE_CAP_SOFT_DETECT` instead of `SANE_CAP_SOFT_DETECT` alone. This
+   renders the label and value ENABLED (black) in KSaneWidgets. Nothing
+   about the state machine or the mark becomes settable, though: the new
+   `case OPT_MAGAZINE` in `set_option_value()` (`genesys.cpp`) is a
+   documented no-op — it sets only `*myinfo |= SANE_INFO_RELOAD_OPTIONS`,
+   which makes the frontend immediately re-read the option and re-display
+   the TRUE value, so a SET "succeeds" (any of the seven listed values is
+   accepted, `SANE_STATUS_GOOD`) while changing nothing observable. A
+   value outside the seven is rejected before this handler ever runs, by
+   SANE core's own `sanei_constrain_value` (the string-list constraint
+   check in `sane_control_option_impl`) — unmodified, and exercised
+   through the real path by
+   `tests/test_sane_magazine.py`'s `test_setting_the_status_line_is_a_no_op`.
+2. **All seven values reworded to name "Scan"** — §10.4 above has the
+   before/after table. A value like "released -- reseat, then scan" left
+   the operator to work out for themselves which button "scan" meant;
+   "released -- take out, push in, Scan" names it.
+3. **The option's tooltip (`desc`) now spells out the whole procedure**:
+   "1. Load film. 2. Take the magazine fully out, push it back in to the
+   stop. 3. Set Frame, press Scan (Basic tab). 4. Eject film. Next strip:
+   swap, push in to the stop, Scan -- no Load film." — the same steps as
+   the README's new "digiKam cheat sheet", so the two channels a SANE
+   frontend actually has (a status line and a written sheet) say the same
+   thing. The option is also retitled from "Film magazine" to "Magazine --
+   next step".
+
+**None of this has been tried live.** The next digiKam session is what
+would show whether an enabled, better-worded status line and a spelled-
+out tooltip actually reduce how much external guidance the process
+needs, or only make the status line legible without closing the gap the
+owner's verdict named. `docs/ROADMAP.md` "digiKam dialog usability"
+tracks that as still open.

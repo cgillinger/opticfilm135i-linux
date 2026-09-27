@@ -73,7 +73,7 @@ index 02cfc43..8813651 100644
  
  
 diff --git a/backend/genesys/genesys.cpp b/backend/genesys/genesys.cpp
-index d7ec422..3d1b376 100644
+index d7ec422..2f8154b 100644
 --- a/backend/genesys/genesys.cpp
 +++ b/backend/genesys/genesys.cpp
 @@ -38,6 +38,13 @@
@@ -90,7 +90,7 @@ index d7ec422..3d1b376 100644
  #include "gl124_registers.h"
  #include "gl841_registers.h"
  #include "gl842_registers.h"
-@@ -149,6 +156,23 @@ static const SANE_Range enhance_range = {
+@@ -149,6 +156,24 @@ static const SANE_Range enhance_range = {
  /**
   * range for expiration time
   */
@@ -101,8 +101,9 @@ index d7ec422..3d1b376 100644
 +// the driver repo), and the vendor's own WIA batch capture positioned
 +// to frames 5 and 6 directly (FEEDL 49796 and 60174). Derived from the
 +// constant, not a second copy of the number, so the two cannot drift.
-+// GL126: how much room the read-only "magazine" option gives its text
++// GL126: how much room the "magazine" status line gives its text
 +// (gl126::magazine_state_text(), docs/sane-wp4-magazine.md section 2).
++// Settable since 2026-09-27, but SET is a no-op -- see OPT_MAGAZINE below.
 +#define GL126_MAGAZINE_TEXT_SIZE 256
 +
 +static const SANE_Range gl126_frame_range = {
@@ -114,7 +115,7 @@ index d7ec422..3d1b376 100644
  static const SANE_Range expiration_range = {
    -1,	        /* minimum */
    30000,	/* maximum */
-@@ -3657,11 +3681,19 @@ static void genesys_flatbed_calibration(Genesys_Device* dev, Genesys_Sensor& sen
+@@ -3657,11 +3682,19 @@ static void genesys_flatbed_calibration(Genesys_Device* dev, Genesys_Sensor& sen
      }
  
      // send default shading data
@@ -139,7 +140,7 @@ index d7ec422..3d1b376 100644
      {
          scanner_move_to_ta(*dev);
      }
-@@ -3969,7 +4001,12 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -3969,7 +4002,12 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
    /* since not all scanners are set to wait for head to park
     * we check we are not still parking before starting a new scan */
      if (dev->parking) {
@@ -153,7 +154,7 @@ index d7ec422..3d1b376 100644
      }
  
      // disable power saving
-@@ -3990,21 +4027,30 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -3990,21 +4028,30 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
      }
  
    /* set top left x and y values by scanning the internals if flatbed scanners */
@@ -189,7 +190,7 @@ index d7ec422..3d1b376 100644
          dev->cmd_set->load_document(dev);
      }
  
-@@ -4017,7 +4063,17 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -4017,7 +4064,17 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
      dev->cmd_set->send_gamma_table(dev, sensor);
  
    /* try to use cached calibration first */
@@ -208,7 +209,7 @@ index d7ec422..3d1b376 100644
      {
          // calibration : sheetfed scanners can't calibrate before each scan.
          // also don't run calibration for those scanners where all passes are disabled
-@@ -4039,8 +4095,11 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -4039,8 +4096,11 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
          dev->cmd_set->move_back_home(dev, true);
      }
  
@@ -222,7 +223,7 @@ index d7ec422..3d1b376 100644
      {
          scanner_move_to_ta(*dev);
      }
-@@ -4059,9 +4118,12 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -4059,9 +4119,12 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
      {
          genesys_send_shading_coefficient(dev, sensor);
      }
@@ -237,7 +238,7 @@ index d7ec422..3d1b376 100644
  
      // start effective scan
      dev->cmd_set->begin_scan(dev, sensor, &dev->reg, true);
-@@ -4070,6 +4132,13 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -4070,6 +4133,13 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
          dev->interface->test_checkpoint("start_scan");
          return;
      }
@@ -251,7 +252,7 @@ index d7ec422..3d1b376 100644
  
    /*do we really need this? the valid data check should be sufficient -- pierre*/
    /* waits for head to reach scanning position */
-@@ -4283,6 +4352,7 @@ static Genesys_Settings calculate_scan_settings(Genesys_Scanner* s)
+@@ -4283,6 +4353,7 @@ static Genesys_Settings calculate_scan_settings(Genesys_Scanner* s)
      }
  
      settings.expiration_time = s->expiration_time;
@@ -259,7 +260,7 @@ index d7ec422..3d1b376 100644
  
      settings.exposure_lperiod = s->exposure_time;
  
-@@ -4476,6 +4546,27 @@ static void set_resolution_option_values(Genesys_Scanner& s, bool reset_resoluti
+@@ -4476,6 +4547,27 @@ static void set_resolution_option_values(Genesys_Scanner& s, bool reset_resoluti
  {
      auto resolutions = s.dev->model->get_resolutions(s.scan_method);
  
@@ -287,7 +288,7 @@ index d7ec422..3d1b376 100644
      s.opt_resolution_values.resize(resolutions.size() + 1, 0);
      s.opt_resolution_values[0] = resolutions.size();
      std::copy(resolutions.begin(), resolutions.end(), s.opt_resolution_values.begin() + 1);
-@@ -4550,6 +4641,15 @@ static void init_options(Genesys_Scanner* s)
+@@ -4550,6 +4642,15 @@ static void init_options(Genesys_Scanner* s)
    s->opt[OPT_MODE].size = max_string_size (mode_list);
    s->opt[OPT_MODE].constraint.string_list = mode_list;
    s->mode = SANE_VALUE_SCAN_MODE_GRAY;
@@ -303,7 +304,7 @@ index d7ec422..3d1b376 100644
  
    /* scan source */
      s->opt_source_values.clear();
-@@ -4737,6 +4837,87 @@ static void init_options(Genesys_Scanner* s)
+@@ -4737,6 +4838,101 @@ static void init_options(Genesys_Scanner* s)
    s->opt[OPT_CONTRAST].cap = SANE_CAP_SOFT_SELECT | SANE_CAP_SOFT_DETECT;
    s->contrast = 0;  // disable by default
  
@@ -329,12 +330,16 @@ index d7ec422..3d1b376 100644
 +     the mechanical stop in the MIDDLE of the sequence, and SANE has no way
 +     for a backend to ask for that during sane_start. So "Load film"
 +     releases the magazine (on a cold unit it brings the scanner up first)
-+     and the next scan performs the load. "Film magazine" is a read-only
-+     line saying where the magazine is, and what to do next. Inactive on
-+     every other chip -- no other genesys model has a magazine. */
++     and the next scan performs the load. "Magazine -- next step" is a
++     status line saying where the magazine is, and what to do next.
++     Inactive on every other chip -- no other genesys model has a
++     magazine. */
 +  s->opt[OPT_MAGAZINE].name = "magazine";
-+  s->opt[OPT_MAGAZINE].title = SANE_I18N ("Film magazine");
-+  s->opt[OPT_MAGAZINE].desc = SANE_I18N ("Where the film magazine is, and what to do next.");
++  s->opt[OPT_MAGAZINE].title = SANE_I18N ("Magazine -- next step");
++  s->opt[OPT_MAGAZINE].desc =
++    SANE_I18N ("1. Load film. 2. Take the magazine fully out, push it back in to the "
++               "stop. 3. Set Frame, press Scan (Basic tab). 4. Eject film. Next strip: "
++               "swap, push in to the stop, Scan -- no Load film.");
 +  s->opt[OPT_MAGAZINE].type = SANE_TYPE_STRING;
 +  s->opt[OPT_MAGAZINE].unit = SANE_UNIT_NONE;
 +  s->opt[OPT_MAGAZINE].size = GL126_MAGAZINE_TEXT_SIZE;
@@ -343,7 +348,17 @@ index d7ec422..3d1b376 100644
 +     it, which is noise for a line nobody can set (Test 76). */
 +  s->opt[OPT_MAGAZINE].constraint_type = SANE_CONSTRAINT_STRING_LIST;
 +  s->opt[OPT_MAGAZINE].constraint.string_list = gl126::magazine_state_values();
-+  s->opt[OPT_MAGAZINE].cap = SANE_CAP_SOFT_DETECT;   /* read-only */
++  /* SOFT_SELECT as well as SOFT_DETECT, even though nothing about the
++     magazine's state can actually be set: KSaneWidgets (libksane's
++     LabeledCombo, the widget it draws for every string-list option)
++     renders a SOFT_DETECT-only option disabled -- grey label, grey
++     value, barely readable. The operator's only channel for "what do I
++     do next" (SANE has no dialogs) was effectively invisible (Test 91,
++     2026-09-27, docs/test-log.md: "no one can do this process without a
++     written manual"). Making the option settable renders it enabled
++     (black) without it doing anything: see the OPT_MAGAZINE case in
++     set_option_value(), a documented no-op. */
++  s->opt[OPT_MAGAZINE].cap = SANE_CAP_SOFT_SELECT | SANE_CAP_SOFT_DETECT;
 +
 +  s->opt[OPT_LOAD_FILM].name = "load-film";
 +  s->opt[OPT_LOAD_FILM].title = SANE_I18N ("Load film");
@@ -391,7 +406,7 @@ index d7ec422..3d1b376 100644
    /* "Extras" group: */
    s->opt[OPT_EXTRAS_GROUP].name = "extras-group";
    s->opt[OPT_EXTRAS_GROUP].title = SANE_I18N ("Extras");
-@@ -4755,7 +4936,27 @@ static void init_options(Genesys_Scanner* s)
+@@ -4755,7 +4951,27 @@ static void init_options(Genesys_Scanner* s)
    s->opt[OPT_COLOR_FILTER].type = SANE_TYPE_STRING;
    s->opt[OPT_COLOR_FILTER].constraint_type = SANE_CONSTRAINT_STRING_LIST;
    /* true gray not yet supported for GL847 and GL124 scanners */
@@ -420,7 +435,7 @@ index d7ec422..3d1b376 100644
        s->opt[OPT_COLOR_FILTER].size = max_string_size (color_filter_list);
        s->opt[OPT_COLOR_FILTER].constraint.string_list = color_filter_list;
        s->color_filter = s->opt[OPT_COLOR_FILTER].constraint.string_list[1];
-@@ -5053,6 +5254,38 @@ static void init_options(Genesys_Scanner* s)
+@@ -5053,6 +5269,38 @@ static void init_options(Genesys_Scanner* s)
      s->opt[OPT_IGNORE_OFFSETS].cap = SANE_CAP_SOFT_DETECT | SANE_CAP_SOFT_SELECT |
                                       SANE_CAP_ADVANCED;
  
@@ -459,7 +474,7 @@ index d7ec422..3d1b376 100644
      calc_parameters(s);
  }
  
-@@ -5457,6 +5690,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5457,6 +5705,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
          throw SaneException("could not find the device to open: %s", devicename);
      }
  
@@ -492,7 +507,7 @@ index d7ec422..3d1b376 100644
      if (is_testing_mode()) {
          // during testing we need to initialize dev->model before test scanner interface is created
          // as that it needs to know what type of chip it needs to mimic.
-@@ -5473,6 +5732,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5473,6 +5747,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
          dev->interface->get_usb_device().open(dev->file_name.c_str());
      } else {
@@ -515,7 +530,7 @@ index d7ec422..3d1b376 100644
          dev->interface = std::unique_ptr<ScannerInterfaceUsb>{new ScannerInterfaceUsb{dev}};
  
          dbg.vstatus("open device '%s'", dev->file_name.c_str());
-@@ -5523,6 +5798,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5523,6 +5813,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
      // some hardware capabilities are detected through sensors
      dev->cmd_set->update_hardware_sensors (s);
@@ -528,7 +543,7 @@ index d7ec422..3d1b376 100644
  }
  
  SANE_GENESYS_API_LINKAGE
-@@ -5556,6 +5837,20 @@ sane_close_impl(SANE_Handle handle)
+@@ -5556,6 +5852,20 @@ sane_close_impl(SANE_Handle handle)
  
      auto* dev = it->dev;
  
@@ -549,7 +564,7 @@ index d7ec422..3d1b376 100644
      // eject document for sheetfed scanners
      if (dev->model->is_sheetfed) {
          catch_all_exceptions(__func__, [&](){ dev->cmd_set->eject_document(dev); });
-@@ -5579,12 +5874,26 @@ sane_close_impl(SANE_Handle handle)
+@@ -5579,12 +5889,26 @@ sane_close_impl(SANE_Handle handle)
      dev->clear();
  
      // LAMP OFF : same register across all the ASICs */
@@ -580,7 +595,7 @@ index d7ec422..3d1b376 100644
  
      // not freeing dev because it's in the dev list
      catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().close(); });
-@@ -5715,6 +6024,17 @@ static void get_option_value(Genesys_Scanner* s, int option, void* val)
+@@ -5715,6 +6039,17 @@ static void get_option_value(Genesys_Scanner* s, int option, void* val)
      case OPT_EXPIRATION_TIME:
          *reinterpret_cast<SANE_Word*>(val) = s->expiration_time;
          break;
@@ -598,7 +613,7 @@ index d7ec422..3d1b376 100644
      case OPT_CUSTOM_GAMMA:
          *reinterpret_cast<SANE_Word*>(val) = s->custom_gamma;
          break;
-@@ -5937,7 +6257,13 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
+@@ -5937,7 +6272,13 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
          {
            DISABLE(OPT_CONTRAST);
            DISABLE(OPT_BRIGHTNESS);
@@ -613,7 +628,7 @@ index d7ec422..3d1b376 100644
            ENABLE(OPT_CONTRAST);
            ENABLE(OPT_BRIGHTNESS);
          }
-@@ -5960,7 +6286,17 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
+@@ -5960,7 +6301,17 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
              s->mode = reinterpret_cast<const char*>(val);
  
              if (s->mode == SANE_VALUE_SCAN_MODE_GRAY) {
@@ -632,7 +647,7 @@ index d7ec422..3d1b376 100644
                      ENABLE(OPT_COLOR_FILTER);
                  }
                  create_bpp_list(s, dev->model->bpp_gray_values);
-@@ -6012,6 +6348,12 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
+@@ -6012,6 +6363,12 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
              }
              break;
          }
@@ -645,10 +660,32 @@ index d7ec422..3d1b376 100644
          case OPT_EXPIRATION_TIME: {
              if (*reinterpret_cast<SANE_Word*>(val) != s->expiration_time) {
                  s->expiration_time = *reinterpret_cast<SANE_Word*>(val);
-@@ -6092,6 +6434,20 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
+@@ -6092,6 +6449,42 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
              }
              break;
          }
++        case OPT_MAGAZINE: {
++            /* Deliberately a no-op: the state this option reports lives
++               in gl126's magazine state machine and the cross-process
++               mark (docs/sane-wp4-magazine.md), never in anything a SET
++               here could change. The option is settable anyway, only so
++               KSaneWidgets renders its label and value in black instead
++               of the disabled grey it uses for a read-only
++               (SOFT_DETECT-only) option -- Test 91 (2026-09-27,
++               docs/test-log.md): the operator could not read the status
++               line at all and had to be walked through the process from
++               outside the dialog. SANE_INFO_RELOAD_OPTIONS makes the
++               frontend re-fetch the option right after this SET, which
++               snaps KSane's combo back to the true value
++               (magazine_state_text()/the mark) regardless of what was
++               set -- so this "accepts" every listed value while
++               changing nothing. A value outside the constraint list
++               never reaches here: sanei_constrain_value()
++               (sane_control_option_impl, this file) rejects it before
++               set_option_value() is called. */
++            *myinfo |= SANE_INFO_RELOAD_OPTIONS;
++            break;
++        }
 +        case OPT_LOAD_FILM: {
 +            /* The release half of the magazine's two-step protocol
 +               (docs/sane-wp4-magazine.md). Exceptions propagate: a

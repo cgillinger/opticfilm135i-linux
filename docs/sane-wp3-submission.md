@@ -177,8 +177,11 @@ Earlier work covering the profiles, geometry and image path is in
 > mechanical stop in the middle of the sequence, and since SANE offers no
 > way to ask for that during `sane_start`, `load-film` performs the
 > release, the operator re-seats, and the next `sane_start` completes the
-> load. A read-only `magazine` option reports where it is believed to be.
-> All four options are inactive on every other ASIC.
+> load. A `magazine` option reports where it is believed to be; it
+> accepts a SET (so a frontend that greys out a strictly read-only
+> option still renders it legibly), but the value is fixed by the state
+> machine, not by the caller. All four options are inactive on every
+> other ASIC.
 >
 > The motor waits fall into two kinds, and which kind each one is, is
 > marked at the site in the generated tables.
@@ -330,6 +333,41 @@ inside the nine `gl126_*` files this table does not cover.
 | file | change | class | effect on other ASICs |
 |---|---|---|---|
 | `genesys.cpp`, `set_resolution_option_values` | for GL126 only, the resolution word list handed to the frontend is reversed to ascending (600 first) before being copied into `opt_resolution_values`; the value SELECTION below it (nearest-value pick, min-element default) is unchanged and remains order-independent | gated | none — every other ASIC's list is built from the same `get_resolutions()` call, still returned descending as `device.cpp`'s `MethodResolutions::get_resolutions()` always sorts it; only the GL126 branch reverses its own copy afterward |
+
+**Addendum, 2026-09-27, later the same evening (this task -- the
+digiKam dialog's second live session, `docs/test-log.md` Test 91's
+second paragraph, and the owner's verdict "no one can do this process
+without a written manual").** One more hunk in shared code, not yet
+folded into `sane/wp3-package/`.
+
+| file | change | class | effect on other ASICs |
+|---|---|---|---|
+| `genesys.cpp`, `init_options` (`OPT_MAGAZINE`) | `cap` changed from `SANE_CAP_SOFT_DETECT` (read-only) to `SANE_CAP_SOFT_SELECT \| SANE_CAP_SOFT_DETECT` (settable); title changed from "Film magazine" to "Magazine -- next step"; desc rewritten from one sentence to the whole four-step procedure | gated (inactive elsewhere) | none |
+| `genesys.cpp`, `set_option_value` (new `case OPT_MAGAZINE`) | a SET handler that changes nothing: it sets only `SANE_INFO_RELOAD_OPTIONS`, so the frontend re-reads and re-displays the true value regardless of what was sent | additive (a new case in a switch shared by every ASIC, reached only when `option == OPT_MAGAZINE`; `SANE_CAP_INACTIVE` on every other ASIC, so the case is never dispatched there) | none |
+
+**Rationale.** KSaneWidgets renders a `SANE_CAP_SOFT_DETECT`-only option
+(this port's own prior choice -- "read-only, so the widget can't be
+misused") DISABLED: grey label, grey value. That made the status line
+-- the operator's only channel for "what do I do next", since SANE has
+no dialogs -- effectively unreadable in the second live session, even
+though its values were already short and correctly ordered (Tests
+76/91). Adding `SANE_CAP_SOFT_SELECT` makes the option render enabled
+without giving it anything real to control: `sanei_constrain_value`
+(SANE core, unmodified) still rejects any value outside the seven
+listed ones before the handler ever runs, and a value that IS listed
+is accepted (`SANE_STATUS_GOOD`) and then immediately overridden by the
+`RELOAD_OPTIONS`-driven re-read -- the state machine and the on-disk
+mark are untouched either way. Tested through the real
+`sane_control_option` path (not the handler in isolation) in
+`tests/test_sane_magazine.py`'s `test_setting_the_status_line_is_a_no_op`
+(probe scenarios `magazine-set-accepts-a-listed-value-as-a-no-op` and
+`magazine-set-rejects-an-unlisted-value`, `tests/gl126_magazine_probe.cpp`).
+
+The seven value texts (each now names the frontend's own button,
+"Scan", instead of a generic "scan") and the tooltip's procedure text
+changed too, but both live entirely inside `sane/gl126.cpp` -- one of
+this port's own nine files, not shared code -- so, like the
+English-only change in the addendum above, they need no row here.
 
 **Offline coverage of the shared changes.** The op and geometry suites
 (`tests/test_sane_ops.py`, `test_sane_geometry.py`) prove the GL126 path

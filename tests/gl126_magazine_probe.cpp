@@ -49,7 +49,10 @@
          Runs one scripted scenario and prints, in order:
              KEY <device name>            (the mark's device key)
              STATUS <n> <message>         (one per hook call)
-             OPTSTATUS <n>                (one per option press)
+             OPTSTATUS <n>                (one per option press or SET)
+             OPTINFO <n>                  (the *info word after a magazine
+                                            SET; SANE_INFO_RELOAD_OPTIONS
+                                            is bit 1, value 2)
              STARTSTATUS <n> <message>    (scenarios that call sane_start)
              PROGRESS <msg>               (likewise)
              TEXT <the "magazine" option's value>
@@ -171,6 +174,26 @@ void press(SANE_Handle h, const char* name)
     SANE_Int info = 0;
     SANE_Status st = sane_control_option(h, opt, SANE_ACTION_SET_VALUE, nullptr, &info);
     std::printf("OPTSTATUS %d\n", static_cast<int>(st));
+}
+
+/* SET the "magazine" option through the REAL option path (task 1, the
+   2026-09-27 enabled-status-line change): reports the status code AND
+   the info word a frontend would see, so a test can assert
+   SANE_INFO_RELOAD_OPTIONS came back without the caller needing to know
+   its numeric value. */
+void set_magazine(SANE_Handle h, const char* value)
+{
+    int opt = find_opt(h, "magazine");
+    if (opt < 0) {
+        std::printf("OPTSTATUS -1\n");
+        return;
+    }
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%s", value);
+    SANE_Int info = 0;
+    SANE_Status st = sane_control_option(h, opt, SANE_ACTION_SET_VALUE, buf, &info);
+    std::printf("OPTSTATUS %d\n", static_cast<int>(st));
+    std::printf("OPTINFO %d\n", static_cast<int>(info));
 }
 
 void print_text(SANE_Handle h)
@@ -620,6 +643,34 @@ int cmd_scenario(int argc, char** argv)
         seed(dev, 0x01, 0x22);
         seed(dev, 0x101, 0xF0);           // loader sensor CLEAR
         do_start = true;
+    } else if (scenario == "magazine-set-accepts-a-listed-value-as-a-no-op") {
+        // Task 1 (2026-09-27): OPT_MAGAZINE is settable now (so KSane
+        // renders it enabled/black), but SET must never change the
+        // state or the on-disk mark -- GET afterwards must still return
+        // the TRUE text. Get to a real, non-default state first: the
+        // "nothing to do" eject (loader sensor already clear) is the one
+        // state transition in this file that succeeds GOOD without
+        // touching the wire at all (every OTHER hook call in this suite
+        // fails closed on the silent mock, by design -- see
+        // "eject-no-magazine"), so it is the only state reachable here
+        // to set the option AGAINST.
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);            // loader sensor CLEAR
+        call_hook(dev, "eject");           // -> Ejected, mark written, GOOD
+        // Set it to a DIFFERENT listed value than the current one,
+        // without hardcoding either string: the state values array's
+        // first entry (kMagazineUnknown) is never what "eject" left
+        // behind.
+        set_magazine(h, gl126::magazine_state_values()[0]);
+    } else if (scenario == "magazine-set-rejects-an-unlisted-value") {
+        // The constraint check happens in SANE core
+        // (sanei_constrain_value, called from sane_control_option_impl
+        // before set_option_value() ever runs) -- this exercises that
+        // real path, not a hand-rolled check in the handler.
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);
+        call_hook(dev, "eject");
+        set_magazine(h, "not one of the constrained values");
     } else {
         std::fprintf(stderr, "unknown scenario: %s\n", scenario.c_str());
         sane_close(h);

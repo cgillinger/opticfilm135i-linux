@@ -59,6 +59,22 @@ one exists; "offline" means implemented and tested without the scanner.
   dialog is mixed-language by design. See `docs/sane-install.md` §6 for
   the walkthrough and the mechanism, and `docs/ROADMAP.md` for what is
   still unverified in a live digiKam session.
+- **Status line enabled, reworded to name "Scan"** (offline, 2026-09-27,
+  following a second live digiKam session that passed on the mechanics
+  but whose operator still needed outside guidance -- Test 91's second
+  paragraph, owner's verdict: "no one can do this process without a
+  written manual"): `magazine` gets `SANE_CAP_SOFT_SELECT` added
+  (`SANE_CAP_SOFT_SELECT | SANE_CAP_SOFT_DETECT`) so KSaneWidgets renders
+  its label and value enabled/black instead of the disabled grey it draws
+  for a `SANE_CAP_SOFT_DETECT`-only option; its SET handler is a
+  documented no-op (returns `SANE_INFO_RELOAD_OPTIONS`, changes nothing,
+  a listed value is accepted and an unlisted one is rejected by SANE core
+  before the handler runs). The option is retitled `Magazine -- next
+  step`, its seven values now each name the frontend's own button
+  ("... push in, Scan" instead of "... push in and scan"), and its
+  tooltip (`desc`) spells out the whole load/scan/eject procedure. The
+  README gained a matching six-line "digiKam cheat sheet". Not yet seen
+  live.
 
 ### Film and holders
 - **110 (Pocket Instamatic) film in the 35 mm strip holder**: `--film 110`

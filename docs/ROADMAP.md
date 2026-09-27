@@ -666,7 +666,7 @@ change; further timing work; repeats of accepted profiles.
 ## Known issues (cosmetic, not blocking)
 
 - **The magazine controls render awkwardly in digiKam / KSane.** The
-  read-only `magazine` status is a wide text field that truncates its value
+  `magazine` status (read-only until 2026-09-27, see below) is a wide text field that truncates its value
   (KSane shows only the tail), and it sits with the `Load film` / `Eject
   film` buttons in a layout KSane lays out oddly — one control looks
   over-long. Scanning and the magazine operations themselves work; this is
@@ -691,10 +691,19 @@ change; further timing work; repeats of accepted profiles.
   should carry no translations at all -- the catalog feature and its
   `po/sv.po` entries were removed the same evening (see "digiKam dialog
   usability" below for the bugs and the current, English-only state).
-  **Still open:** the wide text field / truncation itself is a KSane
-  widget behaviour this change did not touch, and the layout has not
-  been confirmed in a live digiKam session with the fixes in place -- a
-  re-run is still pending.
+  A second live session, same evening, confirmed the layout and passed
+  on the mechanics (docs/test-log.md, Test 91's second paragraph) but
+  found the status line rendered DISABLED (grey) -- a `SANE_CAP_SOFT_
+  DETECT`-only option, this repo's own earlier choice -- and the owner's
+  verdict was that the process could not be done without outside
+  guidance. **2026-09-27, later the same evening (offline, this task):**
+  `magazine` gained `SANE_CAP_SOFT_SELECT` (a documented no-op SET) so it
+  renders enabled, its seven values were reworded to name "Scan", and its
+  tooltip now spells out the whole procedure -- see "digiKam dialog
+  usability" below for the detail. **Still open:** the wide text field /
+  truncation itself is a KSane widget behaviour none of this touched, and
+  none of this task's changes have been seen live yet -- a re-run is
+  still pending.
 
 ## C3 — 110 (Pocket Instamatic) film in the strip holder (added 2026-09-19)
 
@@ -732,6 +741,14 @@ Not in scope: a 110 FEEDL grid, 126 Instamatic, holder-ID detection,
 
 Recorded so they are not lost. None is committed work; each needs a
 decision before it starts.
+
+**WP-5 — one-button loading (design written 2026-09-27, not
+implemented, owner's go for the design).** `docs/sane-wp5-load-button.md`:
+`Load film` waits for the loader sensor's out-then-in edge and runs LOAD
+itself; Scan never loads (refuses read-only when nothing is loaded); a
+`Check status` button reads the hardware. Removes the button sequence
+that put the scanner into the feed failure in Test 91. Hardware plan
+Test 92 in its §7.
 
 **1800 dpi.** The vendor's QuickScan offers six resolutions — 7200,
 3600, 2400, **1800**, 1200, 600 (owner's screenshot, 2026-09-27) — where
@@ -961,3 +978,35 @@ placeholders, and an actual live digiKam session with both workarounds
 in place to confirm the layout and status line now behave — that re-run
 has not happened yet. A candidate, not scheduled: report the two
 libksane bugs upstream (owner's call).
+
+**Second session, same evening (2026-09-27): PASS on the mechanics, but
+the dialog is still not self-explanatory.** With the English-only fix
+installed, the owner ran a full digiKam cycle -- Load film, reseat,
+Scan, Eject film, swap strip, Scan again with no Load film -- and it
+worked: both the cross-process next-strip load (`scanimage`, Test 90,
+earlier that day) and the in-process one (digiKam, this session) are
+now hardware-verified (docs/test-log.md, Test 91's second paragraph).
+But the status line was still disabled/grey at the time (this entry's
+fix below had not been written yet), and the owner needed to be walked
+through the sequence from outside the dialog to complete it. His
+verdict, verbatim: **"no one can do this process without a written
+manual."**
+
+That is a limitation of the KSane dialog surface, not a bug: SANE has
+no mechanism for a backend to pop up a prompt, so a status-line string
+and a written cheat sheet are the only channel a backend has at all.
+What changed in response, all offline, all in this same change: (1) the
+status line renders ENABLED now (`SANE_CAP_SOFT_SELECT` added; a SET is
+a documented no-op that only triggers `SANE_INFO_RELOAD_OPTIONS` so the
+frontend re-reads the true value) instead of the disabled grey text
+Test 91 found barely readable; (2) the seven values are reworded to
+name the frontend's own button, "Scan", instead of a generic "scan" a
+value like "released -- reseat, then scan" (Test 91's session) left the
+operator to interpret for themselves; (3) the option's tooltip now
+spells out the whole four-step procedure end to end; (4) the README
+gained a six-line "digiKam cheat sheet" mirroring the tooltip, since the
+tooltip and that sheet are, by (1)'s own admission, all a SANE frontend
+can offer. **None of this has been tried live** -- the next digiKam
+session is what would show whether it actually reduces how much
+external guidance the process needs, or only makes the status line
+legible without closing the gap the owner's verdict named.

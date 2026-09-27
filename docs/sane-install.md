@@ -268,8 +268,9 @@ parentheses.
    GL126 remain here, grouped under `Film` (a heading `scanimage -A` and
    xsane show; KSaneWidgets drops SANE groups entirely, so digiKam shows
    just the four options, in that order, at the top of the tab — no
-   visible heading there), in this order: `Film magazine` (`magazine`, the
-   status line — read first), `Load film`, `Eject film`, `Frame` (1–6).
+   visible heading there), in this order: **`Magazine — next step`**
+   (`magazine`, the status line — read first), `Load film`, `Eject film`,
+   `Frame` (1–6).
    Every option that never had an effect on this scanner (exposure time,
    brightness/contrast, lamp timing, the whole calibration-cache family,
    colour filter) is hidden, so the tab no longer mixes working controls
@@ -277,6 +278,27 @@ parentheses.
    field, long text truncated to its tail) is unchanged by this session —
    the fix there was shortening every status string to fit and ordering it
    first, not the widget itself.
+
+   **2026-09-27, second change (this task):** the status line renders
+   ENABLED (black label and value) now, not the disabled grey KSane draws
+   for a `SANE_CAP_SOFT_DETECT`-only option — `magazine` is `SANE_CAP_
+   SOFT_SELECT | SANE_CAP_SOFT_DETECT` (settable) with a SET handler that
+   is a documented no-op (`genesys.cpp`, `case OPT_MAGAZINE` in
+   `set_option_value()`: ignores the value, returns `SANE_INFO_RELOAD_
+   OPTIONS` so the frontend immediately re-reads the true text and the
+   combo snaps back regardless of what was set). The option is also
+   retitled `Magazine — next step` and its seven values now each name the
+   Basic tab's button by the word it actually shows, **Scan**, instead of
+   a generic "scan": `not loaded -- press Load film`, `released -- take
+   out, push in, Scan`, `released earlier -- reseat, then Scan`, `loaded
+   -- press Scan, or Eject film`, `ejected -- swap strip, push in, Scan`,
+   `ejected earlier -- push in, then Scan`, `failed -- power-cycle, then
+   Load film`. Its tooltip (the option's `desc`, task 3) now spells out
+   the whole procedure: "1. Load film. 2. Take the magazine fully out,
+   push it back in to the stop. 3. Set Frame, press Scan (Basic tab).
+   4. Eject film. Next strip: swap, push in to the stop, Scan -- no Load
+   film needed." — the same six steps as the README's digiKam cheat
+   sheet.
    ![digiKam Scanner Specific Options tab after the change](images/digikam-scanner-specific.png)
    For comparison, the same tab before the change: ![before](images/digikam-scanner-specific-before.png)
 
@@ -299,6 +321,26 @@ parentheses.
    power cycle and Load film again). The operating rule this gives:
    **press Load film ONCE, reseat the magazine, then Läs in** — never
    press Load film again just because nothing visibly changed.
+
+   **Second live session, same evening (docs/test-log.md, Test 91's
+   second paragraph):** with the status line still disabled/grey (this
+   task's fix had not been written yet), the owner completed a full
+   cycle — Load film, reseat, Scan, Eject film, swap strip, Scan again
+   with no Load film (the next-strip load, in-process this time, not
+   just from `scanimage`) — but only by being walked through it from
+   outside the dialog. His verdict, verbatim: **"no one can do this
+   process in a SANE frontend without a written manual."** That is
+   recorded here as a **documented limitation of the KSane dialog
+   surface**, not a bug in the backend: SANE has no mechanism for a
+   backend to show a prompt, so a status-line string and a written cheat
+   sheet (this section; six lines in the README) are the only channel
+   available. What this task changed in response — enabling the status
+   line so it is legible at all (above), naming the frontend's own
+   button in every value (above), and spelling out the whole procedure
+   in the option's tooltip (task 3) — is offline work, aimed at making
+   that written manual as unnecessary as a read-only SANE option can make
+   it; it has **not** been tried live. The next digiKam session is what
+   would confirm or refute that.
 3. Back on the **Grundalternativ** tab, press **Läs in** (Scan/Read — not
    "Förhandsgranskning": that runs a full 600 dpi pass, never a cheap
    preview, on this scanner).

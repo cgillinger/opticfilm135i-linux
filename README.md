@@ -79,6 +79,20 @@ functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md]
   nothing has been submitted. Per-profile detail:
   **[docs/ROADMAP.md](docs/ROADMAP.md)**
 
+**digiKam cheat sheet** (SANE has no dialogs, so this and the "Magazine —
+next step" status line on the Film tab are the whole interface):
+
+1. **Load film** once (Film tab) — cold start + open + jog, ~25 s, no
+   progress shown.
+2. Take the magazine fully out, push it back in to the mechanical stop.
+3. Set **Frame**, press **Scan** (Basic tab).
+4. Repeat step 3 for each frame; **Eject film** when the strip is done.
+5. Next strip: swap it, push in to the stop, press **Scan** — no Load
+   film needed (Test 90).
+6. If anything looks wrong, read the status line before pressing
+   anything else — a SANE frontend cannot prompt you, so that line and
+   this sheet are all there is.
+
 See **[docs/ROADMAP.md](docs/ROADMAP.md)** for the acceptance matrix,
 frozen scope, and exactly what remains before the driver is "complete".
 

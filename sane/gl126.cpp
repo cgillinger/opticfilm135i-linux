@@ -2103,7 +2103,10 @@ void magazine_eject(Genesys_Device* dev)
     magazine_eject_impl(dev);
 }
 
-/* The possible values of the read-only "magazine" option.
+/* The possible values of the "magazine" status line (settable since
+   2026-09-27 -- see the OPT_MAGAZINE cap comment in genesys.cpp's
+   init_options and the no-op SET case in set_option_value -- but never
+   actually changed by anything; the state below is unaffected by that).
 
    Short, and the STATE WORD FIRST. On hardware 2026-09-13 (Test 76) the
    previous texts -- full sentences -- overflowed KSane's widget, which
@@ -2145,16 +2148,21 @@ void magazine_eject(Genesys_Device* dev)
    not ours -- see docs/sane-install.md S6). Titles and descriptions are
    unaffected: those are one-shot labels/tooltips, never matched against
    a live value, so their SANE_I18N wrapping is harmless and stays. */
-const char* const kMagazineUnknown       = "unknown -- press Load film";
-const char* const kMagazinePending       = "reseat the magazine, then scan";
-const char* const kMagazineReleased      = "released -- reseat, then scan";
-const char* const kMagazineLoaded        = "loaded -- scan, then Eject film";
+/* Reworded 2026-09-27 (task 2 of the digiKam-dialog follow-up, docs/
+   ROADMAP.md "digiKam dialog usability"): each value now names the
+   frontend's own button, "Scan" (digiKam's Basic-tab "Read in"/"Scan"),
+   instead of the generic "scan" the operator has to translate into an
+   action themselves. */
+const char* const kMagazineUnknown       = "not loaded -- press Load film";
+const char* const kMagazinePending       = "released earlier -- reseat, then Scan";
+const char* const kMagazineReleased      = "released -- take out, push in, Scan";
+const char* const kMagazineLoaded        = "loaded -- press Scan, or Eject film";
 /* Section 10 (2026-09-25): an eject no longer means "press Load film" --
    the next scan does a next-strip load on its own once the new strip is
    pushed to the stop. Load film is still there as the fallback. */
-const char* const kMagazineEjected       = "ejected -- push in, then scan";
-const char* const kMagazineEjectedPending = "ejected earlier -- push in and scan";
-const char* const kMagazineFailed        = "failed -- power-cycle the scanner";
+const char* const kMagazineEjected       = "ejected -- swap strip, push in, Scan";
+const char* const kMagazineEjectedPending = "ejected earlier -- push in, then Scan";
+const char* const kMagazineFailed        = "failed -- power-cycle, then Load film";
 
 const char* const* magazine_state_values()
 {

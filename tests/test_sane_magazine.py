@@ -20,7 +20,11 @@ inside the built backend:
   2. the state machine's refusals happen BEFORE anything reaches the
      wire, and say what to do instead;
   3. a scan with no release pending does not touch the magazine at all;
-  4. a stale or foreign mark cannot reach the load feed.
+  4. a stale or foreign mark cannot reach the load feed;
+  5. SET on the status line (settable since 2026-09-27, so KSane renders
+     it enabled -- Test 91) is a documented no-op: it never moves the
+     state machine or the mark, and an unlisted value is rejected by
+     SANE core before the handler ever runs.
 
 It drives the REAL public flow (sane_open -> sane_control_option ->
 sane_start) against the BUILT backend in genesys's test mode, through
@@ -73,6 +77,9 @@ SANE_TYPE_INT = 1
 SANE_TYPE_STRING = 3
 SANE_TYPE_BUTTON = 4
 SANE_TYPE_GROUP = 5
+
+# sane.h's *info bits.
+SANE_INFO_RELOAD_OPTIONS = 1 << 1
 
 
 def _sane_backends_dir():
@@ -170,6 +177,8 @@ def _run(probe, *args, lock_dir=None):
             out.setdefault("values", []).append(line[len("VALUE "):].strip())
         elif line.startswith("OPTSTATUS "):
             out["optstatuses"].append(int(line.split()[1]))
+        elif line.startswith("OPTINFO "):
+            out.setdefault("optinfos", []).append(int(line.split()[1]))
         elif line.startswith("STARTSTATUS "):
             rest = line[len("STARTSTATUS "):]
             code, _, msg = rest.partition(" ")
@@ -203,9 +212,9 @@ def _run(probe, *args, lock_dir=None):
 
 
 def test_magazine_options_exist_only_for_gl126():
-    """The two buttons and the read-only status line are declared for the
-    135i and inactive on every other genesys chip -- no other model in
-    this backend has a magazine to load."""
+    """The two buttons and the status line are declared for the 135i and
+    inactive on every other genesys chip -- no other model in this
+    backend has a magazine to load."""
     probe = _build_probe()
     if probe is None:
         return _skip("test_magazine_options_exist_only_for_gl126")
@@ -218,12 +227,15 @@ def test_magazine_options_exist_only_for_gl126():
     assert int(opts["load-film"]["type"]) == SANE_TYPE_BUTTON, opts["load-film"]
     assert int(opts["eject-film"]["type"]) == SANE_TYPE_BUTTON, opts["eject-film"]
     assert int(opts["magazine"]["type"]) == SANE_TYPE_STRING, opts["magazine"]
-    # The status line is read-only: SANE_CAP_SOFT_DETECT (0x04) set,
-    # SANE_CAP_SOFT_SELECT (0x01) clear, so a frontend renders it as text
-    # rather than offering to set it.
+    # 2026-09-27: settable now (SANE_CAP_SOFT_SELECT | SANE_CAP_SOFT_DETECT,
+    # 0x04 | 0x01 = 0x05), not read-only -- KSaneWidgets renders a
+    # SOFT_DETECT-only option disabled/greyed (Test 91), so the option is
+    # made settable purely to make the status line legible; the SET
+    # handler is a documented no-op (genesys.cpp, case OPT_MAGAZINE in
+    # set_option_value()).
     cap = int(opts["magazine"]["cap"], 16)
     assert cap & 0x04, opts["magazine"]
-    assert not (cap & 0x01), opts["magazine"]
+    assert cap & 0x01, opts["magazine"]
     assert int(opts["magazine"]["size"]) >= 128, opts["magazine"]
 
     other = _run(probe, "options", GL124_DEVICE)
@@ -265,14 +277,53 @@ def test_the_status_line_is_readable_and_comes_first():
     for v in values:
         assert len(v) <= 40, (len(v), v)          # fits the widget
         assert v[0].islower(), v                   # state word leads
-        assert " -- " in v or v.startswith("reseat"), v
+        assert " -- " in v, v
     # The states an operator must be able to tell apart, each present.
+    # ("unknown" is the internal MagazineState name; its text says "not
+    # loaded" instead, 2026-09-27 task 2.)
     joined = " | ".join(values)
-    for word in ("unknown", "released", "loaded", "ejected", "failed"):
+    for word in ("not loaded", "released", "loaded", "ejected", "failed"):
         assert word in joined, (word, values)
     print(f"test_the_status_line_is_readable_and_comes_first OK "
           f"({len(values)} values, longest {max(len(v) for v in values)} chars, "
           f"index {opts['magazine']['index']} before the buttons)")
+
+
+def test_setting_the_status_line_is_a_no_op():
+    """Task 1 (2026-09-27): OPT_MAGAZINE is settable (SANE_CAP_SOFT_SELECT
+    added) purely so KSaneWidgets renders its label and value enabled
+    (black) instead of the disabled grey it draws for a SOFT_DETECT-only
+    option -- Test 91 found that rendering unreadable. But nothing the
+    option reports can actually be commanded, so a SET must never move
+    the magazine state machine or touch the on-disk mark, and a GET
+    right after must still return the TRUE text, not whatever was set.
+
+    Drives the real sane_control_option(SET) path, not the handler
+    directly, so this also exercises SANE core's own constraint check
+    (sanei_constrain_value, called from sane_control_option_impl before
+    set_option_value() runs): a value outside the string-list constraint
+    must be rejected by core and never reach the no-op handler at all."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_setting_the_status_line_is_a_no_op")
+
+    r = _run(probe, "scenario", "magazine-set-accepts-a-listed-value-as-a-no-op")
+    assert r["text"].startswith("ejected -- swap strip"), r["text"]
+    assert r["optstatuses"] == [SANE_STATUS_GOOD], r["optstatuses"]
+    assert r["optinfos"] == [SANE_INFO_RELOAD_OPTIONS], r["optinfos"]
+    assert r["mark"].startswith("present ejected"), r["mark"]
+
+    r2 = _run(probe, "scenario", "magazine-set-rejects-an-unlisted-value")
+    assert r2["optstatuses"] == [SANE_STATUS_INVAL], r2["optstatuses"]
+    # info stays 0: sanei_constrain_value's STRING_LIST case throws (via
+    # TIE) before set_option_value() -- and its SANE_INFO_RELOAD_OPTIONS
+    # bit -- ever runs.
+    assert r2["optinfos"] == [0], r2["optinfos"]
+    assert r2["text"].startswith("ejected -- swap strip"), r2["text"]
+    assert r2["mark"].startswith("present ejected"), r2["mark"]
+    print("test_setting_the_status_line_is_a_no_op OK "
+          "(a listed value: GOOD+RELOAD_OPTIONS, state/mark unchanged; "
+          "an unlisted value: INVAL from core, handler never ran)")
 
 
 def test_the_status_line_reports_a_load_pending_from_another_process():
@@ -286,11 +337,12 @@ def test_the_status_line_reports_a_load_pending_from_another_process():
         return _skip("test_the_status_line_reports_a_load_pending_from_another_process")
 
     r = _run(probe, "scenario", "state-mark-pending")
-    assert r["text"].startswith("reseat"), r["text"]
+    assert r["text"].startswith("released earlier"), r["text"]
     assert r["mark"].startswith("present"), r["mark"]
-    # And with no mark at all it still says unknown, not a false pending.
+    # And with no mark at all it still says "not loaded", not a false
+    # pending.
     r2 = _run(probe, "scenario", "state-initial")
-    assert r2["text"].startswith("unknown"), r2["text"]
+    assert r2["text"].startswith("not loaded"), r2["text"]
     print("test_the_status_line_reports_a_load_pending_from_another_process OK")
 
 
@@ -423,7 +475,7 @@ def test_a_scan_after_eject_on_a_cold_scanner_refuses_and_clears_the_mark():
     assert r["mark"] == "absent", r["mark"]
     # Unknown, not failed: nothing was written, so the session is not
     # terminal the way a real motor-sequence failure is.
-    assert r["text"].startswith("unknown"), r["text"]
+    assert r["text"].startswith("not loaded"), r["text"]
     print("test_a_scan_after_eject_on_a_cold_scanner_refuses_and_clears_the_mark OK "
           "(INVAL, mark cleared, session not failed)")
 
@@ -511,7 +563,7 @@ def test_magazine_text_starts_unknown():
         return _skip("test_magazine_text_starts_unknown")
 
     r = _run(probe, "scenario", "state-initial")
-    assert r["text"].startswith("unknown"), r["text"]
+    assert r["text"].startswith("not loaded"), r["text"]
     assert "Load film" in r["text"], r["text"]
     assert r["mark"] == "absent", r["mark"]
     print(f"test_magazine_text_starts_unknown OK ({r['text']!r})")
@@ -536,7 +588,7 @@ def test_release_refuses_an_unknown_start_state():
     assert "0x17" in msg, msg
     assert "No registers were written" in msg, msg
     # Refused, not failed: the state machine never moved.
-    assert r["text"].startswith("unknown"), r["text"]
+    assert r["text"].startswith("not loaded"), r["text"]
     assert r["mark"] == "absent", r["mark"]
     print("test_release_refuses_an_unknown_start_state OK (INVAL, nothing written)")
 
@@ -787,11 +839,11 @@ def test_a_scan_with_no_release_pending_never_touches_the_magazine():
 
     r = _run(probe, "scenario", "load-no-mark")
     assert r["statuses"] == [(SANE_STATUS_GOOD, "")], r["statuses"]
-    assert r["text"].startswith("unknown"), r["text"]
+    assert r["text"].startswith("not loaded"), r["text"]
 
     r2 = _run(probe, "scenario", "start-no-mark")
     assert r2["progress"] == "offset_calibration", r2
-    assert r2["text"].startswith("unknown"), r2["text"]
+    assert r2["text"].startswith("not loaded"), r2["text"]
     print("test_a_scan_with_no_release_pending_never_touches_the_magazine OK "
           "(hook returns without reading, calibration entered)")
 
@@ -970,13 +1022,13 @@ def test_dead_options_are_inactive_and_film_group_is_placed_and_ordered():
     assert resolution_values == [600, 1200, 2400, 3600, 7200], resolution_values
 
     expected_magazine_values = [
-        "unknown -- press Load film",
-        "reseat the magazine, then scan",
-        "ejected earlier -- push in and scan",
-        "released -- reseat, then scan",
-        "loaded -- scan, then Eject film",
-        "ejected -- push in, then scan",
-        "failed -- power-cycle the scanner",
+        "not loaded -- press Load film",
+        "released earlier -- reseat, then Scan",
+        "ejected earlier -- push in, then Scan",
+        "released -- take out, push in, Scan",
+        "loaded -- press Scan, or Eject film",
+        "ejected -- swap strip, push in, Scan",
+        "failed -- power-cycle, then Load film",
     ]
     assert r.get("magazine_values") == expected_magazine_values, r.get("magazine_values")
 
@@ -1041,6 +1093,7 @@ def main() -> int:
         test_magazine_options_exist_only_for_gl126,
         test_magazine_text_starts_unknown,
         test_the_status_line_is_readable_and_comes_first,
+        test_setting_the_status_line_is_a_no_op,
         test_the_status_line_reports_a_load_pending_from_another_process,
         test_a_scan_after_eject_runs_open_then_load,
         test_a_scan_after_eject_accepts_the_last_scan_profiles_regs_3b_3c,

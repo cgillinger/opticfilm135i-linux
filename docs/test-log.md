@@ -6507,3 +6507,27 @@ this, the owner decided the backend should carry no translations at
 all (English-only, 2026-09-27 evening) to stay clear of this class of
 bug entirely — the Swedish catalog feature (`tools/sane_install.sh`,
 `po/sv.po`) was removed the same evening.
+
+**Second session, same evening — PASS.** After the English-only fix
+(commit c62cde6) was installed (build `63fd6c4e…`), the owner ran
+digiKam again against the same magazine, `SANE_DEBUG_GENESYS=8`, log
+`digikam-session-2.log` in the private analysis area `t90-20260927/`.
+
+| time | action | result |
+|---|---|---|
+| 19:42:32 | "Load film" (once) | cold start + `open` + jog -> Released, mark written; digiKam re-read the status option and showed `released -- reseat, then scan` (screenshot `Skärmbild_20260927_194351.png`, `~/Bilder/opticfilm-granskning/digiKAMSane/`) |
+| — | operator reseated the magazine to the stop | |
+| 19:44:49 | "Scan" | `load`: feed 0xf4 first poll / traverse 0xdc 18 ms; Released -> Loaded, mark consumed; gain 0x2c/0x21/0x27; FEEDL 6519; POSITION 1429 ms; PARK. Dialog showed 600 dpi (the ascending list, workaround 2 live); saved PNG 876 x 927, 16-bit RGB, `low_byte_nonzero` 0.996 |
+| 19:47:02 | "Eject film" | -> Ejected, mark written; digiKam re-read the status option |
+| — | strip swapped, magazine pushed back in to the stop | |
+| 19:47:25 | "Scan" (no "Load film" pressed) | next-strip load, IN-PROCESS this time (not `scanimage` across two invocations): regs 0x3b/0x3c read 0x02/0x00 (the 600 dpi profile's leftover, Test 90's precondition fix), `open` then `load`, feed 0xf4 first poll / traverse 0xdc 52 ms; Ejected -> Loaded; FEEDL 6519; PARK |
+
+**Verdict: PASS.** Both the cross-process next-strip load
+(`scanimage`, the afternoon of the same day, Test 90) and the
+in-process next-strip load (digiKam, this session) are now
+hardware-verified. The operator still needed step-by-step guidance
+from outside the dialog to run the session (the owner's finding,
+`docs/ROADMAP.md` "digiKam dialog usability") — tasks 1–3 of that
+follow-up (the status line rendering enabled, the seven values naming
+"Scan", the tooltip spelling out the whole procedure) address this
+offline, in this same change, and have **not** been seen live.
