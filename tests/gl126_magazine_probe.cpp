@@ -70,15 +70,20 @@
 #include "test_scanner_interface.h"
 #include "error.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 #include <string>
+#include <vector>
 
 using namespace genesys;
 
 namespace {
 
-const char* const kMagazineOptions[] = { "load-film", "eject-film", "magazine" };
+const char* const kMagazineOptions[] = {
+    "load-film", "eject-film", "check-status", "magazine",
+};
 
 /* Which test checkpoint, if any, should throw -- genesys's own injection
    mechanism (a no-op on the USB interface, a callback here). It throws
@@ -88,12 +93,117 @@ const char* const kMagazineOptions[] = { "load-film", "eject-film", "magazine" }
    the pending-load mark on disk after an actual failure. */
 std::string g_throw_at;
 
-void checkpoint_callback(const Genesys_Device&, TestScannerInterface&,
+/* WP-5 (docs/sane-wp5-load-button.md section 6): the magazine edge
+   wait's own script. On every "gl126_magazine_edge_poll" checkpoint (one
+   per poll, fired AFTER that poll's read_register but before the next
+   one) this writes g_edge_script[g_edge_step] to reg 0x101, so the NEXT
+   read sees it, and advances the step (holding the last value once the
+   script is exhausted). An empty script leaves the register exactly as
+   seed() left it, forever -- the two timeout shapes (present-only,
+   clear-only) need nothing scripted at all, only the right seed before
+   the press.
+
+   Also the vehicle for the wait's own "no write happened" assertion
+   (implementation note 1 / review finding F): the first poll snapshots
+   TestScannerInterface::write_count() (raw USB OUT traffic PLUS every
+   write any of its own methods perform -- not just out_transfer_count(),
+   which alone would miss a stray write_register()/write_registers()/etc.
+   call that never reaches the wire), and every later poll compares
+   against it -- any mismatch sets g_edge_write_violation, printed at the
+   end as EDGEWRITE so a Python test can assert on it without the
+   callback itself aborting the run. The script itself writes through
+   seed_register() (uncounted), never write_register() (counted) -- the
+   scripting is test setup, not the thing being measured. */
+std::vector<int> g_edge_script;
+std::size_t g_edge_step = 0;
+bool g_edge_baseline_set = false;
+unsigned g_edge_baseline = 0;
+bool g_edge_write_violation = false;
+
+void set_edge_script(std::initializer_list<int> values)
+{
+    g_edge_script.assign(values);
+    g_edge_step = 0;
+}
+
+/* Ejected-kind and Released-retry scenarios below all start the wait with
+   the sensor reading present (0xF8, the "resting after eject" case WP-4
+   section 10.3 describes) and want it to resolve: clear, clear, present
+   x5. Shared so every "the edge really does resolve" scenario scripts
+   the identical sequence. */
+void set_edge_script_resolve_from_present()
+{
+    set_edge_script({ 0xF0, 0xF0, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8 });
+}
+
+/* Review finding A: the same sequence, but the checkpoint fired on the
+   Seen-triggering (5th present) read writes ONE MORE value, `trailing`,
+   which is then what the POST-EDGE presence+class re-read sees (nothing
+   else changes the register between the wait returning and that
+   re-read). Used to script "the magazine was pulled back out during the
+   600 ms settle" (trailing = clear, 0xF0) and "present but not the idle
+   class" (trailing = 0xD8) without touching production code's own
+   settle delay (the mock's sleep_ms is a no-op in test mode, so the
+   settle costs no wall time either way). */
+void set_edge_script_resolve_from_present_then(std::uint8_t trailing)
+{
+    set_edge_script({ 0xF0, 0xF0, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8, trailing });
+}
+
+/* The retry case starts the SECOND wait already clear (the first wait's
+   own timeout left it there in every scenario below) and needs one more
+   clear read to reach the 2-consecutive threshold before the same five
+   presents. */
+void set_edge_script_resolve_from_clear()
+{
+    set_edge_script({ 0xF0, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8 });
+}
+
+/* Review finding I: a single-poll clear "glitch" -- present, one clear
+   read, present again -- must NOT be mistaken for the magazine coming
+   loose (clear_consec resets before reaching kEdgeClearReadsNeeded, so
+   saw_clear stays false through it). This script absorbs exactly one
+   such glitch and THEN genuinely clears for 2 consecutive reads before
+   resolving present x5 -- proving the glitch does not block a real
+   resolve either. Seed the register present (0xF8) before the press;
+   read order this produces: present(seed), clear(glitch), present
+   (glitch interrupted, consec reset), clear, clear (the real
+   transition), present x5 (Seen). */
+void set_edge_script_debounce_glitch_then_resolve()
+{
+    set_edge_script({ 0xF0, 0xF8, 0xF0, 0xF0, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8 });
+}
+
+/* The other half: the SAME single glitch, but nothing ever clears for
+   real afterwards -- must time out with saw_clear FALSE (the glitch
+   alone must not count). Seed present (0xF8) before the press; produces
+   present(seed), clear(glitch), present, present, present... forever. */
+void set_edge_script_debounce_single_glitch_then_present()
+{
+    set_edge_script({ 0xF0, 0xF8, 0xF8 });
+}
+
+void checkpoint_callback(const Genesys_Device&, TestScannerInterface& iface,
                          const std::string& name)
 {
     if (!g_throw_at.empty() && name == g_throw_at) {
         throw SaneException(SANE_STATUS_IO_ERROR,
                             "injected: invalid read, scanner unplugged?");
+    }
+    if (name == "gl126_magazine_edge_poll") {
+        if (!g_edge_baseline_set) {
+            g_edge_baseline = iface.write_count();
+            g_edge_baseline_set = true;
+        } else if (iface.write_count() != g_edge_baseline) {
+            g_edge_write_violation = true;
+        }
+        if (!g_edge_script.empty()) {
+            std::size_t idx = std::min(g_edge_step, g_edge_script.size() - 1);
+            iface.seed_register(0x101, static_cast<std::uint8_t>(g_edge_script[idx]));
+            if (g_edge_step + 1 < g_edge_script.size()) {
+                ++g_edge_step;
+            }
+        }
     }
 }
 
@@ -149,9 +259,17 @@ void call_hook(Genesys_Device* dev, const std::string& which)
     std::string msg;
     try {
         if (which == "release") {
-            gl126::magazine_release(dev);
+            // Kept as "release" (not renamed to "load-film") purely so
+            // every EXISTING scenario string in this file and in
+            // tests/test_sane_magazine.py that calls it needs no
+            // mechanical rename -- the C++ function it reaches is
+            // gl126::magazine_load_film() (WP-5), the whole one-button
+            // flow, not just a release any more.
+            gl126::magazine_load_film(dev);
         } else if (which == "eject") {
             gl126::magazine_eject(dev);
+        } else if (which == "check-status") {
+            gl126::magazine_check_status(dev);
         } else {
             dev->cmd_set->load_document(dev);
         }
@@ -221,10 +339,18 @@ void print_mark()
 
 /* Seed the test interface's register cache: gl126's hooks read reg 0x01,
    the loader sensor (reg 0x101) and regs 0x3b/0x3c before they decide
-   anything, and in test mode those reads come from this cache. */
+   anything, and in test mode those reads come from this cache. Through
+   seed_register() (uncounted), not write_register() (review finding F):
+   this is test setup, not a production write, and must never itself
+   trip the "no write during the wait" assertion. */
 void seed(Genesys_Device* dev, std::uint16_t addr, std::uint8_t value)
 {
-    dev->interface->write_register(addr, value);
+    auto* iface = dynamic_cast<TestScannerInterface*>(dev->interface.get());
+    if (iface != nullptr) {
+        iface->seed_register(addr, value);
+    } else {
+        dev->interface->write_register(addr, value);
+    }
 }
 
 std::string progress_of(Genesys_Device* dev)
@@ -413,11 +539,27 @@ int cmd_scenario(int argc, char** argv)
         g_throw_at = "gl126_magazine_armed";
     } else if (scenario == "eject-usb-failure") {
         g_throw_at = "gl126_magazine_after_eject";
+    } else if (scenario == "load-film-killed-mid-wait") {
+        // Review finding B: a process killed BETWEEN the jog completing
+        // and the wait finishing (Ctrl-C on `scanimage -n --load-film`,
+        // or "Terminate" on a frozen digiKam) must leave a mark that
+        // makes the NEXT scan refuse. Modelled here as a thrown exception
+        // at the wait's own first poll -- reached only after the jog has
+        // already run and the pre-wait mark write has already happened
+        // (magazine_load_film_impl() writes it before calling
+        // wait_for_magazine_edge()) -- so the guard's own failure path
+        // never gets a chance to run either; the mark this scenario
+        // checks is the ONE the pre-wait write left, not one the guard
+        // wrote afterwards.
+        g_throw_at = "gl126_magazine_edge_poll";
     }
 
-    enable_testing_mode(0x07b3, 0x1436, 0x0000,
-                        g_throw_at.empty() ? TestCheckpointCallback()
-                                           : TestCheckpointCallback(checkpoint_callback));
+    // Always registered now (not just when g_throw_at is set): the edge
+    // wait's own script/no-write-assertion logic lives in the same
+    // callback and every scenario needs it available, even the ones that
+    // never populate g_edge_script (the callback is then a no-op for
+    // "gl126_magazine_edge_poll" beyond the baseline snapshot).
+    enable_testing_mode(0x07b3, 0x1436, 0x0000, TestCheckpointCallback(checkpoint_callback));
     SANE_Int version = 0;
     if (sane_init(&version, nullptr) != SANE_STATUS_GOOD) {
         std::fprintf(stderr, "sane_init failed\n");
@@ -486,15 +628,25 @@ int cmd_scenario(int argc, char** argv)
         seed(dev, 0x01, 0x17);            // would refuse IF it looked
         call_hook(dev, "load");
     } else if (scenario == "load-mark-no-magazine") {
+        // WP-5 (docs/sane-wp5-load-button.md section 3.4): load_document()
+        // is a pure checker now -- it never reads the hardware at all, so
+        // the sensor/register seeds below are vestigial (kept so the
+        // scenario still demonstrates NOTHING is read: a Released mark
+        // alone, from ANY hardware state, refuses read-only).
         gl126::magazine_mark_write(dev->file_name);
         seed(dev, 0x01, 0x22);
-        seed(dev, 0x101, 0xF0);           // loader sensor CLEAR
+        seed(dev, 0x101, 0xF0);
         call_hook(dev, "load");
     } else if (scenario == "load-mark-bad-state") {
+        // Same point, the other seed combination: WP-5's load_document()
+        // does not distinguish "sensor clear" from "wrong register state"
+        // any more -- both are just "not loaded" now (the distinction only
+        // matters inside magazine_load_film_impl()'s own edge-wait/regs
+        // check, exercised separately below).
         gl126::magazine_mark_write(dev->file_name);
         seed(dev, 0x01, 0x22);
         seed(dev, 0x101, 0xF8);
-        seed(dev, 0x3B, 0xFF);            // not the state the jog leaves
+        seed(dev, 0x3B, 0xFF);
         seed(dev, 0x3C, 0xFF);
         call_hook(dev, "load");
     } else if (scenario == "release-usb-failure") {
@@ -509,12 +661,15 @@ int cmd_scenario(int argc, char** argv)
         seed(dev, 0x3B, 0x00);
         seed(dev, 0x3C, 0x00);
         call_hook(dev, "eject");
-    } else if (scenario == "load-mark-invalid-request") {
-        // A pending load, a scanner in exactly the right state -- and a
-        // scan request that cannot be served. The magazine must NOT move
-        // before that is noticed. Frame 9 is past the holder's six
-        // apertures; the option's own constraint would refuse it, so it
-        // is set behind the option to model a frontend that does not.
+    } else if (scenario == "load-mark-frame-does-not-matter") {
+        // WP-5: load_document() no longer validates the scan request at
+        // all (it never moves the magazine any more, so Astra's 2026-09-13
+        // "an impossible request must not move it first" concern is moot
+        // here -- offset_calibration() still validates, unchanged, before
+        // ANY scan). A pending Released mark refuses NO_DOCS regardless of
+        // the frame number; frame 9 is past the holder's six apertures,
+        // set directly (bypassing the option's own constraint) to show
+        // load_document() never even looks at it.
         gl126::magazine_mark_write(dev->file_name);
         seed(dev, 0x01, 0x22);
         seed(dev, 0x101, 0xF8);
@@ -538,68 +693,259 @@ int cmd_scenario(int argc, char** argv)
         call_hook(dev, "eject");       // -> Ejected (mark: ejected), no motor command
         call_hook(dev, "load");        // sensor still clear -> NO_DOCS, mark kept
     } else if (scenario == "load-after-eject") {
-        // Ejected, then the strip is swapped and pushed to the stop
-        // (sensor present again), then a scan. The load half must run
-        // "open" before "load" -- on the test interface "open" reaches
-        // the wire and stops at its first unacknowledged write, exactly
-        // like the release path's "open" run (test_release_from_idle_
-        // runs_the_open_and_jog_programs), which is the proof that it
-        // ran at all.
+        // WP-5: load_document() (the "load" hook here) is a pure checker
+        // now -- Ejected (in-process) refuses NO_DOCS "press Load film
+        // first" no matter what the hardware reads. Reaching "open" the
+        // way this scenario used to prove is now the JOB of "Load film"
+        // itself (see load-film-edge-seen-ejected below); this scenario
+        // stays to prove the Scan-side gate keeps refusing after an
+        // eject, seeds and all, unaffected by what they say.
         seed(dev, 0x01, 0x22);
         seed(dev, 0x101, 0xF0);        // eject with nothing to do -> Ejected
         call_hook(dev, "eject");
         seed(dev, 0x101, 0xF8);        // strip pushed in: sensor present again
         seed(dev, 0x3B, 0x00);
         seed(dev, 0x3C, 0x00);
-        call_hook(dev, "load");        // must run "open" (fails closed on the mock)
-    } else if (scenario == "load-after-eject-scan-regs") {
-        // Test 90's refusal (2026-09-27): after a real eject regs 0x3b/
-        // 0x3c hold the LAST SCAN PROFILE's values -- 0x02/0x00 after a
-        // 600 dpi scan on the device -- not the 0x00/0x00 the jog leaves,
-        // and the first hardware run of the Ejected kind refused on
-        // exactly that. The Ejected kind must accept them (only the
-        // base-table 0xff/0xff is refused) and run "open" -- which fails
-        // closed on the mock exactly like load-after-eject does.
+        call_hook(dev, "load");        // NO_DOCS -- press Load film first
+    } else if (scenario == "load-film-edge-seen-ejected") {
+        // The WP-5 replacement for the old "load-after-eject-scan-regs":
+        // the Ejected KIND is now reached through "Load film" itself
+        // (magazine_load_film_impl()), which waits for the edge BEFORE
+        // running "open" -- no jog. Test 90's finding (0x3b/0x3c = 0x02/
+        // 0x00, what a 600 dpi scan leaves, NOT the jog's 0x00/0x00) is
+        // reproduced here as the regs the post-wait check must accept.
+        // Scripted so the wait actually resolves (present -> clear ->
+        // clear -> present x5, tests/test_sane_magazine.py's poll_cap_ms
+        // override gives it enough polls); "open" then reaches the wire
+        // and fails closed on the mock, same evidence every other "open
+        // ran" assertion in this suite uses -- and the checkpoint records
+        // that NOT ONE of those polls wrote anything (EDGEWRITE 0).
         seed(dev, 0x01, 0x22);
         seed(dev, 0x101, 0xF0);
         call_hook(dev, "eject");       // -> Ejected (mark: ejected)
-        seed(dev, 0x101, 0xF8);        // strip pushed in
+        seed(dev, 0x101, 0xF8);        // resting after the eject (WP-4 10.3)
         seed(dev, 0x3B, 0x02);         // what the 600 dpi profile leaves
         seed(dev, 0x3C, 0x00);
-        call_hook(dev, "load");        // must run "open" (fails closed on the mock)
-    } else if (scenario == "load-after-eject-base-table") {
-        // The one 0x3b/0x3c state the Ejected kind still refuses: Test
-        // 44's base-table-only 0xff/0xff. Read-only INVAL, state Failed,
-        // mark cleared -- the generic wrong-state refusal.
+        set_edge_script_resolve_from_present();
+        call_hook(dev, "release");     // wait resolves -> "open" (fails closed)
+    } else if (scenario == "load-film-edge-seen-bad-regs") {
+        // The WP-5 replacement for the old "load-after-eject-base-table":
+        // the one 0x3b/0x3c state the Ejected kind still refuses -- Test
+        // 44's base-table-only 0xff/0xff -- but now checked by "Load
+        // film" AFTER the edge resolves, not by the Scan-side gate. Read-
+        // only INVAL (no "open" attempted), state Failed, mark cleared.
         seed(dev, 0x01, 0x22);
         seed(dev, 0x101, 0xF0);
         call_hook(dev, "eject");       // -> Ejected (mark: ejected)
         seed(dev, 0x101, 0xF8);
         seed(dev, 0x3B, 0xFF);
         seed(dev, 0x3C, 0xFF);
-        call_hook(dev, "load");        // must refuse INVAL, no motor write
-    } else if (scenario == "load-after-eject-cold") {
-        // Ejected, then the scanner reads COLD (reg 0x01 = 0x00) at the
-        // next scan -- a power cycle happened after the eject. A next-
-        // strip load assumes the transport is still homed and positioned
-        // from the same power-on, so this refuses INVAL, clears the
-        // stale mark, and drops to Unknown (not Failed: nothing was
-        // written) rather than the sensor-clear or wrong-state refusals.
+        set_edge_script_resolve_from_present();
+        call_hook(dev, "release");     // wait resolves, then refuses INVAL
+    } else if (scenario == "load-film-edge-present-only") {
+        // WP-5 section 3.2/3.6, section 6's "present only": the operator
+        // pressed Load film and did nothing else -- the sensor never
+        // clears. Times out with NO clear ever seen: Released, "did not
+        // come loose" wording, no motor write of any kind (not even
+        // "open" -- the regs check after a Seen outcome never runs).
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);
+        call_hook(dev, "eject");       // -> Ejected (mark: ejected)
+        seed(dev, 0x101, 0xF8);        // present, and stays present: no script
+        call_hook(dev, "release");     // times out, no clear ever seen
+    } else if (scenario == "load-film-edge-debounce-glitch-then-resolve") {
+        // Review finding I: a single-poll clear glitch must not be
+        // mistaken for the reseat, but must also not PREVENT the real
+        // one from resolving right afterwards.
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);
+        call_hook(dev, "eject");       // -> Ejected (mark: ejected)
+        seed(dev, 0x101, 0xF8);
+        seed(dev, 0x3B, 0x02);
+        seed(dev, 0x3C, 0x00);
+        set_edge_script_debounce_glitch_then_resolve();
+        call_hook(dev, "release");     // glitch absorbed, then resolves -> "open"
+    } else if (scenario == "load-film-edge-debounce-single-glitch-times-out") {
+        // The other half: the same single glitch, nothing genuine after
+        // it -- must time out with "did not come loose" (saw_clear
+        // false), not the default wording.
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);
+        call_hook(dev, "eject");       // -> Ejected (mark: ejected)
+        seed(dev, 0x101, 0xF8);
+        set_edge_script_debounce_single_glitch_then_present();
+        call_hook(dev, "release");     // glitch absorbed, then times out, no clear
+    } else if (scenario == "load-film-retry-no-clear-rejogs") {
+        // Review finding G corrected what this proves: since the FIRST
+        // press here is Ejected-origin, a SECOND press with no clear ever
+        // seen does NOT re-jog (Ejected never jogs, whatever a retry's
+        // saw-clear flag says) -- it waits again, and once that resolves,
+        // runs "open" (the lenient regs rule), never "jog". (Test 51's
+        // literal double jog is a RELEASED-origin retry, which is not
+        // reachable through this probe at all: reaching a timed-out
+        // Released state in the first place needs OPEN to have already
+        // succeeded, and OPEN's first acknowledgement always fails on
+        // this always-zero-answering mock -- documented as a coverage gap,
+        // docs/sane-wp5-load-button.md section 9.3.)
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);
+        call_hook(dev, "eject");       // -> Ejected (mark: ejected)
+        seed(dev, 0x101, 0xF8);        // present, never clears
+        call_hook(dev, "release");     // 1st press: times out, no clear seen
+        seed(dev, 0x101, 0xF8);        // present again for the 2nd wait
+        seed(dev, 0x3B, 0x02);         // what a 600 dpi scan leaves
+        seed(dev, 0x3C, 0x00);
+        set_edge_script_resolve_from_present();
+        call_hook(dev, "release");     // 2nd press: waits (no jog), then "open"
+    } else if (scenario == "load-film-retry-with-clear-then-edge") {
+        // The other retry row, same Ejected origin: the first wait DID
+        // see a clear (it just never came back present in time). The
+        // SECOND press still does not jog (it never would have, being
+        // Ejected-origin) and, once the wait resolves, still runs "open"
+        // before "load" -- the lenient regs rule, not the strict one a
+        // genuine Released-origin retry would use.
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);
+        call_hook(dev, "eject");       // -> Ejected (mark: ejected)
+        seed(dev, 0x101, 0xF0);        // clear from the start
+        call_hook(dev, "release");     // 1st press: times out, clear was seen
+        seed(dev, 0x101, 0xF0);        // the second wait starts clear again
+        seed(dev, 0x3B, 0x02);
+        seed(dev, 0x3C, 0x00);
+        set_edge_script_resolve_from_clear();
+        call_hook(dev, "release");     // 2nd press: waits, then "open" then "load"
+    } else if (scenario == "load-film-cold-after-eject-forces-fresh-path") {
+        // The Ejected/Released shortcuts assume the transport is still
+        // homed and positioned from the SAME power-on (WP-4 section
+        // 10.3's own reasoning) -- so a cold reg 0x01 at "Load film" time
+        // must force the full cold_init + open + jog path even from an
+        // in-process Ejected state, never the no-jog shortcut. On the
+        // mock the cold-start program's own fail-closed motor completion
+        // is reached first (identical shape to "release-cold"), which is
+        // the proof the shortcut was NOT taken (an Ejected-kind press
+        // would have gone straight to the edge wait instead, with no
+        // motor completion to fail on at all).
         seed(dev, 0x01, 0x22);
         seed(dev, 0x101, 0xF0);
         call_hook(dev, "eject");       // -> Ejected (mark: ejected)
         seed(dev, 0x01, 0x00);         // power-cycled since the eject
-        seed(dev, 0x101, 0xF8);        // irrelevant -- cold is checked first
-        call_hook(dev, "load");        // must refuse INVAL, no motor write
+        call_hook(dev, "release");     // must run cold_init, not the shortcut
     } else if (scenario == "release-after-eject") {
-        // Load film pressed again after an eject: the full jog path must
-        // still work exactly as it does from any other non-Failed state
-        // -- an eject does not narrow what Load film can do, only what a
-        // plain scan can skip.
+        // Load film pressed again after an eject now WAITS first (no jog)
+        // instead of releasing again -- section 3.2's Ejected row. The
+        // sensor is left clear from the eject step and nothing scripts a
+        // change, so the wait times out having SEEN a clear (immediately):
+        // Released, the default retry wording, no motor write at all.
         seed(dev, 0x01, 0x22);
         seed(dev, 0x101, 0xF0);
         call_hook(dev, "eject");       // -> Ejected (mark: ejected)
-        call_hook(dev, "release");     // must still run "open" (then jog)
+        call_hook(dev, "release");     // waits, times out (clear seen), Released
+    } else if (scenario == "load-film-edge-seen-then-not-idle") {
+        // Review finding A: the edge wait only watches bit 0x08, so a
+        // present-but-BUSY class (0xd8: present set, but 0xd8 & 0xf0 =
+        // 0xd0 != 0xf0) slipped in during the 600 ms settle must still be
+        // caught by the post-edge re-read, not treated as good enough
+        // because the wait itself already saw five present reads.
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);
+        call_hook(dev, "eject");       // -> Ejected (mark: ejected)
+        seed(dev, 0x101, 0xF8);
+        seed(dev, 0x3B, 0x02);
+        seed(dev, 0x3C, 0x00);
+        set_edge_script_resolve_from_present_then(0xD8);   // present, not idle
+        call_hook(dev, "release");     // must refuse, no "open" attempted
+    } else if (scenario == "load-film-edge-seen-then-clear") {
+        // The other half of finding A: the magazine pulled back out
+        // during the settle (clear again right after the wait's own
+        // Seen decision).
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);
+        call_hook(dev, "eject");
+        seed(dev, 0x101, 0xF8);
+        seed(dev, 0x3B, 0x02);
+        seed(dev, 0x3C, 0x00);
+        set_edge_script_resolve_from_present_then(0xF0);   // clear after settle
+        call_hook(dev, "release");
+    } else if (scenario == "load-film-blocked-by-loaded-mark") {
+        // Review finding D: a "loaded" mark from an EARLIER PROCESS
+        // blocks a second "Load film" press exactly like the in-process
+        // Loaded state already does -- read-only refusal, mark untouched
+        // (this refusal is reached before check_start_state(), let alone
+        // the guard, so nothing here could have changed it anyway).
+        gl126::magazine_mark_write(gl126::MagazineMarkKind::Loaded, dev->file_name);
+        seed(dev, 0x01, 0x22);
+        call_hook(dev, "release");
+    } else if (scenario == "load-film-killed-mid-wait") {
+        // Review finding B: g_throw_at (set above, before
+        // enable_testing_mode) fires at the wait's OWN FIRST POLL -- the
+        // shape of a process that dies while waiting (Ctrl-C on
+        // `scanimage -n --load-film`, "Terminate" on a frozen digiKam).
+        // By this point the pre-wait mark write has already run (state
+        // Released, mark "released") -- but the exception unwinds
+        // through the ARMED MagazineFailGuard too, which is not yet
+        // `done_`, so it OVERWRITES that mark with "failed" on the way
+        // out. Either mark refuses the next scan; this is which one
+        // actually lands (and proves the pre-wait write in isolation
+        // would not be enough on its own -- the guard has the last
+        // word).
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);
+        call_hook(dev, "eject");       // -> Ejected (mark: ejected)
+        seed(dev, 0x101, 0xF8);        // present, resting after the eject
+        call_hook(dev, "release");     // killed at the wait's first poll
+    } else if (scenario == "load-film-failed-mark-blocks-scan") {
+        // Review finding E: a magazine sequence that fails must leave a
+        // mark a SECOND process can see -- the failure clears the
+        // in-process state, and used to clear the mark too, so nothing
+        // survived a process boundary at all.
+        seed(dev, 0x01, 0x22);
+        call_hook(dev, "release");     // fails on the mock wire -> Failed, mark failed
+        call_hook(dev, "load");        // this "process"'s own scan gate: refuses too
+    } else if (scenario == "state-mark-failed-pending") {
+        // The cross-process half of the same finding: a "failed" mark
+        // written by an EARLIER PROCESS, used with load-mark-failed-
+        // crossproc under a shared OF135I_LOCK_FILE.
+        gl126::magazine_mark_write(gl126::MagazineMarkKind::Failed, dev->file_name);
+    } else if (scenario == "load-mark-failed-crossproc") {
+        // Writes nothing: the "failed" mark must already be on disk from
+        // a prior invocation of state-mark-failed-pending sharing the
+        // same lock path. A fresh process (Unknown in-process) must
+        // still refuse -- on the mark alone -- for Scan, Load film and
+        // Eject film alike.
+        seed(dev, 0x01, 0x22);
+        call_hook(dev, "load");
+        call_hook(dev, "release");
+        call_hook(dev, "eject");
+    } else if (scenario == "load-film-ejected-origin-retry-keeps-open") {
+        // Review finding G: the bug it found. An Ejected-origin press
+        // that times out with a clear seen, retried, must STILL run
+        // "open" (no jog either time) and use the LENIENT regs rule --
+        // before the fix, the second press forgot the origin the moment
+        // state became Released, used the strict 0x00/0x00 rule, and
+        // refused Failed on exactly these regs (0x02/0x00, what a 600
+        // dpi scan leaves).
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);
+        call_hook(dev, "eject");           // -> Ejected (mark: ejected)
+        seed(dev, 0x101, 0xF0);            // clear from the start
+        call_hook(dev, "release");         // 1st press: times out, clear seen
+        seed(dev, 0x101, 0xF0);            // the second wait starts clear again
+        seed(dev, 0x3B, 0x02);             // what a 600 dpi scan leaves
+        seed(dev, 0x3C, 0x00);
+        set_edge_script_resolve_from_clear();
+        call_hook(dev, "release");         // 2nd press: must still run "open"
+    } else if (scenario == "load-film-loaded-then-cold") {
+        // Review finding H: a power cycle since a load completed. A real
+        // LOAD never completes on this always-zero-answering mock (every
+        // "reaches the wire" proof in this suite fails closed at the
+        // first unacknowledged write), so the in-process Loaded state is
+        // not directly reachable here -- its cross-process form, a
+        // "loaded" mark, exercises the identical code path (the precheck
+        // does not distinguish the two: "had_mark || had_state"). Must
+        // fall into the fresh path, not "already loaded".
+        gl126::magazine_mark_write(gl126::MagazineMarkKind::Loaded, dev->file_name);
+        seed(dev, 0x01, 0x00);         // power-cycled since the load
+        call_hook(dev, "release");     // must run cold_init, not "already loaded"
     } else if (scenario == "state-mark-ejected-pending") {
         // An Ejected mark written by an EARLIER PROCESS -- used with
         // load-mark-ejected-crossproc under a shared OF135I_LOCK_FILE to
@@ -610,7 +956,8 @@ int cmd_scenario(int argc, char** argv)
     } else if (scenario == "load-mark-ejected-crossproc") {
         // Writes nothing: the mark must already be on disk from a prior
         // invocation of state-mark-ejected-pending sharing the same lock
-        // path. Good preconditions, so a matched mark runs "open".
+        // path. WP-5: load_document() refuses NO_DOCS regardless -- the
+        // seeds below are vestigial, kept to show they are never read.
         seed(dev, 0x01, 0x22);
         seed(dev, 0x101, 0xF8);
         seed(dev, 0x3B, 0x00);
@@ -639,10 +986,81 @@ int cmd_scenario(int argc, char** argv)
         seed(dev, 0x01, 0x22);
         do_start = true;
     } else if (scenario == "start-mark-no-magazine") {
+        // WP-5: refuses NO_DOCS before calibration regardless of the
+        // hardware -- the seeds are vestigial (kept to show they are
+        // never read; the name is historical, from when the sensor
+        // state was the reason).
         gl126::magazine_mark_write(dev->file_name);
         seed(dev, 0x01, 0x22);
-        seed(dev, 0x101, 0xF0);           // loader sensor CLEAR
+        seed(dev, 0x101, 0xF0);
         do_start = true;
+    } else if (scenario == "start-mark-loaded") {
+        // section 3.4: a "loaded" mark from an EARLIER PROCESS (Load film
+        // ran there, then that process exited -- `scanimage -n
+        // --load-film`) lets a scan proceed in THIS one, exactly like the
+        // in-process Loaded state does.
+        gl126::magazine_mark_write(gl126::MagazineMarkKind::Loaded, dev->file_name);
+        seed(dev, 0x01, 0x22);
+        do_start = true;
+    } else if (scenario == "load-mark-loaded") {
+        // The hook directly: a "loaded" mark lets load_document() return
+        // without refusing, and the mark is NOT consumed by a mere check
+        // -- only an eject, a failure, or a cold read clears it. Seeded
+        // idle-homed (review finding J: load_document() now reads reg
+        // 0x01 too, and the test interface's own default is cold).
+        gl126::magazine_mark_write(gl126::MagazineMarkKind::Loaded, dev->file_name);
+        seed(dev, 0x01, 0x22);
+        call_hook(dev, "load");
+    } else if (scenario == "wiring-check-status") {
+        // The third button really is wired to the hook: unlike Load film
+        // and Eject film, Check status never refuses (it only reads), so
+        // the wiring proof here is simply that it returns GOOD through
+        // the real option path from a state the OTHER two buttons would
+        // have refused from.
+        seed(dev, 0x01, 0x17);
+        press(h, "check-status");
+    } else if (scenario == "check-status-cold") {
+        // section 3.5's one real transition: reg 0x01 = 0x00 resets the
+        // state to Unknown and clears any mark, whatever was pending.
+        gl126::magazine_mark_write(dev->file_name);   // as if a release were pending
+        seed(dev, 0x01, 0x00);
+        call_hook(dev, "check-status");
+    } else if (scenario == "check-status-no-magazine") {
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF0);           // loader sensor CLEAR
+        call_hook(dev, "check-status");
+    } else if (scenario == "check-status-present-not-loaded") {
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF8);           // idle class, sensor present
+        call_hook(dev, "check-status");
+    } else if (scenario == "check-status-loaded-mark") {
+        // Loaded is reported from a cross-process mark too -- but it is
+        // NEVER promoted to Loaded on hardware evidence alone (the sensor
+        // cannot tell "loaded" from "loose in the slot", section 3.5's
+        // honest limit): this only reports it, it does not set the
+        // in-process state to Loaded.
+        gl126::magazine_mark_write(gl126::MagazineMarkKind::Loaded, dev->file_name);
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xF8);
+        call_hook(dev, "check-status");
+    } else if (scenario == "check-status-loaded-non-idle") {
+        // Review finding C: right after LOAD completes (or during
+        // calibration) reg 0x101 reads 0xdc/0xd8-shaped -- NEITHER is the
+        // idle class (0xf0-shaped) -- and a genuinely loaded magazine
+        // must be reported as "loaded", not "unknown state -- power-
+        // cycle", just because of that.
+        gl126::magazine_mark_write(gl126::MagazineMarkKind::Loaded, dev->file_name);
+        seed(dev, 0x01, 0x22);
+        seed(dev, 0x101, 0xDC);           // present, NOT the idle class
+        call_hook(dev, "check-status");
+    } else if (scenario == "check-status-unknown-hw") {
+        // "unknown state -- power-cycle" is reserved for reg 0x01 OUTSIDE
+        // {0x22, 0x00} (review finding C) -- seeded here as 0x17, since
+        // 0x22 with any sensor reading now resolves to one of the other
+        // three rows.
+        seed(dev, 0x01, 0x17);
+        seed(dev, 0x101, 0xF8);
+        call_hook(dev, "check-status");
     } else if (scenario == "magazine-set-accepts-a-listed-value-as-a-no-op") {
         // Task 1 (2026-09-27): OPT_MAGAZINE is settable now (so KSane
         // renders it enabled/black), but SET must never change the
@@ -694,6 +1112,7 @@ int cmd_scenario(int argc, char** argv)
 
     print_text(h);
     print_mark();
+    std::printf("EDGEWRITE %d\n", g_edge_write_violation ? 1 : 0);
 
     sane_close(h);
     sane_exit();

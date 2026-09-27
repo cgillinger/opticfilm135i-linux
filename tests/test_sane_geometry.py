@@ -215,10 +215,18 @@ def _validate_scan_request_body() -> str:
     return _function_body("const Profile* validate_scan_request(")
 
 
-def _magazine_load_body() -> str:
-    """The source text of magazine_load_if_pending() -- the load half,
-    which since WP-4 runs BEFORE calibration and moves the magazine."""
-    return _function_body("void magazine_load_if_pending(")
+def _magazine_check_scan_allowed_body() -> str:
+    """The source text of magazine_check_scan_allowed() -- load_document()
+    itself, since WP-5 (docs/sane-wp5-load-button.md section 3.4) a pure
+    checker of the in-process state and the on-disk mark, called BEFORE
+    calibration but touching no device I/O at all any more."""
+    return _function_body("void magazine_check_scan_allowed(")
+
+
+def _magazine_load_film_body() -> str:
+    """The source text of magazine_load_film_impl() -- WP-5's one-button
+    load, the ONLY thing that still moves the magazine."""
+    return _function_body("void magazine_load_film_impl(")
 
 
 def test_offset_calibration_preflight_precedes_any_io():
@@ -282,35 +290,47 @@ def test_offset_calibration_preflight_precedes_any_io():
           "its own body does no I/O; feedl_for_frame/frame_geometry are pure)")
 
 
-def test_magazine_load_validates_the_request_before_moving_anything():
-    """WP-4 moved the first thing that touches the transport EARLIER than
-    calibration: the core calls load_document() before
-    genesys_scanner_calibration(), and the load half drives the loader
-    motor. The scan request's write-free refusals therefore have to run
-    there too -- otherwise an impossible request (a frame past the
-    holder's six apertures, an unsupported colour mode) would move the
-    magazine and only then be refused (Astra review 2026-09-13).
+def test_load_document_is_pure_and_never_moves_the_magazine():
+    """WP-5 (docs/sane-wp5-load-button.md section 3.4) retired the concern
+    Astra's 2026-09-13 review raised about WP-4's load_document(): that
+    hook used to run BEFORE calibration and drive the loader motor, so an
+    impossible scan request could move the magazine before being refused.
+    Since WP-5, load_document() (magazine_check_scan_allowed()) is the
+    checker ITSELF that no longer moves anything -- it is pure computation
+    on the in-process state and the on-disk mark, plus (review round two,
+    finding J, 2026-09-27) exactly ONE device READ, reg 0x01, so a power
+    cycle since Load film/Eject film last ran does not leave a stale
+    Loaded/Failed claim un-refuted. No WRITE of any kind, no op program,
+    no validate_scan_request() call either (there is no scan request to
+    protect the magazine from any more, since nothing here can move it in
+    the first place). The scan request's own refusals still run,
+    unchanged, inside offset_calibration() at the actual scan. The
+    status-line GET (magazine_state_text()) does NOT do even this one
+    read -- it stays free of hardware reads by design; only this hook and
+    Check status ever read reg 0x01 outside of a button press.
 
-    Source order, like the offset-calibration test above: once a load is
-    known to be pending, validate_scan_request() precedes the first
-    register read and the load program. The runtime proof that the
-    refusal actually happens, with the mark kept, is
-    tests/test_sane_magazine.py."""
-    body = _magazine_load_body()
-
-    i_pending = body.index("if (!pending) {")            # the early return
-    i_validate = body.index("validate_scan_request(dev)")
-    i_read = body.index("read_register(REG_0x01)")       # first device read
-    i_run = body.index('run_magazine_program(dev, "load"')  # the motor move
-
-    assert i_pending < i_validate, ("no validation when nothing is pending",
-                                    i_pending, i_validate)
-    assert i_validate < i_read, ("validation must precede the first read",
-                                 i_validate, i_read)
-    assert i_validate < i_run, ("validation must precede the load program",
-                                i_validate, i_run)
-    print("test_magazine_load_validates_the_request_before_moving_anything OK "
-          "(validate_scan_request precedes the first read and the load program)")
+    Source-level, like the offset-calibration test above: the function
+    body contains none of the device-WRITE primitives every OTHER
+    magazine hook uses, and no motor-program runner. The runtime proof
+    that a pending mark still refuses (with the mark kept), and that a
+    cold read resets a stale claim, is tests/test_sane_magazine.py."""
+    body = _magazine_check_scan_allowed_body()
+    for banned in ("run_magazine_program", "run_phase_program",
+                   "write_table", "validate_scan_request",
+                   "check_start_state", "write_register", "write_registers",
+                   "write_0x8c", "write_buffer", "write_gamma", "write_ahb",
+                   "write_fe_register", "bulk_"):
+        assert banned not in body, (banned, "magazine_check_scan_allowed must not do I/O")
+    # The one read it IS allowed: reg 0x01, and only that register.
+    assert body.count("read_register") == 1, body
+    assert "read_register(REG_0x01)" in body, body
+    # And it still runs before ANY of the ops that do -- the one place
+    # that still moves the magazine is a SEPARATE function now.
+    load_film = _magazine_load_film_body()
+    assert 'run_magazine_program(dev, "load"' in load_film, load_film
+    assert 'run_magazine_program(dev, "open"' in load_film, load_film
+    print("test_load_document_is_pure_and_never_moves_the_magazine OK "
+          "(no device I/O in load_document; the motor moves live in Load film alone)")
 
 
 def test_public_frame_option_constraint_is_1_to_6():
@@ -339,7 +359,7 @@ def main() -> int:
         test_frame_geom_safety_bounds,
         test_frame_bounds_enforced_before_any_write,
         test_offset_calibration_preflight_precedes_any_io,
-        test_magazine_load_validates_the_request_before_moving_anything,
+        test_load_document_is_pure_and_never_moves_the_magazine,
         test_public_frame_option_constraint_is_1_to_6,
     ]
     passed = 0

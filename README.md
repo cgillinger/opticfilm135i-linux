@@ -32,11 +32,14 @@ The project has two parts, at different stages:
   2026-09-13 a frame has been scanned both through the installed `scanimage`
   and from inside **digiKam**, with every resolution profile and the infrared
   pass run on the unit and accepted by eye. It loads, frees and ejects the
-  magazine itself through a `Load film` / `Eject film` option pair (the
-  load completes on the next scan, because the operator has to reseat the
-  magazine in between): the whole load → scan → eject cycle has run from
-  `scanimage` and from digiKam with no command-line step, including a
-  power-cycled unit with a latched magazine (Tests 75–77, 2026-09-13).
+  magazine itself through one `Load film` button (release, wait for the
+  reseat, load — all in one press, up to 120 s, no progress shown; a
+  `Check status` button reads the hardware and updates the status line):
+  the whole load → scan → eject cycle has run from `scanimage` and from
+  digiKam with no command-line step, including a power-cycled unit with a
+  latched magazine (Tests 75–77, 2026-09-13). The one-button flow itself
+  (**offline only so far**, hardware run pending) is
+  **[docs/sane-wp5-load-button.md](docs/sane-wp5-load-button.md)**.
   What it does not do is anything upstream: a submission package for the
   SANE project is prepared and reviewable, and nothing has been sent. Its
   verification is tracked independently of the CLI driver's — see the
@@ -79,19 +82,33 @@ functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md]
   nothing has been submitted. Per-profile detail:
   **[docs/ROADMAP.md](docs/ROADMAP.md)**
 
-**digiKam cheat sheet** (SANE has no dialogs, so this and the "Magazine —
-next step" status line on the Film tab are the whole interface):
+**digiKam cheat sheet, the one rule** (SANE has no dialogs, so this and
+the "Magazine — next step" status line on the Film tab are the whole
+interface — **[docs/sane-wp5-load-button.md](docs/sane-wp5-load-button.md)**,
+offline only so far):
 
-1. **Load film** once (Film tab) — cold start + open + jog, ~25 s, no
-   progress shown.
-2. Take the magazine fully out, push it back in to the mechanical stop.
-3. Set **Frame**, press **Scan** (Basic tab).
-4. Repeat step 3 for each frame; **Eject film** when the strip is done.
-5. Next strip: swap it, push in to the stop, press **Scan** — no Load
-   film needed (Test 90).
-6. If anything looks wrong, read the status line before pressing
-   anything else — a SANE frontend cannot prompt you, so that line and
-   this sheet are all there is.
+1. **Press Load film first**, then take the magazine fully out and push
+   it back in to the mechanical stop — it loads by itself, no further
+   button needed (up to 120 s, no progress shown; from cold, add ~25 s
+   before the wait even starts).
+2. Set **Frame**, press **Scan** (Basic tab). Scan never loads the
+   magazine by itself — if nothing is loaded, it refuses.
+3. Repeat step 2 for each frame; **Eject film** when the strip is done.
+4. Next strip: press **Load film** again, swap the strip, push it in to
+   the stop — no jog this time (Test 90).
+5. If anything looks wrong, read the status line before pressing
+   anything else, or press **Check status** to refresh it from the
+   hardware — a SANE frontend cannot prompt you, so those and this sheet
+   are all there is.
+6. **The whole dialog is unresponsive while Load film waits** (up to
+   120 s) — that is expected, not a freeze; do not force-quit digiKam on
+   the assumption it has hung. From the command line, `scanimage -n
+   --load-film` blocks the same way and prints nothing meanwhile;
+   Ctrl-C during that wait kills it outright, but the magazine state this
+   leaves is covered (a mark refuses the next scan rather than letting it
+   proceed on an unfinished load) — recover with Load film again. Read
+   `--check-status`'s result with a separate `scanimage -A`, it prints
+   nothing itself. Details: **[docs/sane-install.md](docs/sane-install.md)** §7.
 
 See **[docs/ROADMAP.md](docs/ROADMAP.md)** for the acceptance matrix,
 frozen scope, and exactly what remains before the driver is "complete".

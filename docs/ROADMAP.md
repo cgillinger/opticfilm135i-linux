@@ -598,6 +598,54 @@ promised scope require them. VueScan stays out of public docs.
 - Stop condition: any deviation stops WP-4; no blind retry, no recovery
   experiments.
 
+**WP-5 — One-button loading (owner's verdict on WP-4's usability).**
+- Why: driving WP-4's two-step protocol live (Test 91, 2026-09-27,
+  digiKam) exposed that no frontend prompt exists for "now reseat the
+  magazine" and that a second `Load film` press re-jogs and un-seats an
+  already-released magazine, feeding at the un-seated-magazine signature
+  (`0xfc`) on the following scan. The owner's verdict, verbatim: "no one
+  can do this process without a written manual."
+- Goal / acceptance: `docs/sane-wp5-load-button.md`. One button — "Load
+  film" — runs the release (skipped when nothing needs releasing), a
+  read-only wait (up to 120 s) for the loader sensor's present-clear-
+  present edge, and the load, all inside one call; `sane_start`
+  (`load_document()`) never runs LOAD any more, only checks whether one
+  is loaded; a "Check status" button reads the hardware and reconciles
+  the status line without ever claiming Loaded on hardware evidence
+  alone (the sensor cannot tell "loaded" from "loose in the slot").
+- **Implemented OFFLINE 2026-09-27, nothing hardware-run.** `sane/gl126.cpp`:
+  `wait_for_magazine_edge()` (a plain read-only poll loop, gated exactly
+  like every other magazine poll site's `OF135I_SANE_POLL_CAP_MS`
+  test-mode-only cap), `magazine_load_film_impl()` (replaces the old
+  release-only button), `magazine_check_scan_allowed()` (replaces the old
+  load half — now pure computation, zero device I/O), `magazine_check_
+  status_impl()` (new). A third mark kind, `MagazineMarkKind::Loaded`
+  (`sane/gl126_lock.{h,cpp}`), lets a `scanimage -n --load-film` process's
+  completed load be seen by a later, separate `scanimage` scan. A new
+  `OPT_CHECK_STATUS` button in the integration patch. 380 offline tests
+  pass (was 346), 0 warnings, patch regenerated and verified
+  byte-identical to the clone's `git diff`.
+- **Review round two (2026-09-27, later): nine further findings (an
+  independent reviewer plus the coordinator), all fixed offline.**
+  Highlights: an Ejected-origin retry had lost its "no jog, lenient
+  regs" treatment the moment a timeout made it look like an ordinary
+  Released retry (the reviewer's own finding); a magazine failure used
+  to CLEAR the cross-process mark instead of recording it, so a second
+  process had no way to know the transport's state was never
+  established (fourth mark kind, `Failed`); a process killed while
+  waiting could leave nothing behind to stop the next scan; Check
+  status could report "unknown state — power-cycle" for a magazine that
+  was actually loaded, because reg 0x101 is not idle-class-shaped right
+  after LOAD or during calibration. Full details and all nine items:
+  `docs/sane-wp5-load-button.md` §9.5. 389 offline tests pass (was
+  380), 0 warnings, patch re-regenerated and re-verified.
+- Test 92 (hardware, owner's go required): `docs/sane-wp5-load-button.md`
+  §7 — the rule (cold scanner, Load film, reseat, loads by itself), the
+  two traps read-only (do nothing → 120 s timeout, no `0xfc` anywhere;
+  press again while loaded → refused), Check status after every step,
+  and the cross-process case from `scanimage`.
+- Stop condition: any deviation stops Test 92; no blind retry.
+
 **WP-3 — SANE submission package, prepared only (B2). PREPARED,
 rebased onto current upstream 2026-09-15 — see
 `docs/sane-wp3-submission.md`.** A five-commit series on branch
@@ -1010,3 +1058,13 @@ can offer. **None of this has been tried live** -- the next digiKam
 session is what would show whether it actually reduces how much
 external guidance the process needs, or only makes the status line
 legible without closing the gap the owner's verdict named.
+
+**2026-09-27, later the same evening: WP-5 is the actual response to
+the verdict above.** A better-worded, enabled status line still left a
+process with a trap in it (a second `Load film` press could re-jog an
+already-released magazine). `docs/sane-wp5-load-button.md` removes the
+trap itself rather than documenting around it: one button does release,
+wait and load together, and `Scan` never loads anything. See the WP-5
+entry above this section. **Implemented offline 2026-09-27, not tried
+live** -- this candidate stays open until a digiKam session with WP-5
+installed confirms it.

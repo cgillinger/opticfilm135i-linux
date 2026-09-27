@@ -235,6 +235,8 @@ const char* magazine_mark_kind_name(MagazineMarkKind kind)
     switch (kind) {
     case MagazineMarkKind::Released: return "released";
     case MagazineMarkKind::Ejected:  return "ejected";
+    case MagazineMarkKind::Loaded:   return "loaded";
+    case MagazineMarkKind::Failed:   return "failed";
     }
     return "released";
 }
@@ -317,8 +319,8 @@ bool magazine_mark_read(MagazineMarkKind* kind, std::string* device_key)
         return false;
     }
     // Line 1: "<kind> <timestamp> (sane genesys gl126)", kind being the
-    // first word, "released" or "ejected". Line 2: the device key, whole,
-    // spaces and all.
+    // first word, "released", "ejected" or "loaded". Line 2: the device
+    // key, whole, spaces and all.
     std::string text(buf, static_cast<std::size_t>(n));
     std::size_t eol = text.find('\n');
     if (eol == std::string::npos) {
@@ -332,8 +334,12 @@ bool magazine_mark_read(MagazineMarkKind* kind, std::string* device_key)
         found_kind = MagazineMarkKind::Released;
     } else if (word == "ejected") {
         found_kind = MagazineMarkKind::Ejected;
+    } else if (word == "loaded") {
+        found_kind = MagazineMarkKind::Loaded;
+    } else if (word == "failed") {
+        found_kind = MagazineMarkKind::Failed;
     } else {
-        // Neither known kind (garbage, or a future/older format): treat
+        // No known kind (garbage, or a future/older format): treat
         // exactly like "no mark", same as the old fixed "released" check.
         return false;
     }

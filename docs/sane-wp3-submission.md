@@ -369,6 +369,50 @@ changed too, but both live entirely inside `sane/gl126.cpp` -- one of
 this port's own nine files, not shared code -- so, like the
 English-only change in the addendum above, they need no row here.
 
+**Addendum, 2026-09-27, WP-5 (one-button loading,
+`docs/sane-wp5-load-button.md`).** Supersedes the two-step protocol the
+addendum above still describes: `OPT_LOAD_FILM` now runs release, wait
+and load in one call, and `OPT_MAGAZINE`'s twelve values (was seven)
+include four `Check status`-only diagnostic texts. Four hunks in shared
+code, none yet folded into `sane/wp3-package/`.
+
+| file | change | class | effect on other ASICs |
+|---|---|---|---|
+| `genesys.h` | one new `Genesys_Option` value, `OPT_CHECK_STATUS`, inserted between `OPT_EJECT_FILM` and `OPT_FRAME` | additive | option **indices** from `OPT_FRAME` onward shift by one more, for every model -- same class of change as the two option-enum additions above; addressed by name, `SANE_CAP_INACTIVE` on every other ASIC |
+| `genesys.cpp`, `init_options` | the `OPT_CHECK_STATUS` button declared (type, title, desc, unit, constraint); added to the GL126-only active set and to the non-GL126 `SANE_CAP_INACTIVE` block alongside the other three film options; `OPT_LOAD_FILM`'s desc rewritten for the one-button procedure | gated (inactive elsewhere) | none |
+| `genesys.cpp`, `set_option_value` (new `case OPT_LOAD_FILM` body, new `case OPT_CHECK_STATUS`) | `OPT_LOAD_FILM`'s case now calls `gl126::magazine_load_film()` (was `magazine_release()`, a plain rename of the C++ function it forwards to -- the case's own three lines are otherwise the same shape); `OPT_CHECK_STATUS`'s case calls `gl126::magazine_check_status()` and sets `SANE_INFO_RELOAD_OPTIONS`, the same pattern the other two film buttons already use | additive (a new case in a switch shared by every ASIC, reached only when `option == OPT_CHECK_STATUS`; unreachable elsewhere since the option is `SANE_CAP_INACTIVE` there) | none |
+| `test_scanner_interface.{h,cpp}` | GL126's test-mode constructor now also seeds regs `0x3b`/`0x3c` to `0x00`, alongside the pre-existing `0x01`/`0x101` seeds; **review round two (finding F)**: every `write_*` method (`write_register`, `write_registers`, `write_0x8c`, `bulk_write_data`, `write_buffer`, `write_gamma`, `write_ahb`, `write_fe_register`) now increments a counter, exposed as `write_count()` alongside the pre-existing `out_transfer_count()`; a new `seed_register()` writes the cache directly, uncounted, for test setup | gated (the register seeds, `AsicType::GL126` branch only) / additive, test-mode only (the counter and `seed_register()`) | none -- test-mode-only, no other ASIC's branch touched, no production caller |
+| `test_usb_device.{h,cpp}` (new files, not yet in `sane/wp3-package/`'s file list) | a small `out_transfer_count()` counter on the test-mode USB mock, incremented on every OUT control transfer and `bulk_write` | additive, test-mode only | none -- these are test-harness classes with no production caller |
+
+**Rationale for the register-seed and counter additions.** Both are
+test-harness fixes needed by the new offline suite
+(`tests/test_sane_magazine.py`'s edge-wait tests), not production
+behaviour changes: `magazine_check_status_impl()` reads regs 0x3b/0x3c
+unconditionally, and `RegisterCache::get()` (test-mode only) throws for
+an address never written, unlike real hardware, which always answers a
+register read with something; the counter lets a test assert "the edge
+wait's own polls put nothing on the wire" without a new mechanism in
+genesys core. Neither has a code path reachable by any other ASIC in any
+mode other than the backend's own unit tests.
+
+The renamed C++ functions themselves (`magazine_release` ->
+`magazine_load_film`, `magazine_load_if_pending` ->
+`magazine_check_scan_allowed`, both `gl126.h`/`gl126.cpp`), the new
+`wait_for_magazine_edge()`, `magazine_check_status_impl()`, the third
+mark kind `MagazineMarkKind::Loaded` (`gl126_lock.{h,cpp}`) and the
+twelve status-value constants all live entirely inside the nine
+`gl126_*` files, not shared code, so -- like every other GL126-only
+change in this document -- they need no row here.
+
+**Review round two (2026-09-27, later the same day, docs/sane-wp5-load-
+button.md §9.5): nine more findings (A-I), all fixed inside `gl126.cpp`/
+`gl126_lock.{h,cpp}` -- a fourth mark kind (`Failed`), the post-edge
+presence+class check, the pre-wait mark write, the Ejected-origin retry
+fix, the `saw_clear` debounce, and the `load_document()` cold read (item
+J) -- add NO new shared-code rows beyond the `test_scanner_interface.{h,
+cpp}` row already updated above (finding F's write-counting).** Every
+other fix is entirely inside this port's own nine files.
+
 **Offline coverage of the shared changes.** The op and geometry suites
 (`tests/test_sane_ops.py`, `test_sane_geometry.py`) prove the GL126 path
 byte-exact against the Python driver; `tests/gl126_session_probe.cpp` runs

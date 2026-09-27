@@ -75,6 +75,40 @@ one exists; "offline" means implemented and tested without the scanner.
   tooltip (`desc`) spells out the whole load/scan/eject procedure. The
   README gained a matching six-line "digiKam cheat sheet". Not yet seen
   live.
+- **One-button loading (WP-5)** (offline, 2026-09-27, following a live
+  session that passed on the mechanics but whose operator still needed
+  outside guidance, and a defect the same session hit for real: a second
+  `Load film` press re-jogged and un-seated an already-released magazine,
+  failing the following scan at the feed): `Load film` now runs the WHOLE
+  flow in one press -- release (skipped when nothing needs releasing), a
+  read-only wait (up to 120 s) for the loader sensor's present-clear-
+  present edge, then the load. `Scan` never loads the magazine any more
+  (`load_document()` is a pure checker of the in-process state and the
+  on-disk mark); a new `Check status` button reads the hardware and
+  reconciles the status line, without ever claiming Loaded on hardware
+  evidence alone. A third mark kind, `loaded`, lets `scanimage -n
+  --load-film` hand off to a separate scanning invocation. Status line
+  values grew from seven to twelve (`docs/sane-wp5-load-button.md` §3.6).
+  Design and implementation notes: `docs/sane-wp5-load-button.md`.
+  **Test 92 (hardware) pending, owner's go required.**
+- **WP-5 review round two** (offline, 2026-09-27, later the same day --
+  an independent reviewer plus the coordinator, nine findings): an
+  Ejected-origin retry could lose its no-jog/lenient-regs treatment the
+  moment a timeout made it look like an ordinary Released retry, and
+  would then have refused Failed on real post-scan register values for a
+  magazine that was never jogged loose; a magazine failure now WRITES a
+  fourth mark kind (`failed`) instead of clearing the pending one, so a
+  second process knows the transport's state was never established; a
+  process killed while Load film waits now always leaves a mark that
+  blocks the next scan; Check status no longer reports "unknown state --
+  power-cycle" for a magazine that is actually loaded (reg 0x101 is not
+  idle-class-shaped right after LOAD or during calibration); a
+  cross-process `loaded` mark now blocks a second Load film press the
+  same way the in-process state does; a cold reg 0x01 read inside one
+  process now resets a stale Loaded/Failed claim instead of refusing
+  forever; the sensor-clear debounce needs 2 consecutive reads, not one.
+  Full list and rationale: `docs/sane-wp5-load-button.md` §9.5. 389
+  offline tests pass (was 380). Still offline only.
 
 ### Film and holders
 - **110 (Pocket Instamatic) film in the 35 mm strip holder**: `--film 110`

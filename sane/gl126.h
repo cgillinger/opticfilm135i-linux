@@ -149,27 +149,29 @@ void read_image_chunk_usb(Genesys_Device* dev, std::uint8_t* data, std::size_t s
     like the visible image (Test 70). */
 void push_dual_light_nodes(const ScanSession& session, ImagePipelineStack& pipeline);
 
-/** WP-4 (docs/sane-wp4-magazine.md): the magazine flow's two operator
-    actions and the one line of status text, called by the "load-film",
-    "eject-film" and "magazine" options genesys.cpp declares for GL126
-    (gl126-integration.patch).
+/** WP-5 (docs/sane-wp5-load-button.md): the magazine flow is now ONE
+    button. "Load film" (magazine_load_film()) runs the whole thing in a
+    single call: a cold unit's bring-up if needed, the vendor device-open
+    table and the jog (skipped when nothing needs releasing -- the
+    Ejected case), a read-only wait for the operator's reseat -- present
+    to clear to present on the loader sensor, reg 0x101 -- and then LOAD.
+    A timeout (120 s) ends the call with no LOAD and the magazine
+    considered Released; SANE_STATUS_GOOD either way, since the operator
+    doing nothing is not an error. "Check status" (magazine_check_status())
+    is a third button that is allowed to read the hardware and reconcile
+    the status line with it, without ever promoting anything to Loaded on
+    hardware evidence alone.
 
-    The magazine cannot be loaded in one call: the vendor's insert flow
-    needs the operator to take it out and reseat it to the stop in the
-    middle, and SANE has no way to ask for that during sane_start. So
-    magazine_release() runs the release half (a cold unit's bring-up, the
-    vendor device-open table, the jog that frees the cassette) and the
-    LOAD runs from load_document() at the next sane_start, once the
-    hardware confirms the state the jog leaves behind.
-
-    Section 10 (2026-09-25, docs/sane-wp4-magazine.md): load_document()
-    also completes a load pending from a plain eject -- no jog, no
-    reinsert prompt, just the strip swapped and pushed to the stop --
-    mirroring of135i/loadflow.py's --next-strip. Both kinds of pending
-    load are tracked by the same in-process state and the same
-    cross-process mark (gl126_lock.h MagazineMarkKind). */
-void magazine_release(Genesys_Device* dev);
+    load_document() (CommandSetGl126, gl126.cpp) no longer loads anything:
+    since WP-5 it is a pure checker of the in-process state and the
+    cross-process mark (gl126_lock.h MagazineMarkKind, now Released,
+    Ejected or Loaded), called from genesys_start_scan before calibration
+    (gl126-integration.patch). This superseded WP-4's two-step protocol
+    (docs/sane-wp4-magazine.md section 3, section 10: "load at next
+    sane_start"), which is kept there as historical background. */
+void magazine_load_film(Genesys_Device* dev);
 void magazine_eject(Genesys_Device* dev);
+void magazine_check_status(Genesys_Device* dev);
 std::string magazine_state_text(const Genesys_Device* dev);
 
 /** Every value magazine_state_text() can return, NULL-terminated, for the

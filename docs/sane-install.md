@@ -267,10 +267,32 @@ parentheses.
    — after this session's changes, only the options that do something on
    GL126 remain here, grouped under `Film` (a heading `scanimage -A` and
    xsane show; KSaneWidgets drops SANE groups entirely, so digiKam shows
-   just the four options, in that order, at the top of the tab — no
+   just the options, in that order, at the top of the tab — no
    visible heading there), in this order: **`Magazine — next step`**
    (`magazine`, the status line — read first), `Load film`, `Eject film`,
-   `Frame` (1–6).
+   `Check status`, `Frame` (1–6).
+
+   **2026-09-27, WP-5 change (superseding the two-step procedure the rest
+   of this numbered step originally described — docs/sane-wp5-load-
+   button.md):** `Load film` is now the ONE button. Pressed, it runs
+   whatever release is needed (a cold bring-up first if the scanner was
+   off; the vendor's own device-open table and jog, skipped when nothing
+   needs releasing), then WAITS — read-only, up to 120 s, no progress
+   shown — for the operator to take the magazine fully out and push it
+   back in to the mechanical stop, then loads it, all before the call
+   returns. `Scan` (Läs in) never loads anything any more: pressed
+   without a loaded magazine it refuses ("Document feeder out of
+   documents" is libksane's generic wording for `SANE_STATUS_NO_DOCS`).
+   `Check status` is a third button, safe to press at any time: it reads
+   the scanner and updates the status line with what it finds, without
+   ever claiming "loaded" on hardware evidence alone (the loader sensor
+   cannot tell a loaded magazine from one merely resting in the slot).
+   **The one rule, unchanged from the option's own tooltip:** press Load
+   film first, then handle the magazine; the motor runs when the operator
+   is done; then set Frame and press Scan. Same button after Eject film:
+   press Load film, swap the strip, push the magazine in to the stop —
+   it loads with no jog. See the README's "digiKam cheat sheet" for the
+   same rule in six words.
    Every option that never had an effect on this scanner (exposure time,
    brightness/contrast, lamp timing, the whole calibration-cache family,
    colour filter) is hidden, so the tab no longer mixes working controls
@@ -279,7 +301,7 @@ parentheses.
    the fix there was shortening every status string to fit and ordering it
    first, not the widget itself.
 
-   **2026-09-27, second change (this task):** the status line renders
+   **2026-09-27, second change (WP-4/WP-5):** the status line renders
    ENABLED (black label and value) now, not the disabled grey KSane draws
    for a `SANE_CAP_SOFT_DETECT`-only option — `magazine` is `SANE_CAP_
    SOFT_SELECT | SANE_CAP_SOFT_DETECT` (settable) with a SET handler that
@@ -287,19 +309,28 @@ parentheses.
    `set_option_value()`: ignores the value, returns `SANE_INFO_RELOAD_
    OPTIONS` so the frontend immediately re-reads the true text and the
    combo snaps back regardless of what was set). The option is also
-   retitled `Magazine — next step` and its seven values now each name the
-   Basic tab's button by the word it actually shows, **Scan**, instead of
-   a generic "scan": `not loaded -- press Load film`, `released -- take
-   out, push in, Scan`, `released earlier -- reseat, then Scan`, `loaded
-   -- press Scan, or Eject film`, `ejected -- swap strip, push in, Scan`,
-   `ejected earlier -- push in, then Scan`, `failed -- power-cycle, then
-   Load film`. Its tooltip (the option's `desc`, task 3) now spells out
-   the whole procedure: "1. Load film. 2. Take the magazine fully out,
-   push it back in to the stop. 3. Set Frame, press Scan (Basic tab).
-   4. Eject film. Next strip: swap, push in to the stop, Scan -- no Load
-   film needed." — the same six steps as the README's digiKam cheat
-   sheet.
+   retitled `Magazine — next step`.
+
+   **2026-09-27, WP-5 change (this task):** its values are now TWELVE, not
+   seven — the ordinary ones plus what `Check status` can show and a
+   couple of retry/cross-process variants — each still naming the Basic
+   tab's button by the word it actually shows, **Scan**: `not loaded --
+   press Load film`, `released earlier -- Load film again`, `ejected
+   earlier -- press Load film`, `press Load film, then take out, push
+   in`, `did not come loose? Load film again`, `loaded -- set Frame,
+   press Scan`, `ejected -- swap strip, then Load film`, `failed --
+   power-cycle, then Load film`, `cold -- press Load film`, `no magazine
+   in the slot`, `magazine present, not loaded? Load film`, `unknown
+   state -- power-cycle, Load film` (the last four only ever come from
+   `Check status`). Its tooltip (the option's `desc`) now spells out the
+   one-button procedure: "Press Load film first, then take the magazine
+   out and push it in to the stop; it loads by itself. Set Frame, press
+   Scan. Eject film; next strip: press Load film, swap, push in." — the
+   same steps as the README's digiKam cheat sheet.
    ![digiKam Scanner Specific Options tab after the change](images/digikam-scanner-specific.png)
+   The screenshot and the walkthrough below predate WP-5 and still show
+   the two-step protocol (Load film releases, a following Scan loads) --
+   not retaken; the text in this section is the current, WP-5 behaviour.
    For comparison, the same tab before the change: ![before](images/digikam-scanner-specific-before.png)
 
    Both screenshots show the `Film` group's own labels in Swedish
@@ -310,47 +341,36 @@ parentheses.
    reason given in "Two libksane display bugs" below; the screenshots
    have not been retaken.
 
-   **Three usability findings from the owner's first live session (Test
-   91, 2026-09-27), documented as limits of the KSane dialog, not bugs in
-   it:** the instruction after pressing Load film is only a tooltip plus
-   this status line — nothing pops up to say "now reseat the magazine";
-   Läs in sits on the Grundalternativ tab, a tab away from the Film group's
-   buttons; and pressing Load film a SECOND time re-jogs and un-seats an
-   already-released magazine (the following scan then fails at the feed,
-   `0xfc`, the documented un-seated-magazine signature — recovery is a
-   power cycle and Load film again). The operating rule this gives:
-   **press Load film ONCE, reseat the magazine, then Läs in** — never
-   press Load film again just because nothing visibly changed.
-
-   **Second live session, same evening (docs/test-log.md, Test 91's
-   second paragraph):** with the status line still disabled/grey (this
-   task's fix had not been written yet), the owner completed a full
-   cycle — Load film, reseat, Scan, Eject film, swap strip, Scan again
-   with no Load film (the next-strip load, in-process this time, not
-   just from `scanimage`) — but only by being walked through it from
-   outside the dialog. His verdict, verbatim: **"no one can do this
-   process in a SANE frontend without a written manual."** That is
-   recorded here as a **documented limitation of the KSane dialog
-   surface**, not a bug in the backend: SANE has no mechanism for a
-   backend to show a prompt, so a status-line string and a written cheat
-   sheet (this section; six lines in the README) are the only channel
-   available. What this task changed in response — enabling the status
-   line so it is legible at all (above), naming the frontend's own
-   button in every value (above), and spelling out the whole procedure
-   in the option's tooltip (task 3) — is offline work, aimed at making
-   that written manual as unnecessary as a read-only SANE option can make
-   it; it has **not** been tried live. The next digiKam session is what
-   would confirm or refute that.
+   **HISTORICAL — the two-step protocol's usability findings (Test 91,
+   2026-09-27), superseded by WP-5 below:** the owner's first live session
+   found three problems with the OLD two-call protocol (Load film
+   releases; the FOLLOWING Scan loads) -- no prompt telling the operator
+   to reseat the magazine, Läs in a tab away from the Film group, and a
+   SECOND press of Load film re-jogging and un-seating an already-released
+   magazine (the following scan then failed at the feed, `0xfc`). A
+   second live session the same evening completed a full cycle only by
+   being walked through it from outside the dialog; the owner's verdict,
+   verbatim: **"no one can do this process in a SANE frontend without a
+   written manual."** `docs/sane-wp5-load-button.md` was written in
+   direct response and replaces the two-call protocol entirely (one
+   button now does release, wait and load together) -- the specific
+   defect that made a second press harmful is gone, because there is no
+   longer a "released, waiting for a following Scan" state a second press
+   can disturb: a second `Load film` press either safely re-runs the
+   release (if the operator never actually touched the magazine) or
+   safely waits again (if they already had). **None of this has been
+   tried live** -- the next digiKam session is what would confirm WP-5
+   actually closes the gap the owner's verdict named.
 3. Back on the **Grundalternativ** tab, press **Läs in** (Scan/Read — not
    "Förhandsgranskning": that runs a full 600 dpi pass, never a cheap
-   preview, on this scanner).
-4. **Next strip, without a fresh Load film:** press **Eject film**, swap
-   the strip in the magazine, push the magazine back in to the mechanical
-   stop, then press **Läs in** again — the scan itself performs a
-   next-strip load (open + load, no jog), backend-verified on hardware as
-   Test 90. `Load film` is only needed after a genuine cold start or a
-   stuck magazine, not between ordinary strips — see finding 3 above for
-   why a second press is actively harmful, not just redundant.
+   preview, on this scanner). It refuses (`SANE_STATUS_NO_DOCS`,
+   libksane shows this as a generic "Document feeder out of documents"
+   or similar) if `Load film` has not completed a load first — WP-5:
+   Scan itself never loads the magazine any more.
+4. **Next strip:** press **Eject film**, swap the strip in the magazine,
+   push the magazine back in to the mechanical stop, press **Load film**
+   (no jog this time — WP-4 §10's next-strip mechanism, now reached from
+   the button instead of automatically at Scan), then **Läs in**.
 
 ### Two libksane display bugs and how this backend works around them
 
@@ -466,19 +486,31 @@ is English, everything else follows the desktop.
 
 ## 7. Who does what: load, scan, eject
 
-**The backend handles the magazine itself.** `load_document()` /
+**The backend handles the magazine itself, in ONE button now (WP-5,
+`docs/sane-wp5-load-button.md`, 2026-09-27 — supersedes WP-4's two-step
+protocol described in `docs/sane-wp4-magazine.md`).** `load_document()` /
 `eject_document()` are implemented behind a `load-film` / `eject-film` /
-`magazine` option set (WP-4, `docs/sane-wp4-magazine.md`), and the whole
-load → scan → eject cycle has run on hardware from `scanimage` and from
-digiKam with no command-line step, including freeing a latched magazine
-after a power cycle (Tests 75–77, 2026-09-13). The two-step protocol:
-press **Load film**, take the magazine out when told and re-seat it to
-the stop, then start the scan — the load runs before calibration.
-**Eject film** ejects from the post-PARK state.
+`check-status` / `magazine` option set, and the whole load → scan → eject
+cycle has run on hardware from `scanimage` and from digiKam with no
+command-line step, including freeing a latched magazine after a power
+cycle (Tests 75–77, 2026-09-13; the one-button flow itself is **offline
+only so far**, Test 92 pending, `docs/sane-wp5-load-button.md` §7).
+
+**The one rule:** press **Load film** first, then take the magazine out
+and push it back in to the mechanical stop — it loads itself, no further
+button press needed (up to 120 s, no progress shown; a timeout is not an
+error, the status line says what to do next). Set **Frame**, press
+**Scan**. **Eject film**; next strip: press **Load film** again, swap the
+strip, push it in — no jog this time. `Scan` never loads the magazine by
+itself any more; `Check status` is a third button (after Load film and
+Eject film), safe to press whenever, that reads the hardware and updates
+the status line without ever claiming "loaded" on hardware evidence
+alone.
 
 The command-line division below still works and was the B1 workflow
 (Christian's decision of 2026-09-13; it does not satisfy B2, which is why
-WP-4 exists). Use it when you prefer the driver's interactive load tool:
+WP-4/WP-5 exist). Use it when you prefer the driver's interactive load
+tool:
 
 | step | who | command |
 |---|---|---|
@@ -492,6 +524,47 @@ The two sides exclude each other through one `flock` on
 the device open for as long as its scanner dialog is open**, so `of135i eject`
 will report the scanner busy until that dialog is closed. Close the dialog
 first, then eject.
+
+**Mixing `of135i` and SANE leaves a mark the other side does not know
+about.** `of135i load`/`of135i eject` do not write the SANE-side
+cross-process mark (`/tmp/of135i-07b3-1436.lock.magazine`) at all -- only
+`Load film`/`Eject film`/a completed load do. So a load done through
+`of135i load` and then handed to a SANE scan is the documented CLI
+division above (Unknown, no mark -> proceeds with a warning, section
+3.4); it is not itself a stale-mark problem. What CAN go stale is the
+other direction: a `scanimage -n --load-film` (or `--eject-film`) that
+ran and left an "loaded"/"ejected" mark, followed by driving the
+magazine with `of135i` instead of SANE from then on -- the mark still
+says what SANE last believed, and a LATER scan through SANE will read
+it as true again, possibly wrongly. Two ways out: press **Check status**
+(SANE) or run `scanimage -n --check-status` before the next SANE scan --
+a genuinely cold reg 0x01 clears any mark as stale; or, if the scanner
+is not cold, delete the mark file by hand
+(`rm -f /tmp/of135i-07b3-1436.lock.magazine`, or `$OF135I_LOCK_FILE.magazine`
+if that variable is set) before the next SANE session.
+
+**`scanimage -n --load-film` blocks for up to 120 s and prints nothing
+while it waits** (WP-5 section 3.7) -- this is expected, not a hang: take
+the magazine out and push it back in to the mechanical stop during that
+window, and the command returns 0 once the load completes. **Ctrl-C
+during that wait kills the process outright** (SANE's own signal
+handling is only installed after option parsing, so nothing in the
+backend gets a chance to react) -- the state this leaves behind is
+covered, not lost: the backend writes a mark BEFORE the wait starts and
+the interrupted magazine sequence's own failure handling overwrites it
+with a "failed" mark on the way out, either of which makes the next scan
+refuse rather than proceed against a jogged- or ejected-but-unloaded
+magazine (WP-5 review findings B and E). Recover with **Load film**
+again (a power cycle first if the interruption happened mid-motor-move
+and the next press itself refuses). **`scanimage -n --check-status`
+prints nothing either** -- read the result with a separate `scanimage -A`
+(or the `magazine` value in a frontend). In **digiKam, the whole dialog
+is unresponsive while `Load film` waits** (KSane runs option sets on its
+GUI thread) -- this is expected too: do **not** force-quit or "Terminate"
+digiKam during that wait on the assumption it has frozen; wait for it to
+return (up to 120 s) or, if it must be interrupted, treat it the same as
+the Ctrl-C case above -- check the status line (or press Check status)
+before doing anything else.
 
 ## 8. Uninstall / restore
 

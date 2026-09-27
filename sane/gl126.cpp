@@ -658,6 +658,81 @@ const char* magazine_state_name(MagazineState s)
     return "unknown";
 }
 
+/* The possible values of the "magazine" status line (docs/sane-wp5-load-
+   button.md section 3.6). Declared here, ahead of magazine_check_status_
+   impl() below (which needs the Check-status-only ones), rather than
+   next to magazine_state_values()/magazine_state_text() further down --
+   an unnamed namespace's members are ordinary (internally-linked)
+   members of the enclosing gl126:: namespace, so where exactly they sit
+   in the file only matters for the usual C++ "declared before first
+   use" rule.
+
+   Short, and the STATE WORD FIRST. On hardware 2026-09-13 (Test 76) the
+   previous texts -- full sentences -- overflowed KSane's widget, which
+   renders an unconstrained string option as an editable combo scrolled
+   to the END of its content. The operator saw the tail of the advice and
+   not the state at all. Every string here fits, and the first word is
+   the answer even if the rest is clipped.
+
+   Reworded again for WP-5 (2026-09-27, docs/sane-wp5-load-button.md
+   section 3.6): "Scan" no longer loads anything (load_document() is a
+   pure checker now, magazine_check_scan_allowed() below), so every
+   wording that used to say "reseat, then Scan" or "push in, then Scan" --
+   implying the SCAN would finish the load -- is wrong under WP-5 and is
+   replaced with "press Load film [again]": the button is the only thing
+   that loads the magazine now, always. */
+/* Deliberately NOT wrapped in SANE_I18N, unlike every other user-facing
+   string in this backend (titles, descriptions). These are compared, not
+   just displayed -- and that comparison is where a libksane bug bites.
+
+   KSaneWidgets' LabeledCombo (the widget libksane draws for every SANE
+   value-list option; src/widgets/labeledcombo.cpp) does
+   `setValue(val)` in response to KSaneCore::Option::valueChanged, and
+   that slot matches `itemData(i) == val` against the combo's items --
+   but the items were populated with each value's INTERNAL text (this
+   array, as sane_get_option_descriptor's constraint.string_list), while
+   valueChanged carries the TRANSLATED text (frontend-side sane_i18n
+   lookup) whenever the option's current msgid has a catalog entry. For a
+   string-list option whose values have a translation, internal and
+   translated never match, so the combo never follows a backend-side
+   value change -- it keeps showing whatever it last showed.
+
+   That is what Test 91 hit live (2026-09-27, docs/test-log.md): after
+   "Ladda film" moved the state to Released the status line stayed on
+   "okänt -- tryck Ladda film" (a Swedish sv.po translation existed and
+   matched), so the operator pressed Ladda film a second time, which
+   re-jogged and un-seated an already-released magazine, and the
+   following Läs in failed at the feed (0xfc).
+
+   The workaround: no translation, no mismatch. These strings stay
+   English on purpose until libksane compares itemData against the
+   OPTION'S INTERNAL VALUE instead of the translated one (a libksane fix,
+   not ours -- see docs/sane-install.md S6). Titles and descriptions are
+   unaffected: those are one-shot labels/tooltips, never matched against
+   a live value, so their SANE_I18N wrapping is harmless and stays. */
+const char* const kMagazineUnknown         = "not loaded -- press Load film";
+const char* const kMagazineReleased        = "press Load film, then take out, push in";
+/* WP-5 (section 3.2): the wording when the LAST edge wait timed out
+   without ever seeing the sensor clear -- the magazine did not come
+   loose, so the operator has (very likely) not touched it yet. */
+const char* const kMagazineReleasedNoClear = "did not come loose? Load film again";
+/* A "released" mark from an EARLIER PROCESS: whether that wait saw a
+   clear is not recoverable across a process boundary (magazine_saw_
+   clear_map() is in-memory only), so this cross-process text is neutral
+   between the two in-process variants above. */
+const char* const kMagazinePending         = "released earlier -- Load film again";
+const char* const kMagazineLoaded          = "loaded -- set Frame, press Scan";
+const char* const kMagazineEjected         = "ejected -- swap strip, then Load film";
+const char* const kMagazineEjectedPending  = "ejected earlier -- press Load film";
+const char* const kMagazineFailed          = "failed -- power-cycle, then Load film";
+/* "Check status" only (section 3.5) -- never returned by the ordinary
+   state-machine path in magazine_state_text(), only by magazine_check_
+   status_impl()'s one-shot override (magazine_check_override_map()). */
+const char* const kMagazineCold             = "cold -- press Load film";
+const char* const kMagazineNoMagazine       = "no magazine in the slot";
+const char* const kMagazinePresentNotLoaded = "magazine present, not loaded? Load film";
+const char* const kMagazineUnknownHw        = "unknown state -- power-cycle, Load film";
+
 std::map<const Genesys_Device*, MagazineState>& magazine_state_map()
 {
     static std::map<const Genesys_Device*, MagazineState> states;
@@ -670,6 +745,84 @@ MagazineState magazine_state_of(const Genesys_Device* dev)
     return it == magazine_state_map().end() ? MagazineState::Unknown : it->second;
 }
 
+/* WP-5 (docs/sane-wp5-load-button.md section 3.2): whether the LAST edge
+   wait that ended in a timeout ever saw the loader sensor read clear.
+   Meaningful only while the in-process state is Released (a "Load film"
+   press timed out); consulted twice: to choose the status line's wording
+   ("did not come loose" vs. the default retry instruction) and, on the
+   NEXT "Load film" press from Released, to decide whether that press
+   must jog again (no clear was ever seen -- the magazine may still be
+   latched, exactly the double-jog recipe Test 51 established) or may
+   skip straight to another wait (a clear WAS seen, so the jog already
+   did its job; only the reseat is still pending). A cross-process
+   Released mark carries no such memory (the flag is not persisted to
+   disk), so a press that finds Released only via the mark is treated as
+   a fresh, non-cold press -- see magazine_load_film_impl(). */
+std::map<const Genesys_Device*, bool>& magazine_saw_clear_map()
+{
+    static std::map<const Genesys_Device*, bool> flags;
+    return flags;
+}
+
+bool magazine_wait_saw_clear(const Genesys_Device* dev)
+{
+    auto it = magazine_saw_clear_map().find(dev);
+    return it != magazine_saw_clear_map().end() && it->second;
+}
+
+void set_magazine_wait_saw_clear(Genesys_Device* dev, bool saw_clear)
+{
+    magazine_saw_clear_map()[dev] = saw_clear;
+}
+
+/* WP-5 addendum (review finding G, 2026-09-27): whether the PENDING
+   Released state originated from an Ejected-kind press (no jog, OPEN
+   after the edge, the lenient regs 0x3b/0x3c rule) rather than a genuine
+   release (OPEN+JOG already ran, the strict 0x00/0x00 rule). Without
+   this, a timeout on an Ejected-origin wait forgot its origin the moment
+   the in-process state became Released: a SECOND press would then use
+   the strict rule and skip "open" -- exactly wrong for a magazine that
+   was never jogged, and the retry would refuse Failed on the very regs
+   (0x3b/0x3c left by the last scan profile) the Ejected kind is supposed
+   to tolerate. Persisted alongside saw_clear for the IN-PROCESS retry;
+   the CROSS-PROCESS equivalent is the mark's own KIND -- a timeout of an
+   Ejected-origin wait writes an "ejected" mark, not a "released" one, so
+   a fresh process's existing Ejected-mark detection already recovers the
+   same fact with no extra state of its own. */
+std::map<const Genesys_Device*, bool>& magazine_needs_open_map()
+{
+    static std::map<const Genesys_Device*, bool> flags;
+    return flags;
+}
+
+bool magazine_wait_needs_open(const Genesys_Device* dev)
+{
+    auto it = magazine_needs_open_map().find(dev);
+    return it != magazine_needs_open_map().end() && it->second;
+}
+
+void set_magazine_wait_needs_open(Genesys_Device* dev, bool needs_open)
+{
+    magazine_needs_open_map()[dev] = needs_open;
+}
+
+/* WP-5 section 3.5: "Check status" is allowed to read the hardware and
+   update the status line with what it finds, WITHOUT the state machine
+   or the marks changing except where the table explicitly says so (the
+   cold row). The other rows are pure diagnostic snapshots -- "no
+   magazine in the slot", "magazine present, not loaded?", "unknown
+   state" -- that do not correspond to any MagazineState transition,  so
+   they are kept here as a one-shot override of the text
+   magazine_state_text() would otherwise compute from the state machine.
+   Any REAL transition (set_magazine_state(), below) invalidates it, so a
+   stale hardware snapshot can never survive the next thing that actually
+   happens. */
+std::map<const Genesys_Device*, std::string>& magazine_check_override_map()
+{
+    static std::map<const Genesys_Device*, std::string> overrides;
+    return overrides;
+}
+
 /* Every transition goes through here, so a debug log of a magazine
    session reads as the state machine of docs/sane-wp4-magazine.md
    section 2.2 rather than as a pile of transfers. */
@@ -677,6 +830,7 @@ void set_magazine_state(Genesys_Device* dev, MagazineState next)
 {
     MagazineState prev = magazine_state_of(dev);
     magazine_state_map()[dev] = next;
+    magazine_check_override_map().erase(dev);
     if (prev != next) {
         DBG(DBG_info, "gl126: magazine %s -> %s\n",
             magazine_state_name(prev), magazine_state_name(next));
@@ -754,6 +908,129 @@ MagazineSensor read_magazine_sensor(Genesys_Device* dev)
     return s;
 }
 
+/* ------------------------------------------------- the edge wait (WP-5)
+
+   docs/sane-wp5-load-button.md section 3.2: a plain C++ read-only poll
+   loop, not an op program -- there is nothing to replay here, only a
+   register to watch. Poll reg 0x101 every 100 ms; require the loader
+   sensor CLEAR on 2 consecutive reads, then PRESENT on 5 consecutive
+   reads, then a 600 ms settle (the vendor's own insert-to-LOAD delay,
+   Test 81) before returning Seen. Timeout at 120 s (capped, test mode
+   only, by $OF135I_SANE_POLL_CAP_MS -- the same gate magazine_policy()
+   uses, so a shorter wait can never reach real hardware). No register
+   WRITE of any kind occurs in this loop -- only read_register, sleep_ms
+   and the one test_checkpoint() per poll a probe can re-seed the mock
+   from. */
+
+constexpr unsigned kEdgePollIntervalMs = 100;
+constexpr unsigned kEdgeClearReadsNeeded = 2;
+constexpr unsigned kEdgePresentReadsNeeded = 5;
+constexpr unsigned kEdgeSettleMs = 600;
+constexpr unsigned kEdgeTimeoutMs = 120000;
+
+enum class EdgeWaitOutcome {
+    Seen,            // clear, then present again: the reseat happened
+    TimeoutNoClear,  // the sensor never read clear -- it did not come loose
+    TimeoutSawClear, // it came loose but never read present again in time
+};
+
+/* The wait's own timeout budget, gated exactly like magazine_policy():
+   $OF135I_SANE_POLL_CAP_MS only ever SHORTENS it, and only when the wire
+   is a mock in test mode -- never on real hardware, no matter what an
+   environment happens to carry (Astra review 2026-09-13, the same
+   reasoning magazine_policy() documents). This wait has no wire and no
+   run_program() budget of its own, so it is gated here rather than
+   through RunPolicy. */
+unsigned edge_wait_timeout_ms(Genesys_Device* dev)
+{
+    unsigned budget = kEdgeTimeoutMs;
+    if (!dev->interface->is_mock() || !is_testing_mode()) {
+        return budget;
+    }
+    const char* cap = std::getenv("OF135I_SANE_POLL_CAP_MS");
+    if (cap != nullptr && *cap != '\0') {
+        long v = std::strtol(cap, nullptr, 10);
+        if (v > 0 && static_cast<unsigned>(v) < budget) {
+            budget = static_cast<unsigned>(v);
+        }
+    }
+    return budget;
+}
+
+EdgeWaitOutcome wait_for_magazine_edge(Genesys_Device* dev)
+{
+    unsigned budget_ms = edge_wait_timeout_ms(dev);
+    unsigned max_polls = budget_ms / kEdgePollIntervalMs;
+    if (max_polls == 0) {
+        max_polls = 1;
+    }
+
+    enum class Phase { WaitClear, WaitPresent } phase = Phase::WaitClear;
+    unsigned clear_consec = 0;
+    unsigned present_consec = 0;
+    bool saw_clear = false;
+    unsigned polls = 0;
+    std::uint8_t first_val = 0;
+    std::uint8_t last_val = 0;
+
+    DBG(DBG_info, "gl126: magazine edge wait started (budget %u ms)\n", budget_ms);
+
+    while (polls < max_polls) {
+        std::uint8_t status = dev->interface->read_register(0x101);
+        if (polls == 0) {
+            first_val = status;
+        }
+        last_val = status;
+        ++polls;
+        /* Once per poll, so a probe can re-seed reg 0x101 between reads
+           (tests/gl126_magazine_probe.cpp): present -> clear -> present
+           scripts a successful reseat, present-only or clear-only script
+           the two timeout shapes. */
+        dev->interface->test_checkpoint("gl126_magazine_edge_poll");
+
+        bool present = (status & 0x08) != 0;
+        if (phase == Phase::WaitClear) {
+            if (present) {
+                clear_consec = 0;
+            } else {
+                // Review finding I: saw_clear is a DEBOUNCED fact -- it
+                // is only true once clear_consec actually reaches the
+                // threshold (the real phase transition), not on a single
+                // clear read. A one-poll glitch (a bounce, a mis-timed
+                // read) must not be mistaken for "the magazine came
+                // loose": present, clear-once, present again within the
+                // 200 ms window still counts as "never cleared" for the
+                // retry decision and the status wording alike.
+                if (++clear_consec >= kEdgeClearReadsNeeded) {
+                    saw_clear = true;
+                    phase = Phase::WaitPresent;
+                    present_consec = 0;
+                }
+            }
+        } else {
+            if (present) {
+                if (++present_consec >= kEdgePresentReadsNeeded) {
+                    DBG(DBG_info, "gl126: magazine edge seen (%u polls, ~%u ms); "
+                        "settling %u ms\n", polls, polls * kEdgePollIntervalMs, kEdgeSettleMs);
+                    dev->interface->sleep_ms(kEdgeSettleMs);
+                    return EdgeWaitOutcome::Seen;
+                }
+            } else {
+                present_consec = 0;
+            }
+        }
+        if (polls >= max_polls) {
+            break;
+        }
+        dev->interface->sleep_ms(kEdgePollIntervalMs);
+    }
+
+    DBG(DBG_info, "gl126: magazine edge wait timed out (%u polls, ~%u ms, first 0x%02x "
+        "last 0x%02x, saw a clear read: %s)\n", polls, polls * kEdgePollIntervalMs,
+        first_val, last_val, saw_clear ? "yes" : "no");
+    return saw_clear ? EdgeWaitOutcome::TimeoutSawClear : EdgeWaitOutcome::TimeoutNoClear;
+}
+
 /** Once a magazine operation may have written, ANY way out other than
     success leaves the transport in a state nobody can name -- so the
     session is failed and a pending load is invalidated, whatever the
@@ -781,11 +1058,23 @@ public:
             return;
         }
         // This runs during stack unwinding, where an escaping exception
-        // would terminate the process. Book-keeping and one unlink() --
+        // would terminate the process. Book-keeping and one mark write --
         // neither is allowed to become the failure.
+        //
+        // WP-5 review finding E (2026-09-27): a "failed" mark is WRITTEN
+        // here, not cleared. Before this, a failure dropped whatever mark
+        // was pending and left NOTHING behind -- so a second process (the
+        // next `scanimage` invocation) had no way to know the transport's
+        // state was never established, and would try a scan, or another
+        // magazine action, against it. Every entry point that already
+        // refuses on an in-process Failed state also refuses on a
+        // matching `failed` mark from Unknown (magazine_check_scan_
+        // allowed(), magazine_load_film_impl(), magazine_eject_impl());
+        // only a cold reg 0x01 read clears it (a power cycle is the one
+        // event that actually re-establishes a known state).
         try {
             set_magazine_state(dev_, MagazineState::Failed);
-            clear_magazine_mark("failed sequence");
+            write_magazine_mark(dev_, gl126::MagazineMarkKind::Failed);
         } catch (...) {
         }
     }
@@ -911,43 +1200,205 @@ void run_magazine_program(Genesys_Device* dev, const char* name, RunResult& out,
     }
 }
 
-/** The "Load film" button: the release half of the two-step protocol.
+/** The "Load film" button (WP-5, docs/sane-wp5-load-button.md section
+    3.2): the ENTIRE flow in one press -- release (when anything needs
+    releasing), a read-only wait for the operator's reseat, and the load.
+    Supersedes WP-4's two-call protocol (release now, load runs itself at
+    the next sane_start): load_document() no longer runs LOAD at all
+    (section 3.4, magazine_check_scan_allowed() below).
 
-    From a cold unit (reg 0x01 = 0x00) the vendor cold-start sequence runs
-    first and the unit must then read idle-homed, exactly as the driver's
-    cold_init() requires. Then the vendor device-open table and the jog --
-    feed, feed, eject. The jog IS the eject: it releases a latched
-    cassette, which is why pressing this twice (power cycle, press,
-    reseat, press, reseat, scan) is the supported way out of "power-cycled
-    with the magazine latched", the recipe Test 51 established. */
-void magazine_release_impl(Genesys_Device* dev)
+      Unknown, cold (reg 0x01 = 0x00)        cold_init -> OPEN -> JOG ->
+                                              wait -> LOAD
+      Unknown, idle                          OPEN -> JOG -> wait -> LOAD
+      Ejected (in-process, or an "ejected"   wait -> OPEN -> LOAD
+      mark for this device)                  (no jog; WP-4 section 10)
+      Released, last wait saw NO clear,      JOG again -> wait -> LOAD
+      non-Ejected origin
+      Released, last wait saw a clear,       wait only -> LOAD
+      non-Ejected origin
+      Released, EITHER, Ejected origin        wait -> OPEN -> LOAD
+      (review finding G)                      (no jog, same as Ejected)
+      Loaded                                 refused, read-only
+      Failed (in-process, or a "failed"      refused, read-only
+      mark, review finding E)
+      A matching "loaded" mark, Unknown      refused, read-only, same as
+      in-process (review finding D)          in-process Loaded
+
+    A timeout ends the call with NO LOAD, state Released, an on-disk
+    mark (kind depends on origin -- see finding G below), and
+    SANE_STATUS_GOOD -- the operator doing nothing (or not finishing) is
+    not itself an error; the status line carries the instruction
+    (magazine_state_text(), which also picks the wording from whether
+    this wait ever saw a clear -- section 3.6). The jog itself, OPEN and
+    LOAD are unchanged, byte-identical programs; the only new thing on
+    the wire is the read-only poll loop between them.
+
+    Review round, 2026-09-27 (an independent reviewer plus the
+    coordinator), all fixed here:
+    - **(H) A power cycle inside one process.** reg 0x01 is read here,
+      first thing, before the Loaded/Failed in-process refusals: if it
+      reads cold, neither claim survives a power cycle, so state resets
+      to Unknown and any mark is cleared as stale before anything else
+      is decided -- otherwise a scanner power-cycled after a Load film
+      press earlier in the SAME session would keep refusing "already
+      loaded" forever, with no way back in but a fresh sane_open.
+    - **(D) A cross-process "loaded" mark blocks a second Load film**
+      exactly like the in-process Loaded state does: read-only "already
+      loaded" refusal, not a silent second load attempt.
+    - **(E) A "failed" mark blocks Load film too**, the cross-process
+      counterpart of the in-process Failed refusal.
+    - **(G) The Ejected origin is remembered across a timeout.** Before
+      this fix, a timeout always set state Released and wrote a
+      "released" mark, whatever the press had started from -- so a
+      SECOND press, now reading Released, treated an Ejected-origin
+      retry as an ordinary release: skipped OPEN, and checked the
+      Released kind's STRICT 0x3b/0x3c == 0x00/0x00 rule instead of the
+      Ejected kind's lenient one. After a real scan (regs left at, say,
+      0x02/0x00) that retry would refuse Failed for a magazine that was
+      never actually jogged loose in the first place. Fixed by carrying
+      the origin across the timeout: an in-process flag
+      (magazine_wait_needs_open()) for the same-process retry, and the
+      MARK'S OWN KIND for the cross-process one -- a timeout of an
+      Ejected-origin wait writes an "ejected" mark, not "released", so a
+      fresh process's existing Ejected-mark detection recovers the same
+      fact with no new state of its own.
+    - **(A) A post-edge presence + class check.** The edge wait only
+      watches bit 0x08 (present/clear); it does not by itself prove the
+      status byte is in the DONE class Tests 75-77/90 loaded from
+      (0xf8-shaped). A magazine pulled back out during the 600 ms settle,
+      or a present-but-busy class, must not reach LOAD -- checked here
+      as reg 0x101 alongside reg 0x01/0x3b/0x3c, same refusal shape. */
+void magazine_load_film_impl(Genesys_Device* dev)
 {
     DBG_HELPER(dbg);
     MagazineState state = magazine_state_of(dev);
+
+    // (H) A claim this process holds -- Loaded or Failed -- does not
+    // survive a power cycle, and neither does a MARK saying the same
+    // thing from an earlier process (a "loaded" mark plus a cold read
+    // has the identical bug shape: without this, the Unknown-branch mark
+    // lookup further down would still throw "already loaded" against a
+    // scanner that has since been power-cycled). Read first, before
+    // either refusal: a cold read resets state to Unknown and clears any
+    // mark as stale, so the rest of this call proceeds as a fresh press
+    // instead of refusing forever on a claim nothing can still vouch for.
+    std::uint8_t precheck_reg01 = dev->interface->read_register(REG_0x01);
+    if (precheck_reg01 == 0x00) {
+        gl126::MagazineMarkKind stale_kind = gl126::MagazineMarkKind::Released;
+        std::string stale_key;
+        bool had_mark = gl126::magazine_mark_read(&stale_kind, &stale_key) &&
+                        stale_key == magazine_device_key(dev);
+        bool had_state = state != MagazineState::Unknown;
+        if (had_mark || had_state) {
+            DBG(DBG_info, "gl126: reg 0x01 = 0x00 while %s%s%s -- a power cycle happened; "
+                "resetting to Unknown\n",
+                had_state ? "this process believed " : "",
+                had_state ? magazine_state_name(state) : "",
+                had_mark ? (had_state ? ", and a mark was pending" : "a mark was pending") : "");
+            if (had_state) {
+                set_magazine_state(dev, MagazineState::Unknown);
+                state = MagazineState::Unknown;
+            }
+            clear_magazine_mark("cold at load-film start");
+            set_magazine_wait_saw_clear(dev, false);
+            set_magazine_wait_needs_open(dev, false);
+        }
+    }
+
     if (state == MagazineState::Failed) {
         throw SaneException(SANE_STATUS_INVAL,
                             "gl126: the magazine sequence failed earlier in this session; "
                             "the transport state is unknown. Power-cycle the scanner and "
                             "open the scanner again. Nothing was written.");
     }
+    if (state == MagazineState::Loaded) {
+        throw SaneException(SANE_STATUS_INVAL,
+                            "gl126: the magazine is already loaded -- press Scan or Eject "
+                            "film. Nothing was written.");
+    }
+
+    // A RETRY of a press that timed out earlier IN THIS PROCESS: whether
+    // that wait ever saw the sensor clear decides whether this press must
+    // jog again (Test 51's double jog, for a magazine that may still be
+    // latched) or may go straight back to waiting (the jog already did
+    // its job). A cross-process "released" mark is deliberately NOT given
+    // this treatment: whether the earlier wait saw a clear lives only in
+    // this process's memory (magazine_saw_clear_map()), and a mark alone
+    // cannot carry that across a process boundary -- the safe default is
+    // to treat it like any other non-cold Unknown press (a fresh
+    // OPEN + JOG, always harmless, Test 51).
+    bool is_released_retry = (state == MagazineState::Released);
+    bool retry_saw_clear = is_released_retry && magazine_wait_saw_clear(dev);
+    // (G) The other half of a retry: did the wait that put us here
+    // originate from an Ejected-kind press? Only meaningful alongside
+    // is_released_retry.
+    bool retry_needs_open = is_released_retry && magazine_wait_needs_open(dev);
+
+    // Ejected -- in-process, or a cross-process "ejected" mark for this
+    // device (WP-4 section 10's reasoning still applies: the eject
+    // already disengaged the magazine, so no jog is needed, only OPEN).
+    // (D, E) The same Unknown-branch mark lookup also catches a
+    // cross-process "loaded" or "failed" mark, refused read-only exactly
+    // like the in-process state of the same name.
+    bool is_ejected_kind = (state == MagazineState::Ejected);
+    if (state == MagazineState::Unknown) {
+        gl126::MagazineMarkKind marked_kind = gl126::MagazineMarkKind::Released;
+        std::string marked_key;
+        if (gl126::magazine_mark_read(&marked_kind, &marked_key) &&
+            marked_key == magazine_device_key(dev))
+        {
+            if (marked_kind == gl126::MagazineMarkKind::Ejected) {
+                is_ejected_kind = true;
+                DBG(DBG_info, "gl126: an 'ejected' mark from an earlier process applies -- "
+                    "no jog\n");
+            } else if (marked_kind == gl126::MagazineMarkKind::Loaded) {
+                throw SaneException(SANE_STATUS_INVAL,
+                                    "gl126: the magazine is already loaded (an earlier process "
+                                    "finished a load) -- press Scan or Eject film. Nothing was "
+                                    "written.");
+            } else if (marked_kind == gl126::MagazineMarkKind::Failed) {
+                throw SaneException(SANE_STATUS_INVAL,
+                                    "gl126: the magazine sequence failed earlier (in an earlier "
+                                    "process); the transport state is unknown. Power-cycle the "
+                                    "scanner. Nothing was written.");
+            }
+            // A plain "released" mark is not given the retry treatment
+            // either (see the comment above) -- it falls through to the
+            // ordinary fresh-press path below.
+        }
+    }
+
+    // Whether this press behaves like the Ejected kind end to end: no
+    // jog, OPEN after the edge (not before), the lenient regs rule.
+    bool effective_ejected = is_ejected_kind || retry_needs_open;
 
     std::uint8_t reg01 = check_start_state(dev);   // 0x22 or 0x00, else refuses
 
     // From here on anything may have been written, so any way out other
-    // than success fails the session and invalidates a pending load.
+    // than success (including the timeout this function handles itself,
+    // below) fails the session and invalidates a pending load.
     MagazineFailGuard guard(dev);
     guard.arm();
     /* genesys's own injection point (a no-op on the USB interface, a
        callback in test mode), placed at the first moment the guard is
        armed. The offline test throws a NON-OpsError exception here to
        prove that ANY way out after arming fails the session and drops a
-       pending load -- the hole Astra's 2026-09-13 review found. (It used
-       to sit after the cold-start program; since that program's motor
-       completions are fail-closed, the zero-answering test interface
-       never gets past its first one, so the injection moved up.) */
+       pending load -- the hole Astra's 2026-09-13 review found. */
     dev->interface->test_checkpoint("gl126_magazine_armed");
 
     if (reg01 == 0x00) {
+        // A power cycle happened: whatever the Ejected/Released
+        // shortcuts assumed about the transport's position no longer
+        // holds (WP-4 section 10.3's own reasoning for refusing a cold
+        // next-strip load applies here just as much) -- so a cold read
+        // always forces the full path, never the shortcuts. The eventual
+        // outcome (Loaded on success, Released on a timeout) overwrites
+        // whatever Ejected/Released this call started from either way.
+        is_ejected_kind = false;
+        is_released_retry = false;
+        retry_saw_clear = false;
+        retry_needs_open = false;
+        effective_ejected = false;
         DBG(DBG_info, "gl126: reg 0x01 = 0x00 (cold, never homed) -- running the "
             "vendor cold-start sequence first\n");
         RunResult cold;
@@ -963,201 +1414,115 @@ void magazine_release_impl(Genesys_Device* dev)
         }
     }
 
-    RunResult open_result;
-    run_magazine_program(dev, "open", open_result);
-    /* A second injection point, after the device-open program: reached
-       on hardware, not on the zero-answering test interface (OPEN stops
-       at its first unacknowledged write there). */
-    dev->interface->test_checkpoint("gl126_magazine_after_open");
+    if (!effective_ejected && !(is_released_retry && retry_saw_clear)) {
+        // The full release: OPEN + JOG -- every non-ejected-origin press
+        // that is either fresh or a retry that never saw a clear (WP-4's
+        // "no per-state branch" rule, unchanged: writing the open table
+        // again is harmless, and a second jog from Released is Test 51's
+        // supported double jog). An Ejected-origin retry NEVER jogs,
+        // whether or not its own wait saw a clear -- effective_ejected
+        // already covers that.
+        RunResult open_result;
+        run_magazine_program(dev, "open", open_result);
+        /* Reached on hardware, not on the zero-answering test interface
+           (OPEN stops at its first unacknowledged write there). */
+        dev->interface->test_checkpoint("gl126_magazine_after_open");
 
-    RunResult jog_result;
-    run_magazine_program(dev, "jog", jog_result);
-
-    guard.succeeded();
-    set_magazine_state(dev, MagazineState::Released);
-    write_magazine_mark(dev, gl126::MagazineMarkKind::Released);
-    DBG(DBG_info, "gl126: magazine released. Take it fully out of the slot, push it back "
-        "in to the mechanical stop, then scan.\n");
-}
-
-/** The load half, run from sane_start before calibration -- but only when
-    a load is actually pending, and only after the hardware agrees.
-
-    Section 10 (2026-09-25): a load can be pending in two KINDS now.
-    Released (the original) means Load film's jog already ran; only the
-    bare "load" program is needed. Ejected means an eject completed and
-    the operator swapped the strip and pushed it to the stop; nothing has
-    replayed the device-open table since the eject, so this half also
-    runs "open" first -- a next-strip load, no jog, no reinsert prompt,
-    mirroring of135i/loadflow.py's --next-strip (docs/protocol-notes.md
-    Pass 14 addendum 4, docs/test-log.md Test 89).
-
-    The mark alone never authorises a motor move: a power cycle
-    re-enumerates the unit under a new address AND leaves reg 0x01 cold,
-    so a stale mark cannot reach the feed. */
-void magazine_load_if_pending(Genesys_Device* dev)
-{
-    DBG_HELPER(dbg);
-    MagazineState state = magazine_state_of(dev);
-    if (state == MagazineState::Failed) {
-        // Checked BEFORE the "is anything pending" question: a failed
-        // magazine sequence leaves the transport in a state nobody can
-        // name, and the failure already cleared the mark -- so asking
-        // about the mark first would let the scan through to calibrate
-        // on top of it.
-        clear_magazine_mark("failed sequence");
-        throw SaneException(SANE_STATUS_INVAL,
-                            "gl126: the magazine sequence failed earlier in this session, so "
-                            "the transport state is unknown and a scan is not started on top "
-                            "of it. Power-cycle the scanner. Nothing was written.");
-    }
-    if (state == MagazineState::Unknown) {
-        DBG(DBG_info, "gl126: no magazine state known in this session; if nothing is "
-            "loaded this scan will deliver an unusable image\n");
+        RunResult jog_result;
+        run_magazine_program(dev, "jog", jog_result);
+        dev->interface->test_checkpoint("gl126_magazine_after_jog");
     }
 
-    // What is pending, and its KIND. In-process state takes precedence,
-    // exactly as before Ejected became a second pending kind; the
-    // cross-process mark is consulted only when nothing is known in this
-    // process. Unlike before 2026-09-25, an in-process Ejected state is
-    // no longer an unconditional refusal -- it is the Ejected kind of
-    // pending, subject to the same hardware preconditions as Released.
-    bool pending = false;
-    gl126::MagazineMarkKind kind = gl126::MagazineMarkKind::Released;
-    if (state == MagazineState::Released) {
-        pending = true;
-        kind = gl126::MagazineMarkKind::Released;
-    } else if (state == MagazineState::Ejected) {
-        pending = true;
-        kind = gl126::MagazineMarkKind::Ejected;
-    }
-    if (!pending) {
-        gl126::MagazineMarkKind marked_kind = gl126::MagazineMarkKind::Released;
-        std::string marked_key;
-        if (gl126::magazine_mark_read(&marked_kind, &marked_key)) {
-            if (marked_key == magazine_device_key(dev)) {
-                pending = true;
-                kind = marked_kind;
-            } else {
-                // Another unit, or the same one under a pre-power-cycle
-                // address: not ours, and never will be.
-                DBG(DBG_info, "gl126: magazine mark names %s, this device is %s -- ignored\n",
-                    marked_key.c_str(), magazine_device_key(dev).c_str());
-                clear_magazine_mark("foreign device");
-            }
-        }
-    }
-    if (!pending) {
-        return;   // nothing read, nothing written
+    if (!effective_ejected) {
+        // (B) Written BEFORE the wait starts, not after: a process
+        // killed between here and the wait finishing (Ctrl-C on
+        // `scanimage -n --load-film` -- SANE's own signal handling is
+        // only installed after option parsing -- or "Terminate" on a
+        // frozen digiKam) must leave a mark that makes the NEXT scan
+        // refuse, never one that lets it proceed against a jogged-but-
+        // unloaded magazine. The Ejected path needs no equivalent write
+        // here: its own "ejected" mark already covers it (written by
+        // Eject film, by an earlier timeout of an Ejected-origin wait,
+        // or already present as a cross-process mark) -- effective_
+        // ejected is false for exactly the presses that lack one.
+        set_magazine_state(dev, MagazineState::Released);
+        set_magazine_wait_saw_clear(dev, false);
+        set_magazine_wait_needs_open(dev, false);
+        write_magazine_mark(dev, gl126::MagazineMarkKind::Released);
     }
 
-    // A load is pending, so this call is about to MOVE THE MAGAZINE --
-    // and it runs BEFORE calibration, which is where the scan request
-    // used to be validated. Refuse an impossible request here, on pure
-    // computation, so it can never drive the loader and only then be
-    // told the frame number was out of range (Astra review 2026-09-13).
-    // The mark stays: the request is wrong, the magazine is not.
-    (void) validate_scan_request(dev);
+    EdgeWaitOutcome outcome = wait_for_magazine_edge(dev);
 
-    // Preconditions, reads only (docs/sane-wp4-magazine.md section 3.3,
-    // section 10 for the Ejected kind).
-    std::uint8_t reg01 = dev->interface->read_register(REG_0x01);
-    if (kind == gl126::MagazineMarkKind::Ejected && reg01 == 0x00) {
-        // A power cycle happened after the eject: reg 0x01 goes cold on
-        // one (on top of the re-enumeration the mark's key already
-        // guards against), and a next-strip load assumes the transport
-        // is still homed and positioned from earlier in THIS power-on --
-        // the same assumption of135i/loadflow.py's --next-strip makes.
-        // Only the full jog path is valid from a fresh power-on. Nothing
-        // was written, so this is a refusal, not a failure: the mark is
-        // stale and is cleared, but the state goes to Unknown, not
-        // Failed -- `of135i load`/Load film remain the documented way
-        // out, exactly as a fresh Unknown session already allows.
-        clear_magazine_mark("cold refusal");
-        set_magazine_state(dev, MagazineState::Unknown);
-        throw SaneException(SANE_STATUS_INVAL,
-                            "gl126: the scanner was power-cycled after the eject; press "
-                            "Load film (jog + reseat) -- the next-strip load is only valid "
-                            "in the same power-on. Nothing was written.");
-    }
-    MagazineSensor sensor = read_magazine_sensor(dev);
-    if (!sensor.present()) {
-        // The magazine is out of the slot: the operator is mid-swap (or
-        // mid-reseat), or forgot. Keep the mark either way -- pushing it
-        // in and scanning again is the whole fix -- and refuse without
-        // writing anything.
+    if (outcome != EdgeWaitOutcome::Seen) {
+        // No LOAD. Not a failure -- the operator having done nothing (or
+        // not finished) is an ordinary outcome -- so the guard is told
+        // this succeeded (there is nothing to invalidate) and the
+        // state/mark are set explicitly, to Released, the same way
+        // whether this press started from Unknown, Ejected or Released
+        // itself (section 3.2's table collapses to this one outcome).
         //
-        // A scan started after an eject WITHOUT pushing the magazine
-        // back to the stop first reaches here too, but only once the
-        // sensor genuinely reads clear; if it reads present but is only
-        // resting against the mechanism rather than seated, the sensor
-        // cannot tell the difference (docs/sane-wp4-magazine.md section
-        // 10) -- the load below is then attempted on a magazine that is
-        // not actually engaged, the feed fails to grip (the documented
-        // benign 0xfc signature), the sequence fails closed, and a power
-        // cycle is required. This is the same trade-off the vendor app
-        // and of135i/loadflow.py's --next-strip already accept.
-        if (kind == gl126::MagazineMarkKind::Ejected) {
-            throw SaneException(SANE_STATUS_NO_DOCS,
-                                "gl126: no magazine in the slot -- swap the strip, push the "
-                                "magazine in to the mechanical stop, then scan again. "
-                                "Nothing was written.");
-        }
-        throw SaneException(SANE_STATUS_NO_DOCS,
-                            "gl126: no magazine in the slot (loader sensor clear). Push it "
-                            "back in to the mechanical stop and scan again. Nothing was "
-                            "written.");
+        // (B) The mark is written BEFORE anything else here, not after:
+        // a process killed between the jog and the wait finishing
+        // (Ctrl-C on `scanimage -n --load-film` -- SANE's own SIGINT
+        // handler is only installed after option parsing -- or "Terminate"
+        // on a frozen digiKam) must leave a mark that makes the NEXT scan
+        // refuse, never one that lets it proceed against a jogged-but-
+        // unloaded magazine. (G) The mark's KIND carries the origin: an
+        // Ejected-origin timeout writes "ejected" (so a fresh process's
+        // existing Ejected-mark detection reapplies the no-jog, lenient-
+        // regs treatment), everything else writes "released".
+        guard.succeeded();
+        set_magazine_state(dev, MagazineState::Released);
+        set_magazine_wait_saw_clear(dev, outcome == EdgeWaitOutcome::TimeoutSawClear);
+        set_magazine_wait_needs_open(dev, effective_ejected);
+        write_magazine_mark(dev, effective_ejected ? gl126::MagazineMarkKind::Ejected
+                                                    : gl126::MagazineMarkKind::Released);
+        DBG(DBG_info, "gl126: magazine load film: no reseat seen in time (%s); the magazine "
+            "is Released -- press Load film again.\n",
+            outcome == EdgeWaitOutcome::TimeoutNoClear ? "sensor never cleared"
+                                                        : "cleared, never came back present");
+        return;
     }
+
+    // The edge was seen: reg 0x101 read present for 5 consecutive polls
+    // after 2 consecutive clear ones, which already proves BIT 0x08 --
+    // but not the whole status class. (A) A fresh read after the settle
+    // checks the DONE class too (the 0xf8-shaped pattern Tests 75-77/90
+    // loaded from): a magazine pulled back out during the 600 ms settle,
+    // or a present-but-busy class, must not reach LOAD. Combined with
+    // reg 0x01 idle-homed and regs 0x3b/0x3c matching what the jog
+    // (0x00/0x00) or the eject (anything but the base-table 0xff/0xff,
+    // Test 44) leaves (Test 90, 2026-09-27) -- the whole register state
+    // the release half left behind, not just the one bit the wait
+    // itself watched. A load is not attempted from an unverified state;
+    // the guard (armed since before the release) is what turns this
+    // throw into Failed + a "failed" mark.
+    MagazineSensor sensor_after = read_magazine_sensor(dev);
+    std::uint8_t reg01_now = dev->interface->read_register(REG_0x01);
     std::uint8_t reg3b = dev->interface->read_register(0x3B);
     std::uint8_t reg3c = dev->interface->read_register(0x3C);
-    // Regs 0x3b/0x3c differ by KIND. The jog leaves the OPEN table's
-    // 0x00/0x00 (Released). An eject rewrites neither register, so after
-    // an eject they still hold the LAST SCAN PROFILE's values: 0x02/0x00
-    // after a 600 dpi scan (Test 90, 2026-09-27 -- the first hardware run
-    // of the Ejected kind refused on exactly this, with the 0x00/0x00
-    // requirement copied from the jog case), 0x00/0x01 after every other
-    // profile (the profiles' own captured reads of 0x3b22/0x3c22). The
-    // only 0x3b/0x3c state any evidence marks unsafe is the base-table-
-    // only 0xff/0xff of Test 44 -- the state eject itself refuses from
-    // -- so the Ejected kind refuses that and nothing else here; the
-    // "open" run below rewrites both to 0x00/0x00 before "load" anyway.
-    bool regs_ok = kind == gl126::MagazineMarkKind::Ejected
-                       ? (reg3b != 0xff && reg3c != 0xff)
-                       : (reg3b == 0x00 && reg3c == 0x00);
-    if (kind == gl126::MagazineMarkKind::Ejected) {
-        DBG(DBG_info, "gl126: next-strip load: regs 0x3b/0x3c = 0x%02x/0x%02x "
-            "(left by the last scan profile; open rewrites them)\n", reg3b, reg3c);
-    }
-    if (reg01 != 0x22 || !sensor.idle_class() || !regs_ok) {
-        set_magazine_state(dev, MagazineState::Failed);
-        clear_magazine_mark("failed sequence");
-        const char* left_by = kind == gl126::MagazineMarkKind::Ejected
-                                  ? "the eject leaves it in" : "the jog leaves it in";
-        const char* regs_expected = kind == gl126::MagazineMarkKind::Ejected
-                                        ? "neither 0x3b nor 0x3c reading 0xff"
-                                        : "0x00/0x00";
+    bool regs_ok = effective_ejected ? (reg3b != 0xFF && reg3c != 0xFF)
+                                     : (reg3b == 0x00 && reg3c == 0x00);
+    if (reg01_now != 0x22 || !sensor_after.present() || !sensor_after.idle_class() || !regs_ok) {
+        const char* left_by = effective_ejected ? "the eject leaves it in" : "the jog leaves it in";
+        const char* regs_expected = effective_ejected ? "neither 0x3b nor 0x3c reading 0xff"
+                                                       : "0x00/0x00";
         throw SaneException(SANE_STATUS_INVAL,
-                            "gl126: the scanner is not in the state %s "
-                            "(reg 0x01 = 0x%02x, reg 0x101 = 0x%02x, regs 0x3b/0x3c = "
-                            "0x%02x/0x%02x; expected 0x22, the idle class with the loader "
-                            "sensor set, and %s). A load is not attempted from an "
-                            "unverified state. Power-cycle the scanner, then press Load "
-                            "film. Nothing was written.",
-                            left_by, reg01, sensor.status, reg3b, reg3c, regs_expected);
+                            "gl126: the scanner is not in the state %s (reg 0x01 = 0x%02x, "
+                            "reg 0x101 = 0x%02x, regs 0x3b/0x3c = 0x%02x/0x%02x; expected 0x22, "
+                            "the loader sensor present in the idle class, and %s). A load "
+                            "is not attempted from an unverified state. Power-cycle the "
+                            "scanner, then press Load film. Nothing further was written.",
+                            left_by, reg01_now, sensor_after.status, reg3b, reg3c, regs_expected);
     }
 
-    MagazineFailGuard guard(dev);
-    guard.arm();
-
-    if (kind == gl126::MagazineMarkKind::Ejected) {
-        // Replay the vendor's device-open table before the load: nothing
-        // has written it since the eject. This mirrors of135i/loadflow.py's
-        // --next-strip choice -- the driver's own loader-profile "open"
-        // table, hardware-verified from the post-jog position (Tests
-        // 17-23) and again as the next-strip load itself (Test 89) --
-        // rather than the vendor's undocumented fallback of scanning with
-        // whatever speed registers the PRECEDING scan pass happened to
-        // leave behind (docs/protocol-notes.md Pass 14 addendum 4).
+    if (effective_ejected) {
+        // Nothing has replayed the device-open table since the eject
+        // (WP-4 section 10.2): a next-strip load, no jog, no reinsert
+        // prompt -- mirroring of135i/loadflow.py's --next-strip. Also
+        // reached by an Ejected-origin retry (finding G): the same
+        // reasoning applies whether this is the first wait after the
+        // eject or a second one after a timeout.
         RunResult open_result;
         run_magazine_program(dev, "open", open_result);
         dev->interface->test_checkpoint("gl126_magazine_after_next_strip_open");
@@ -1222,8 +1587,121 @@ void magazine_load_if_pending(Genesys_Device* dev)
 
     guard.succeeded();
     set_magazine_state(dev, MagazineState::Loaded);
-    clear_magazine_mark("consumed by load");
+    set_magazine_wait_saw_clear(dev, false);
+    set_magazine_wait_needs_open(dev, false);
+    /* Section 3.3/3.4: a "loaded" mark, not a cleared one -- WP-5's
+       load_document() (magazine_check_scan_allowed(), below) needs to
+       see it from a SEPARATE process (`scanimage -n --load-film` exits
+       right after this returns; the scan that uses the magazine is a
+       later invocation). Cleared by eject, by any failure, and, like
+       every mark, ignored when the device key does not match or reg 0x01
+       reads cold (magazine_check_scan_allowed(), magazine_check_status_impl()). */
+    write_magazine_mark(dev, gl126::MagazineMarkKind::Loaded);
     DBG(DBG_info, "gl126: magazine loaded (reg 0x101 = 0x%02x)\n", after.status);
+}
+
+/** load_document() (WP-5, docs/sane-wp5-load-button.md section 3.4): a
+    pure checker now, called from genesys_start_scan before calibration
+    (gl126-integration.patch) for GL126 as well as sheet-fed models. It
+    never runs LOAD any more, and never moves the magazine -- the "Load
+    film" button (magazine_load_film_impl(), above) is the only thing
+    that does that since WP-5. This supersedes WP-4 section 3.3's "the
+    load runs at the next sane_start", kept in docs/sane-wp4-magazine.md
+    as historical background.
+
+    Review finding J (2026-09-27): it performs exactly ONE device read,
+    reg 0x01, and only to catch a power cycle that happened since
+    Load film/Eject film last ran -- a Loaded/Released/Ejected/Failed
+    claim, in-process or on a mark, cannot be trusted to survive one
+    (the same principle magazine_load_film_impl()'s own start-of-call
+    check and Check status's cold row already apply). The status-line
+    GET (magazine_state_text()) does NOT do this: it stays free of
+    hardware reads by design, so only this hook and Check status ever
+    read reg 0x01 outside of a button press.
+
+      Cold, something was pending (state or mark)               -> refuse
+          INVAL "press Load film", state -> Unknown, mark cleared as
+          stale (the claim is gone, not "still true but paused").
+      Cold, nothing was pending                                  -> falls
+          through to the same warning as "Unknown, no mark" below --
+          keeps the documented CLI division working for an operator who
+          has not touched Load film at all.
+      Loaded (in-process, or a "loaded" mark for this device)  -> proceed.
+      Released or Ejected (in-process, or their marks)         -> refuse
+          SANE_STATUS_NO_DOCS, read-only, mark KEPT (the state is still
+          true; the operator just has not pressed Load film yet, or the
+          wait it started has not finished).
+      Failed (in-process, or a "failed" mark, review finding E)  -> refuse
+          INVAL, mark KEPT (only a cold read clears a Failed mark).
+      Unknown, no mark                                          -> proceed
+          with today's warning -- nothing here can produce the 0xfc
+          failure any more, since nothing here runs a motor sequence at
+          all. */
+void magazine_check_scan_allowed(Genesys_Device* dev)
+{
+    DBG_HELPER(dbg);
+    MagazineState state = magazine_state_of(dev);
+
+    std::uint8_t reg01 = dev->interface->read_register(REG_0x01);
+    if (reg01 == 0x00) {
+        gl126::MagazineMarkKind stale_kind = gl126::MagazineMarkKind::Released;
+        std::string stale_key;
+        bool had_mark = gl126::magazine_mark_read(&stale_kind, &stale_key) &&
+                        stale_key == magazine_device_key(dev);
+        bool had_state = state != MagazineState::Unknown;
+        if (had_mark || had_state) {
+            if (had_state) {
+                set_magazine_state(dev, MagazineState::Unknown);
+            }
+            clear_magazine_mark("cold: load_document");
+            throw SaneException(SANE_STATUS_INVAL,
+                                "gl126: the scanner was power-cycled since -- press Load film. "
+                                "Nothing was written.");
+        }
+        // Cold with nothing pending: fall through to the trailing
+        // warning below, unchanged.
+    } else {
+        if (state == MagazineState::Failed) {
+            throw SaneException(SANE_STATUS_INVAL,
+                                "gl126: the magazine sequence failed earlier in this session, so "
+                                "the transport state is unknown and a scan is not started on top "
+                                "of it. Power-cycle the scanner. Nothing was written.");
+        }
+        if (state == MagazineState::Loaded) {
+            return;
+        }
+        if (state == MagazineState::Released || state == MagazineState::Ejected) {
+            throw SaneException(SANE_STATUS_NO_DOCS,
+                                "gl126: the magazine is not loaded -- press Load film first. "
+                                "Nothing was written.");
+        }
+
+        // Unknown: consult the cross-process mark.
+        gl126::MagazineMarkKind marked_kind = gl126::MagazineMarkKind::Released;
+        std::string marked_key;
+        if (gl126::magazine_mark_read(&marked_kind, &marked_key)) {
+            if (marked_key != magazine_device_key(dev)) {
+                // Another unit, or the same one under a pre-power-cycle
+                // address: not ours, and never will be.
+                DBG(DBG_info, "gl126: magazine mark names %s, this device is %s -- ignored\n",
+                    marked_key.c_str(), magazine_device_key(dev).c_str());
+                clear_magazine_mark("foreign device");
+            } else if (marked_kind == gl126::MagazineMarkKind::Loaded) {
+                return;   // a Load film press in another process finished
+            } else if (marked_kind == gl126::MagazineMarkKind::Failed) {
+                throw SaneException(SANE_STATUS_INVAL,
+                                    "gl126: the magazine sequence failed earlier -- power-cycle "
+                                    "the scanner, then press Load film. Nothing was written.");
+            } else {
+                throw SaneException(SANE_STATUS_NO_DOCS,
+                                    "gl126: the magazine is not loaded -- press Load film first. "
+                                    "Nothing was written.");
+            }
+        }
+    }
+
+    DBG(DBG_info, "gl126: no magazine state known in this session; if nothing is "
+        "loaded this scan will deliver an unusable image\n");
 }
 
 /** Shared tail of every path that reaches state Ejected: write the
@@ -1245,6 +1723,24 @@ void magazine_eject_impl(Genesys_Device* dev)
         throw SaneException(SANE_STATUS_INVAL,
                             "gl126: the magazine sequence failed earlier in this session. "
                             "Power-cycle the scanner. Nothing was written.");
+    }
+    if (state == MagazineState::Unknown) {
+        // Review finding E: a "failed" mark from an earlier process (or
+        // an earlier, since-cleared moment in THIS process -- the mark
+        // is the only thing that can still say so once state has moved
+        // on) refuses here too, the cross-process counterpart of the
+        // in-process Failed refusal just above.
+        gl126::MagazineMarkKind marked_kind = gl126::MagazineMarkKind::Released;
+        std::string marked_key;
+        if (gl126::magazine_mark_read(&marked_kind, &marked_key) &&
+            marked_key == magazine_device_key(dev) &&
+            marked_kind == gl126::MagazineMarkKind::Failed)
+        {
+            throw SaneException(SANE_STATUS_INVAL,
+                                "gl126: the magazine sequence failed earlier (in an earlier "
+                                "process); the transport state is unknown. Power-cycle the "
+                                "scanner. Nothing was written.");
+        }
     }
     if (state == MagazineState::Released) {
         throw SaneException(SANE_STATUS_INVAL,
@@ -1314,7 +1810,99 @@ void magazine_eject_impl(Genesys_Device* dev)
        Released mark was written for. */
     write_ejected_mark(dev);
     DBG(DBG_info, "gl126: magazine ejected. Swap the strip, push the magazine in to the "
-        "mechanical stop, then scan -- or press Load film for the full jog path.\n");
+        "mechanical stop, then press Load film (WP-5: Scan itself no longer loads).\n");
+}
+
+/** The "Check status" button (WP-5, docs/sane-wp5-load-button.md section
+    3.5): allowed to read the hardware -- reg 0x01, the loader sensor
+    (reg 0x101) and regs 0x3b/0x3c, per the task spec, though the table
+    below only branches on the first two; 0x3b/0x3c are read and logged
+    for the diagnostic record, not because any row here needs them (the
+    Ejected-kind preconditions that DO use them live in the "Load film"
+    path, above). Updates the status line (via magazine_check_override_
+    map(), consulted first by magazine_state_text()) with what the
+    hardware says, RECONCILING but never fabricating: hardware evidence
+    alone can never promote anything to Loaded (the sensor cannot tell
+    "loaded" from "loose in the slot" -- WP-4 section 7's honest limit,
+    still true here). Only the cold row is a real MagazineState
+    transition; every other row is a read-only snapshot. */
+void magazine_check_status_impl(Genesys_Device* dev)
+{
+    DBG_HELPER(dbg);
+    std::uint8_t reg01 = dev->interface->read_register(REG_0x01);
+    MagazineSensor sensor = read_magazine_sensor(dev);
+    std::uint8_t reg3b = dev->interface->read_register(0x3B);
+    std::uint8_t reg3c = dev->interface->read_register(0x3C);
+    DBG(DBG_info, "gl126: check status: reg 0x01 = 0x%02x, reg 0x101 = 0x%02x, regs 0x3b/"
+        "0x3c = 0x%02x/0x%02x\n", reg01, sensor.status, reg3b, reg3c);
+
+    if (reg01 == 0x00) {
+        // The one row that is a real transition: a power cycle happened,
+        // so whatever this process believed is stale -- including a
+        // "failed" mark (review finding E: only a cold reg 0x01 read,
+        // here or at Load film's own start, clears one).
+        set_magazine_state(dev, MagazineState::Unknown);
+        clear_magazine_mark("check status: cold");
+        set_magazine_wait_saw_clear(dev, false);
+        set_magazine_wait_needs_open(dev, false);
+        magazine_check_override_map()[dev] = kMagazineCold;
+        DBG(DBG_info, "gl126: check status: cold -- state reset to Unknown, marks cleared\n");
+        return;
+    }
+    if (!sensor.present()) {
+        magazine_check_override_map()[dev] = kMagazineNoMagazine;
+        return;
+    }
+
+    // Review finding E: a Failed claim (in-process, or a matching
+    // "failed" mark) is reported as such rather than being reinterpreted
+    // from the register state -- the transport's state is exactly what a
+    // failure leaves unknown, so this is a status report, not a fresh
+    // diagnosis.
+    bool failed = (magazine_state_of(dev) == MagazineState::Failed);
+    if (!failed) {
+        gl126::MagazineMarkKind marked_kind = gl126::MagazineMarkKind::Released;
+        std::string marked_key;
+        if (gl126::magazine_mark_read(&marked_kind, &marked_key) &&
+            marked_key == magazine_device_key(dev) &&
+            marked_kind == gl126::MagazineMarkKind::Failed)
+        {
+            failed = true;
+        }
+    }
+    if (failed) {
+        magazine_check_override_map()[dev] = kMagazineFailed;
+        return;
+    }
+
+    // Review finding C: reg 0x101's DONE/idle class (0xf0-shaped) is NOT
+    // required to report Loaded -- right after LOAD completes, or during
+    // calibration, the status byte is 0xdc/0xd8-shaped (Test 90's own
+    // log), neither of which is the idle class, and a magazine that
+    // really is loaded must never be reported as "unknown state --
+    // power-cycle" because of that. reg 0x01 == 0x22 and the sensor
+    // present are enough, together with Loaded already being established
+    // (in-process or a matching "loaded" mark) -- hardware evidence
+    // alone still never PROMOTES anything to Loaded (the sensor cannot
+    // tell "loaded" from "loose in the slot"). "unknown state --
+    // power-cycle, Load film" is now reserved for reg 0x01 outside
+    // {0x22, 0x00} -- never reg 0x01 == 0x22, whatever reg 0x101 reads.
+    bool loaded = (magazine_state_of(dev) == MagazineState::Loaded);
+    if (!loaded) {
+        gl126::MagazineMarkKind marked_kind = gl126::MagazineMarkKind::Released;
+        std::string marked_key;
+        if (gl126::magazine_mark_read(&marked_kind, &marked_key) &&
+            marked_key == magazine_device_key(dev) &&
+            marked_kind == gl126::MagazineMarkKind::Loaded)
+        {
+            loaded = true;
+        }
+    }
+    if (reg01 == 0x22) {
+        magazine_check_override_map()[dev] = loaded ? kMagazineLoaded : kMagazinePresentNotLoaded;
+        return;
+    }
+    magazine_check_override_map()[dev] = kMagazineUnknownHw;
 }
 
 /** A hook that has not been brought up against the hardware yet.
@@ -2007,14 +2595,14 @@ void CommandSetGl126::wait_for_motor_stop(Genesys_Device* /*dev*/) const
 }
 
 /* Called from genesys_start_scan, before calibration, for GL126 as well
-   as for sheet-fed models (gl126-integration.patch). It is the LOAD half
-   of the two-step magazine protocol and does nothing at all -- not even a
-   register read -- unless a release is actually pending
-   (docs/sane-wp4-magazine.md section 3.3). */
+   as for sheet-fed models (gl126-integration.patch). Since WP-5
+   (docs/sane-wp5-load-button.md section 3.4) it is a pure checker -- it
+   never runs LOAD, and never touches the hardware at all: the "Load
+   film" button is the only thing that loads the magazine now. */
 void CommandSetGl126::load_document(Genesys_Device* dev) const
 {
     DBG_HELPER(dbg);
-    magazine_load_if_pending(dev);
+    magazine_check_scan_allowed(dev);
 }
 
 void CommandSetGl126::eject_document(Genesys_Device* dev) const
@@ -2089,13 +2677,13 @@ void push_dual_light_nodes(const ScanSession& session, ImagePipelineStack& pipel
        the same number of lines off the ends as the crop did. */
 }
 
-/* The three entry points genesys.cpp's option handlers call
-   (gl126-integration.patch): the two buttons and the one line of text
+/* The entry points genesys.cpp's option handlers call
+   (gl126-integration.patch): the three buttons and the one line of text
    that tells the operator where the magazine is believed to be. Declared
    in gl126.h; the work is in the anonymous namespace above. */
-void magazine_release(Genesys_Device* dev)
+void magazine_load_film(Genesys_Device* dev)
 {
-    magazine_release_impl(dev);
+    magazine_load_film_impl(dev);
 }
 
 void magazine_eject(Genesys_Device* dev)
@@ -2103,104 +2691,85 @@ void magazine_eject(Genesys_Device* dev)
     magazine_eject_impl(dev);
 }
 
-/* The possible values of the "magazine" status line (settable since
-   2026-09-27 -- see the OPT_MAGAZINE cap comment in genesys.cpp's
-   init_options and the no-op SET case in set_option_value -- but never
-   actually changed by anything; the state below is unaffected by that).
+void magazine_check_status(Genesys_Device* dev)
+{
+    magazine_check_status_impl(dev);
+}
 
-   Short, and the STATE WORD FIRST. On hardware 2026-09-13 (Test 76) the
-   previous texts -- full sentences -- overflowed KSane's widget, which
-   renders an unconstrained string option as an editable combo scrolled
-   to the END of its content. The operator saw the tail of the advice and
-   not the state at all. Every string here fits, and the first word is
-   the answer even if the rest is clipped.
+/* The possible values of the "magazine" status line: the constants
+   themselves are declared early in the file now (docs/sane-wp5-load-
+   button.md section 3.6, next to magazine_state_name()), so magazine_
+   check_status_impl() -- defined in the same unnamed namespace, well
+   before this point -- can use them too.
 
    Exposed as a list so genesys.cpp can give the option a
    SANE_CONSTRAINT_STRING_LIST: a constrained string draws as a plain
    combo showing its current value, instead of an edit box with Add and
-   Remove buttons beside it. */
-/* Deliberately NOT wrapped in SANE_I18N, unlike every other user-facing
-   string in this backend (titles, descriptions). These are compared, not
-   just displayed -- and that comparison is where a libksane bug bites.
-
-   KSaneWidgets' LabeledCombo (the widget libksane draws for every SANE
-   value-list option; src/widgets/labeledcombo.cpp) does
-   `setValue(val)` in response to KSaneCore::Option::valueChanged, and
-   that slot matches `itemData(i) == val` against the combo's items --
-   but the items were populated with each value's INTERNAL text (this
-   array, as sane_get_option_descriptor's constraint.string_list), while
-   valueChanged carries the TRANSLATED text (frontend-side sane_i18n
-   lookup) whenever the option's current msgid has a catalog entry. For a
-   string-list option whose values have a translation, internal and
-   translated never match, so the combo never follows a backend-side
-   value change -- it keeps showing whatever it last showed.
-
-   That is what Test 91 hit live (2026-09-27, docs/test-log.md): after
-   "Ladda film" moved the state to Released the status line stayed on
-   "okänt -- tryck Ladda film" (a Swedish sv.po translation existed and
-   matched), so the operator pressed Ladda film a second time, which
-   re-jogged and un-seated an already-released magazine, and the
-   following Läs in failed at the feed (0xfc).
-
-   The workaround: no translation, no mismatch. These seven strings stay
-   English on purpose until libksane compares itemData against the
-   OPTION'S INTERNAL VALUE instead of the translated one (a libksane fix,
-   not ours -- see docs/sane-install.md S6). Titles and descriptions are
-   unaffected: those are one-shot labels/tooltips, never matched against
-   a live value, so their SANE_I18N wrapping is harmless and stays. */
-/* Reworded 2026-09-27 (task 2 of the digiKam-dialog follow-up, docs/
-   ROADMAP.md "digiKam dialog usability"): each value now names the
-   frontend's own button, "Scan" (digiKam's Basic-tab "Read in"/"Scan"),
-   instead of the generic "scan" the operator has to translate into an
-   action themselves. */
-const char* const kMagazineUnknown       = "not loaded -- press Load film";
-const char* const kMagazinePending       = "released earlier -- reseat, then Scan";
-const char* const kMagazineReleased      = "released -- take out, push in, Scan";
-const char* const kMagazineLoaded        = "loaded -- press Scan, or Eject film";
-/* Section 10 (2026-09-25): an eject no longer means "press Load film" --
-   the next scan does a next-strip load on its own once the new strip is
-   pushed to the stop. Load film is still there as the fallback. */
-const char* const kMagazineEjected       = "ejected -- swap strip, push in, Scan";
-const char* const kMagazineEjectedPending = "ejected earlier -- push in, then Scan";
-const char* const kMagazineFailed        = "failed -- power-cycle, then Load film";
-
+   Remove buttons beside it (Test 76). All twelve values are listed, not
+   only the seven the plain state machine returns, so that the Check
+   status button's four extra observations and the retry wording are
+   valid GET results for this option's own constraint too. */
 const char* const* magazine_state_values()
 {
     static const char* const values[] = {
         kMagazineUnknown, kMagazinePending, kMagazineEjectedPending, kMagazineReleased,
-        kMagazineLoaded, kMagazineEjected, kMagazineFailed, nullptr,
+        kMagazineReleasedNoClear, kMagazineLoaded, kMagazineEjected, kMagazineFailed,
+        kMagazineCold, kMagazineNoMagazine, kMagazinePresentNotLoaded, kMagazineUnknownHw,
+        nullptr,
     };
     return values;
 }
 
 std::string magazine_state_text(const Genesys_Device* dev)
 {
+    /* "Check status" (WP-5 section 3.5) is allowed to read the hardware
+       and report what it found WITHOUT that necessarily being a real
+       MagazineState transition (e.g. "no magazine in the slot" while the
+       in-process state may still be, say, Loaded from before a magazine
+       was pulled out without telling the backend). Its snapshot takes
+       priority here and is invalidated by set_magazine_state() the
+       moment anything real happens, so it can never go stale. */
+    auto override_it = magazine_check_override_map().find(dev);
+    if (override_it != magazine_check_override_map().end()) {
+        return override_it->second;
+    }
+
     switch (magazine_state_of(dev)) {
-    case MagazineState::Released: return kMagazineReleased;
+    case MagazineState::Released:
+        /* WP-5 section 3.6: which of the two Released texts depends on
+           whether the wait that put us here ever saw the sensor clear --
+           the same flag that decides whether the NEXT "Load film" press
+           must jog again. */
+        return magazine_wait_saw_clear(dev) ? kMagazineReleased : kMagazineReleasedNoClear;
     case MagazineState::Loaded:   return kMagazineLoaded;
     case MagazineState::Ejected:  return kMagazineEjected;
     case MagazineState::Failed:   return kMagazineFailed;
     case MagazineState::Unknown:  break;
     }
-    /* Unknown in THIS process is not the whole truth: a release OR an
-       eject written by an earlier one survives on disk, and `scanimage`
-       reaches us in a fresh process every invocation. Test 77 hit exactly
-       this for a release -- digiKam was restarted between the release and
-       the scan, and the status line said "unknown" while a load was
-       genuinely pending. Consult the mark, the same way the load half
-       does, and mirror its kind in the text so the line agrees with what
-       will actually happen at the next scan.
+    /* Unknown in THIS process is not the whole truth: a release, an
+       eject or a completed load written by an earlier one survives on
+       disk, and `scanimage` reaches us in a fresh process every
+       invocation. Test 77 hit exactly this for a release -- digiKam was
+       restarted between the release and the scan, and the status line
+       said "unknown" while a load was genuinely pending. Consult the
+       mark, the same way load_document() does, and mirror its kind in
+       the text so the line agrees with what a scan will actually do.
 
        The loader sensor is deliberately NOT read here: an option query
        should not put a register read on the wire, and that bit reports
-       presence rather than whether the film is fed. */
+       presence rather than whether the film is fed -- that is exactly
+       what the Check status button is for. */
     gl126::MagazineMarkKind marked_kind = gl126::MagazineMarkKind::Released;
     std::string marked_key;
     if (gl126::magazine_mark_read(&marked_kind, &marked_key) &&
         marked_key == magazine_device_key(dev))
     {
-        return marked_kind == gl126::MagazineMarkKind::Ejected
-                  ? kMagazineEjectedPending : kMagazinePending;
+        switch (marked_kind) {
+        case gl126::MagazineMarkKind::Ejected:  return kMagazineEjectedPending;
+        case gl126::MagazineMarkKind::Loaded:   return kMagazineLoaded;
+        case gl126::MagazineMarkKind::Released: return kMagazinePending;
+        case gl126::MagazineMarkKind::Failed:   return kMagazineFailed;
+        }
     }
     return kMagazineUnknown;
 }

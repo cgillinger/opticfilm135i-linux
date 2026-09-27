@@ -561,6 +561,62 @@ def test_magazine_mark_empty_file_reads_as_no_mark():
     print("test_magazine_mark_empty_file_reads_as_no_mark OK")
 
 
+def test_magazine_mark_loaded_and_failed_kinds_round_trip():
+    """WP-5 review finding E: the two kinds added after Ejected --
+    "loaded" (a Load film press completed in a separate process) and
+    "failed" (a magazine sequence failed, and that fact must survive the
+    failing process's exit) -- go through the SAME two-argument
+    magazine_mark_write()/magazine_mark_read() Ejected already used.
+    Exercised here via the probe's mark-write-kind/mark-read-kind
+    commands; the one-argument mark-write/mark-read commands (used by
+    test_magazine_mark_round_trip) are UNCHANGED and stay Released-only,
+    per docs/sane-wp4-magazine.md section 10.1."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_magazine_mark_loaded_and_failed_kinds_round_trip SKIPPED (no g++)")
+        return "skipped"
+
+    with tempfile.TemporaryDirectory() as td:
+        lock_path = str(Path(td) / "of135i.lock")
+        env = _probe_env(lock_path)
+
+        def run(*args):
+            return subprocess.run([probe, *args], capture_output=True, text=True, env=env)
+
+        r = run("mark-write-kind", "failed", "test device:0x07b3:0x1436")
+        assert r.returncode == 0 and r.stdout.strip() == "WROTE", r
+        r = run("mark-read-kind")
+        assert r.returncode == 0, r
+        assert r.stdout.strip() == "KIND failed KEY test device:0x07b3:0x1436", r
+
+        # The mark file's own first word is the kind name -- readable by
+        # a person the same way "released"/"ejected" already are.
+        mark_path = Path(lock_path + ".magazine")
+        lines = mark_path.read_text().splitlines()
+        assert lines[0].startswith("failed "), lines
+
+        r = run("mark-write-kind", "loaded", "libusb:001:007")
+        assert r.returncode == 0 and r.stdout.strip() == "WROTE", r
+        r = run("mark-read-kind")
+        assert r.stdout.strip() == "KIND loaded KEY libusb:001:007", r
+        lines = mark_path.read_text().splitlines()
+        assert lines[0].startswith("loaded "), lines
+
+        # The one-argument, Released-only forms are unaffected by, and
+        # unaware of, the kind that was last written: a "loaded" mark
+        # reads as "no mark" through mark-read (docs/sane-wp4-magazine.md
+        # section 10.1's back-compat rule, now covering a third kind too).
+        r = run("mark-read")
+        assert r.returncode == 1 and r.stdout.strip() == "NONE", r
+
+        r = run("mark-clear")
+        assert r.returncode == 0, r
+        r = run("mark-read-kind")
+        assert r.returncode == 1 and r.stdout.strip() == "NONE", r
+    print("test_magazine_mark_loaded_and_failed_kinds_round_trip OK "
+          "(loaded/failed round-trip, one-argument forms stay Released-only)")
+
+
 def main() -> int:
     tests = [
         test_driver_holding_lock_refuses_sane_open,
@@ -577,6 +633,7 @@ def main() -> int:
         test_magazine_mark_path_hard_link_is_refused,
         test_magazine_mark_symlink_is_replaced_not_written_through,
         test_magazine_mark_empty_file_reads_as_no_mark,
+        test_magazine_mark_loaded_and_failed_kinds_round_trip,
     ]
     passed = 0
     skipped = 0

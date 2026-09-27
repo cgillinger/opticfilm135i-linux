@@ -145,20 +145,24 @@ def _skip(name):
     return "skipped"
 
 
-def _run(probe, *args, lock_dir=None):
+def _run(probe, *args, lock_dir=None, poll_cap_ms=5):
     """Run the probe with an isolated HOME (so no real calibration file is
     read) and an isolated lock/mark path (so a test can never disturb the
-    real one, nor a real session a test)."""
+    real one, nor a real session a test).
+
+    `poll_cap_ms` defaults to 5: the mock never answers a poll, so every
+    best-effort site would otherwise burn its real budget -- the cold-start
+    program alone carries the driver's 1.5 s and 30 s waits at nineteen poll
+    sites (ten best-effort, nine fail-closed motor completions). The cap
+    only ever shortens a wait (sane/gl126_ops.h RunPolicy, and the WP-5
+    magazine edge wait's own equivalent gate in gl126.cpp). A handful of
+    edge-wait tests need the wait to actually run its scripted sequence to
+    completion (100 ms/poll, up to ~8 polls) and pass a larger value."""
     with tempfile.TemporaryDirectory() as tmp:
         env = dict(os.environ, HOME=tmp)
         env.pop("SANE_DEBUG_GENESYS", None)
         env["OF135I_LOCK_FILE"] = str(Path(lock_dir or tmp) / "of135i.lock")
-        # The mock never answers a poll, so every best-effort site would
-        # otherwise burn its real budget -- the cold-start program alone
-        # carries the driver's 1.5 s and 30 s waits at nineteen poll sites (ten
-        # best-effort, nine fail-closed motor completions). The
-        # cap only ever shortens a wait (sane/gl126_ops.h RunPolicy).
-        env["OF135I_SANE_POLL_CAP_MS"] = "5"
+        env["OF135I_SANE_POLL_CAP_MS"] = str(poll_cap_ms)
         r = subprocess.run([probe, *args], capture_output=True, text=True,
                            env=env, timeout=180)
     assert r.returncode == 0, f"probe exit {r.returncode}: {r.stdout}\n{r.stderr}"
@@ -205,6 +209,8 @@ def _run(probe, *args, lock_dir=None):
             out.setdefault("resolution_values", []).append(int(line[len("RESVALUE "):].strip()))
         elif line.startswith("MAGVALUE "):
             out.setdefault("magazine_values", []).append(line[len("MAGVALUE "):].strip())
+        elif line.startswith("EDGEWRITE "):
+            out["edgewrite"] = int(line[len("EDGEWRITE "):].strip())
     return out
 
 
@@ -212,8 +218,8 @@ def _run(probe, *args, lock_dir=None):
 
 
 def test_magazine_options_exist_only_for_gl126():
-    """The two buttons and the status line are declared for the 135i and
-    inactive on every other genesys chip -- no other model in this
+    """The three buttons and the status line are declared for the 135i
+    and inactive on every other genesys chip -- no other model in this
     backend has a magazine to load."""
     probe = _build_probe()
     if probe is None:
@@ -221,11 +227,12 @@ def test_magazine_options_exist_only_for_gl126():
 
     r = _run(probe, "options")
     opts = r["options"]
-    for name in ("load-film", "eject-film", "magazine"):
+    for name in ("load-film", "eject-film", "check-status", "magazine"):
         assert name in opts and opts[name] != "MISSING", (name, opts)
         assert opts[name]["inactive"] == "0", (name, opts[name])
     assert int(opts["load-film"]["type"]) == SANE_TYPE_BUTTON, opts["load-film"]
     assert int(opts["eject-film"]["type"]) == SANE_TYPE_BUTTON, opts["eject-film"]
+    assert int(opts["check-status"]["type"]) == SANE_TYPE_BUTTON, opts["check-status"]
     assert int(opts["magazine"]["type"]) == SANE_TYPE_STRING, opts["magazine"]
     # 2026-09-27: settable now (SANE_CAP_SOFT_SELECT | SANE_CAP_SOFT_DETECT,
     # 0x04 | 0x01 = 0x05), not read-only -- KSaneWidgets renders a
@@ -239,11 +246,11 @@ def test_magazine_options_exist_only_for_gl126():
     assert int(opts["magazine"]["size"]) >= 128, opts["magazine"]
 
     other = _run(probe, "options", GL124_DEVICE)
-    for name in ("load-film", "eject-film", "magazine"):
+    for name in ("load-film", "eject-film", "check-status", "magazine"):
         assert other["options"][name]["inactive"] == "1", (name, other["options"][name])
 
     print("test_magazine_options_exist_only_for_gl126 OK "
-          "(3 options active on GL126, all inactive on GL124)")
+          "(4 options active on GL126, all inactive on GL124)")
 
 
 def test_the_status_line_is_readable_and_comes_first():
@@ -273,11 +280,14 @@ def test_the_status_line_is_readable_and_comes_first():
     assert int(opts["magazine"]["constraint"]) == 3, opts["magazine"]
 
     values = r.get("values") or []
-    assert len(values) >= 5, values
+    # WP-5: twelve now -- the seven from the ordinary state machine plus
+    # three cross-process/retry variants and four Check-status-only
+    # diagnostic snapshots (docs/sane-wp5-load-button.md section 3.6);
+    # the exact list is pinned in test_magazine_state_values_are_pinned.
+    assert len(values) == 12, values
     for v in values:
         assert len(v) <= 40, (len(v), v)          # fits the widget
         assert v[0].islower(), v                   # state word leads
-        assert " -- " in v, v
     # The states an operator must be able to tell apart, each present.
     # ("unknown" is the internal MagazineState name; its text says "not
     # loaded" instead, 2026-09-27 task 2.)
@@ -346,91 +356,95 @@ def test_the_status_line_reports_a_load_pending_from_another_process():
     print("test_the_status_line_reports_a_load_pending_from_another_process OK")
 
 
-def test_a_scan_after_eject_runs_open_then_load():
-    """Section 10 (2026-09-25): an eject is no longer a dead end for the
-    next scan. The vendor's own between-strip load (docs/protocol-notes.md
-    Pass 14 addendum 4) just swaps the strip, pushes it to the stop, and
-    loads -- no jog, no reinsert prompt -- so the backend now does the
-    same: ejected is a PENDING next-strip load, of the Ejected kind.
-
-    That kind replays the device-open table first (nothing has written it
-    since the eject), then the bare load. On the test interface "open"
-    reaches the wire and stops at its first unacknowledged write -- the
-    same proof-of-reaching-the-wire the release path's "open" run gives
-    (test_release_from_idle_runs_the_open_and_jog_programs) -- which fails
-    the session closed exactly as every other magazine-sequence failure
-    does: nothing further written, no recovery, mark dropped."""
+def test_a_scan_after_eject_refuses_no_matter_what_the_hardware_says():
+    """WP-5 (docs/sane-wp5-load-button.md section 3.4): Scan never loads
+    the magazine any more -- load_document() is a pure checker of the
+    in-process state and the marks, and does not read the hardware at
+    all. An Ejected magazine (in-process, from the "nothing to do" eject
+    used throughout this suite) refuses NO_DOCS "press Load film first"
+    regardless of the sensor and register seeds this scenario carries
+    forward from its WP-4 name -- they used to matter to load_document()
+    itself; now they only matter to the Load film button (see
+    test_the_edge_resolving_lets_the_ejected_kind_load, below)."""
     probe = _build_probe()
     if probe is None:
-        return _skip("test_a_scan_after_eject_runs_open_then_load")
+        return _skip("test_a_scan_after_eject_refuses_no_matter_what_the_hardware_says")
 
     r = _run(probe, "scenario", "load-after-eject")
     assert len(r["statuses"]) == 2, r["statuses"]
     eject, load = r["statuses"]
     assert eject[0] == SANE_STATUS_GOOD, eject
-    assert load[0] == SANE_STATUS_IO_ERROR, load
-    assert "magazine open sequence" in load[1], load[1]
-    assert "register write not acknowledged" in load[1], load[1]
-    # Failed closed like every other magazine-sequence failure: the
-    # pending load is gone and the status line says so.
-    assert r["mark"] == "absent", r["mark"]
-    assert r["text"].startswith("failed"), r["text"]
-    print("test_a_scan_after_eject_runs_open_then_load OK "
-          "(open reached the wire, failed closed)")
-
-
-def test_a_scan_after_eject_accepts_the_last_scan_profiles_regs_3b_3c():
-    """Test 90 (2026-09-27): the first hardware run of the Ejected kind
-    refused before writing anything because regs 0x3b/0x3c read 0x02/0x00
-    -- the values the 600 dpi scan profile leaves and an eject never
-    rewrites -- against a 0x00/0x00 requirement copied from the jog case.
-    The Ejected kind now refuses only the base-table 0xff/0xff (Test 44)
-    and runs "open", which rewrites both registers before "load"."""
-    probe = _build_probe()
-    if probe is None:
-        return _skip("test_a_scan_after_eject_accepts_the_last_scan_profiles_regs_3b_3c")
-
-    r = _run(probe, "scenario", "load-after-eject-scan-regs")
-    assert len(r["statuses"]) == 2, r["statuses"]
-    eject, load = r["statuses"]
-    assert eject[0] == SANE_STATUS_GOOD, eject
-    # Not the wrong-state refusal: "open" reached the wire (and failed
-    # closed on the mock, like every open run in this suite).
-    assert load[0] == SANE_STATUS_IO_ERROR, load
-    assert "magazine open sequence" in load[1], load[1]
-    assert "not in the state" not in load[1], load[1]
-    print("test_a_scan_after_eject_accepts_the_last_scan_profiles_regs_3b_3c OK "
-          "(0x02/0x00 accepted, open reached the wire)")
-
-
-def test_a_scan_after_eject_still_refuses_the_base_table_state():
-    """The one 0x3b/0x3c state the Ejected kind refuses: 0xff/0xff, the
-    base-table-only state eject itself refuses from (Test 44). Read-only
-    INVAL, Failed, mark cleared."""
-    probe = _build_probe()
-    if probe is None:
-        return _skip("test_a_scan_after_eject_still_refuses_the_base_table_state")
-
-    r = _run(probe, "scenario", "load-after-eject-base-table")
-    assert len(r["statuses"]) == 2, r["statuses"]
-    eject, load = r["statuses"]
-    assert eject[0] == SANE_STATUS_GOOD, eject
-    assert load[0] == SANE_STATUS_INVAL, load
-    assert "0xff/0xff" in load[1], load[1]
-    assert "the eject leaves it in" in load[1], load[1]
+    assert load[0] == SANE_STATUS_NO_DOCS, load
+    assert "press Load film first" in load[1], load[1]
     assert "Nothing was written" in load[1], load[1]
-    assert r["mark"] == "absent", r["mark"]
+    # A refusal, not a failure: the mark survives, and so does the pending
+    # load it represents.
+    assert r["mark"].startswith("present ejected"), r["mark"]
+    assert r["text"].startswith("ejected"), r["text"]
+    print("test_a_scan_after_eject_refuses_no_matter_what_the_hardware_says OK "
+          "(NO_DOCS, mark kept, nothing read)")
+
+
+def test_the_edge_resolving_lets_the_ejected_kind_load():
+    """The WP-4 register preconditions this used to live in load_document()
+    (Test 90's regs 0x3b/0x3c finding included) moved to the "Load film"
+    button itself (magazine_load_film_impl()), checked AFTER the edge wait
+    resolves -- the wait's own "Seen" outcome already proves the sensor
+    precondition WP-4 section 10.3 used a single read for. Scripted so the
+    wait actually completes (present -> clear -> clear -> present x5,
+    hence the larger poll cap): "open" then reaches the wire and fails
+    closed on the mock, and the checkpoint proves not one of the wait's
+    own polls wrote anything (EDGEWRITE 0)."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_the_edge_resolving_lets_the_ejected_kind_load")
+
+    r = _run(probe, "scenario", "load-film-edge-seen-ejected", poll_cap_ms=2000)
+    assert len(r["statuses"]) == 2, r["statuses"]
+    eject, release = r["statuses"]
+    assert eject[0] == SANE_STATUS_GOOD, eject
+    assert release[0] == SANE_STATUS_IO_ERROR, release
+    assert "magazine open sequence" in release[1], release[1]
+    assert "register write not acknowledged" in release[1], release[1]
+    assert "not in the state" not in release[1], release[1]
+    assert r["edgewrite"] == 0, r
+    assert r["mark"].startswith("present failed"), r["mark"]
     assert r["text"].startswith("failed"), r["text"]
-    print("test_a_scan_after_eject_still_refuses_the_base_table_state OK "
-          "(refused read-only)")
+    print("test_the_edge_resolving_lets_the_ejected_kind_load OK "
+          "(0x02/0x00 accepted, edge resolved with no writes, open reached the wire)")
+
+
+def test_the_regs_check_after_the_edge_still_refuses_the_base_table_state():
+    """The one 0x3b/0x3c state the Ejected kind still refuses: 0xff/0xff,
+    the base-table-only state eject itself refuses from (Test 44). Now
+    checked by "Load film" right after the edge resolves, not by
+    load_document() -- read-only INVAL, no "open" attempted, Failed, mark
+    cleared."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_the_regs_check_after_the_edge_still_refuses_the_base_table_state")
+
+    r = _run(probe, "scenario", "load-film-edge-seen-bad-regs", poll_cap_ms=2000)
+    assert len(r["statuses"]) == 2, r["statuses"]
+    eject, release = r["statuses"]
+    assert eject[0] == SANE_STATUS_GOOD, eject
+    assert release[0] == SANE_STATUS_INVAL, release
+    assert "0xff/0xff" in release[1], release[1]
+    assert "the eject leaves it in" in release[1], release[1]
+    assert "Nothing further was written" in release[1], release[1]
+    assert r["edgewrite"] == 0, r
+    assert r["mark"].startswith("present failed"), r["mark"]
+    assert r["text"].startswith("failed"), r["text"]
+    print("test_the_regs_check_after_the_edge_still_refuses_the_base_table_state OK "
+          "(refused read-only, after the edge resolved)")
 
 
 def test_a_scan_after_eject_without_a_magazine_refuses_and_keeps_the_mark():
-    """The strip has not been pushed back in yet (or was never taken out)
-    -- the loader sensor still reads clear. Read-only NO_DOCS, worded for
-    a strip swap rather than the Released kind's reseat wording, and the
-    mark is KEPT: pushing the magazine in and scanning again is the whole
-    fix, exactly as it is for the Released kind's equivalent refusal."""
+    """The strip has not been pushed back in yet (or was never taken out).
+    load_document() no longer reads the sensor to say so (WP-5) -- it is
+    the SAME read-only NO_DOCS refusal as every other Ejected/Released
+    scan-gate case, and the mark is KEPT: pressing Load film (which now
+    does its own wait) is the whole fix."""
     probe = _build_probe()
     if probe is None:
         return _skip("test_a_scan_after_eject_without_a_magazine_refuses_and_keeps_the_mark")
@@ -440,8 +454,7 @@ def test_a_scan_after_eject_without_a_magazine_refuses_and_keeps_the_mark():
     eject, load = r["statuses"]
     assert eject[0] == SANE_STATUS_GOOD, eject
     assert load[0] == SANE_STATUS_NO_DOCS, load
-    assert "no magazine in the slot" in load[1], load[1]
-    assert "mechanical stop" in load[1], load[1]
+    assert "press Load film first" in load[1], load[1]
     assert "Nothing was written" in load[1], load[1]
     assert r["mark"].startswith("present"), r["mark"]
     assert r["text"].startswith("ejected"), r["text"]
@@ -449,56 +462,55 @@ def test_a_scan_after_eject_without_a_magazine_refuses_and_keeps_the_mark():
           "(NO_DOCS, mark kept)")
 
 
-def test_a_scan_after_eject_on_a_cold_scanner_refuses_and_clears_the_mark():
-    """A power cycle happened between the eject and the next scan. A
-    next-strip load assumes the transport is still homed and positioned
-    from the same power-on -- of135i/loadflow.py's --next-strip makes
-    exactly this assumption and refuses the same way (NEXT_STRIP_COLD_MSG).
-    Nothing was written (this is a register read), so the mark is cleared
-    as stale but the session is NOT failed: state drops to Unknown, and
-    the documented way out (Load film's jog, or a fresh `of135i load`)
-    remains available -- unlike the wrong-state refusal below it in
-    gl126.cpp, which does fail the session."""
+def test_a_cold_read_forces_the_full_release_path_even_from_ejected():
+    """WP-5: the Ejected/Released shortcuts (no jog, straight to the edge
+    wait) assume the transport is still homed and positioned from the
+    SAME power-on as the eject that produced them -- exactly WP-4 section
+    10.3's reasoning for refusing a cold next-strip load. So a cold reg
+    0x01 at "Load film" time forces the FULL path (cold_init, then open,
+    then jog) even from an in-process Ejected state, never the no-jog
+    shortcut. Proven by the shape of the failure: the cold-start program's
+    own fail-closed motor completion is reached (identical to
+    test_release_from_cold_stops_at_the_first_motor_completion) -- an
+    Ejected-kind press would have gone straight to the read-only edge
+    wait instead, with no motor completion to fail on at all."""
     probe = _build_probe()
     if probe is None:
-        return _skip("test_a_scan_after_eject_on_a_cold_scanner_refuses_and_clears_the_mark")
+        return _skip("test_a_cold_read_forces_the_full_release_path_even_from_ejected")
 
-    r = _run(probe, "scenario", "load-after-eject-cold")
+    r = _run(probe, "scenario", "load-film-cold-after-eject-forces-fresh-path")
     assert len(r["statuses"]) == 2, r["statuses"]
-    eject, load = r["statuses"]
+    eject, release = r["statuses"]
     assert eject[0] == SANE_STATUS_GOOD, eject
-    assert load[0] == SANE_STATUS_INVAL, load
-    assert "power-cycled after the eject" in load[1], load[1]
-    assert "Load film" in load[1], load[1]
-    assert "same power-on" in load[1], load[1]
-    assert "Nothing was written" in load[1], load[1]
-    assert r["mark"] == "absent", r["mark"]
-    # Unknown, not failed: nothing was written, so the session is not
-    # terminal the way a real motor-sequence failure is.
-    assert r["text"].startswith("not loaded"), r["text"]
-    print("test_a_scan_after_eject_on_a_cold_scanner_refuses_and_clears_the_mark OK "
-          "(INVAL, mark cleared, session not failed)")
+    assert release[0] == SANE_STATUS_DEVICE_BUSY, release
+    assert "magazine cold_init sequence" in release[1], release[1]
+    assert "a motor move did not complete" in release[1], release[1]
+    assert r["mark"].startswith("present failed"), r["mark"]
+    assert r["text"].startswith("failed"), r["text"]
+    print("test_a_cold_read_forces_the_full_release_path_even_from_ejected OK "
+          "(cold_init ran, not the no-jog shortcut)")
 
 
-def test_an_ejected_mark_from_another_process_runs_open_then_load():
-    """The cross-process case the Released mark was built for in the
-    first place: `scanimage --eject-film=yes` in one process, a plain
-    scan in the next. Two SEPARATE probe invocations sharing one
-    OF135I_LOCK_FILE -- the first writes an Ejected mark and exits (no
-    in-process state survives that), the second knows nothing except what
-    it reads from disk.
+def test_an_ejected_mark_from_another_process_refuses_the_scan():
+    """The cross-process case the mark was built for in the first place:
+    `scanimage --eject-film=yes` in one process, a plain scan in the
+    next. Two SEPARATE probe invocations sharing one OF135I_LOCK_FILE --
+    the first writes an Ejected mark and exits (no in-process state
+    survives that), the second knows nothing except what it reads from
+    disk, and (WP-5) load_document() refuses NO_DOCS regardless -- the
+    same "press Load film first" every Ejected/Released mark produces.
 
     This also proves the mark's device key round-trips a name WITH SPACES
     for the Ejected kind specifically (the backend's own test-mode device
     is named "test device:0x07b3:0x1436"): if the space truncated the key
-    on either write or read, the second run's key would not match its own
-    device and the load would never be attempted at all -- it would
-    return GOOD with nothing touched, not reach "open". (The Released
-    kind's equivalent round trip is covered by tests/test_sane_lock.py's
-    test_magazine_mark_round_trip, unaffected by this change.)"""
+    on either write or read, the mark would name a device that never
+    matches and the refusal would not happen -- the scan would proceed
+    with a warning instead. (The Released kind's equivalent round trip is
+    covered by tests/test_sane_lock.py's test_magazine_mark_round_trip,
+    unaffected by this change.)"""
     probe = _build_probe()
     if probe is None:
-        return _skip("test_an_ejected_mark_from_another_process_runs_open_then_load")
+        return _skip("test_an_ejected_mark_from_another_process_refuses_the_scan")
 
     with tempfile.TemporaryDirectory() as lock_dir:
         r1 = _run(probe, "scenario", "state-mark-ejected-pending", lock_dir=lock_dir)
@@ -508,10 +520,10 @@ def test_an_ejected_mark_from_another_process_runs_open_then_load():
         r2 = _run(probe, "scenario", "load-mark-ejected-crossproc", lock_dir=lock_dir)
     assert r2["key"] == r1["key"], (r1["key"], r2["key"])
     status, msg = r2["statuses"][0]
-    assert status == SANE_STATUS_IO_ERROR, r2["statuses"]
-    assert "magazine open sequence" in msg, msg
-    assert r2["mark"] == "absent", r2["mark"]
-    print("test_an_ejected_mark_from_another_process_runs_open_then_load OK "
+    assert status == SANE_STATUS_NO_DOCS, r2["statuses"]
+    assert "press Load film first" in msg, msg
+    assert r2["mark"].startswith("present ejected"), r2["mark"]
+    print("test_an_ejected_mark_from_another_process_refuses_the_scan OK "
           "(two processes, one shared mark, key with spaces round-tripped)")
 
 
@@ -530,26 +542,33 @@ def test_an_ejected_mark_for_another_device_is_ignored_and_cleared():
     print("test_an_ejected_mark_for_another_device_is_ignored_and_cleared OK")
 
 
-def test_load_film_from_ejected_still_runs_the_open_and_jog_programs():
-    """An eject does not narrow what Load film can do -- only what a
-    plain scan can skip. Pressed again after an eject, the full release
-    path (cold-init-if-needed, device-open table, jog) still runs exactly
-    as it does from any other non-Failed state; this is the fallback the
-    cold-power-cycle refusal above points the operator to."""
+def test_load_film_from_ejected_waits_instead_of_jogging():
+    """WP-5 section 3.2's Ejected row: pressed again after an eject, "Load
+    film" no longer re-releases (WP-4's old rule) -- it WAITS for the edge
+    first, no jog. The eject step here left the sensor reading clear, and
+    nothing scripts a change, so the wait times out having SEEN a clear
+    (debounced -- review finding I -- so this needs a poll_cap_ms large
+    enough for 2 consecutive clear reads, not just one): Released
+    (in-process state and status text), no motor write of any kind, GOOD
+    (a timeout is not an error). Review finding G: the ON-DISK MARK stays
+    "ejected", not "released" -- the origin (no jog needed, lenient regs
+    rule) has to survive a retry in a FRESH process the same way
+    magazine_wait_needs_open() survives one in this process
+    (test_an_ejected_origin_retry_keeps_running_open)."""
     probe = _build_probe()
     if probe is None:
-        return _skip("test_load_film_from_ejected_still_runs_the_open_and_jog_programs")
+        return _skip("test_load_film_from_ejected_waits_instead_of_jogging")
 
-    r = _run(probe, "scenario", "release-after-eject")
+    r = _run(probe, "scenario", "release-after-eject", poll_cap_ms=300)
     assert len(r["statuses"]) == 2, r["statuses"]
     eject, release = r["statuses"]
     assert eject[0] == SANE_STATUS_GOOD, eject
-    assert release[0] == SANE_STATUS_IO_ERROR, release
-    assert "magazine open sequence" in release[1], release[1]
-    assert r["mark"] == "absent", r["mark"]
-    assert r["text"].startswith("failed"), r["text"]
-    print("test_load_film_from_ejected_still_runs_the_open_and_jog_programs OK "
-          "(Load film unaffected by a prior eject)")
+    assert release == (SANE_STATUS_GOOD, ""), release
+    assert r["edgewrite"] == 0, r
+    assert r["mark"].startswith("present ejected"), r["mark"]
+    assert r["text"].startswith("press Load film"), r["text"]
+    print("test_load_film_from_ejected_waits_instead_of_jogging OK "
+          "(no jog, timed out, Released in-process, mark stays 'ejected')")
 
 
 def test_magazine_text_starts_unknown():
@@ -619,9 +638,11 @@ def test_release_from_idle_runs_the_open_and_jog_programs():
     for prompt in ("try again", "press load film", "start over", "retry"):
         assert prompt not in msg.lower(), (prompt, msg)
     # A failed magazine sequence is terminal for the session, and the
-    # status line says so instead of inviting another press.
+    # status line says so instead of inviting another press. Review
+    # finding E (2026-09-27): the mark now PERSISTS the failure (was
+    # cleared before), so a second PROCESS also refuses.
     assert r["text"].startswith("failed"), r["text"]
-    assert r["mark"] == "absent", r["mark"]
+    assert r["mark"].startswith("present failed"), r["mark"]
     print("test_release_from_idle_runs_the_open_and_jog_programs OK "
           "(reached the wire, failed closed)")
 
@@ -666,9 +687,9 @@ def test_release_from_cold_stops_at_the_first_motor_completion():
     assert "Nothing further was written" in msg, msg
     assert "cold-start sequence completed" not in msg, msg
     assert r["text"].startswith("failed"), r["text"]
-    assert r["mark"] == "absent", r["mark"]
+    assert r["mark"].startswith("present failed"), r["mark"]
     print("test_release_from_cold_stops_at_the_first_motor_completion OK "
-          f"(PollTimeout at op {first}, the first of nine; failed, no mark)")
+          f"(PollTimeout at op {first}, the first of nine; failed mark persists)")
 
 
 def test_a_usb_failure_mid_sequence_fails_the_session():
@@ -695,36 +716,33 @@ def test_a_usb_failure_mid_sequence_fails_the_session():
         assert status == SANE_STATUS_IO_ERROR, (scenario, r["statuses"])
         assert "injected" in msg, (scenario, msg)
         assert r["text"].startswith("failed"), (scenario, r["text"])
-        assert r["mark"] == "absent", (scenario, r["mark"])
+        assert r["mark"].startswith("present failed"), (scenario, r["mark"])
     print("test_a_usb_failure_mid_sequence_fails_the_session OK "
-          "(release and eject: failed, mark dropped)")
+          "(release and eject: failed, mark now PERSISTS the failure)")
 
 
-def test_an_impossible_scan_request_never_moves_the_magazine():
-    """The load half runs BEFORE calibration -- the core calls
-    load_document() first -- while the scan request used to be validated
-    inside offset_calibration(). With a release pending, an impossible
-    request would therefore have driven the loader and only then been
-    refused (Astra review 2026-09-13).
-
-    Now the same write-free validation runs first. The refusal must leave
-    the mark intact (the request is wrong, the magazine is not) and must
-    NOT fail the session -- nothing was written, so nothing is unknown."""
+def test_load_document_never_looks_at_the_frame_number():
+    """WP-5: load_document() cannot move the magazine on an impossible
+    scan request any more (Astra's 2026-09-13 concern), because it cannot
+    move the magazine AT ALL -- it is a pure checker (section 3.4). A
+    pending Released mark refuses NO_DOCS "press Load film first" no
+    matter what dev->settings.frame holds, frame 9 (past the holder's six
+    apertures) included; the request validation Astra's review was about
+    still runs, unchanged, inside offset_calibration() at the actual scan,
+    not here."""
     probe = _build_probe()
     if probe is None:
-        return _skip("test_an_impossible_scan_request_never_moves_the_magazine")
+        return _skip("test_load_document_never_looks_at_the_frame_number")
 
-    r = _run(probe, "scenario", "load-mark-invalid-request")
+    r = _run(probe, "scenario", "load-mark-frame-does-not-matter")
     status, msg = r["statuses"][0]
-    assert status == SANE_STATUS_INVAL, r["statuses"]
-    assert "outside 1-6" in msg, msg
+    assert status == SANE_STATUS_NO_DOCS, r["statuses"]
+    assert "press Load film first" in msg, msg
     assert "Nothing was written" in msg, msg
-    # A refusal, not a failure: the session stays usable and the pending
-    # load survives, so scanning a valid frame completes it.
     assert not r["text"].startswith("failed"), r["text"]
     assert r["mark"].startswith("present"), r["mark"]
-    print("test_an_impossible_scan_request_never_moves_the_magazine OK "
-          "(INVAL before any write, mark kept, session not failed)")
+    print("test_load_document_never_looks_at_the_frame_number OK "
+          "(NO_DOCS regardless of the frame value, mark kept)")
 
 
 def test_a_failed_sequence_is_terminal():
@@ -806,11 +824,14 @@ def test_eject_refuses_the_base_table_state():
 
 
 def test_the_option_handlers_reach_the_hooks():
-    """The two buttons really are wired to the magazine hooks: pressed
-    from a start state nobody can name, each returns the refusal only
-    those hooks produce. (The text itself is asserted on the direct calls
-    -- the backend's public entry points wrap every exception into a bare
-    status code, so the message never escapes the library.)"""
+    """The three buttons really are wired to the magazine hooks: Load film
+    and Eject film, pressed from a start state nobody can name, each
+    return the refusal only those hooks produce (the text itself is
+    asserted on the direct calls elsewhere -- the backend's public entry
+    points wrap every exception into a bare status code, so the message
+    never escapes the library). Check status never refuses (it only
+    reads), so its wiring proof is simply that it succeeds from a state
+    that refused the other two."""
     probe = _build_probe()
     if probe is None:
         return _skip("test_the_option_handlers_reach_the_hooks")
@@ -818,7 +839,14 @@ def test_the_option_handlers_reach_the_hooks():
     for scenario in ("wiring-load", "wiring-eject"):
         r = _run(probe, "scenario", scenario)
         assert r["optstatuses"] == [SANE_STATUS_INVAL], (scenario, r["optstatuses"])
-    print("test_the_option_handlers_reach_the_hooks OK (load-film and eject-film)")
+
+    r = _run(probe, "scenario", "wiring-check-status")
+    assert r["optstatuses"] == [SANE_STATUS_GOOD], r["optstatuses"]
+    # reg 0x01 = 0x17 (not idle, not cold) with reg 0x101 at its
+    # constructor default (0x00, sensor clear): the "no magazine" row.
+    assert r["text"].startswith("no magazine"), r["text"]
+    print("test_the_option_handlers_reach_the_hooks OK "
+          "(load-film and eject-film refuse; check-status succeeds)")
 
 
 def test_a_scan_with_no_release_pending_never_touches_the_magazine():
@@ -849,10 +877,10 @@ def test_a_scan_with_no_release_pending_never_touches_the_magazine():
 
 
 def test_a_scan_after_a_failed_magazine_sequence_refuses():
-    """A failed release clears the mark, so "is a load pending?" would
-    answer no and let the scan through to calibrate on top of a transport
-    state nobody can name. The load half therefore checks the FAILED
-    state first, before it asks about the mark at all."""
+    """load_document() checks the in-process FAILED state first, before it
+    asks about the mark at all -- the mark now agrees anyway (review
+    finding E: a failure WRITES a "failed" mark instead of clearing it),
+    but the in-process check must not depend on that ordering."""
     probe = _build_probe()
     if probe is None:
         return _skip("test_a_scan_after_a_failed_magazine_sequence_refuses")
@@ -884,51 +912,414 @@ def test_a_mark_for_another_device_is_ignored_and_cleared():
     print("test_a_mark_for_another_device_is_ignored_and_cleared OK")
 
 
-def test_a_pending_load_without_a_magazine_refuses_and_keeps_the_mark():
-    """The operator pressed Load film, took the magazine out, and scanned
-    before putting it back. Refuse read-only with NO_DOCS -- and KEEP the
-    mark, because inserting the magazine and scanning again is the whole
-    fix; losing it would force another release.
+def test_a_pending_load_refuses_and_keeps_the_mark_no_matter_what_the_hardware_says():
+    """WP-5: a Released mark refuses read-only NO_DOCS "press Load film
+    first" and KEEPS the mark -- pressing Load film again (which now
+    does its own wait) is the whole fix; losing the mark would force
+    starting over. Two DIFFERENT hardware seed combinations (one that
+    used to mean "sensor clear", one that used to mean "wrong register
+    state") produce the IDENTICAL refusal now, because load_document()
+    reads neither any more.
 
     Also checked through sane_start, which is where this really happens:
     the refusal must land BEFORE calibration, so nothing is written."""
     probe = _build_probe()
     if probe is None:
-        return _skip("test_a_pending_load_without_a_magazine_refuses_and_keeps_the_mark")
+        return _skip("test_a_pending_load_refuses_and_keeps_the_mark_no_matter_what_the_hardware_says")
 
-    r = _run(probe, "scenario", "load-mark-no-magazine")
-    status, msg = r["statuses"][0]
-    assert status == SANE_STATUS_NO_DOCS, r["statuses"]
-    assert "no magazine in the slot" in msg, msg
-    assert "mechanical stop" in msg, msg
-    assert "Nothing was written" in msg, msg
-    assert r["mark"].startswith("present"), r["mark"]
+    for scenario in ("load-mark-no-magazine", "load-mark-bad-state"):
+        r = _run(probe, "scenario", scenario)
+        status, msg = r["statuses"][0]
+        assert status == SANE_STATUS_NO_DOCS, (scenario, r["statuses"])
+        assert "press Load film first" in msg, (scenario, msg)
+        assert "Nothing was written" in msg, (scenario, msg)
+        assert r["mark"].startswith("present"), (scenario, r["mark"])
+        assert not r["text"].startswith("failed"), (scenario, r["text"])
 
     r2 = _run(probe, "scenario", "start-mark-no-magazine")
     assert r2["start"][0] == SANE_STATUS_NO_DOCS, r2["start"]
     assert r2["progress"] != "offset_calibration", r2
     assert r2["mark"].startswith("present"), r2["mark"]
-    print("test_a_pending_load_without_a_magazine_refuses_and_keeps_the_mark OK "
-          "(NO_DOCS before calibration, mark kept)")
+    print("test_a_pending_load_refuses_and_keeps_the_mark_no_matter_what_the_hardware_says OK "
+          "(NO_DOCS before calibration, mark kept, hardware irrelevant)")
 
 
-def test_a_pending_load_from_the_wrong_state_refuses_and_drops_the_mark():
-    """The mark says a release is pending but the scanner is not in the
-    state the jog leaves behind. A load is not attempted from an
-    unverified state: refuse, drop the mark so nothing retries by itself,
-    and send the operator through the power cycle."""
+def test_a_loaded_mark_lets_a_scan_through():
+    """Section 3.3/3.4: `scanimage -n --load-film` completes the load and
+    exits; a SEPARATE `scanimage` invocation that scans needs to know the
+    magazine is loaded from the mark alone, exactly as it already needed
+    to know a release/eject was pending. The mark is NOT consumed by a
+    mere check -- only an eject, a failure, or a cold read clears it."""
     probe = _build_probe()
     if probe is None:
-        return _skip("test_a_pending_load_from_the_wrong_state_refuses_and_drops_the_mark")
+        return _skip("test_a_loaded_mark_lets_a_scan_through")
 
-    r = _run(probe, "scenario", "load-mark-bad-state")
+    r = _run(probe, "scenario", "load-mark-loaded")
+    assert r["statuses"] == [(SANE_STATUS_GOOD, "")], r["statuses"]
+    assert r["mark"].startswith("present loaded"), r["mark"]
+
+    r2 = _run(probe, "scenario", "start-mark-loaded")
+    assert r2["progress"] == "offset_calibration", r2
+    assert r2["mark"].startswith("present loaded"), r2["mark"]
+    assert r2["text"].startswith("loaded"), r2["text"]
+    print("test_a_loaded_mark_lets_a_scan_through OK "
+          "(hook proceeds, calibration entered, mark not consumed)")
+
+
+# ---------------------------------------------- 4. the one-button load (WP-5)
+
+
+def test_the_edge_wait_times_out_without_writing_anything():
+    """Section 3.2/3.6's two timeout shapes, both from an Ejected start
+    (no jog either way): the sensor never clears at all ("did not come
+    loose"), or it clears immediately and just stays that way ("clear
+    only" -- section 6's name for it). Either way: no motor write of any
+    kind (EDGEWRITE 0), Released (in-process state and status text),
+    SANE_STATUS_GOOD -- the operator having done nothing, or not
+    finished, is not itself an error. Review finding G: since both start
+    from Ejected, the ON-DISK MARK is "ejected" in both cases, not
+    "released" -- see test_load_film_from_ejected_waits_instead_of_jogging."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_the_edge_wait_times_out_without_writing_anything")
+
+    r = _run(probe, "scenario", "load-film-edge-present-only")
+    assert len(r["statuses"]) == 2, r["statuses"]
+    assert r["statuses"][1] == (SANE_STATUS_GOOD, ""), r["statuses"]
+    assert r["edgewrite"] == 0, r
+    assert r["mark"].startswith("present ejected"), r["mark"]
+    assert r["text"].startswith("did not come loose"), r["text"]
+
+    # poll_cap_ms=300: saw_clear is debounced (review finding I), so this
+    # needs 2 consecutive clear reads' worth of budget, not just one.
+    r2 = _run(probe, "scenario", "release-after-eject", poll_cap_ms=300)
+    assert r2["statuses"][1] == (SANE_STATUS_GOOD, ""), r2["statuses"]
+    assert r2["edgewrite"] == 0, r2
+    assert r2["mark"].startswith("present ejected"), r2["mark"]
+    assert r2["text"].startswith("press Load film, then take out"), r2["text"]
+    print("test_the_edge_wait_times_out_without_writing_anything OK "
+          "(both timeout shapes: Released in-process, mark stays 'ejected', no writes, GOOD)")
+
+
+def test_an_ejected_origin_retry_never_jogs_either_way():
+    """Review finding G, both retry sub-cases: an EJECTED-origin press
+    that times out -- whether or not that wait ever saw a clear -- is
+    retried by a second press that still does not jog (Ejected never
+    jogs) and, once that second wait resolves, still runs "open" before
+    "load" (the lenient regs rule). Before the fix, the ORIGIN was
+    forgotten the moment state became Released: a no-clear retry re-ran
+    open+jog from scratch, and a clear-seen retry skipped "open" entirely
+    and used the STRICT regs rule -- either way wrong for a magazine that
+    was ejected, never jogged.
+
+    (Test 51's literal double jog -- a RELEASED-origin retry, re-running
+    open+jog because the FIRST press already succeeded once as an
+    ordinary release -- is not reachable through this probe at all:
+    OPEN's first acknowledgement always fails on this always-zero-
+    answering mock, so a timed-out Released state is only ever reachable
+    here through an Ejected origin. Coverage gap, documented in
+    docs/sane-wp5-load-button.md section 9.3.)"""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_an_ejected_origin_retry_never_jogs_either_way")
+
+    r = _run(probe, "scenario", "load-film-retry-no-clear-rejogs", poll_cap_ms=2000)
+    assert len(r["statuses"]) == 3, r["statuses"]
+    press1, press2 = r["statuses"][1], r["statuses"][2]
+    assert press1 == (SANE_STATUS_GOOD, ""), press1
+    assert press2[0] == SANE_STATUS_IO_ERROR, press2
+    assert "magazine open sequence" in press2[1], press2[1]
+    assert r["edgewrite"] == 0, r
+
+    r2 = _run(probe, "scenario", "load-film-retry-with-clear-then-edge", poll_cap_ms=2000)
+    assert len(r2["statuses"]) == 3, r2["statuses"]
+    press1b, press2b = r2["statuses"][1], r2["statuses"][2]
+    assert press1b == (SANE_STATUS_GOOD, ""), press1b
+    assert press2b[0] == SANE_STATUS_IO_ERROR, press2b
+    assert "magazine open sequence" in press2b[1], press2b[1]
+    assert r2["edgewrite"] == 0, r2
+    print("test_an_ejected_origin_retry_never_jogs_either_way OK "
+          "(both retry sub-cases: no jog, open still runs, lenient regs rule)")
+
+
+# ------------------------------------------------------ 5. Check status (WP-5)
+
+
+def test_check_status_reads_the_hardware_and_updates_the_line():
+    """Section 3.5's table, row by row. Only the cold row is a real
+    MagazineState transition (Unknown, marks cleared as stale); every
+    other row is a read-only snapshot that overrides the status line
+    without moving the state machine. Hardware evidence alone never
+    promotes anything to Loaded (the sensor cannot tell "loaded" from
+    "loose in the slot") -- the Loaded row is reached here THROUGH a
+    cross-process "loaded" mark, not invented from the register state."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_check_status_reads_the_hardware_and_updates_the_line")
+
+    r = _run(probe, "scenario", "check-status-cold")
+    assert r["statuses"] == [(SANE_STATUS_GOOD, "")], r["statuses"]
+    assert r["text"].startswith("cold"), r["text"]
+    assert r["mark"] == "absent", r["mark"]   # cleared as stale
+
+    r2 = _run(probe, "scenario", "check-status-no-magazine")
+    assert r2["text"] == "no magazine in the slot", r2["text"]
+
+    r3 = _run(probe, "scenario", "check-status-present-not-loaded")
+    assert r3["text"].startswith("magazine present, not loaded"), r3["text"]
+
+    r4 = _run(probe, "scenario", "check-status-loaded-mark")
+    assert r4["text"].startswith("loaded"), r4["text"]
+    assert r4["mark"].startswith("present loaded"), r4["mark"]   # unaffected
+
+    r5 = _run(probe, "scenario", "check-status-unknown-hw")
+    assert r5["text"].startswith("unknown state"), r5["text"]
+
+    print("test_check_status_reads_the_hardware_and_updates_the_line OK "
+          "(all five rows of section 3.5's table)")
+
+
+def test_magazine_state_values_are_pinned():
+    """docs/sane-wp5-load-button.md section 3.6: all twelve values --
+    seven from the ordinary state machine, three cross-process/retry
+    variants, and the four that only Check status can ever produce -- are
+    each at most 40 characters (the KSaneWidgets combo limit, Test 76) and
+    all mutually distinct, exactly as the "magazine" option's
+    SANE_CONSTRAINT_STRING_LIST must be."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_magazine_state_values_are_pinned")
+
+    r = _run(probe, "layout")
+    values = r.get("magazine_values") or []
+    expected = [
+        "not loaded -- press Load film",
+        "released earlier -- Load film again",
+        "ejected earlier -- press Load film",
+        "press Load film, then take out, push in",
+        "did not come loose? Load film again",
+        "loaded -- set Frame, press Scan",
+        "ejected -- swap strip, then Load film",
+        "failed -- power-cycle, then Load film",
+        "cold -- press Load film",
+        "no magazine in the slot",
+        "magazine present, not loaded? Load film",
+        "unknown state -- power-cycle, Load film",
+    ]
+    assert values == expected, values
+    assert len(set(values)) == len(values), values
+    for v in values:
+        assert len(v) <= 40, (len(v), v)
+    print(f"test_magazine_state_values_are_pinned OK "
+          f"({len(values)} values, longest {max(len(v) for v in values)} chars)")
+
+
+# --------------------------------------------- 6. review round (2026-09-27)
+
+
+def test_saw_clear_is_debounced():
+    """Review finding I: saw_clear (which drives both the status wording
+    and, cross-process, the mark's kind on a timeout) is a DEBOUNCED fact
+    -- true only once the sensor reads clear for 2 CONSECUTIVE polls, not
+    on a single glitchy read. One script absorbs a single-poll glitch and
+    then genuinely clears, proving the glitch does not block a real
+    resolve (open still reaches the wire); the other has the identical
+    glitch with nothing genuine after it, proving the glitch alone does
+    NOT set saw_clear (times out with "did not come loose", not the
+    default wording a real clear would produce)."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_saw_clear_is_debounced")
+
+    r = _run(probe, "scenario", "load-film-edge-debounce-glitch-then-resolve", poll_cap_ms=2000)
+    assert len(r["statuses"]) == 2, r["statuses"]
+    eject, release = r["statuses"]
+    assert eject[0] == SANE_STATUS_GOOD, eject
+    assert release[0] == SANE_STATUS_IO_ERROR, release
+    assert "magazine open sequence" in release[1], release[1]
+    assert r["edgewrite"] == 0, r
+
+    r2 = _run(probe, "scenario", "load-film-edge-debounce-single-glitch-times-out",
+              poll_cap_ms=500)
+    assert len(r2["statuses"]) == 2, r2["statuses"]
+    eject2, release2 = r2["statuses"]
+    assert eject2[0] == SANE_STATUS_GOOD, eject2
+    assert release2 == (SANE_STATUS_GOOD, ""), release2
+    assert r2["edgewrite"] == 0, r2
+    assert r2["text"].startswith("did not come loose"), r2["text"]
+    print("test_saw_clear_is_debounced OK "
+          "(a single-poll glitch neither blocks a real resolve nor counts by itself)")
+
+
+def test_the_post_edge_check_catches_a_late_class_or_presence_change():
+    """Review finding A: the edge wait only watches bit 0x08 (present/
+    clear); it does not by itself prove the status byte is in the DONE
+    class Tests 75-77/90 loaded from (0xf8-shaped). A magazine pulled
+    back out during the 600 ms settle, or a present-but-busy class, must
+    not reach LOAD -- both refused the same way the pre-existing regs
+    check already refuses, no "open" attempted either time."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_the_post_edge_check_catches_a_late_class_or_presence_change")
+
+    r = _run(probe, "scenario", "load-film-edge-seen-then-not-idle", poll_cap_ms=2000)
+    assert len(r["statuses"]) == 2, r["statuses"]
+    eject, release = r["statuses"]
+    assert eject[0] == SANE_STATUS_GOOD, eject
+    assert release[0] == SANE_STATUS_INVAL, release
+    assert "0xd8" in release[1], release[1]
+    assert "the loader sensor present in the idle class" in release[1], release[1]
+    assert r["edgewrite"] == 0, r
+    assert r["mark"].startswith("present failed"), r["mark"]
+
+    r2 = _run(probe, "scenario", "load-film-edge-seen-then-clear", poll_cap_ms=2000)
+    assert len(r2["statuses"]) == 2, r2["statuses"]
+    eject2, release2 = r2["statuses"]
+    assert eject2[0] == SANE_STATUS_GOOD, eject2
+    assert release2[0] == SANE_STATUS_INVAL, release2
+    assert "0xf0" in release2[1], release2[1]
+    assert r2["mark"].startswith("present failed"), r2["mark"]
+    print("test_the_post_edge_check_catches_a_late_class_or_presence_change OK "
+          "(present-but-busy and clear-after-settle both refused, no open)")
+
+
+def test_a_killed_process_leaves_a_refusing_mark():
+    """Review finding B: a process that dies WHILE WAITING (Ctrl-C on
+    `scanimage -n --load-film`, "Terminate" on a frozen digiKam) must
+    leave a mark that makes the next scan refuse, never one that lets it
+    proceed against a jogged/ejected-but-unloaded magazine. Modelled by
+    throwing at the wait's own first poll; the unwinding
+    MagazineFailGuard has the last word (a "failed" mark, not the
+    "released"/"ejected" one written just before the wait started)."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_a_killed_process_leaves_a_refusing_mark")
+
+    r = _run(probe, "scenario", "load-film-killed-mid-wait", poll_cap_ms=2000)
+    assert len(r["statuses"]) == 2, r["statuses"]
+    eject, release = r["statuses"]
+    assert eject[0] == SANE_STATUS_GOOD, eject
+    assert release[0] == SANE_STATUS_IO_ERROR, release
+    assert "injected" in release[1], release[1]
+    assert r["mark"].startswith("present failed"), r["mark"]
+    assert r["text"].startswith("failed"), r["text"]
+    print("test_a_killed_process_leaves_a_refusing_mark OK (failed mark survives the kill)")
+
+
+def test_a_cross_process_loaded_mark_blocks_load_film():
+    """Review finding D: a "loaded" mark from an EARLIER PROCESS blocks a
+    second "Load film" press exactly like the in-process Loaded state
+    already does -- read-only refusal, mark untouched (nothing here ever
+    reaches check_start_state, let alone the guard)."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_a_cross_process_loaded_mark_blocks_load_film")
+
+    r = _run(probe, "scenario", "load-film-blocked-by-loaded-mark")
     status, msg = r["statuses"][0]
     assert status == SANE_STATUS_INVAL, r["statuses"]
-    assert "not in the state the jog leaves it in" in msg, msg
+    assert "already loaded" in msg, msg
     assert "Nothing was written" in msg, msg
-    assert r["mark"] == "absent", r["mark"]
-    assert r["text"].startswith("failed"), r["text"]
-    print("test_a_pending_load_from_the_wrong_state_refuses_and_drops_the_mark OK")
+    assert r["mark"].startswith("present loaded"), r["mark"]
+    assert r["text"].startswith("loaded"), r["text"]
+    print("test_a_cross_process_loaded_mark_blocks_load_film OK")
+
+
+def test_a_failed_mark_persists_and_blocks_everything():
+    """Review finding E: a magazine sequence that fails leaves the
+    transport in a state nobody can name, and that fact must survive the
+    failing process's exit -- a SECOND process has no other way to know.
+    A "failed" mark now blocks Scan, Load film and Eject film alike, in a
+    FRESH process that never saw the failure itself; only a cold reg 0x01
+    read clears it (test_check_status_reads_the_hardware_and_updates_the_line's
+    cold row, and Load film's own start-of-call precheck)."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_a_failed_mark_persists_and_blocks_everything")
+
+    r = _run(probe, "scenario", "load-film-failed-mark-blocks-scan")
+    assert len(r["statuses"]) == 2, r["statuses"]
+    release, load = r["statuses"]
+    assert release[0] == SANE_STATUS_IO_ERROR, release
+    assert load[0] == SANE_STATUS_INVAL, load
+    assert "failed earlier" in load[1], load[1]
+    assert r["mark"].startswith("present failed"), r["mark"]
+
+    with tempfile.TemporaryDirectory() as lock_dir:
+        r1 = _run(probe, "scenario", "state-mark-failed-pending", lock_dir=lock_dir)
+        assert r1["mark"].startswith("present failed"), r1["mark"]
+        assert r1["text"].startswith("failed"), r1["text"]
+
+        r2 = _run(probe, "scenario", "load-mark-failed-crossproc", lock_dir=lock_dir)
+    assert len(r2["statuses"]) == 3, r2["statuses"]
+    for status, msg in r2["statuses"]:
+        assert status == SANE_STATUS_INVAL, r2["statuses"]
+        assert "failed earlier" in msg, msg
+    assert r2["mark"].startswith("present failed"), r2["mark"]
+    print("test_a_failed_mark_persists_and_blocks_everything OK "
+          "(same process and a fresh one, Scan/Load film/Eject film all refuse)")
+
+
+def test_an_ejected_origin_retry_keeps_running_open():
+    """Review finding G, the bug it found: an Ejected-origin press that
+    times out with a clear seen, retried, must STILL run "open" (no jog
+    either time) and use the LENIENT regs rule. Before the fix, the
+    second press forgot the origin the moment state became Released,
+    used the strict 0x00/0x00 rule, and would have refused Failed on
+    exactly the regs (0x02/0x00) a 600 dpi scan leaves -- for a magazine
+    that was never actually jogged loose in the first place."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_an_ejected_origin_retry_keeps_running_open")
+
+    r = _run(probe, "scenario", "load-film-ejected-origin-retry-keeps-open", poll_cap_ms=2000)
+    assert len(r["statuses"]) == 3, r["statuses"]
+    eject, press1, press2 = r["statuses"]
+    assert eject[0] == SANE_STATUS_GOOD, eject
+    assert press1 == (SANE_STATUS_GOOD, ""), press1
+    assert press2[0] == SANE_STATUS_IO_ERROR, press2
+    assert "magazine open sequence" in press2[1], press2[1]
+    assert "not in the state" not in press2[1], press2[1]
+    print("test_an_ejected_origin_retry_keeps_running_open OK "
+          "(open reached the wire on the retry, lenient regs rule applied)")
+
+
+def test_a_power_cycle_inside_one_process_resets_loaded():
+    """Review finding H: neither an in-process Loaded/Failed claim nor a
+    matching mark survives a power cycle happening INSIDE one process's
+    lifetime, between one Load film press and the next. Modelled through
+    a "loaded" mark (a real LOAD never completes on this always-zero-
+    answering mock, so the in-process state is not directly reachable in
+    a probe scenario, but the precheck treats the two identically --
+    "had_mark || had_state"): the cold read must fall into the fresh
+    cold_init path, not refuse "already loaded"."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_a_power_cycle_inside_one_process_resets_loaded")
+
+    r = _run(probe, "scenario", "load-film-loaded-then-cold", poll_cap_ms=2000)
+    status, msg = r["statuses"][0]
+    assert status == SANE_STATUS_DEVICE_BUSY, r["statuses"]
+    assert "magazine cold_init sequence" in msg, msg
+    assert "already loaded" not in msg, msg
+    print("test_a_power_cycle_inside_one_process_resets_loaded OK "
+          "(cold_init ran, not the already-loaded refusal)")
+
+
+def test_check_status_reports_loaded_despite_a_busy_class():
+    """Review finding C: right after LOAD completes, or during
+    calibration, reg 0x101 reads 0xdc/0xd8-shaped -- NEITHER is the idle
+    class (0xf0-shaped) -- and a genuinely loaded magazine must be
+    reported as such, not "unknown state -- power-cycle", just because of
+    that. "unknown state" is now reserved for reg 0x01 outside
+    {0x22, 0x00}."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_check_status_reports_loaded_despite_a_busy_class")
+
+    r = _run(probe, "scenario", "check-status-loaded-non-idle")
+    assert r["text"].startswith("loaded"), r["text"]
+    print("test_check_status_reports_loaded_despite_a_busy_class OK")
 
 
 # ------------------------------------------------------------ 8. dialog surface (2026-09-27)
@@ -970,19 +1361,21 @@ def test_dead_options_are_inactive_and_film_group_is_placed_and_ordered():
         assert name in by_name, name
         assert by_name[name][1]["inactive"] == "0", by_name[name]
 
-    for name in ("magazine", "load-film", "eject-film", "frame"):
+    for name in ("magazine", "load-film", "eject-film", "check-status", "frame"):
         assert name in by_name, name
         assert by_name[name][1]["inactive"] == "0", by_name[name]
 
     magazine_idx = by_name["magazine"][0]
     load_idx = by_name["load-film"][0]
     eject_idx = by_name["eject-film"][0]
+    check_status_idx = by_name["check-status"][0]
     frame_idx = by_name["frame"][0]
     # In this order, and consecutive -- no other option sits between the
     # group and Frame.
     assert load_idx == magazine_idx + 1, by_name
     assert eject_idx == load_idx + 1, by_name
-    assert frame_idx == eject_idx + 1, by_name
+    assert check_status_idx == eject_idx + 1, by_name
+    assert frame_idx == check_status_idx + 1, by_name
 
     # The group immediately above them: a GROUP item at magazine_idx - 1,
     # titled "Film".
@@ -1023,12 +1416,17 @@ def test_dead_options_are_inactive_and_film_group_is_placed_and_ordered():
 
     expected_magazine_values = [
         "not loaded -- press Load film",
-        "released earlier -- reseat, then Scan",
-        "ejected earlier -- push in, then Scan",
-        "released -- take out, push in, Scan",
-        "loaded -- press Scan, or Eject film",
-        "ejected -- swap strip, push in, Scan",
+        "released earlier -- Load film again",
+        "ejected earlier -- press Load film",
+        "press Load film, then take out, push in",
+        "did not come loose? Load film again",
+        "loaded -- set Frame, press Scan",
+        "ejected -- swap strip, then Load film",
         "failed -- power-cycle, then Load film",
+        "cold -- press Load film",
+        "no magazine in the slot",
+        "magazine present, not loaded? Load film",
+        "unknown state -- power-cycle, Load film",
     ]
     assert r.get("magazine_values") == expected_magazine_values, r.get("magazine_values")
 
@@ -1042,7 +1440,7 @@ def test_dead_options_are_inactive_and_film_group_is_placed_and_ordered():
     other_by_name = {f["name"]: (idx, f) for idx, f in other["items"] if "name" in f}
     for name in ("brightness", "contrast"):
         assert other_by_name[name][1]["inactive"] == "0", (name, other_by_name[name])
-    for name in ("magazine", "load-film", "eject-film", "frame"):
+    for name in ("magazine", "load-film", "eject-film", "check-status", "frame"):
         assert other_by_name[name][1]["inactive"] == "1", (name, other_by_name[name])
     other_group_idx = other_by_name["magazine"][0] - 1
     other_group = next((f for idx, f in other["items"] if idx == other_group_idx), None)
@@ -1051,7 +1449,8 @@ def test_dead_options_are_inactive_and_film_group_is_placed_and_ordered():
 
     print("test_dead_options_are_inactive_and_film_group_is_placed_and_ordered OK "
           f"(Film group between Enhancement and Extras at index {group_idx}; "
-          f"magazine={magazine_idx} load={load_idx} eject={eject_idx} frame={frame_idx}; "
+          f"magazine={magazine_idx} load={load_idx} eject={eject_idx} "
+          f"check-status={check_status_idx} frame={frame_idx}; "
           "default mode Color, colour filter None)")
 
 
@@ -1095,20 +1494,20 @@ def main() -> int:
         test_the_status_line_is_readable_and_comes_first,
         test_setting_the_status_line_is_a_no_op,
         test_the_status_line_reports_a_load_pending_from_another_process,
-        test_a_scan_after_eject_runs_open_then_load,
-        test_a_scan_after_eject_accepts_the_last_scan_profiles_regs_3b_3c,
-        test_a_scan_after_eject_still_refuses_the_base_table_state,
+        test_a_scan_after_eject_refuses_no_matter_what_the_hardware_says,
+        test_the_edge_resolving_lets_the_ejected_kind_load,
+        test_the_regs_check_after_the_edge_still_refuses_the_base_table_state,
         test_a_scan_after_eject_without_a_magazine_refuses_and_keeps_the_mark,
-        test_a_scan_after_eject_on_a_cold_scanner_refuses_and_clears_the_mark,
-        test_an_ejected_mark_from_another_process_runs_open_then_load,
+        test_a_cold_read_forces_the_full_release_path_even_from_ejected,
+        test_an_ejected_mark_from_another_process_refuses_the_scan,
         test_an_ejected_mark_for_another_device_is_ignored_and_cleared,
-        test_load_film_from_ejected_still_runs_the_open_and_jog_programs,
+        test_load_film_from_ejected_waits_instead_of_jogging,
         test_release_refuses_an_unknown_start_state,
         test_release_from_idle_runs_the_open_and_jog_programs,
         test_release_from_cold_stops_at_the_first_motor_completion,
         test_a_failed_sequence_is_terminal,
         test_a_usb_failure_mid_sequence_fails_the_session,
-        test_an_impossible_scan_request_never_moves_the_magazine,
+        test_load_document_never_looks_at_the_frame_number,
         test_eject_refuses_from_cold_and_sends_you_to_load_film,
         test_eject_with_no_magazine_does_nothing,
         test_eject_refuses_the_base_table_state,
@@ -1116,8 +1515,20 @@ def main() -> int:
         test_a_scan_with_no_release_pending_never_touches_the_magazine,
         test_a_scan_after_a_failed_magazine_sequence_refuses,
         test_a_mark_for_another_device_is_ignored_and_cleared,
-        test_a_pending_load_without_a_magazine_refuses_and_keeps_the_mark,
-        test_a_pending_load_from_the_wrong_state_refuses_and_drops_the_mark,
+        test_a_pending_load_refuses_and_keeps_the_mark_no_matter_what_the_hardware_says,
+        test_a_loaded_mark_lets_a_scan_through,
+        test_the_edge_wait_times_out_without_writing_anything,
+        test_an_ejected_origin_retry_never_jogs_either_way,
+        test_check_status_reads_the_hardware_and_updates_the_line,
+        test_magazine_state_values_are_pinned,
+        test_saw_clear_is_debounced,
+        test_the_post_edge_check_catches_a_late_class_or_presence_change,
+        test_a_killed_process_leaves_a_refusing_mark,
+        test_a_cross_process_loaded_mark_blocks_load_film,
+        test_a_failed_mark_persists_and_blocks_everything,
+        test_an_ejected_origin_retry_keeps_running_open,
+        test_a_power_cycle_inside_one_process_resets_loaded,
+        test_check_status_reports_loaded_despite_a_busy_class,
         test_dead_options_are_inactive_and_film_group_is_placed_and_ordered,
         test_switching_to_gray_does_not_reopen_hidden_options_on_gl126,
     ]

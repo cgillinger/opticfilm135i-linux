@@ -893,3 +893,71 @@ out tooltip actually reduce how much external guidance the process
 needs, or only make the status line legible without closing the gap the
 owner's verdict named. `docs/ROADMAP.md` "digiKam dialog usability"
 tracks that as still open.
+
+## 11. Superseded by WP-5 for the frontend path (2026-09-27, offline)
+
+The owner's verdict after §10.8's changes were tried live (Test 91,
+second session, `docs/test-log.md`) was that even an enabled, better-
+worded status line and a spelled-out tooltip were not enough: "no one can
+do this process without a written manual." `docs/sane-wp5-load-button.md`
+replaces the two-call protocol this document designed (§2's state
+machine, §3's five programs' orchestration into "release now, load at
+the next `sane_start`") with ONE button: "Load film" runs cold-init-if-
+needed, OPEN, JOG (skipped when nothing needs releasing), a read-only
+wait for the operator's reseat, and LOAD, all inside a single call.
+
+**What stays true, unchanged, and is NOT superseded:**
+
+- The five programs themselves -- `cold_init`, `open`, `jog`, `load`,
+  `eject` -- byte-identical to the Python driver, wire-equality-tested
+  exactly as this document describes (§3, §5).
+- The cross-process mark mechanism (§2.1, §10.1): `gl126_lock.h`'s
+  `MagazineMarkKind`, now three kinds (`Released`, `Ejected`, and a new
+  `Loaded`, WP-5 section 3.3) instead of two, still living next to the
+  process lock and still re-verified against the hardware before any use.
+- `eject-film` and its own state machine and preconditions (§3.4, §10.2,
+  §10.3): unchanged by WP-5, since the button that used to trigger a
+  next-strip load automatically at the next `sane_start` (§10) no longer
+  does -- see below.
+- The safety model: `MagazineFailGuard`, `validate_scan_request()`'s
+  existence (still called from `offset_calibration()`, no longer from the
+  load half, which cannot move the magazine any more -- see below), the
+  register preconditions Test 90 established (§10.3), all still true, now
+  checked from inside "Load film" itself rather than from
+  `load_document()`.
+
+**What §3.3 and §10 above describe as HISTORICAL, no longer how the code
+behaves:**
+
+- §3.3's "Stage B in `load_document()`": `load_document()` does not run
+  LOAD at all any more. It is a pure checker (WP-5 section 3.4): Loaded
+  (in-process or a `loaded` mark) lets a scan through; Released or Ejected
+  refuses `SANE_STATUS_NO_DOCS` "press Load film first"; Unknown with no
+  mark proceeds with the old warning; Failed refuses. It performs zero
+  device I/O -- not even a register read -- which retires this document's
+  own §9's Astra-review concern about validating the scan request before
+  moving the magazine: nothing in `load_document()` can move the magazine
+  any more, so there is nothing left to protect it from.
+- §10's "Ejected is a pending load, completed automatically at the next
+  `sane_start`, no `load-film` press, no reinsert prompt": this no longer
+  happens on Scan. Since WP-5, "Load film" pressed from an Ejected state
+  (in-process or an "ejected" mark) is what completes the next-strip
+  load -- it waits for the edge (present, since the strip is being
+  swapped and the sensor may already read that way, WP-4 section 10.3's
+  own trade-off), then runs `open` (§10.2's reasoning, unchanged) then
+  `load`, with no jog. The operator presses one button either way; WP-5
+  removed the one path that let a bare Scan load anything.
+- The two-step protocol's own state-machine diagram (§2.2) and its
+  worked example (§2.3, "Load film, reinsert, Load film again, reinsert,
+  scan"): still an accurate description of what the FIVE PROGRAMS do and
+  in what order, but the button sequence a Christian-shaped operator
+  actually presses is WP-5's, not this.
+
+Nothing above changed a byte of any op program, a poll condition, a
+timeout, calibration, POSITION, PARK, the image path, or the Python
+driver -- `docs/sane-wp5-load-button.md` section 4 says so explicitly,
+and it is the same claim this document makes throughout. The WP-3
+submission package (§ "Relation to the other packages" in
+`docs/sane-wp5-load-button.md`) must be re-exported after WP-5, since its
+§8 gets the new hunks (`OPT_CHECK_STATUS`, the option handlers, the test-
+mode register defaults).

@@ -176,12 +176,39 @@ int process_lock_refs();
    kind is not a new field: it is the mark's existing first word, which
    used to be the constant "released" and is now whichever of the two
    names applies -- so a mark written by this WP still reads back byte-
-   identically to one written before it. */
+   identically to one written before it.
 
-/** The two things a magazine mark can mean. */
-enum class MagazineMarkKind { Released, Ejected };
+   WP-5 (docs/sane-wp5-load-button.md, 2026-09-27) adds a third kind,
+   "loaded": since "Load film" now runs the WHOLE flow (release, wait for
+   the reseat edge, and LOAD) in one button press, a load can complete in
+   a process that then exits (`scanimage -n --load-film`) before the scan
+   that uses it runs in a SEPARATE process -- so a cross-process "the
+   magazine is loaded" fact is needed the same way "a release/eject is
+   pending" already was. `load_document()` no longer runs LOAD at all
+   (WP-5 section 3.4): it only checks this mark (or the in-process state)
+   to decide whether to let a scan through.
 
-/** "released" or "ejected" -- also the word the mark file leads with. */
+   The same review round (2026-09-27, finding E) adds a FOURTH kind,
+   "failed": a magazine sequence that fails leaves the transport in a
+   state nobody can name, and that fact used to be dropped the moment the
+   failing process exited (the old code cleared the mark on failure) --
+   so a SECOND process (a following `scanimage` invocation) had no way to
+   know the previous one had failed, and would try a scan (or another
+   magazine action) against a transport whose state was never
+   established. `MagazineFailGuard` (sane/gl126.cpp) now WRITES this mark
+   on any failure instead of clearing whatever was there; every entry
+   point that already refuses on an in-process Failed state (Load film,
+   Eject film, load_document()) refuses the same way on a matching
+   `failed` mark from Unknown. Only a cold reg 0x01 read clears it --
+   the one event that actually re-establishes a known transport state
+   (a power cycle), checked at Load film's own start and by Check
+   status. */
+
+/** The four things a magazine mark can mean. */
+enum class MagazineMarkKind { Released, Ejected, Loaded, Failed };
+
+/** "released", "ejected", "loaded" or "failed" -- also the word the mark
+    file leads with. */
 const char* magazine_mark_kind_name(MagazineMarkKind kind);
 
 /** Path of the magazine mark: the lock path plus ".magazine". */

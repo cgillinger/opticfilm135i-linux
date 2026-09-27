@@ -73,7 +73,7 @@ index 02cfc43..8813651 100644
  
  
 diff --git a/backend/genesys/genesys.cpp b/backend/genesys/genesys.cpp
-index d7ec422..2f8154b 100644
+index d7ec422..2a7a7a0 100644
 --- a/backend/genesys/genesys.cpp
 +++ b/backend/genesys/genesys.cpp
 @@ -38,6 +38,13 @@
@@ -304,7 +304,7 @@ index d7ec422..2f8154b 100644
  
    /* scan source */
      s->opt_source_values.clear();
-@@ -4737,6 +4838,101 @@ static void init_options(Genesys_Scanner* s)
+@@ -4737,6 +4838,131 @@ static void init_options(Genesys_Scanner* s)
    s->opt[OPT_CONTRAST].cap = SANE_CAP_SOFT_SELECT | SANE_CAP_SOFT_DETECT;
    s->contrast = 0;  // disable by default
  
@@ -324,22 +324,29 @@ index d7ec422..2f8154b 100644
 +  s->opt[OPT_FILM_GROUP].size = 0;
 +  s->opt[OPT_FILM_GROUP].constraint_type = SANE_CONSTRAINT_NONE;
 +
-+  /* GL126 (OpticFilm 135i): magazine handling, in two steps
-+     (docs/sane-wp4-magazine.md in the driver repo). The vendor's insert
++  /* GL126 (OpticFilm 135i): magazine handling, ONE button
++     (docs/sane-wp5-load-button.md in the driver repo; supersedes the
++     two-call protocol of docs/sane-wp4-magazine.md). The vendor's insert
 +     flow needs the operator to take the magazine out and push it back to
 +     the mechanical stop in the MIDDLE of the sequence, and SANE has no way
-+     for a backend to ask for that during sane_start. So "Load film"
-+     releases the magazine (on a cold unit it brings the scanner up first)
-+     and the next scan performs the load. "Magazine -- next step" is a
-+     status line saying where the magazine is, and what to do next.
-+     Inactive on every other chip -- no other genesys model has a
-+     magazine. */
++     for a backend to ask for that during sane_start -- so "Load film"
++     does the release (on a cold unit it brings the scanner up first),
++     then WAITS (read-only, up to 120 s) for that reseat to be observed on
++     the loader sensor, then loads, all inside the one button press.
++     "Magazine -- next step" is a status line saying where the magazine is
++     believed to be, and what to do next; "Check status" is allowed to
++     read the hardware and reconcile that line with it. Inactive on every
++     other chip -- no other genesys model has a magazine. */
 +  s->opt[OPT_MAGAZINE].name = "magazine";
 +  s->opt[OPT_MAGAZINE].title = SANE_I18N ("Magazine -- next step");
++  /* WP-5's one rule (docs/sane-wp5-load-button.md section 3.1): Load film
++     now does the whole release-wait-load sequence by itself -- Scan no
++     longer loads anything (load_document() is a pure checker since
++     section 3.4), so the procedure text is rewritten around that. */
 +  s->opt[OPT_MAGAZINE].desc =
-+    SANE_I18N ("1. Load film. 2. Take the magazine fully out, push it back in to the "
-+               "stop. 3. Set Frame, press Scan (Basic tab). 4. Eject film. Next strip: "
-+               "swap, push in to the stop, Scan -- no Load film.");
++    SANE_I18N ("Press Load film first, then take the magazine out and push it in to the "
++               "stop; it loads by itself. Set Frame, press Scan. Eject film; next strip: "
++               "press Load film, swap, push in.");
 +  s->opt[OPT_MAGAZINE].type = SANE_TYPE_STRING;
 +  s->opt[OPT_MAGAZINE].unit = SANE_UNIT_NONE;
 +  s->opt[OPT_MAGAZINE].size = GL126_MAGAZINE_TEXT_SIZE;
@@ -360,12 +367,20 @@ index d7ec422..2f8154b 100644
 +     set_option_value(), a documented no-op. */
 +  s->opt[OPT_MAGAZINE].cap = SANE_CAP_SOFT_SELECT | SANE_CAP_SOFT_DETECT;
 +
++  /* WP-5: one button does the whole thing -- release, wait for the
++     reseat, load -- and blocks while it waits (up to 120 s; a frontend on
++     its GUI thread, such as KSane, is unresponsive for that long, by
++     design -- docs/sane-wp5-load-button.md section 5). A timeout is not
++     an error: it returns SANE_STATUS_GOOD with nothing loaded, and the
++     status line says what to do next. */
 +  s->opt[OPT_LOAD_FILM].name = "load-film";
 +  s->opt[OPT_LOAD_FILM].title = SANE_I18N ("Load film");
 +  s->opt[OPT_LOAD_FILM].desc =
-+    SANE_I18N ("Release the magazine: take it fully out, push it back in to the stop, "
-+               "then scan -- the scan loads it. From a cold scanner this takes about 25 s "
-+               "with no progress shown.");
++    SANE_I18N ("Press this, then take the magazine fully out and push it back in to the "
++               "stop -- it loads by itself, no further button press needed. From a cold "
++               "scanner this takes about 25 s before the wait even starts, with no "
++               "progress shown; the wait itself is up to 120 s and returns normally if "
++               "nothing is done in time.");
 +  s->opt[OPT_LOAD_FILM].type = SANE_TYPE_BUTTON;
 +  s->opt[OPT_LOAD_FILM].unit = SANE_UNIT_NONE;
 +  s->opt[OPT_LOAD_FILM].size = 0;
@@ -375,11 +390,25 @@ index d7ec422..2f8154b 100644
 +  s->opt[OPT_EJECT_FILM].title = SANE_I18N ("Eject film");
 +  s->opt[OPT_EJECT_FILM].desc =
 +    SANE_I18N ("Eject the magazine. To scan the next strip: swap the strip, push the "
-+               "magazine in to the stop, then scan -- no Load film needed.");
++               "magazine in to the stop, then press Load film again -- Scan itself no "
++               "longer loads.");
 +  s->opt[OPT_EJECT_FILM].type = SANE_TYPE_BUTTON;
 +  s->opt[OPT_EJECT_FILM].unit = SANE_UNIT_NONE;
 +  s->opt[OPT_EJECT_FILM].size = 0;
 +  s->opt[OPT_EJECT_FILM].constraint_type = SANE_CONSTRAINT_NONE;
++
++  /* WP-5 section 3.5: allowed to read the hardware (the status line's own
++     GET deliberately never does) and reconcile the status line with it.
++     Never promotes anything to Loaded on hardware evidence alone -- the
++     loader sensor cannot tell "loaded" from "loose in the slot". */
++  s->opt[OPT_CHECK_STATUS].name = "check-status";
++  s->opt[OPT_CHECK_STATUS].title = SANE_I18N ("Check status");
++  s->opt[OPT_CHECK_STATUS].desc =
++    SANE_I18N ("Read the scanner and update the status line.");
++  s->opt[OPT_CHECK_STATUS].type = SANE_TYPE_BUTTON;
++  s->opt[OPT_CHECK_STATUS].unit = SANE_UNIT_NONE;
++  s->opt[OPT_CHECK_STATUS].size = 0;
++  s->opt[OPT_CHECK_STATUS].constraint_type = SANE_CONSTRAINT_NONE;
 +
 +  /* GL126 (OpticFilm 135i): frame selection. The unit scans one frame of
 +     the loaded strip per pass, reached by an absolute feed from home; the
@@ -400,13 +429,14 @@ index d7ec422..2f8154b 100644
 +      s->opt[OPT_MAGAZINE].cap |= SANE_CAP_INACTIVE;
 +      s->opt[OPT_LOAD_FILM].cap |= SANE_CAP_INACTIVE;
 +      s->opt[OPT_EJECT_FILM].cap |= SANE_CAP_INACTIVE;
++      s->opt[OPT_CHECK_STATUS].cap |= SANE_CAP_INACTIVE;
 +      s->opt[OPT_FRAME].cap |= SANE_CAP_INACTIVE;
 +  }
 +
    /* "Extras" group: */
    s->opt[OPT_EXTRAS_GROUP].name = "extras-group";
    s->opt[OPT_EXTRAS_GROUP].title = SANE_I18N ("Extras");
-@@ -4755,7 +4951,27 @@ static void init_options(Genesys_Scanner* s)
+@@ -4755,7 +4981,27 @@ static void init_options(Genesys_Scanner* s)
    s->opt[OPT_COLOR_FILTER].type = SANE_TYPE_STRING;
    s->opt[OPT_COLOR_FILTER].constraint_type = SANE_CONSTRAINT_STRING_LIST;
    /* true gray not yet supported for GL847 and GL124 scanners */
@@ -435,7 +465,7 @@ index d7ec422..2f8154b 100644
        s->opt[OPT_COLOR_FILTER].size = max_string_size (color_filter_list);
        s->opt[OPT_COLOR_FILTER].constraint.string_list = color_filter_list;
        s->color_filter = s->opt[OPT_COLOR_FILTER].constraint.string_list[1];
-@@ -5053,6 +5269,38 @@ static void init_options(Genesys_Scanner* s)
+@@ -5053,6 +5299,38 @@ static void init_options(Genesys_Scanner* s)
      s->opt[OPT_IGNORE_OFFSETS].cap = SANE_CAP_SOFT_DETECT | SANE_CAP_SOFT_SELECT |
                                       SANE_CAP_ADVANCED;
  
@@ -474,7 +504,7 @@ index d7ec422..2f8154b 100644
      calc_parameters(s);
  }
  
-@@ -5457,6 +5705,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5457,6 +5735,32 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
          throw SaneException("could not find the device to open: %s", devicename);
      }
  
@@ -507,7 +537,7 @@ index d7ec422..2f8154b 100644
      if (is_testing_mode()) {
          // during testing we need to initialize dev->model before test scanner interface is created
          // as that it needs to know what type of chip it needs to mimic.
-@@ -5473,6 +5747,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5473,6 +5777,22 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
          dev->interface->get_usb_device().open(dev->file_name.c_str());
      } else {
@@ -530,7 +560,7 @@ index d7ec422..2f8154b 100644
          dev->interface = std::unique_ptr<ScannerInterfaceUsb>{new ScannerInterfaceUsb{dev}};
  
          dbg.vstatus("open device '%s'", dev->file_name.c_str());
-@@ -5523,6 +5813,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5523,6 +5843,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
      // some hardware capabilities are detected through sensors
      dev->cmd_set->update_hardware_sensors (s);
@@ -543,7 +573,7 @@ index d7ec422..2f8154b 100644
  }
  
  SANE_GENESYS_API_LINKAGE
-@@ -5556,6 +5852,20 @@ sane_close_impl(SANE_Handle handle)
+@@ -5556,6 +5882,20 @@ sane_close_impl(SANE_Handle handle)
  
      auto* dev = it->dev;
  
@@ -564,7 +594,7 @@ index d7ec422..2f8154b 100644
      // eject document for sheetfed scanners
      if (dev->model->is_sheetfed) {
          catch_all_exceptions(__func__, [&](){ dev->cmd_set->eject_document(dev); });
-@@ -5579,12 +5889,26 @@ sane_close_impl(SANE_Handle handle)
+@@ -5579,12 +5919,26 @@ sane_close_impl(SANE_Handle handle)
      dev->clear();
  
      // LAMP OFF : same register across all the ASICs */
@@ -595,7 +625,7 @@ index d7ec422..2f8154b 100644
  
      // not freeing dev because it's in the dev list
      catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().close(); });
-@@ -5715,6 +6039,17 @@ static void get_option_value(Genesys_Scanner* s, int option, void* val)
+@@ -5715,6 +6069,17 @@ static void get_option_value(Genesys_Scanner* s, int option, void* val)
      case OPT_EXPIRATION_TIME:
          *reinterpret_cast<SANE_Word*>(val) = s->expiration_time;
          break;
@@ -613,7 +643,7 @@ index d7ec422..2f8154b 100644
      case OPT_CUSTOM_GAMMA:
          *reinterpret_cast<SANE_Word*>(val) = s->custom_gamma;
          break;
-@@ -5937,7 +6272,13 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
+@@ -5937,7 +6302,13 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
          {
            DISABLE(OPT_CONTRAST);
            DISABLE(OPT_BRIGHTNESS);
@@ -628,7 +658,7 @@ index d7ec422..2f8154b 100644
            ENABLE(OPT_CONTRAST);
            ENABLE(OPT_BRIGHTNESS);
          }
-@@ -5960,7 +6301,17 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
+@@ -5960,7 +6331,17 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
              s->mode = reinterpret_cast<const char*>(val);
  
              if (s->mode == SANE_VALUE_SCAN_MODE_GRAY) {
@@ -647,7 +677,7 @@ index d7ec422..2f8154b 100644
                      ENABLE(OPT_COLOR_FILTER);
                  }
                  create_bpp_list(s, dev->model->bpp_gray_values);
-@@ -6012,6 +6363,12 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
+@@ -6012,6 +6393,12 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
              }
              break;
          }
@@ -660,7 +690,7 @@ index d7ec422..2f8154b 100644
          case OPT_EXPIRATION_TIME: {
              if (*reinterpret_cast<SANE_Word*>(val) != s->expiration_time) {
                  s->expiration_time = *reinterpret_cast<SANE_Word*>(val);
-@@ -6092,6 +6449,42 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
+@@ -6092,6 +6479,51 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
              }
              break;
          }
@@ -687,11 +717,15 @@ index d7ec422..2f8154b 100644
 +            break;
 +        }
 +        case OPT_LOAD_FILM: {
-+            /* The release half of the magazine's two-step protocol
-+               (docs/sane-wp4-magazine.md). Exceptions propagate: a
-+               refusal here must reach the frontend, not be swallowed the
-+               way OPT_CALIBRATE swallows its own. */
-+            gl126::magazine_release(dev);
++            /* The WHOLE magazine load, in one press (docs/sane-wp5-load-
++               button.md): release, wait for the reseat (up to 120 s),
++               then load. Exceptions propagate: a refusal here must reach
++               the frontend, not be swallowed the way OPT_CALIBRATE
++               swallows its own. A timeout is not an exception -- it
++               returns normally with nothing loaded; the status line
++               (OPT_MAGAZINE, re-read because of SANE_INFO_RELOAD_OPTIONS
++               below) says what to do next. */
++            gl126::magazine_load_film(dev);
 +            *myinfo |= SANE_INFO_RELOAD_OPTIONS;
 +            break;
 +        }
@@ -700,14 +734,19 @@ index d7ec422..2f8154b 100644
 +            *myinfo |= SANE_INFO_RELOAD_OPTIONS;
 +            break;
 +        }
++        case OPT_CHECK_STATUS: {
++            gl126::magazine_check_status(dev);
++            *myinfo |= SANE_INFO_RELOAD_OPTIONS;
++            break;
++        }
          case OPT_CALIBRATE: {
              auto& sensor = sanei_genesys_find_sensor_for_write(dev, dev->settings.xres,
                                                                 dev->settings.get_channels(),
 diff --git a/backend/genesys/genesys.h b/backend/genesys/genesys.h
-index 87855fd..914c696 100644
+index 87855fd..0d6a0dd 100644
 --- a/backend/genesys/genesys.h
 +++ b/backend/genesys/genesys.h
-@@ -88,6 +88,19 @@ enum Genesys_Option
+@@ -88,6 +88,22 @@ enum Genesys_Option
    OPT_BRIGHTNESS,
    OPT_CONTRAST,
  
@@ -719,15 +758,18 @@ index 87855fd..914c696 100644
 +  // not afterwards (Test 76). FRAME comes last -- it only matters once
 +  // something is loaded.
 +  OPT_FILM_GROUP,
-+  OPT_MAGAZINE,    // GL126: read-only text -- where the magazine is
-+  OPT_LOAD_FILM,   // GL126: release the magazine so it can be reseated (WP-4)
-+  OPT_EJECT_FILM,  // GL126: eject the magazine
-+  OPT_FRAME,       // GL126: which frame of the strip to scan
++  OPT_MAGAZINE,      // GL126: status text -- where the magazine is (settable
++                     // as a no-op only, so KSane renders it enabled; WP-4/WP-5)
++  OPT_LOAD_FILM,     // GL126: the WHOLE load flow -- release, wait for the
++                     // reseat, LOAD -- in one button press (WP-5)
++  OPT_EJECT_FILM,    // GL126: eject the magazine
++  OPT_CHECK_STATUS,  // GL126: read the hardware and update the status line (WP-5)
++  OPT_FRAME,         // GL126: which frame of the strip to scan
 +
    OPT_EXTRAS_GROUP,
    OPT_LAMP_OFF_TIME,
    OPT_LAMP_OFF,
-@@ -198,6 +211,7 @@ struct Genesys_Scanner
+@@ -198,6 +214,7 @@ struct Genesys_Scanner
      SANE_Word contrast = 0;
      SANE_Word brightness = 0;
      SANE_Word expiration_time = 0;
@@ -1071,10 +1113,10 @@ index 09ca861..a8df6a0 100644
      sensor.sensor_id = SensorId::CCD_PLUSTEK_OPTICFILM_7300; // gl843
      sensor.full_resolution = 7200;
 diff --git a/backend/genesys/test_scanner_interface.cpp b/backend/genesys/test_scanner_interface.cpp
-index ef7cdbb..2a166f4 100644
+index ef7cdbb..40de5e5 100644
 --- a/backend/genesys/test_scanner_interface.cpp
 +++ b/backend/genesys/test_scanner_interface.cpp
-@@ -34,6 +34,16 @@ TestScannerInterface::TestScannerInterface(Genesys_Device* dev, std::uint16_t ve
+@@ -34,6 +34,28 @@ TestScannerInterface::TestScannerInterface(Genesys_Device* dev, std::uint16_t ve
      // initialize status registers
      if (dev_->model->asic_type == AsicType::GL124) {
          write_register(0x101, 0x00);
@@ -1088,9 +1130,177 @@ index ef7cdbb..2a166f4 100644
 +        // calibration was entered.
 +        write_register(0x01, 0x00);
 +        write_register(0x101, 0x00);
++        // Regs 0x3b/0x3c (docs/sane-wp4-magazine.md section 3.3, section
++        // 10.3): the magazine flow reads these unconditionally -- the
++        // Load film / Check status hooks (docs/sane-wp5-load-button.md
++        // sections 3.2/3.5) as preconditions/diagnostics, "eject" as a
++        // refusal check -- and RegisterCache::get() throws for an address
++        // that was never written, unlike real hardware, which always
++        // answers a register read with SOMETHING. Seeded to 0x00/0x00
++        // (the state a device-open table leaves) so test-mode scenarios
++        // that only care about reg 0x01/0x101 do not have to seed these
++        // too just to avoid that mock-only throw.
++        write_register(0x3B, 0x00);
++        write_register(0x3C, 0x00);
      } else {
          write_register(0x41, 0x00);
      }
+@@ -90,11 +112,13 @@ std::uint8_t TestScannerInterface::read_register(std::uint16_t address)
+ void TestScannerInterface::write_register(std::uint16_t address, std::uint8_t value)
+ {
+     cached_regs_.update(address, value);
++    ++cache_write_count_;
+ }
+ 
+ void TestScannerInterface::write_registers(const Genesys_Register_Set& regs)
+ {
+     cached_regs_.update(regs);
++    ++cache_write_count_;
+ }
+ 
+ 
+@@ -102,6 +126,7 @@ void TestScannerInterface::write_0x8c(std::uint8_t index, std::uint8_t value)
+ {
+     (void) index;
+     (void) value;
++    ++cache_write_count_;
+ }
+ 
+ void TestScannerInterface::bulk_read_data(std::uint8_t addr, std::uint8_t* data, std::size_t size)
+@@ -115,6 +140,7 @@ void TestScannerInterface::bulk_write_data(std::uint8_t addr, std::uint8_t* data
+     (void) addr;
+     (void) data;
+     (void) size;
++    ++cache_write_count_;
+ }
+ 
+ void TestScannerInterface::write_buffer(std::uint8_t type, std::uint32_t addr, std::uint8_t* data,
+@@ -124,6 +150,7 @@ void TestScannerInterface::write_buffer(std::uint8_t type, std::uint32_t addr, s
+     (void) addr;
+     (void) data;
+     (void) size;
++    ++cache_write_count_;
+ }
+ 
+ void TestScannerInterface::write_gamma(std::uint8_t type, std::uint32_t addr, std::uint8_t* data,
+@@ -133,6 +160,7 @@ void TestScannerInterface::write_gamma(std::uint8_t type, std::uint32_t addr, st
+     (void) addr;
+     (void) data;
+     (void) size;
++    ++cache_write_count_;
+ }
+ 
+ void TestScannerInterface::write_ahb(std::uint32_t addr, std::uint32_t size, std::uint8_t* data)
+@@ -140,6 +168,7 @@ void TestScannerInterface::write_ahb(std::uint32_t addr, std::uint32_t size, std
+     (void) addr;
+     (void) size;
+     (void) data;
++    ++cache_write_count_;
+ }
+ 
+ std::uint16_t TestScannerInterface::read_fe_register(std::uint8_t address)
+@@ -150,6 +179,7 @@ std::uint16_t TestScannerInterface::read_fe_register(std::uint8_t address)
+ void TestScannerInterface::write_fe_register(std::uint8_t address, std::uint16_t value)
+ {
+     cached_fe_regs_.update(address, value);
++    ++cache_write_count_;
+ }
+ 
+ IUsbDevice& TestScannerInterface::get_usb_device()
+diff --git a/backend/genesys/test_scanner_interface.h b/backend/genesys/test_scanner_interface.h
+index 9a5f412..3d72b05 100644
+--- a/backend/genesys/test_scanner_interface.h
++++ b/backend/genesys/test_scanner_interface.h
+@@ -80,6 +80,26 @@ public:
+ 
+     void set_checkpoint_callback(TestCheckpointCallback callback);
+ 
++    /* The mock's own OUT-transfer counter (test_usb_device.h) PLUS every
++       write this class's own methods perform (write_register/write_
++       registers/write_0x8c/bulk_write_data/write_buffer/write_gamma/
++       write_ahb/write_fe_register -- none of them reach usb_dev_, so the
++       counter above alone would miss them), so a checkpoint callback
++       can assert "no write of ANY kind happened between these two polls",
++       not just no raw USB traffic. Used by the GL126 magazine edge wait's
++       offline test (of135i/opticfilm135i-linux docs/sane-wp5-load-
++       button.md, review finding F: the raw USB counter alone missed
++       these, since none of them reach usb_dev_). */
++    unsigned write_count() const { return usb_dev_.out_transfer_count() + cache_write_count_; }
++
++    /* Bypasses write_count() entirely: for a TEST to seed a register
++       value (initial setup, or a checkpoint callback scripting a
++       register sequence) without that seed itself being mistaken for the
++       production write the count above is meant to catch. Writes
++       straight to the cache, exactly like write_register(), just
++       uncounted. */
++    void seed_register(std::uint16_t address, std::uint8_t value) { cached_regs_.update(address, value); }
++
+ private:
+     Genesys_Device* dev_;
+ 
+@@ -93,6 +113,8 @@ private:
+ 
+     std::string last_progress_message_;
+     std::map<std::string, std::string> key_values_;
++
++    unsigned cache_write_count_ = 0;
+ };
+ 
+ } // namespace genesys
+diff --git a/backend/genesys/test_usb_device.cpp b/backend/genesys/test_usb_device.cpp
+index a5dbd78..cac2741 100644
+--- a/backend/genesys/test_usb_device.cpp
++++ b/backend/genesys/test_usb_device.cpp
+@@ -104,6 +104,8 @@ void TestUsbDevice::control_msg(int rtype, int reg, int value, int index, int le
+     assert_is_open();
+     if (rtype == REQUEST_TYPE_IN) {
+         std::memset(data, 0, length);
++    } else {
++        ++out_transfer_count_;
+     }
+ }
+ 
+@@ -121,6 +123,7 @@ void TestUsbDevice::bulk_write(const std::uint8_t* buffer, std::size_t* size)
+     (void) size;
+     DBG_HELPER(dbg);
+     assert_is_open();
++    ++out_transfer_count_;
+ }
+ 
+ void TestUsbDevice::assert_is_open() const
+diff --git a/backend/genesys/test_usb_device.h b/backend/genesys/test_usb_device.h
+index ae8d4a2..be640ba 100644
+--- a/backend/genesys/test_usb_device.h
++++ b/backend/genesys/test_usb_device.h
+@@ -48,6 +48,20 @@ public:
+                      std::uint8_t* data) override;
+     void bulk_read(std::uint8_t* buffer, std::size_t* size) override;
+     void bulk_write(const std::uint8_t* buffer, std::size_t* size) override;
++
++    /* How many OUT transfers (a control_msg with rtype != REQUEST_TYPE_IN,
++       or a bulk_write) this mock has answered since the last reset --
++       "answered", not "acknowledged": the mock never refuses a write, it
++       just counts it. Added for the GL126 magazine edge wait (of135i/
++       opticfilm135i-linux docs/sane-wp5-load-button.md): that wait is a
++       read-only loop by construction (it only ever calls read_register /
++       sleep_ms), but a regression test wants to assert that on the wire
++       too, from a checkpoint callback that snapshots this count at the
++       first poll and checks it is unchanged at every later one. Every
++       other genesys test ignores this counter; it costs them nothing. */
++    unsigned out_transfer_count() const { return out_transfer_count_; }
++    void reset_out_transfer_count() { out_transfer_count_ = 0; }
++
+ private:
+     void assert_is_open() const;
+ 
+@@ -56,6 +70,7 @@ private:
+     std::uint16_t vendor_ = 0;
+     std::uint16_t product_ = 0;
+     std::uint16_t bcd_device_ = 0;
++    unsigned out_transfer_count_ = 0;
+ };
+ 
+ } // namespace genesys
 diff --git a/doc/descriptions/genesys.desc b/doc/descriptions/genesys.desc
 index 43b0736..83414f8 100644
 --- a/doc/descriptions/genesys.desc
