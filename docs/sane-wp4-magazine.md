@@ -774,3 +774,36 @@ refused because the scanner was power-cycled since the eject), and
 satisfying no longer applies). This is traceability only — no state
 machine transition, precondition or refusal changed; `tests/test_sane_magazine.py`
 (all 28 tests) and `tests/test_sane_lock.py` still pass unchanged.
+
+### 10.7 The status line can go stale in the frontend, independent of any of this (2026-09-27)
+
+Everything in §10.1–10.6 is about what this backend computes and writes
+for `magazine_state_text()` — the state machine, the mark, the logging.
+Test 91 (2026-09-27, `docs/test-log.md`) found a failure mode that has
+nothing to do with any of it: the backend can recompute and return the
+correct text on every `sane_control_option` GET, and the *frontend* can
+still keep showing the previous one. KSaneWidgets' `LabeledCombo` (the
+widget libksane draws for this value-list option) updates via
+`setValue`, which matches the combo's item data — this option's INTERNAL
+values, `magazine_state_values()` — against the value
+`KSaneCore::Option::valueChanged` carries, which is TRANSLATED whenever
+the current msgid has a catalog entry. With a translation installed,
+internal and translated text never match, so the combo silently stops
+following backend-side changes. In Test 91 the backend correctly moved
+to Released after the first "Ladda film" and correctly returned
+"released -- reseat, then scan" on the next GET; the dialog kept showing
+its earlier text regardless, the operator pressed Load film a second
+time on an already-released magazine, and the following scan fed at the
+un-seated-magazine signature (`0xfc`).
+
+This is a **frontend limitation, not a state-machine or mark bug** — it
+is the reason `docs/sane-install.md` §6 documents it under "Two libksane
+display bugs" rather than here as a WP-4 defect. The workaround is also
+frontend-facing rather than a WP-4 change: `magazine_state_values()`'s
+seven strings (§10.4 above) are no longer wrapped in `SANE_I18N` (plain
+English, a comment at the definition explains why), so there is no
+catalog entry for `valueChanged` to translate and the mismatch this
+widget checks for cannot occur. The state machine, the mark, and the
+five kinds of text `magazine_state_text()` can return are all unchanged
+by this — only whether a frontend has any chance of translating the
+result.

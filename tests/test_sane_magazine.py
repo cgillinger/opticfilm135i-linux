@@ -192,6 +192,10 @@ def _run(probe, *args, lock_dir=None):
             out["default_mode"] = line[len("DEFAULT_MODE "):].strip()
         elif line.startswith("DEFAULT_COLOR_FILTER "):
             out["default_color_filter"] = line[len("DEFAULT_COLOR_FILTER "):].strip()
+        elif line.startswith("RESVALUE "):
+            out.setdefault("resolution_values", []).append(int(line[len("RESVALUE "):].strip()))
+        elif line.startswith("MAGVALUE "):
+            out.setdefault("magazine_values", []).append(line[len("MAGVALUE "):].strip())
     return out
 
 
@@ -886,7 +890,12 @@ def test_dead_options_are_inactive_and_film_group_is_placed_and_ordered():
     "Enhancement" and before "Extras"; the scan-area options stay active
     (KSane's preview canvas depends on them); and the frontend's very
     first impression -- the mode and colour filter it opens with -- are a
-    capture this backend actually performs."""
+    capture this backend actually performs.
+
+    Also pins the two 2026-09-27 libksane workarounds (Test 91,
+    docs/sane-install.md S6): the resolution word list is ascending with
+    600 (the backend default) first, and the magazine status values are
+    the untranslated English constants."""
     probe = _build_probe()
     if probe is None:
         return _skip("test_dead_options_are_inactive_and_film_group_is_placed_and_ordered")
@@ -940,6 +949,36 @@ def test_dead_options_are_inactive_and_film_group_is_placed_and_ordered():
 
     assert r["default_mode"] == "Color", r["default_mode"]
     assert r["default_color_filter"] == "None", r["default_color_filter"]
+
+    # Two libksane display bugs, worked around backend-side (docs/
+    # sane-install.md S6): the resolution list must be ascending with 600
+    # (the backend's own default) first, because LabeledCombo's
+    # constructor matches setCurrentText's unit-less number against each
+    # item's unit-bearing TEXT and finds nothing, leaving index 0
+    # selected regardless of the backend's actual value -- ascending order
+    # makes that stale index 0 agree with the truth. And the magazine
+    # status values must be the plain English constants, untranslated:
+    # LabeledCombo's setValue (fed by KSaneCore::Option::valueChanged)
+    # matches itemData (this string-list, i.e. the INTERNAL value) against
+    # a TRANSLATED value whenever the current msgid has a catalog
+    # translation, so a translated value-list option never follows a
+    # backend-side change (Test 91, 2026-09-27: the status line stayed on
+    # "okänt" after Load film moved the state to Released).
+    resolution_values = r.get("resolution_values") or []
+    assert resolution_values == sorted(resolution_values), resolution_values
+    assert resolution_values[0] == 600, resolution_values
+    assert resolution_values == [600, 1200, 2400, 3600, 7200], resolution_values
+
+    expected_magazine_values = [
+        "unknown -- press Load film",
+        "reseat the magazine, then scan",
+        "ejected earlier -- push in and scan",
+        "released -- reseat, then scan",
+        "loaded -- scan, then Eject film",
+        "ejected -- push in, then scan",
+        "failed -- power-cycle the scanner",
+    ]
+    assert r.get("magazine_values") == expected_magazine_values, r.get("magazine_values")
 
     # The gate is asic_type == GL126, not a blanket change: on another chip
     # (GL124) the film group/options stay inactive as before, and two

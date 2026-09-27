@@ -228,14 +228,19 @@ in; pick the row.
 2026-09-27 after the dialog was found too cluttered to get a scan started at
 all, docs/ROADMAP.md "digiKam dialog usability"; the option surface below
 reflects the fixes from that review — hidden dead options, a dedicated
-`Film` group, plainer text — not yet re-verified in a live digiKam session).
-Swedish titles below are what a system with this repo's translation catalog
-installed shows (§"Translations" below); the SANE names are in parentheses.
+`Film` group, plainer text). This backend's own strings (the `Film` group
+and its four options) are English by design (see "Two libksane display
+bugs" below); the tab names and the Scan button below are KSaneCore's own
+UI shell, shown here in Swedish because that is the desktop language this
+was reviewed on — a system in English sees "Basic Options" / "Scanner
+Specific Options" / "Scan" instead. The SANE names are given in
+parentheses.
 
-1. **Basic Options tab** — Källa (`Source`), Läge (`Mode`), Upplösning
-   (`Resolution`), plus the scan-area rectangle, which digiKam draws but the
-   backend ignores: the frame's window is fixed, so dragging a selection
-   changes neither the image nor the time a scan takes.
+1. **Grundalternativ tab** ("Basic Options") — Källa (`Source`), Läge
+   (`Mode`), Upplösning (`Resolution`), plus the scan-area rectangle, which
+   digiKam draws but the backend ignores: the frame's window is fixed, so
+   dragging a selection changes neither the image nor the time a scan
+   takes.
    - Källa: `Transparency Adapter` (IR: `Transparency Adapter Infrared`).
    - Läge: `Color` — this backend's default since this change (genesys'
      generic default is Gray, and this model's generic colour filter
@@ -243,72 +248,121 @@ installed shows (§"Translations" below); the SANE names are in parentheses.
      and GL126 refuses before any device I/O; the option is hidden now, see
      step 2, with its default set to None so Gray still works as host-side
      gray if chosen).
-   - **Check Upplösning before pressing Läs in.** It has been seen sitting
-     at 7200 dpi with no clear cause once (cause not established — KSaneCore
-     requests 300 dpi at `sane_open`, which genesys rounds to 600, so 7200
-     is not the constrained default reasserting itself; something else set
-     it), and 7200 costs on the order of three minutes per frame against
-     well under one at 600 — a silently wrong resolution is real time lost,
-     not just a surprising file.
+   - **Upplösning now opens on 600 dpi** — because 600 is first in GL126's
+     resolution list (reversed to ascending 2026-09-27, see "Two libksane
+     display bugs" below), not because KSane read the backend's actual
+     value; the dialog's construction-time text match cannot do that on
+     this widget regardless of list order. Before that fix it had been seen
+     sitting on 7200 dpi with no scan yet run — the same display bug, just
+     landing on the wrong end of a descending list. 7200 costs on the order
+     of three minutes per frame against well under one at 600, so a
+     silently wrong resolution shown is real time lost, not just a
+     surprising file — still worth a glance before pressing Läs in.
    ![digiKam Basic Options tab after the 2026-09-27 change](images/digikam-basic-options.png)
-2. **Scanner Specific Options tab** — after this session's changes, only
-   the options that do something on GL126 remain here, grouped under `Film`
-   (a heading `scanimage -A` and xsane show; KSaneWidgets drops SANE groups
-   entirely, so digiKam shows just the four options, in that order, at the
-   top of the tab — no visible heading there), in this order: `Filmmagasin`
-   (`magazine`, the status line — read first), `Ladda film` (`Load film`),
-   `Mata ut film` (`Eject film`), `Bildruta` (`Frame`, 1–6). Every option
-   that never had an effect on this scanner (exposure time,
+
+   Taken with a Swedish translation catalog installed; the tab names and
+   KSane's own labels shown here (Källa, Läge, Upplösning) are unaffected
+   by anything below and still show this way on a Swedish desktop.
+2. **Specifika alternativ för bildläsare tab** ("Scanner Specific Options")
+   — after this session's changes, only the options that do something on
+   GL126 remain here, grouped under `Film` (a heading `scanimage -A` and
+   xsane show; KSaneWidgets drops SANE groups entirely, so digiKam shows
+   just the four options, in that order, at the top of the tab — no
+   visible heading there), in this order: `Film magazine` (`magazine`, the
+   status line — read first), `Load film`, `Eject film`, `Frame` (1–6).
+   Every option that never had an effect on this scanner (exposure time,
    brightness/contrast, lamp timing, the whole calibration-cache family,
    colour filter) is hidden, so the tab no longer mixes working controls
-   with dead ones. The status
-   field's own layout quirk in KSane (a wide field, long text truncated to
-   its tail) is unchanged by this session — the fix there was shortening
-   every status string to fit and ordering it first, not the widget itself
-   — and still wants a live digiKam session to confirm it reads well now.
-   ![digiKam Scanner Specific Options tab after the change: Filmmagasin, Ladda film, Mata ut film, Bildruta](images/digikam-scanner-specific.png)
+   with dead ones. The status field's own layout quirk in KSane (a wide
+   field, long text truncated to its tail) is unchanged by this session —
+   the fix there was shortening every status string to fit and ordering it
+   first, not the widget itself.
+   ![digiKam Scanner Specific Options tab after the change](images/digikam-scanner-specific.png)
    For comparison, the same tab before the change: ![before](images/digikam-scanner-specific-before.png)
-3. Back on the **Basic Options** tab, press **Läs in** (Scan/Read — not
+
+   Both screenshots show the `Film` group's own labels in Swedish
+   (Filmmagasin, Ladda film, Mata ut film, Bildruta) — taken the evening
+   this repo's Swedish catalog was installed, before Test 91 and the
+   decision that followed it. Since that same evening these four labels
+   are English (Film magazine, Load film, Eject film, Frame), for the
+   reason given in "Two libksane display bugs" below; the screenshots
+   have not been retaken.
+
+   **Three usability findings from the owner's first live session (Test
+   91, 2026-09-27), documented as limits of the KSane dialog, not bugs in
+   it:** the instruction after pressing Load film is only a tooltip plus
+   this status line — nothing pops up to say "now reseat the magazine";
+   Läs in sits on the Grundalternativ tab, a tab away from the Film group's
+   buttons; and pressing Load film a SECOND time re-jogs and un-seats an
+   already-released magazine (the following scan then fails at the feed,
+   `0xfc`, the documented un-seated-magazine signature — recovery is a
+   power cycle and Load film again). The operating rule this gives:
+   **press Load film ONCE, reseat the magazine, then Läs in** — never
+   press Load film again just because nothing visibly changed.
+3. Back on the **Grundalternativ** tab, press **Läs in** (Scan/Read — not
    "Förhandsgranskning": that runs a full 600 dpi pass, never a cheap
    preview, on this scanner).
-4. **Next strip, without a fresh Load film:** press **Mata ut film**, swap
+4. **Next strip, without a fresh Load film:** press **Eject film**, swap
    the strip in the magazine, push the magazine back in to the mechanical
    stop, then press **Läs in** again — the scan itself performs a
    next-strip load (open + load, no jog), backend-verified on hardware as
-   Test 90. `Ladda film` is only needed after a genuine cold start or a
-   stuck magazine, not between ordinary strips.
+   Test 90. `Load film` is only needed after a genuine cold start or a
+   stuck magazine, not between ordinary strips — see finding 3 above for
+   why a second press is actively harmful, not just redundant.
 
-**Translations.** KSane looks up every SANE option's title and description
-through gettext, domain `sane-backends`, in whatever catalog is installed at
-`<localedir>/sv/LC_MESSAGES/sane-backends.mo` — normally the one Fedora's
-`sane-backends` package owns and which has never carried GL126-specific
-strings. `tools/sane_install.sh install` now also installs this repo's
-Swedish translations there (built from `po/sv.po` via `make -C po sv.gmo` in
-the clone), keeping a backup of whatever catalog was there first (or a
-record that none was), and a hash of what it installed so a later
-`uninstall`/`status` can tell it apart from a subsequent replacement.
+### Two libksane display bugs and how this backend works around them
 
-**This replaces a file the `sane-backends` package owns.** `rpm -V
-sane-backends` will flag `/usr/share/locale/sv/LC_MESSAGES/sane-backends.mo`
-as changed after `install`, exactly as it already does for the repointed
-`libsane-genesys.so.1` symlink. A package update that ships a new catalog
-puts the distribution's file back in place (its own package manager owns
-that path); `uninstall` detects this (the live file's hash no longer
-matches what was recorded) and leaves it alone rather than removing the
-package's own file or restoring over it — `status` reports it as "not
-ours -- the distribution's" in that case. A system with no Swedish locale
-installed at all is left untouched, and the option text simply shows in
-English.
+Found by reading KSaneWidgets' `LabeledCombo` source
+(`src/widgets/labeledcombo.cpp`, the widget libksane draws for every SANE
+value-list option), after Test 91 (2026-09-27) failed at the feed on the
+very first live session with the cleaned-up dialog:
 
-The clone's `po/sv.po` is also **newer than Fedora's shipped catalog** for
-strings that have nothing to do with GL126: it comes from a more recent
-upstream snapshot than the sane-backends 1.4.0-6.fc44 RPM this repo was
-developed against, and Fedora's catalog is missing translations upstream
-has since added. Installing it is not GL126-scoped, and an operator on a
-Swedish system will see OTHER genesys options change language too — e.g.
-`calibration-file`'s title shows as "Kalibreringsfil" where Fedora's
-catalog left it as the untranslated English "Calibration file". This is
-expected, not a leak from this change, and reverses cleanly on `uninstall`.
+1. **A translated status never updates.** `setValue` (called from
+   `KSaneCore::Option::valueChanged`) matches the combo's item data — the
+   option's INTERNAL value — against the value `valueChanged` carries,
+   which is TRANSLATED (frontend-side `sane_i18n` lookup) whenever the
+   current msgid has a catalog entry. For a string-list option whose
+   values have a translation, internal and translated text never match, so
+   the combo silently stops following backend-side changes. This is
+   exactly what happened in Test 91: a Swedish `po/sv.po` catalog was
+   installed, the first "Ladda film" moved the state to Released, but the
+   `magazine` status line stayed on its earlier Swedish text (the
+   translation matched, so the mismatch that would have at least been
+   visible in English was invisible too) — the owner, seeing no change,
+   pressed Ladda film again, which re-jogged and un-seated the magazine,
+   and the following scan failed at the feed (`0xfc`).
+2. **The resolution combo shows a stale value at construction.**
+   `LabeledCombo`'s constructor calls `setCurrentText(value.toString())`
+   against each item's TEXT; this option's items read "*n* dots/inch" (a
+   unit) while the value is the bare number, so nothing matches and index
+   0 stays shown regardless of what the backend actually holds. Display
+   only — no scan runs at the wrong resolution because of this — but a
+   silently wrong number shown costs real time if the operator does not
+   check it.
+
+**Workarounds, both backend-side, both implemented offline the same
+evening:** the seven `magazine` status values are no longer wrapped in
+`SANE_I18N` (plain English constants in `sane/gl126.cpp`, with a comment
+explaining why); GL126's resolution word list is reversed to ascending
+(600 first, the backend's own default) in `genesys.cpp`'s
+`set_resolution_option_values`, so bug 2's stale index 0 now shows the
+truth instead of contradicting it. Neither is a proper fix — that belongs
+in libksane (compare `itemData` against the option's internal value in
+`setValue`; select the current item by internal value, not by text, at
+construction) — and neither has been reported upstream (owner's call).
+
+Following Test 91, the owner decided the backend should carry no
+translations at all, to stay clear of this class of bug entirely: the
+Swedish catalog feature added earlier that same evening
+(`tools/sane_install.sh`, `po/sv.po`) was removed. Titles and
+descriptions stay wrapped in `SANE_I18N` (upstream convention; they are
+one-shot labels and tooltips, never matched against a live value, so
+they are not where either bug lives) but this repository ships no
+translations for them — other genesys options, and KSaneCore's own UI
+shell (tab names, buttons), still come out in the system language from
+the distribution's own sane-backends and libksane catalogs, so the
+dialog is mixed-language by design: everything this backend itself adds
+is English, everything else follows the desktop.
 
 **Things that can ask for something the backend will not do:**
 

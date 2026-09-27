@@ -6440,3 +6440,70 @@ the first real eject-then-scan the backend ever ran — which is what the
 offline seeds could not model. Unverified as before: the reg 0x32
 literal in the LOAD table (harmless at n = 2 across both
 implementations).
+
+### Test 91: first digiKam session after the dialog cleanup — failed at the feed (2026-09-27)
+
+**What.** The first live run of the cleaned-up dialog (commit eb251c5,
+digiKam Film group + Swedish catalog) since the digiKam usability review
+was filed (`docs/ROADMAP.md`, "digiKam dialog usability"). The Swedish
+catalog was installed at the time (Test 90's `sane_install.sh install`
+run earlier the same evening), so this session also happened to be the
+first live look at the Swedish labels.
+
+**What happened, in order.**
+
+| time | action | result |
+|---|---|---|
+| 18:50:07 | cold start, dialog opened, first "Ladda film" | `open` + jog; state -> Released, magazine mark **written** (the first mark-write line this log has ever shown live, not just offline) |
+| 18:50:45 | second "Ladda film" (operator repeated the press) | `open` + jog **again**; mark **rewritten** |
+| 18:50:58 | "Läs in" | preconditions read 0x22/0xf8/0x00/0x00 (all satisfied) -> `load` run -> feed completion **timed out at 0xfc after 4829 ms** -> session Released -> Failed, mark **cleared** (a failed sequence always removes it) |
+
+digiKam reported "Enheten upptagen" (`SANE_STATUS_DEVICE_BUSY`) twice
+during the session; nothing further was written after the Failed
+transition. Recovery: power cycle, then `Load film` (the documented
+`fc`/locked-magazine signature and recipe, Tests 48/49).
+
+**Why.** The `0xfc` feed timeout is the documented signature of a
+magazine that was not pushed fully to the mechanical stop before the
+feed was commanded — not a hardware fault. The operator sequence that
+produced it was itself caused by libksane display bug 1 (see the
+"Two libksane display bugs" work above): after the FIRST "Ladda film"
+moved the state to Released, the status line stayed on its earlier
+text (a Swedish translation existed and matched, so LabeledCombo's
+setValue never updated the combo), so the operator — seeing no visible
+change — pressed "Ladda film" a second time. That second press re-ran
+`open` + jog on an already-released magazine, un-seating it, and the
+following "Läs in" fed a magazine that was not at the stop. Separately,
+bug 2 was also live in this session: the resolution combo showed 7200
+while the backend held its actual default, 600 (display only; no scan
+had started yet).
+
+**Also observed, not part of the failure.** The Swedish labels
+rendered correctly throughout (Filmmagasin / Ladda film / Mata ut film
+/ Bildruta) — the catalog installed earlier that evening was live and
+working as far as gettext lookup goes; it is precisely *because* it
+was live and correctly matched that display bug 1 could bite (an
+untranslated status, as it was before Test 90, would have caught the
+mismatch immediately by simply not matching the translated value
+either way it still wouldn't have updated — the fix is not "no
+translation crashes less", it is "no translation removes the specific
+text-identity mismatch this widget checks"). Earlier the same evening,
+starting QuickScan in the VM re-enumerated the scanner cold
+(`001:005` -> `001:006`) — unrelated to this session, noted because it
+appears in the same USB log window.
+
+Log: private analysis area `t90-20260927/digikam-session.log`.
+Screenshots: `~/Bilder/opticfilm-granskning/digiKAMSane/` (185016,
+185106).
+
+**Verdict: FAILED.** No hardware fault — the operator sequence was
+induced by a frontend (libksane) display bug, and the feed timeout is
+its documented, recoverable signature. Two workarounds were implemented
+offline the same evening (magazine status values left untranslated;
+GL126's resolution word list reversed to ascending in
+`set_resolution_option_values` — see docs/sane-install.md S6) but not
+yet seen live; a re-run to confirm them is still pending. Following
+this, the owner decided the backend should carry no translations at
+all (English-only, 2026-09-27 evening) to stay clear of this class of
+bug entirely — the Swedish catalog feature (`tools/sane_install.sh`,
+`po/sv.po`) was removed the same evening.

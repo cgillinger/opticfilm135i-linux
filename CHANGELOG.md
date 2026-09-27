@@ -39,14 +39,26 @@ one exists; "offline" means implemented and tested without the scanner.
   brightness/contrast, lamp timing, the whole calibration-cache family,
   colour filter) is now hidden; the magazine/frame controls sit in their
   own `Film` group between `Enhancement` and `Extras`, in the order
-  `Filmmagasin`, `Ladda film`, `Mata ut film`, `Bildruta`; the backend's
-  default mode is `Color` (colour filter defaults to `None`) instead of
-  the generic Gray/Green combination this scanner refuses; and the
-  installer (`tools/sane_install.sh install`) now also installs this
-  repo's Swedish translations for all of it (`po/sv.po`, built to
-  `po/sv.gmo`), with the same backup/restore discipline as the library and
-  `genesys.conf`. See `docs/sane-install.md` §6 for the walkthrough and
-  `docs/ROADMAP.md` for what is still unverified in a live digiKam session.
+  `magazine`, `Load film`, `Eject film`, `Frame`; the backend's default
+  mode is `Color` (colour filter defaults to `None`) instead of the
+  generic Gray/Green combination this scanner refuses.
+- **Two libksane display bugs found and worked around, both backend-side**
+  (Test 91, 2026-09-27: a live session with a Swedish translation catalog
+  installed failed at the feed): the seven `magazine` status values are
+  now deliberately untranslated (plain English constants, `sane/gl126.cpp`)
+  because KSaneWidgets' `LabeledCombo` matches a value-list option's
+  internal value against a *translated* one, so a translated status never
+  follows a backend-side change; and GL126's resolution word list is now
+  ascending (600 first) in `genesys.cpp`'s `set_resolution_option_values`,
+  because the same widget's constructor matches the bare default number
+  against each item's unit-bearing text and always falls back to index 0.
+  Following this, the backend's own strings are English-only by design —
+  the Swedish catalog feature (`tools/sane_install.sh`, `po/sv.po`) that
+  was added earlier the same evening was removed; other dialog strings
+  still come from the distribution's own sane-backends catalog, so the
+  dialog is mixed-language by design. See `docs/sane-install.md` §6 for
+  the walkthrough and the mechanism, and `docs/ROADMAP.md` for what is
+  still unverified in a live digiKam session.
 
 ### Film and holders
 - **110 (Pocket Instamatic) film in the 35 mm strip holder**: `--film 110`

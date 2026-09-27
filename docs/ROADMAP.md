@@ -685,12 +685,16 @@ change; further timing work; repeats of accepted profiles.
   now `Color` and its (hidden) colour filter defaults to `None`, so the
   dialog no longer opens on a single-channel capture this scanner refuses.
   Swedish translations for all of this were added to the shared
-  `po/sv.po` and are installed by `tools/sane_install.sh install`
-  (`docs/sane-install.md` §6 "Translations"). **Still open:** the wide
-  text field / truncation itself is a KSane widget behaviour this change
-  did not touch, and none of this has been seen in a live digiKam session
-  yet — the retaken screenshots and that session remain the outstanding
-  work (see "digiKam dialog usability" below).
+  `po/sv.po` and briefly installed by `tools/sane_install.sh install`;
+  the first live session run with them found two libksane display bugs
+  (Test 91, 2026-09-27), after which the owner decided the backend
+  should carry no translations at all -- the catalog feature and its
+  `po/sv.po` entries were removed the same evening (see "digiKam dialog
+  usability" below for the bugs and the current, English-only state).
+  **Still open:** the wide text field / truncation itself is a KSane
+  widget behaviour this change did not touch, and the layout has not
+  been confirmed in a live digiKam session with the fixes in place -- a
+  re-run is still pending.
 
 ## C3 — 110 (Pocket Instamatic) film in the strip holder (added 2026-09-19)
 
@@ -919,13 +923,41 @@ then the frame number. The `magazine` string itself was not changed
 further (Test 76 already shortened every value to fit and pinned the
 status ahead of the buttons; this pass did not reopen that). A one-page
 "digiKam: load, scan, eject" walkthrough is now in
-`docs/sane-install.md` §6, with two screenshot placeholders and a short
-explanation of how the option text is translated (`po/sv.po`, installed
-by `tools/sane_install.sh install`). Opening the dialog on a connected
+`docs/sane-install.md` §6. Opening the dialog on a connected
 scanner writes nothing (`sane_open` writes no register), so this whole
 review ran without a motor move.
-**Still open:** the retaken screenshots for those two placeholders, and an
-actual live digiKam session to confirm the new layout reads the way this
-review assumes it will — KSane's own widget behaviour (the status field's
-width/truncation) was not touched and was not re-verified. (Test 90 ran
-without either on 2026-09-27.)
+
+**Test 91 (2026-09-27 evening): the first live session, and two
+libksane display bugs.** The cleaned-up dialog was installed with a
+Swedish `po/sv.po` catalog and run live for the first time that same
+evening — and failed at the feed. Two bugs in KSaneWidgets'
+`LabeledCombo` (`src/widgets/labeledcombo.cpp`) were found by reading
+its source: (1) `setValue` (fed by `Option::valueChanged`) matches each
+combo item's INTERNAL value against a value that is TRANSLATED for a
+string-list option, so a value-list option with a live catalog
+translation never follows a backend-side change — the `magazine` status
+line stayed on its earlier Swedish text after the first "Ladda film"
+released the magazine, so the owner pressed it again, which re-jogged
+and un-seated the magazine, and the following "Läs in" fed at the
+documented `0xfc` un-seated-magazine signature (docs/test-log.md, Test
+91) — a power cycle and reload, no hardware fault. (2) the constructor's
+`setCurrentText` matches the bare number against each resolution item's
+unit-bearing text ("7200 dots/inch") and finds nothing, so index 0 (7200
+in the backend's descending word list) stayed shown regardless of the
+backend's real default (600) — display only, no scan had started.
+Workarounds implemented offline the same evening (docs/sane-install.md
+§6): the seven magazine status values are no longer translated (English
+constants, comment in `sane/gl126.cpp` explaining why); GL126's
+resolution word list is reversed to ascending (600 first) in
+`genesys.cpp`'s `set_resolution_option_values`, so index 0 agrees with
+the true default. The owner then decided the backend should carry no
+translations at all, to stay clear of this class of bug entirely — the
+Swedish catalog feature (`tools/sane_install.sh`, `po/sv.po`) was
+removed the same evening; other dialog strings still come from the
+distribution's own sane-backends catalog, so the dialog is
+mixed-language by design (English for everything this backend owns).
+**Still open:** the retaken screenshots for the walkthrough's two
+placeholders, and an actual live digiKam session with both workarounds
+in place to confirm the layout and status line now behave — that re-run
+has not happened yet. A candidate, not scheduled: report the two
+libksane bugs upstream (owner's call).

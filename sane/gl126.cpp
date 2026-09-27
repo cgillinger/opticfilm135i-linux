@@ -2116,23 +2116,45 @@ void magazine_eject(Genesys_Device* dev)
    SANE_CONSTRAINT_STRING_LIST: a constrained string draws as a plain
    combo showing its current value, instead of an edit box with Add and
    Remove buttons beside it. */
-/* Wrapped in SANE_I18N (2026-09-27) like every other user-facing string in
-   this backend: it is a no-op for compilation (genesys.h's SANE_I18N is
-   the identity macro), but marks these as translatable text and matches
-   the pattern xgettext would extract from if the .pot were regenerated.
-   The actual translation is looked up by the frontend (KSane) from the
-   sane-backends gettext catalog by this exact English text, which is why
-   the seven msgids in po/sv.po must match byte for byte. */
-const char* const kMagazineUnknown       = SANE_I18N("unknown -- press Load film");
-const char* const kMagazinePending       = SANE_I18N("reseat the magazine, then scan");
-const char* const kMagazineReleased      = SANE_I18N("released -- reseat, then scan");
-const char* const kMagazineLoaded        = SANE_I18N("loaded -- scan, then Eject film");
+/* Deliberately NOT wrapped in SANE_I18N, unlike every other user-facing
+   string in this backend (titles, descriptions). These are compared, not
+   just displayed -- and that comparison is where a libksane bug bites.
+
+   KSaneWidgets' LabeledCombo (the widget libksane draws for every SANE
+   value-list option; src/widgets/labeledcombo.cpp) does
+   `setValue(val)` in response to KSaneCore::Option::valueChanged, and
+   that slot matches `itemData(i) == val` against the combo's items --
+   but the items were populated with each value's INTERNAL text (this
+   array, as sane_get_option_descriptor's constraint.string_list), while
+   valueChanged carries the TRANSLATED text (frontend-side sane_i18n
+   lookup) whenever the option's current msgid has a catalog entry. For a
+   string-list option whose values have a translation, internal and
+   translated never match, so the combo never follows a backend-side
+   value change -- it keeps showing whatever it last showed.
+
+   That is what Test 91 hit live (2026-09-27, docs/test-log.md): after
+   "Ladda film" moved the state to Released the status line stayed on
+   "okänt -- tryck Ladda film" (a Swedish sv.po translation existed and
+   matched), so the operator pressed Ladda film a second time, which
+   re-jogged and un-seated an already-released magazine, and the
+   following Läs in failed at the feed (0xfc).
+
+   The workaround: no translation, no mismatch. These seven strings stay
+   English on purpose until libksane compares itemData against the
+   OPTION'S INTERNAL VALUE instead of the translated one (a libksane fix,
+   not ours -- see docs/sane-install.md S6). Titles and descriptions are
+   unaffected: those are one-shot labels/tooltips, never matched against
+   a live value, so their SANE_I18N wrapping is harmless and stays. */
+const char* const kMagazineUnknown       = "unknown -- press Load film";
+const char* const kMagazinePending       = "reseat the magazine, then scan";
+const char* const kMagazineReleased      = "released -- reseat, then scan";
+const char* const kMagazineLoaded        = "loaded -- scan, then Eject film";
 /* Section 10 (2026-09-25): an eject no longer means "press Load film" --
    the next scan does a next-strip load on its own once the new strip is
    pushed to the stop. Load film is still there as the fallback. */
-const char* const kMagazineEjected       = SANE_I18N("ejected -- push in, then scan");
-const char* const kMagazineEjectedPending = SANE_I18N("ejected earlier -- push in and scan");
-const char* const kMagazineFailed        = SANE_I18N("failed -- power-cycle the scanner");
+const char* const kMagazineEjected       = "ejected -- push in, then scan";
+const char* const kMagazineEjectedPending = "ejected earlier -- push in and scan";
+const char* const kMagazineFailed        = "failed -- power-cycle the scanner";
 
 const char* const* magazine_state_values()
 {

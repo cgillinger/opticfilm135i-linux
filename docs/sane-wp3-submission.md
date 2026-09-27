@@ -311,7 +311,25 @@ per §7; do it before any future submission).
 | `genesys.cpp`, `init_options`, `OPT_MODE` | `s->mode` set to `SANE_VALUE_SCAN_MODE_COLOR` for GL126, after the generic `SANE_VALUE_SCAN_MODE_GRAY` default line | gated | none — the generic default line is unchanged; GL126 overrides it immediately after with its own default |
 | `genesys.cpp`, `set_option_value`, `OPT_MODE` (Gray branch) | the pre-existing `ENABLE(OPT_COLOR_FILTER)` on switching to Gray is now also gated off for GL126 (found in a follow-up review the same day: without this, picking Gray from a live dialog reopened the hidden option with its stock default, undoing the `init_options` default above and putting an option in front of the operator that `sane_start` would then refuse) | gated | none — the existing condition (`GL646 && is_cis`) is unchanged for every other ASIC; only the added `&& asic_type != GL126` term is new |
 | `genesys.cpp`, `set_option_value`, `OPT_BIT_DEPTH` | the pre-existing `ENABLE(OPT_CONTRAST)`/`ENABLE(OPT_BRIGHTNESS)` at depth ≤ 8 is likewise gated off for GL126. Latent today — this model's `bpp_gray_values`/`bpp_color_values` are both `{16}`, so the ≤ 8 branch is never reached — gated anyway so the same contradiction cannot appear if that ever changes | gated (currently unreachable for GL126) | none |
-| `po/sv.po`, `po/POTFILES.in` | Swedish translations for the new `Film` group, its four options' titles/descriptions (including the rewrites in the row above), and the seven magazine status strings (`gl126.cpp`, wrapped in `SANE_I18N` for the first time); `gl126.cpp` added to `POTFILES.in` (`genesys.cpp` was already listed) | additive | none — a catalog entry a backend never emits is simply unused; no existing msgid was changed, one existing one (`"Frame"`, from `snapscan-options.c`) gained an extra `#:` source reference, no new msgstr |
+
+**Addendum, 2026-09-27 evening (Test 91 — the first live digiKam session,
+and two libksane display bugs found by reading `LabeledCombo`'s source;
+`docs/sane-install.md` §6 "Two libksane display bugs").** One more hunk,
+not yet folded into `sane/wp3-package/`. Earlier the same evening a
+Swedish `po/sv.po` catalog for this port's strings was added and briefly
+installed; the live session it enabled found the bugs above, and the
+owner decided afterwards that the backend should carry no translations at
+all, so that catalog and its `po/sv.po` / `po/POTFILES.in` entries were
+removed the same evening. There is no translation row here for that
+reason — there is no translation. The seven magazine status strings
+(`sane/gl126.cpp`, one of this port's own files, not shared code) are
+correspondingly no longer wrapped in `SANE_I18N`; that change needs no row
+here either, for the same reason the strings never did — it is entirely
+inside the nine `gl126_*` files this table does not cover.
+
+| file | change | class | effect on other ASICs |
+|---|---|---|---|
+| `genesys.cpp`, `set_resolution_option_values` | for GL126 only, the resolution word list handed to the frontend is reversed to ascending (600 first) before being copied into `opt_resolution_values`; the value SELECTION below it (nearest-value pick, min-element default) is unchanged and remains order-independent | gated | none — every other ASIC's list is built from the same `get_resolutions()` call, still returned descending as `device.cpp`'s `MethodResolutions::get_resolutions()` always sorts it; only the GL126 branch reverses its own copy afterward |
 
 **Offline coverage of the shared changes.** The op and geometry suites
 (`tests/test_sane_ops.py`, `test_sane_geometry.py`) prove the GL126 path
@@ -332,7 +350,14 @@ same walk against a GL124 device id checks only two things by name —
 `brightness`/`contrast` stay active (proving the new `DISABLE` block did
 not leak past its `asic_type` gate) and the `Film` group/its four options
 stay inactive (the pre-existing per-option gate, unchanged) — it does not
-walk or assert anything about GL124's other options. `test_switching_to_
+walk or assert anything about GL124's other options. The same test also
+covers the 2026-09-27 evening addendum's resolution-order hunk: it reads
+the built backend's `resolution` word-list constraint (in option/display
+order, via `tests/gl126_magazine_probe.cpp`'s `layout` command) and
+asserts it is ascending with 600 first for the GL126 device id — nothing
+here exercises GL124's list, so the claim that other ASICs are unaffected
+rests on the gate (`asic_type == AsicType::GL126`) alone, the same as
+every other row in that addendum. `test_switching_to_
 gray_does_not_reopen_hidden_options_on_gl126` covers the two `ENABLE` gate
 fixes: on GL126, setting mode to Gray through the real option path leaves
 `color-filter`/`brightness`/`contrast` inactive; on GL124 the same set

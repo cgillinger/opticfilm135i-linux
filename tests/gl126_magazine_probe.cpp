@@ -39,6 +39,12 @@
          2026-09-27 digiKam review (docs/sane-install.md S6): the "Film"
          group and its four options' position relative to the other
          groups, and GL126's Color/None defaults.
+         Also prints, after DEFAULT_COLOR_FILTER, the two libksane
+         workarounds' option-order evidence:
+             RESVALUE <n>                 (one per "resolution" word-list
+                                            entry, in option/display order)
+             MAGVALUE <text>               (one per "magazine" string-list
+                                            entry, in option/display order)
      magprobe scenario <name>
          Runs one scripted scenario and prints, in order:
              KEY <device name>            (the mark's device key)
@@ -327,6 +333,40 @@ int cmd_layout(int argc, char** argv)
     auto* scanner = reinterpret_cast<Genesys_Scanner*>(h);
     std::printf("DEFAULT_MODE %s\n", scanner->mode.c_str());
     std::printf("DEFAULT_COLOR_FILTER %s\n", scanner->color_filter.c_str());
+    // Two more display-order facts a test needs (2026-09-27, the two
+    // libksane bugs, docs/sane-install.md S6): the "resolution" option's
+    // word-list constraint IN OPTION ORDER (what a frontend's combo shows
+    // at each index, unlike get_resolutions()'s min/nearest which do not
+    // care about order), and the "magazine" option's string-list
+    // constraint IN OPTION ORDER (to pin that the values are the plain
+    // English constants, not a gettext-translated form).
+    {
+        int opt = find_opt(h, "resolution");
+        if (opt >= 0) {
+            const SANE_Option_Descriptor* d = sane_get_option_descriptor(h, opt);
+            if (d->constraint_type == SANE_CONSTRAINT_WORD_LIST &&
+                d->constraint.word_list != nullptr)
+            {
+                SANE_Int count = d->constraint.word_list[0];
+                for (SANE_Int i = 1; i <= count; ++i) {
+                    std::printf("RESVALUE %d\n", static_cast<int>(d->constraint.word_list[i]));
+                }
+            }
+        }
+    }
+    {
+        int opt = find_opt(h, "magazine");
+        if (opt >= 0) {
+            const SANE_Option_Descriptor* d = sane_get_option_descriptor(h, opt);
+            if (d->constraint_type == SANE_CONSTRAINT_STRING_LIST &&
+                d->constraint.string_list != nullptr)
+            {
+                for (const SANE_String_Const* v = d->constraint.string_list; *v != nullptr; ++v) {
+                    std::printf("MAGVALUE %s\n", *v);
+                }
+            }
+        }
+    }
     sane_close(h);
     sane_exit();
     return 0;
