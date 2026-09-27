@@ -729,6 +729,13 @@ Not in scope: a 110 FEEDL grid, 126 Instamatic, holder-ID detection,
 Recorded so they are not lost. None is committed work; each needs a
 decision before it starts.
 
+**1800 dpi.** The vendor's QuickScan offers six resolutions — 7200,
+3600, 2400, **1800**, 1200, 600 (owner's screenshot, 2026-09-27) — where
+the driver and the backend offer five: 1800 was never captured, so there
+is no profile for it. Adding it means a vendor capture at 1800 and a
+profile bring-up like the other four dual-light profiles (Tests 65–71).
+Not scheduled; nobody has asked for it.
+
 **Whole-strip batch scanning.** The vendor's QuickScan scans all six
 frames in one operation ("Processing 4/6"); our backend scans one frame
 per `sane_start`, chosen by the `frame` option. The gap is smaller than

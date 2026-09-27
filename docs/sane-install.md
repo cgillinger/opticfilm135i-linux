@@ -250,7 +250,7 @@ installed shows (§"Translations" below); the SANE names are in parentheses.
      it), and 7200 costs on the order of three minutes per frame against
      well under one at 600 — a silently wrong resolution is real time lost,
      not just a surprising file.
-   *(screenshot: to be added after the owner retakes them)*
+   ![digiKam Basic Options tab after the 2026-09-27 change](images/digikam-basic-options.png)
 2. **Scanner Specific Options tab** — after this session's changes, only
    the options that do something on GL126 remain here, grouped under `Film`
    (a heading `scanimage -A` and xsane show; KSaneWidgets drops SANE groups
@@ -266,7 +266,8 @@ installed shows (§"Translations" below); the SANE names are in parentheses.
    its tail) is unchanged by this session — the fix there was shortening
    every status string to fit and ordering it first, not the widget itself
    — and still wants a live digiKam session to confirm it reads well now.
-   *(screenshot: to be added after the owner retakes them)*
+   ![digiKam Scanner Specific Options tab after the change: Filmmagasin, Ladda film, Mata ut film, Bildruta](images/digikam-scanner-specific.png)
+   For comparison, the same tab before the change: ![before](images/digikam-scanner-specific-before.png)
 3. Back on the **Basic Options** tab, press **Läs in** (Scan/Read — not
    "Förhandsgranskning": that runs a full 600 dpi pass, never a cheap
    preview, on this scanner).
