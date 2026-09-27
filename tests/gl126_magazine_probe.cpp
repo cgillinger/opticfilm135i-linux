@@ -25,6 +25,20 @@
              OPT <name> type=<n> size=<n> inactive=<0|1> cap=<hex>
          With a vid:pid of another (non-GL126) model, all three must be
          inactive.
+     magprobe layout [vid:pid] [mode]
+         One line per option/group descriptor, in display order (index 1
+         upward, exactly as a frontend enumerates them):
+             ITEM <index> name=<name> type=<n> group=<0|1> inactive=<0|1>
+                 TITLE <title>
+         then the two option values off the scanner struct (DEFAULT_MODE,
+         DEFAULT_COLOR_FILTER) -- sane_open's own defaults if [mode] is
+         omitted, or the state after a real SET_VALUE of "mode" to it
+         (2026-09-27: the ENABLE(OPT_COLOR_FILTER) / ENABLE(OPT_CONTRAST)/
+         ENABLE(OPT_BRIGHTNESS) fix, so a plain switch to Gray does not
+         reopen options GL126 hides).
+         2026-09-27 digiKam review (docs/sane-install.md S6): the "Film"
+         group and its four options' position relative to the other
+         groups, and GL126's Color/None defaults.
      magprobe scenario <name>
          Runs one scripted scenario and prints, in order:
              KEY <device name>            (the mark's device key)
@@ -234,6 +248,85 @@ int cmd_options(int argc, char** argv)
             }
         }
     }
+    sane_close(h);
+    sane_exit();
+    return 0;
+}
+
+/* Every option descriptor in display order (2026-09-27, the digiKam
+   review): what tests/test_sane_magazine.py's "options" command cannot
+   show, because it only looks up the three magazine options by name.
+   This walks index 1 upward exactly as a frontend does, so a test can
+   assert group placement and the whole backend's active/inactive split
+   without hardcoding an enum index anywhere -- the enum is not public
+   API and its numbering is free to move. Also reports the two option
+   values an operator sees before touching anything: sane_open's own
+   defaults for "mode" and "color-filter", read directly off the
+   Genesys_Scanner struct (GET_VALUE on color-filter, hidden for GL126,
+   would return SANE_STATUS_INVAL -- see the comment at the read site),
+   no SET ever called. An optional third argument sets "mode" through the
+   real sane_control_option path first (SANE_ACTION_SET_VALUE), so a test
+   can also observe what a frontend switching to Gray does to the option
+   set. */
+int cmd_layout(int argc, char** argv)
+{
+    std::uint16_t vid = 0x07b3, pid = 0x1436;
+    if (argc > 2) {
+        unsigned v = 0, p = 0;
+        if (std::sscanf(argv[2], "%x:%x", &v, &p) == 2) {
+            vid = static_cast<std::uint16_t>(v);
+            pid = static_cast<std::uint16_t>(p);
+        }
+    }
+    enable_testing_mode(vid, pid, 0x0000, nullptr);
+    SANE_Int version = 0;
+    if (sane_init(&version, nullptr) != SANE_STATUS_GOOD) {
+        std::fprintf(stderr, "sane_init failed\n");
+        return 2;
+    }
+    std::string devname = get_testing_device_name();
+    SANE_Handle h = nullptr;
+    if (sane_open(devname.c_str(), &h) != SANE_STATUS_GOOD) {
+        std::fprintf(stderr, "sane_open(%s) failed\n", devname.c_str());
+        sane_exit();
+        return 2;
+    }
+    // Optional: exercise set_option_value's OPT_MODE handler through the
+    // real path before dumping the option set, so a test can see what
+    // switching modes does to color-filter/brightness/contrast (the
+    // ENABLE gates fixed 2026-09-27) -- not just init_options' one-time
+    // defaults, which the plain "layout" call above already covers.
+    if (argc > 3) {
+        if (!set_str(h, "mode", argv[3])) {
+            std::fprintf(stderr, "failed to set mode=%s\n", argv[3]);
+            sane_close(h);
+            sane_exit();
+            return 2;
+        }
+    }
+    for (int i = 1; ; ++i) {
+        const SANE_Option_Descriptor* d = sane_get_option_descriptor(h, i);
+        if (d == nullptr) {
+            break;
+        }
+        std::printf("ITEM %d name=%s type=%d group=%d inactive=%d TITLE %s\n",
+                    i, d->name != nullptr ? d->name : "(null)",
+                    static_cast<int>(d->type),
+                    d->type == SANE_TYPE_GROUP ? 1 : 0,
+                    (d->cap & SANE_CAP_INACTIVE) ? 1 : 0,
+                    d->title != nullptr ? d->title : "(null)");
+    }
+    // Read init_options' own defaults directly off the scanner struct,
+    // not through sane_control_option: GET_VALUE on an inactive option is
+    // refused everywhere in genesys (sane_control_option_impl,
+    // SANE_OPTION_IS_ACTIVE), by design and unrelated to this change, and
+    // color-filter is now one of the options hidden for GL126. Reading
+    // the struct field is exactly what sane_control_option's own
+    // get_option_value() does internally for an active option; here it
+    // is done directly, the same way genesys.cpp itself casts the handle.
+    auto* scanner = reinterpret_cast<Genesys_Scanner*>(h);
+    std::printf("DEFAULT_MODE %s\n", scanner->mode.c_str());
+    std::printf("DEFAULT_COLOR_FILTER %s\n", scanner->color_filter.c_str());
     sane_close(h);
     sane_exit();
     return 0;
@@ -528,6 +621,9 @@ int main(int argc, char** argv)
         if (std::strcmp(argv[1], "options") == 0) {
             return cmd_options(argc, argv);
         }
+        if (std::strcmp(argv[1], "layout") == 0) {
+            return cmd_layout(argc, argv);
+        }
         if (std::strcmp(argv[1], "scenario") == 0) {
             return cmd_scenario(argc, argv);
         }
@@ -535,6 +631,6 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "ERROR %s\n", e.what());
         return 2;
     }
-    std::fprintf(stderr, "usage: magprobe options|scenario ...\n");
+    std::fprintf(stderr, "usage: magprobe options|layout|scenario ...\n");
     return 2;
 }

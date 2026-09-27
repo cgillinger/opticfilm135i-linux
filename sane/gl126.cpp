@@ -29,9 +29,11 @@
 #include "image_pipeline.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <array>
 #include <chrono>
 #include <functional>
@@ -689,6 +691,51 @@ std::string magazine_device_key(const Genesys_Device* dev)
     return dev->file_name;
 }
 
+/* Write the cross-process magazine mark for KIND, logging the outcome
+   either way. Before 2026-09-27 a successful write logged nothing -- only
+   a failure did -- and an "ejected" mark went missing between an eject
+   and the next dialog open with no log evidence at all of when or why.
+   Both call sites (the Released write in magazine_release_impl() and the
+   Ejected write in write_ejected_mark()) now go through this one helper,
+   so every write is traceable from the log alone. */
+void write_magazine_mark(Genesys_Device* dev, gl126::MagazineMarkKind kind)
+{
+    std::string key = magazine_device_key(dev);
+    if (gl126::magazine_mark_write(kind, key)) {
+        DBG(DBG_info, "gl126: magazine mark written: %s for %s at %s\n",
+            gl126::magazine_mark_kind_name(kind), key.c_str(),
+            gl126::magazine_mark_path().c_str());
+    } else {
+        // Not fatal: a frontend that keeps the device open (digiKam) has
+        // the in-process record. Only a second process (scanimage) needs
+        // the file, and it will simply report "no load is pending".
+        DBG(DBG_warn, "gl126: could not write the magazine mark (%s) at %s -- a load from "
+            "a separate process will not know one is pending\n",
+            gl126::magazine_mark_kind_name(kind), gl126::magazine_mark_path().c_str());
+    }
+}
+
+/* Clear the cross-process magazine mark, logging WHY and WHAT ACTUALLY
+   HAPPENED -- the other half of the same traceability fix: a clear with
+   no reason attached is exactly as unaccountable as a write with no log
+   line was, and "cleared" alone does not say whether there was anything
+   to clear (most of these call sites run whether or not a mark is
+   present -- e.g. every MagazineFailGuard-armed failure). */
+void clear_magazine_mark(const char* reason)
+{
+    switch (gl126::magazine_mark_clear()) {
+    case gl126::MagazineMarkClearResult::Removed:
+        DBG(DBG_info, "gl126: magazine mark cleared (%s): removed\n", reason);
+        break;
+    case gl126::MagazineMarkClearResult::NonePresent:
+        DBG(DBG_info, "gl126: magazine mark cleared (%s): none was present\n", reason);
+        break;
+    case gl126::MagazineMarkClearResult::Error:
+        DBG(DBG_warn, "gl126: magazine mark clear (%s) failed: %s\n", reason, strerror(errno));
+        break;
+    }
+}
+
 /* The loader sensor and the state class, from one read of reg 0x101 --
    the same register and the same bit (0x08) the vendor's own config
    names LoaderSensorReg, hardware-verified 2026-09-02 (0xe0 without a
@@ -738,7 +785,7 @@ public:
         // neither is allowed to become the failure.
         try {
             set_magazine_state(dev_, MagazineState::Failed);
-            gl126::magazine_mark_clear();
+            clear_magazine_mark("failed sequence");
         } catch (...) {
         }
     }
@@ -928,14 +975,7 @@ void magazine_release_impl(Genesys_Device* dev)
 
     guard.succeeded();
     set_magazine_state(dev, MagazineState::Released);
-    if (!gl126::magazine_mark_write(magazine_device_key(dev))) {
-        // Not fatal: a frontend that keeps the device open (digiKam) has
-        // the in-process record. Only a second process (scanimage) needs
-        // the file, and it will simply report "no load is pending".
-        DBG(DBG_warn, "gl126: could not write the magazine mark at %s -- a load from a "
-            "separate process will not know a release is pending\n",
-            gl126::magazine_mark_path().c_str());
-    }
+    write_magazine_mark(dev, gl126::MagazineMarkKind::Released);
     DBG(DBG_info, "gl126: magazine released. Take it fully out of the slot, push it back "
         "in to the mechanical stop, then scan.\n");
 }
@@ -965,7 +1005,7 @@ void magazine_load_if_pending(Genesys_Device* dev)
         // name, and the failure already cleared the mark -- so asking
         // about the mark first would let the scan through to calibrate
         // on top of it.
-        gl126::magazine_mark_clear();
+        clear_magazine_mark("failed sequence");
         throw SaneException(SANE_STATUS_INVAL,
                             "gl126: the magazine sequence failed earlier in this session, so "
                             "the transport state is unknown and a scan is not started on top "
@@ -1003,7 +1043,7 @@ void magazine_load_if_pending(Genesys_Device* dev)
                 // address: not ours, and never will be.
                 DBG(DBG_info, "gl126: magazine mark names %s, this device is %s -- ignored\n",
                     marked_key.c_str(), magazine_device_key(dev).c_str());
-                gl126::magazine_mark_clear();
+                clear_magazine_mark("foreign device");
             }
         }
     }
@@ -1033,7 +1073,7 @@ void magazine_load_if_pending(Genesys_Device* dev)
         // stale and is cleared, but the state goes to Unknown, not
         // Failed -- `of135i load`/Load film remain the documented way
         // out, exactly as a fresh Unknown session already allows.
-        gl126::magazine_mark_clear();
+        clear_magazine_mark("cold refusal");
         set_magazine_state(dev, MagazineState::Unknown);
         throw SaneException(SANE_STATUS_INVAL,
                             "gl126: the scanner was power-cycled after the eject; press "
@@ -1090,7 +1130,7 @@ void magazine_load_if_pending(Genesys_Device* dev)
     }
     if (reg01 != 0x22 || !sensor.idle_class() || !regs_ok) {
         set_magazine_state(dev, MagazineState::Failed);
-        gl126::magazine_mark_clear();
+        clear_magazine_mark("failed sequence");
         const char* left_by = kind == gl126::MagazineMarkKind::Ejected
                                   ? "the eject leaves it in" : "the jog leaves it in";
         const char* regs_expected = kind == gl126::MagazineMarkKind::Ejected
@@ -1182,7 +1222,7 @@ void magazine_load_if_pending(Genesys_Device* dev)
 
     guard.succeeded();
     set_magazine_state(dev, MagazineState::Loaded);
-    gl126::magazine_mark_clear();
+    clear_magazine_mark("consumed by load");
     DBG(DBG_info, "gl126: magazine loaded (reg 0x101 = 0x%02x)\n", after.status);
 }
 
@@ -1193,11 +1233,7 @@ void magazine_load_if_pending(Genesys_Device* dev)
     has the in-process record. */
 void write_ejected_mark(Genesys_Device* dev)
 {
-    if (!gl126::magazine_mark_write(gl126::MagazineMarkKind::Ejected, magazine_device_key(dev))) {
-        DBG(DBG_warn, "gl126: could not write the magazine mark at %s -- a next-strip load "
-            "from a separate process will not know one is pending\n",
-            gl126::magazine_mark_path().c_str());
-    }
+    write_magazine_mark(dev, gl126::MagazineMarkKind::Ejected);
 }
 
 /** The "Eject film" button, and eject_document(). */
@@ -2080,16 +2116,23 @@ void magazine_eject(Genesys_Device* dev)
    SANE_CONSTRAINT_STRING_LIST: a constrained string draws as a plain
    combo showing its current value, instead of an edit box with Add and
    Remove buttons beside it. */
-const char* const kMagazineUnknown       = "unknown -- press Load film";
-const char* const kMagazinePending       = "reseat the magazine, then scan";
-const char* const kMagazineReleased      = "released -- reseat, then scan";
-const char* const kMagazineLoaded        = "loaded -- scan, then Eject film";
+/* Wrapped in SANE_I18N (2026-09-27) like every other user-facing string in
+   this backend: it is a no-op for compilation (genesys.h's SANE_I18N is
+   the identity macro), but marks these as translatable text and matches
+   the pattern xgettext would extract from if the .pot were regenerated.
+   The actual translation is looked up by the frontend (KSane) from the
+   sane-backends gettext catalog by this exact English text, which is why
+   the seven msgids in po/sv.po must match byte for byte. */
+const char* const kMagazineUnknown       = SANE_I18N("unknown -- press Load film");
+const char* const kMagazinePending       = SANE_I18N("reseat the magazine, then scan");
+const char* const kMagazineReleased      = SANE_I18N("released -- reseat, then scan");
+const char* const kMagazineLoaded        = SANE_I18N("loaded -- scan, then Eject film");
 /* Section 10 (2026-09-25): an eject no longer means "press Load film" --
    the next scan does a next-strip load on its own once the new strip is
    pushed to the stop. Load film is still there as the fallback. */
-const char* const kMagazineEjected       = "ejected -- push in, then scan";
-const char* const kMagazineEjectedPending = "ejected earlier -- push in and scan";
-const char* const kMagazineFailed        = "failed -- power-cycle the scanner";
+const char* const kMagazineEjected       = SANE_I18N("ejected -- push in, then scan");
+const char* const kMagazineEjectedPending = SANE_I18N("ejected earlier -- push in and scan");
+const char* const kMagazineFailed        = SANE_I18N("failed -- power-cycle the scanner");
 
 const char* const* magazine_state_values()
 {

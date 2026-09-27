@@ -297,6 +297,22 @@ they did before.
 | `tables_model.cpp`, `tables_sensor.cpp` | the model and sensor entries | additive | none. **Found in this review:** the model comment still called the entry a "stage 1 skeleton, untested" with placeholder ids "replaced during bring-up", and `ModelFlag::UNTESTED` was still set although the `.desc` says `:good`. Corrected in the integration patch 2026-09-15: the adc/gpio/motor ids stay the 7200's because the model must register valid ids and no GL126 hook consults those tables; the flag is gone. The `settings.h` comment said frames 1–4; it is 1–6 |
 | `Makefile.am`, `genesys.conf.in`, `.desc`, man page, `AUTHORS` | build list, USB id, model entry, chip list, author | additive | none |
 
+**Addendum, 2026-09-27 (offline — digiKam dialog usability review,
+`docs/ROADMAP.md`).** Six more hunks in the shared files (two added in a
+follow-up review round the same day), none yet folded into the exported
+package in `sane/wp3-package/` (that export is a separate, deliberate step
+per §7; do it before any future submission).
+
+| file | change | class | effect on other ASICs |
+|---|---|---|---|
+| `genesys.h` | `OPT_FILM_GROUP` inserted between the enhancement and extras groups; the four film options (from the row above) moved under it and reordered to `magazine`, `load-film`, `eject-film`, `frame` | additive + reorder | option **indices** shift again for every model past `OPT_CONTRAST` — the same class of change as the original four-option addition above; still addressed by name, still `SANE_CAP_INACTIVE` on every other ASIC |
+| `genesys.cpp`, `init_options` (the film options' text) | `magazine`'s title changed from "Magazine" to "Film magazine" and its desc shortened ("believed to be" dropped); `Load film`'s desc shortened and reworded (drops the "freshly powered-on" phrasing in favour of "cold scanner", states the ~25 s figure plainly); `Eject film`'s desc rewritten to describe the next-strip flow instead of just naming the action; `Frame`'s desc gained a trailing period. Titles/values a translator sees, not behaviour | additive (text only) | none — gated the same as the options themselves |
+| `genesys.cpp`, `init_options` | eleven existing options (`scan-exposure-time`, `brightness`, `contrast`, `lamp-off-time`, `lamp-off-scan`, `color-filter`, `calibration-file`, `expiration-time`, `clear-calibration`, `force-calibration`, `ignore-internal-offsets`) get `SANE_CAP_INACTIVE` added when `asic_type == AsicType::GL126`. Ten of the eleven were already inert on GL126 (no consumer reads them for this chip) and are only hidden. `color-filter` is different: its GL126-specific branch changes the **default value**, not just visibility — from the generic branch's `"Green"` (a single-channel capture `calculate_scan_session` refuses before any device I/O, Test 62) to `"None"` (host-side gray, a capture this backend performs) — so a Gray-mode scan on GL126 that previously failed at `sane_start` now succeeds. This is a behaviour change for GL126, not merely hiding a dead control | gated | none for every other ASIC — the pre-existing branches are unchanged; the behaviour change is GL126-only |
+| `genesys.cpp`, `init_options`, `OPT_MODE` | `s->mode` set to `SANE_VALUE_SCAN_MODE_COLOR` for GL126, after the generic `SANE_VALUE_SCAN_MODE_GRAY` default line | gated | none — the generic default line is unchanged; GL126 overrides it immediately after with its own default |
+| `genesys.cpp`, `set_option_value`, `OPT_MODE` (Gray branch) | the pre-existing `ENABLE(OPT_COLOR_FILTER)` on switching to Gray is now also gated off for GL126 (found in a follow-up review the same day: without this, picking Gray from a live dialog reopened the hidden option with its stock default, undoing the `init_options` default above and putting an option in front of the operator that `sane_start` would then refuse) | gated | none — the existing condition (`GL646 && is_cis`) is unchanged for every other ASIC; only the added `&& asic_type != GL126` term is new |
+| `genesys.cpp`, `set_option_value`, `OPT_BIT_DEPTH` | the pre-existing `ENABLE(OPT_CONTRAST)`/`ENABLE(OPT_BRIGHTNESS)` at depth ≤ 8 is likewise gated off for GL126. Latent today — this model's `bpp_gray_values`/`bpp_color_values` are both `{16}`, so the ≤ 8 branch is never reached — gated anyway so the same contradiction cannot appear if that ever changes | gated (currently unreachable for GL126) | none |
+| `po/sv.po`, `po/POTFILES.in` | Swedish translations for the new `Film` group, its four options' titles/descriptions (including the rewrites in the row above), and the seven magazine status strings (`gl126.cpp`, wrapped in `SANE_I18N` for the first time); `gl126.cpp` added to `POTFILES.in` (`genesys.cpp` was already listed) | additive | none — a catalog entry a backend never emits is simply unused; no existing msgid was changed, one existing one (`"Frame"`, from `snapscan-options.c`) gained an extra `#:` source reference, no new msgstr |
+
 **Offline coverage of the shared changes.** The op and geometry suites
 (`tests/test_sane_ops.py`, `test_sane_geometry.py`) prove the GL126 path
 byte-exact against the Python driver; `tests/gl126_session_probe.cpp` runs
@@ -305,7 +321,23 @@ a counting pattern mock, which is what caught the `Extract` bug (Test 69).
 Nothing in this repository exercises another ASIC through the modified
 functions, and nothing can without that hardware: for the gated hunks the
 argument is the gate itself, for the `Extract` fix it is the analysis
-above. That is the honest extent of the regression evidence.
+above. That is the honest extent of the regression evidence. The 2026-09-27
+addendum's hunks are covered the same way: `tests/test_sane_magazine.py`'s
+`test_dead_options_are_inactive_and_film_group_is_placed_and_ordered` walks
+every option descriptor of the built backend in test mode for the GL126
+device id, asserting the eleven options are inactive, the `Film` group
+sits between `Enhancement` and `Extras` with its four options in order
+right after it, and the default mode/colour filter are `Color`/`None`; the
+same walk against a GL124 device id checks only two things by name —
+`brightness`/`contrast` stay active (proving the new `DISABLE` block did
+not leak past its `asic_type` gate) and the `Film` group/its four options
+stay inactive (the pre-existing per-option gate, unchanged) — it does not
+walk or assert anything about GL124's other options. `test_switching_to_
+gray_does_not_reopen_hidden_options_on_gl126` covers the two `ENABLE` gate
+fixes: on GL126, setting mode to Gray through the real option path leaves
+`color-filter`/`brightness`/`contrast` inactive; on GL124 the same set
+still re-enables `color-filter` (the pre-existing behaviour, checked by
+name, unchanged).
 
 **Best-effort waits, at the site.** The generated tables carry a
 trailing comment on every `PollBestEffort` op saying why that wait may

@@ -32,6 +32,22 @@ one exists; "offline" means implemented and tested without the scanner.
   load → scan → eject cycle from scanimage and digiKam, including a
   power-cycled, latched magazine (Tests 75–77).
 
+### SANE frontend surface
+- **digiKam/KSane dialog cleanup** (offline, 2026-09-27, following the
+  owner's report that the dialog was too cluttered to start a scan from):
+  every genesys option that never had an effect on GL126 (exposure time,
+  brightness/contrast, lamp timing, the whole calibration-cache family,
+  colour filter) is now hidden; the magazine/frame controls sit in their
+  own `Film` group between `Enhancement` and `Extras`, in the order
+  `Filmmagasin`, `Ladda film`, `Mata ut film`, `Bildruta`; the backend's
+  default mode is `Color` (colour filter defaults to `None`) instead of
+  the generic Gray/Green combination this scanner refuses; and the
+  installer (`tools/sane_install.sh install`) now also installs this
+  repo's Swedish translations for all of it (`po/sv.po`, built to
+  `po/sv.gmo`), with the same backup/restore discipline as the library and
+  `genesys.conf`. See `docs/sane-install.md` §6 for the walkthrough and
+  `docs/ROADMAP.md` for what is still unverified in a live digiKam session.
+
 ### Film and holders
 - **110 (Pocket Instamatic) film in the 35 mm strip holder**: `--film 110`
   with a perforation-anchored frame detector, the two-placement protocol

@@ -55,6 +55,7 @@ _build_attempted = False
 _skip_reason = None
 
 GL124_DEVICE = "04a9:1909"   # a GL124 model in the backend's USB tables
+GL126_DEVICE = "07b3:1436"   # the default; named here for the mode-switch test
 
 # sane.h's SANE_Status enum, in order.
 SANE_STATUS_GOOD = 0
@@ -68,8 +69,10 @@ SANE_STATUS_NO_DOCS = 7
 SANE_STATUS_COVER_OPEN = 8
 SANE_STATUS_IO_ERROR = 9
 
+SANE_TYPE_INT = 1
 SANE_TYPE_STRING = 3
 SANE_TYPE_BUTTON = 4
+SANE_TYPE_GROUP = 5
 
 
 def _sane_backends_dir():
@@ -179,6 +182,16 @@ def _run(probe, *args, lock_dir=None):
             out["key"] = line[len("KEY "):].strip()
         elif line.startswith("MARK "):
             out["mark"] = line[len("MARK "):].strip()
+        elif line.startswith("ITEM "):
+            body, _, title = line[len("ITEM "):].partition(" TITLE ")
+            parts = body.split()
+            fields = dict(p.split("=", 1) for p in parts[1:] if "=" in p)
+            fields["title"] = title
+            out.setdefault("items", []).append((int(parts[0]), fields))
+        elif line.startswith("DEFAULT_MODE "):
+            out["default_mode"] = line[len("DEFAULT_MODE "):].strip()
+        elif line.startswith("DEFAULT_COLOR_FILTER "):
+            out["default_color_filter"] = line[len("DEFAULT_COLOR_FILTER "):].strip()
     return out
 
 
@@ -862,6 +875,128 @@ def test_a_pending_load_from_the_wrong_state_refuses_and_drops_the_mark():
     print("test_a_pending_load_from_the_wrong_state_refuses_and_drops_the_mark OK")
 
 
+# ------------------------------------------------------------ 8. dialog surface (2026-09-27)
+
+
+def test_dead_options_are_inactive_and_film_group_is_placed_and_ordered():
+    """The digiKam review (docs/ROADMAP.md, "digiKam dialog usability"):
+    every genesys option that does nothing on GL126 is hidden, so KSane's
+    "Scanner Specific Options" tab only shows what actually works; the
+    film magazine controls sit in their own "Film" group, right after
+    "Enhancement" and before "Extras"; the scan-area options stay active
+    (KSane's preview canvas depends on them); and the frontend's very
+    first impression -- the mode and colour filter it opens with -- are a
+    capture this backend actually performs."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_dead_options_are_inactive_and_film_group_is_placed_and_ordered")
+
+    r = _run(probe, "layout")
+    items = r["items"]
+    by_name = {f["name"]: (idx, f) for idx, f in items if "name" in f}
+
+    dead = ["scan-exposure-time", "brightness", "contrast", "lamp-off-time",
+            "lamp-off-scan", "color-filter", "calibration-file", "expiration-time",
+            "clear-calibration", "force-calibration", "ignore-internal-offsets"]
+    for name in dead:
+        assert name in by_name, (name, sorted(by_name))
+        _, f = by_name[name]
+        assert f["inactive"] == "1", (name, f)
+
+    # Scan-area (geometry) options: KSane's preview canvas depends on
+    # them, so they must stay active even though they do nothing either.
+    for name in ("tl-x", "tl-y", "br-x", "br-y"):
+        assert name in by_name, name
+        assert by_name[name][1]["inactive"] == "0", by_name[name]
+
+    for name in ("magazine", "load-film", "eject-film", "frame"):
+        assert name in by_name, name
+        assert by_name[name][1]["inactive"] == "0", by_name[name]
+
+    magazine_idx = by_name["magazine"][0]
+    load_idx = by_name["load-film"][0]
+    eject_idx = by_name["eject-film"][0]
+    frame_idx = by_name["frame"][0]
+    # In this order, and consecutive -- no other option sits between the
+    # group and Frame.
+    assert load_idx == magazine_idx + 1, by_name
+    assert eject_idx == load_idx + 1, by_name
+    assert frame_idx == eject_idx + 1, by_name
+
+    # The group immediately above them: a GROUP item at magazine_idx - 1,
+    # titled "Film".
+    group_idx = magazine_idx - 1
+    group_fields = next((f for idx, f in items if idx == group_idx), None)
+    assert group_fields is not None, items
+    assert group_fields["type"] == str(SANE_TYPE_GROUP), group_fields
+    assert group_fields["title"] == "Film", group_fields
+
+    # And that group comes right after "Enhancement", before "Extras": the
+    # two groups on either side of it, in the item list, in order.
+    titles = [f["title"] for _, f in items if f["type"] == str(SANE_TYPE_GROUP)]
+    i = titles.index("Film")
+    assert titles[i - 1] == "Enhancement", titles
+    assert titles[i + 1] == "Extras", titles
+
+    assert r["default_mode"] == "Color", r["default_mode"]
+    assert r["default_color_filter"] == "None", r["default_color_filter"]
+
+    # The gate is asic_type == GL126, not a blanket change: on another chip
+    # (GL124) the film group/options stay inactive as before, and two
+    # options with no OTHER conditional disabling anywhere in genesys.cpp
+    # (brightness, contrast -- unlike calibration-file, which the core
+    # itself disables for root) must still be ACTIVE, proving GL126's new
+    # DISABLE block did not leak into other models.
+    other = _run(probe, "layout", GL124_DEVICE)
+    other_by_name = {f["name"]: (idx, f) for idx, f in other["items"] if "name" in f}
+    for name in ("brightness", "contrast"):
+        assert other_by_name[name][1]["inactive"] == "0", (name, other_by_name[name])
+    for name in ("magazine", "load-film", "eject-film", "frame"):
+        assert other_by_name[name][1]["inactive"] == "1", (name, other_by_name[name])
+    other_group_idx = other_by_name["magazine"][0] - 1
+    other_group = next((f for idx, f in other["items"] if idx == other_group_idx), None)
+    assert other_group is not None and other_group["title"] == "Film", other_group
+    assert other_group["inactive"] == "1", other_group
+
+    print("test_dead_options_are_inactive_and_film_group_is_placed_and_ordered OK "
+          f"(Film group between Enhancement and Extras at index {group_idx}; "
+          f"magazine={magazine_idx} load={load_idx} eject={eject_idx} frame={frame_idx}; "
+          "default mode Color, colour filter None)")
+
+
+def test_switching_to_gray_does_not_reopen_hidden_options_on_gl126():
+    """2026-09-27 fix: set_option_value's OPT_MODE handler unconditionally
+    ENABLEd color-filter on a plain switch to Gray (and OPT_BIT_DEPTH's
+    handler unconditionally ENABLEd brightness/contrast at depth <= 8) --
+    both are now gated off for GL126, alongside init_options' own default.
+    A frontend switching Color -> Gray must not see color-filter,
+    brightness or contrast reappear (with color-filter's stock default,
+    Green on this model, which gl126::calculate_scan_session refuses
+    before any device I/O). On GL124 the pre-existing behaviour --
+    color-filter re-enabled on Gray -- must be unchanged."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_switching_to_gray_does_not_reopen_hidden_options_on_gl126")
+
+    r = _run(probe, "layout", GL126_DEVICE, "Gray")
+    by_name = {f["name"]: (idx, f) for idx, f in r["items"] if "name" in f}
+    assert r["default_mode"] == "Gray", r["default_mode"]
+    for name in ("color-filter", "brightness", "contrast"):
+        assert by_name[name][1]["inactive"] == "1", (name, by_name[name])
+
+    other = _run(probe, "layout", GL124_DEVICE, "Gray")
+    other_mode = other["default_mode"]
+    assert other_mode == "Gray", other_mode
+    other_by_name = {f["name"]: (idx, f) for idx, f in other["items"] if "name" in f}
+    # Unchanged pre-existing behaviour: GL124 is not GL646+cis, so the
+    # original condition still re-enables color-filter on Gray.
+    assert other_by_name["color-filter"][1]["inactive"] == "0", other_by_name["color-filter"]
+
+    print("test_switching_to_gray_does_not_reopen_hidden_options_on_gl126 OK "
+          "(GL126: color-filter/brightness/contrast stay inactive, mode reads Gray; "
+          "GL124: color-filter still re-enabled on Gray, unchanged)")
+
+
 def main() -> int:
     tests = [
         test_magazine_options_exist_only_for_gl126,
@@ -891,6 +1026,8 @@ def main() -> int:
         test_a_mark_for_another_device_is_ignored_and_cleared,
         test_a_pending_load_without_a_magazine_refuses_and_keeps_the_mark,
         test_a_pending_load_from_the_wrong_state_refuses_and_drops_the_mark,
+        test_dead_options_are_inactive_and_film_group_is_placed_and_ordered,
+        test_switching_to_gray_does_not_reopen_hidden_options_on_gl126,
     ]
     passed = 0
     skipped = 0

@@ -365,9 +365,15 @@ bool magazine_mark_read(std::string* device_key)
     return kind == MagazineMarkKind::Released;
 }
 
-void magazine_mark_clear()
+MagazineMarkClearResult magazine_mark_clear()
 {
-    ::unlink(magazine_mark_path().c_str());
+    if (::unlink(magazine_mark_path().c_str()) == 0) {
+        return MagazineMarkClearResult::Removed;
+    }
+    if (errno == ENOENT) {
+        return MagazineMarkClearResult::NonePresent;
+    }
+    return MagazineMarkClearResult::Error;
 }
 
 } // namespace gl126

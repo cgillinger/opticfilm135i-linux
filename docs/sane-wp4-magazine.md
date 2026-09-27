@@ -753,3 +753,24 @@ leaves — is now covered by two scenarios seeded with the measured
 values. The in-process case (digiKam: Eject film, swap, scan in one
 dialog session) has not been run; it goes through the same code with
 the in-process state instead of the mark.
+
+### 10.6 Every mark write and clear is now logged (2026-09-27)
+
+On 2026-09-27 an "ejected" mark went missing between an eject and the
+next dialog open, with no log evidence of when or why: before this, a
+successful `magazine_mark_write` logged nothing at all (only a failed
+write did), and every `magazine_mark_clear()` call site was silent about
+its reason. Both write call sites (the Released write in
+`magazine_release_impl()`, the Ejected write in `write_ejected_mark()`)
+now go through one shared helper that logs `DBG_info` on success too
+("magazine mark written: `<kind>` for `<device key>` at `<path>`"), and
+every clear site now says why, through a second shared helper
+(`clear_magazine_mark(reason)`): `"failed sequence"` (the `MagazineFailGuard`
+destructor, and the two preflight checks that find the session already
+Failed or the hardware in the wrong state), `"foreign device"` (a mark
+naming a different device key), `"cold refusal"` (a next-strip load
+refused because the scanner was power-cycled since the eject), and
+`"consumed by load"` (a load that completed and the mark it was
+satisfying no longer applies). This is traceability only — no state
+machine transition, precondition or refusal changed; `tests/test_sane_magazine.py`
+(all 28 tests) and `tests/test_sane_lock.py` still pass unchanged.

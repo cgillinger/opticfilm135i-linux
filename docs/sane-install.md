@@ -224,27 +224,90 @@ labelled `PLUSTEK : OpticFilm 135i` with the `genesys:libusb:BBB:DDD` string
 underneath. There is no free-text field, so the device string cannot be typed
 in; pick the row.
 
-**Settings for a plain 3600 colour scan of frame 1:**
+**Step by step: digiKam load, scan, eject** (reviewed at the owner's screen
+2026-09-27 after the dialog was found too cluttered to get a scan started at
+all, docs/ROADMAP.md "digiKam dialog usability"; the option surface below
+reflects the fixes from that review — hidden dead options, a dedicated
+`Film` group, plainer text — not yet re-verified in a live digiKam session).
+Swedish titles below are what a system with this repo's translation catalog
+installed shows (§"Translations" below); the SANE names are in parentheses.
 
-| control | where | value |
-|---|---|---|
-| Source | Basic Options | `Transparency Adapter` (IR is `Transparency Adapter Infrared`) |
-| Mode | Basic Options | **`Color`**. genesys' own default is Gray, and for this model (`is_cis = false`) its default colour filter is **Green** — a single-channel gray the vendor never captures, refused before any device I/O. Gray *is* available, but only with *Color filter = None* (host-side gray) on the Scanner Specific Options tab |
-| Bit depth | Basic Options | 16 (the only value the model offers) |
-| Resolution | Basic Options | 3600 (the list is 600/1200/2400/3600/7200) |
-| Frame | **Scanner Specific Options** | 1 (range 1–6) |
-| Output format | save dialog | PNG or TIFF — both lossless. KSaneCore hands over 16 bits per channel (`QImage::Format_RGBX64`) and digiKam's `DImg` can keep them, but choosing a lossless format is **not evidence** that 16 bits reached the file: check the file itself with `tools/image_probe.py` (below) |
+1. **Basic Options tab** — Källa (`Source`), Läge (`Mode`), Upplösning
+   (`Resolution`), plus the scan-area rectangle, which digiKam draws but the
+   backend ignores: the frame's window is fixed, so dragging a selection
+   changes neither the image nor the time a scan takes.
+   - Källa: `Transparency Adapter` (IR: `Transparency Adapter Infrared`).
+   - Läge: `Color` — this backend's default since this change (genesys'
+     generic default is Gray, and this model's generic colour filter
+     default was Green, a single-channel capture the vendor never performs
+     and GL126 refuses before any device I/O; the option is hidden now, see
+     step 2, with its default set to None so Gray still works as host-side
+     gray if chosen).
+   - **Check Upplösning before pressing Läs in.** It has been seen sitting
+     at 7200 dpi with no clear cause once (cause not established — KSaneCore
+     requests 300 dpi at `sane_open`, which genesys rounds to 600, so 7200
+     is not the constrained default reasserting itself; something else set
+     it), and 7200 costs on the order of three minutes per frame against
+     well under one at 600 — a silently wrong resolution is real time lost,
+     not just a surprising file.
+   *(screenshot: to be added after the owner retakes them)*
+2. **Scanner Specific Options tab** — after this session's changes, only
+   the options that do something on GL126 remain here, grouped under `Film`
+   (a heading `scanimage -A` and xsane show; KSaneWidgets drops SANE groups
+   entirely, so digiKam shows just the four options, in that order, at the
+   top of the tab — no visible heading there), in this order: `Filmmagasin`
+   (`magazine`, the status line — read first), `Ladda film` (`Load film`),
+   `Mata ut film` (`Eject film`), `Bildruta` (`Frame`, 1–6). Every option
+   that never had an effect on this scanner (exposure time,
+   brightness/contrast, lamp timing, the whole calibration-cache family,
+   colour filter) is hidden, so the tab no longer mixes working controls
+   with dead ones. The status
+   field's own layout quirk in KSane (a wide field, long text truncated to
+   its tail) is unchanged by this session — the fix there was shortening
+   every status string to fit and ordering it first, not the widget itself
+   — and still wants a live digiKam session to confirm it reads well now.
+   *(screenshot: to be added after the owner retakes them)*
+3. Back on the **Basic Options** tab, press **Läs in** (Scan/Read — not
+   "Förhandsgranskning": that runs a full 600 dpi pass, never a cheap
+   preview, on this scanner).
+4. **Next strip, without a fresh Load film:** press **Mata ut film**, swap
+   the strip in the magazine, push the magazine back in to the mechanical
+   stop, then press **Läs in** again — the scan itself performs a
+   next-strip load (open + load, no jog), backend-verified on hardware as
+   Test 90. `Ladda film` is only needed after a genuine cold start or a
+   stuck magazine, not between ordinary strips.
 
-`Frame` appears automatically: KSaneWidget puts every option it does not
-handle itself onto a *Scanner Specific Options* tab, using the SANE
-descriptor's title, description and range — which the patch provides.
+**Translations.** KSane looks up every SANE option's title and description
+through gettext, domain `sane-backends`, in whatever catalog is installed at
+`<localedir>/sv/LC_MESSAGES/sane-backends.mo` — normally the one Fedora's
+`sane-backends` package owns and which has never carried GL126-specific
+strings. `tools/sane_install.sh install` now also installs this repo's
+Swedish translations there (built from `po/sv.po` via `make -C po sv.gmo` in
+the clone), keeping a backup of whatever catalog was there first (or a
+record that none was), and a hash of what it installed so a later
+`uninstall`/`status` can tell it apart from a subsequent replacement.
 
-The magazine controls (`Load film`, `Eject film`, and the read-only
-`magazine` status) land on that same tab. **They render awkwardly:** KSane
-draws the status as a wide field and truncates its text, and the layout of
-the two buttons looks odd. This is cosmetic — the controls work — and is a
-known issue (see the roadmap's "Known issues"); a fix needs a digiKam session
-to verify.
+**This replaces a file the `sane-backends` package owns.** `rpm -V
+sane-backends` will flag `/usr/share/locale/sv/LC_MESSAGES/sane-backends.mo`
+as changed after `install`, exactly as it already does for the repointed
+`libsane-genesys.so.1` symlink. A package update that ships a new catalog
+puts the distribution's file back in place (its own package manager owns
+that path); `uninstall` detects this (the live file's hash no longer
+matches what was recorded) and leaves it alone rather than removing the
+package's own file or restoring over it — `status` reports it as "not
+ours -- the distribution's" in that case. A system with no Swedish locale
+installed at all is left untouched, and the option text simply shows in
+English.
+
+The clone's `po/sv.po` is also **newer than Fedora's shipped catalog** for
+strings that have nothing to do with GL126: it comes from a more recent
+upstream snapshot than the sane-backends 1.4.0-6.fc44 RPM this repo was
+developed against, and Fedora's catalog is missing translations upstream
+has since added. Installing it is not GL126-scoped, and an operator on a
+Swedish system will see OTHER genesys options change language too — e.g.
+`calibration-file`'s title shows as "Kalibreringsfil" where Fedora's
+catalog left it as the untranslated English "Calibration file". This is
+expected, not a leak from this change, and reverses cleanly on `uninstall`.
 
 **Things that can ask for something the backend will not do:**
 

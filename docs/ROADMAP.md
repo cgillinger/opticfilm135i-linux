@@ -672,11 +672,25 @@ change; further timing work; repeats of accepted profiles.
   over-long. Scanning and the magazine operations themselves work; this is
   purely how KSaneWidgets draws the options. The code already constrains the
   status to a value list (so KSane does not draw an editable combo) and orders
-  the status before the buttons, but the width/truncation remains. A proper
-  fix — a shorter status string and option sizing that KSane renders cleanly —
-  needs a digiKam session to see the result, so it is tracked here rather than
-  changed blind (which would also churn the WP-3 package). Observed on digiKam
-  9.1.0 / KSane 26.08 (Test 76).
+  the status before the buttons, but the width/truncation remains. Observed
+  on digiKam 9.1.0 / KSane 26.08 (Test 76).
+  **2026-09-27 (offline, part of the digiKam dialog usability review
+  below):** every genesys option that never did anything on GL126
+  (exposure time, brightness/contrast, lamp timing, the calibration-cache
+  family, colour filter) is now hidden, the four film options sit in their
+  own `Film` group between `Enhancement` and `Extras` in this order —
+  `Filmmagasin`/`magazine`, `Ladda film`/`Load film`, `Mata ut
+  film`/`Eject film`, `Bildruta`/`Frame` — and their titles/descriptions
+  are plainer (`docs/sane-install.md` §6). The backend's default mode is
+  now `Color` and its (hidden) colour filter defaults to `None`, so the
+  dialog no longer opens on a single-channel capture this scanner refuses.
+  Swedish translations for all of this were added to the shared
+  `po/sv.po` and are installed by `tools/sane_install.sh install`
+  (`docs/sane-install.md` §6 "Translations"). **Still open:** the wide
+  text field / truncation itself is a KSane widget behaviour this change
+  did not touch, and none of this has been seen in a live digiKam session
+  yet — the retaken screenshots and that session remain the outstanding
+  work (see "digiKam dialog usability" below).
 
 ## C3 — 110 (Pocket Instamatic) film in the strip holder (added 2026-09-19)
 
@@ -881,12 +895,30 @@ started at all — the magazine buttons (`load-film`, `eject-film`), the
 KSane's own preview/scan buttons are spread over two tabs with nothing
 that says what order they go in. Reported with the reservation that it
 may be unfamiliarity with digiKam, but the backend owns what it exposes
-and how. To review: which options really need to be visible, their
-titles and descriptions (KSane shows the SANE option `desc` as a
-tooltip only), their order and grouping, whether the `magazine` string
-can carry the next step more plainly, and whether a one-page "digiKam:
-load, scan, eject" walkthrough with screenshots belongs in
-docs/sane-install.md. Opening the dialog on a connected scanner writes
-nothing (sane_open writes no register), so a review session can look at
-the dialog without a motor move. Not scheduled. (Test 90 ran without it
-on 2026-09-27; the review is still open.)
+and how.
+
+**2026-09-27 (offline, at the owner's screen with the review questions
+below):** every question this entry originally asked has an answer now.
+Which options need to be visible: the eleven that never did anything on
+GL126 are hidden (exposure time, brightness/contrast, lamp timing, the
+calibration-cache family, colour filter); the scan-area rectangle stays
+visible because KSane's preview canvas depends on it, even though it too
+has no effect on the fixed frame window. Titles and descriptions: plainer
+text for `magazine`/`Load film`/`Eject film`/`Frame` (`docs/sane-wp3-submission.md`
+§8 has the rationale for each changed string). Order and grouping: a new `Film` group, placed
+between `Enhancement` and `Extras`, holding `magazine`, `Load film`,
+`Eject film`, `Frame` in that order — status first, then the two actions,
+then the frame number. The `magazine` string itself was not changed
+further (Test 76 already shortened every value to fit and pinned the
+status ahead of the buttons; this pass did not reopen that). A one-page
+"digiKam: load, scan, eject" walkthrough is now in
+`docs/sane-install.md` §6, with two screenshot placeholders and a short
+explanation of how the option text is translated (`po/sv.po`, installed
+by `tools/sane_install.sh install`). Opening the dialog on a connected
+scanner writes nothing (`sane_open` writes no register), so this whole
+review ran without a motor move.
+**Still open:** the retaken screenshots for those two placeholders, and an
+actual live digiKam session to confirm the new layout reads the way this
+review assumes it will — KSane's own widget behaviour (the status field's
+width/truncation) was not touched and was not re-verified. (Test 90 ran
+without either on 2026-09-27.)

@@ -49,6 +49,26 @@ LINK_NAME="libsane-genesys.so.1"
 OURS_GLOB="libsane-genesys-gl126.so.*"
 ORIG_MARK=".libsane-genesys.so.1.opticfilm135i-orig"
 CONF_BACKUP_SUFFIX=".opticfilm135i-backup"
+# Swedish option text (docs/sane-install.md S6): KSane looks up our option
+# titles/descriptions through gettext, domain sane-backends, in whatever
+# catalog is installed at <localedir>/sv/LC_MESSAGES/sane-backends.mo --
+# owned, on a Fedora system, by the sane-backends package. Same backup
+# discipline as the CONF block: back up the distribution's file once (or
+# record that there was none), never overwrite that record, restore byte
+# for byte on uninstall, refuse rather than guess if neither is present
+# while a catalog sits there.
+LOCALE_LANG="sv"
+LOCALE_DOMAIN="sane-backends.mo"
+LOCALE_BACKUP_SUFFIX=".opticfilm135i-backup"
+LOCALE_ABSENT_SUFFIX=".opticfilm135i-absent"
+# The sha256 of the catalog THIS script installed, recorded once at install
+# time next to the backup/absent marker. Same reasoning as the library's
+# ORIG_MARK, inverted: that one names the distribution's file so it is
+# never removed out from under a live link; this one names OUR file, so a
+# later uninstall can tell "still what I installed" from "replaced since
+# (a package update, or someone else)" without trusting the CURRENT build,
+# which may have moved on since this install ran.
+LOCALE_INSTALLED_SUFFIX=".opticfilm135i-installed"
 GL126_SOURCES=(gl126.h gl126.cpp gl126_registers.h gl126_tables.h gl126_tables.cpp
                gl126_ops.h gl126_ops.cpp gl126_lock.h gl126_lock.cpp)
 
@@ -97,6 +117,49 @@ installed_name() {
 }
 
 is_ours() { case "$1" in libsane-genesys-gl126.so.*) return 0 ;; *) return 1 ;; esac; }
+
+sha256_of() { sha256sum "$1" | cut -d' ' -f1; }
+
+# ---------------------------------------------------------- sv locale catalog
+# Where the distribution's (and our) Swedish catalog lives. Requires the
+# directory to already exist -- like backend_dir(), it does not create system
+# locale infrastructure that was never there, it only replaces one file
+# inside it that some other package (or a previous run of this script) put
+# there.
+#
+# Whichever candidate already carries one of our three record files
+# (backup, absence marker, installed-hash) wins, so a directory that
+# appeared or disappeared between an install and a later status/uninstall
+# never orphans them; only when neither candidate has any of our records
+# does this fall back to plain existence.
+locale_dir() {
+    local d
+    for d in "$ROOT/usr/share/locale" "$ROOT/usr/local/share/locale"; do
+        if [ -e "$d/$LOCALE_LANG/LC_MESSAGES/$LOCALE_DOMAIN$LOCALE_BACKUP_SUFFIX" ] ||
+           [ -e "$d/$LOCALE_LANG/LC_MESSAGES/$LOCALE_DOMAIN$LOCALE_ABSENT_SUFFIX" ] ||
+           [ -e "$d/$LOCALE_LANG/LC_MESSAGES/$LOCALE_DOMAIN$LOCALE_INSTALLED_SUFFIX" ]; then
+            echo "$d"; return
+        fi
+    done
+    for d in "$ROOT/usr/share/locale" "$ROOT/usr/local/share/locale"; do
+        [ -d "$d/$LOCALE_LANG/LC_MESSAGES" ] && { echo "$d"; return; }
+    done
+    die "no $LOCALE_LANG/LC_MESSAGES locale directory found under /usr/share/locale or /usr/local/share/locale"
+}
+
+locale_catalog() { echo "$(locale_dir)/$LOCALE_LANG/LC_MESSAGES/$LOCALE_DOMAIN"; }
+
+# The catalog this repo builds, and the staleness check install refuses on:
+# po/sv.gmo is a build product (tests/test_sane_install.py fakes it; the real
+# one comes from `make -C po sv.gmo` in the clone) and is trusted only when it
+# is at least as new as the po/sv.po it was built from.
+built_locale() {
+    local f="$CLONE/po/sv.gmo"
+    [ -e "$f" ] || die "no built Swedish catalog: $f is missing -- run 'make -C po sv.gmo' in $CLONE first"
+    [ "$f" -ot "$CLONE/po/sv.po" ] && \
+        die "$f is older than po/sv.po -- run 'make -C po sv.gmo' in $CLONE first"
+    echo "$f"
+}
 
 # The config directory compiled into the library (sanei_config's DEFAULT_DIRS,
 # "./:<sysconfdir>/sane.d"). It MUST match where genesys.conf actually lives.
@@ -194,6 +257,28 @@ cmd_status() {
     grep -qE '^\s*genesys\s*$' "$ROOT/etc/sane.d/dll.conf" 2>/dev/null \
         && echo "dll.conf       : genesys enabled" \
         || echo "dll.conf       : genesys NOT enabled"
+
+    local loc_dir loc_cat loc_hash loc_built
+    if loc_dir="$(locale_dir 2>/dev/null)"; then
+        loc_cat="$loc_dir/$LOCALE_LANG/LC_MESSAGES/$LOCALE_DOMAIN"
+        loc_hash="$loc_cat$LOCALE_INSTALLED_SUFFIX"
+        if [ ! -e "$loc_cat" ]; then
+            echo "sv catalog     : none at $loc_cat"
+        elif [ -e "$loc_hash" ] && [ "$(sha256_of "$loc_cat")" = "$(cat "$loc_hash")" ]; then
+            # The live file's hash still matches what we recorded at
+            # install time: still ours, not replaced by a package update
+            # since (§ package-update model below).
+            if loc_built="$(built_locale 2>/dev/null)" && cmp -s "$loc_built" "$loc_cat"; then
+                echo "sv catalog     : $loc_cat (ours, identical to the current build)"
+            else
+                echo "sv catalog     : $loc_cat (ours, DIFFERS from the current build -- reinstall)"
+            fi
+        else
+            echo "sv catalog     : $loc_cat (present, not ours -- the distribution's; our records dropped at next uninstall)"
+        fi
+    else
+        echo "sv catalog     : no $LOCALE_LANG/LC_MESSAGES directory under /usr/share/locale or /usr/local/share/locale"
+    fi
 }
 
 # --------------------------------------------------------------- install
@@ -234,6 +319,17 @@ cmd_install() {
     [ -f "$CONF" ] || die "$CONF does not exist -- is sane-backends installed?"
     [ -w "$CONF" ] || die "$CONF is not writable"
     [ -w "$(dirname "$CONF")" ] || die "$(dirname "$CONF") is not writable"
+    # Swedish catalog: only a precondition when there is somewhere to put it.
+    # A system with no sv/LC_MESSAGES at all just does not get the feature --
+    # that is not this install's problem to fix -- but a system that DOES
+    # have Swedish sane-backends strings must not have them silently
+    # regressed by a stale or missing local build.
+    local loc_dir="" built_gmo=""
+    if loc_dir="$(locale_dir 2>/dev/null)"; then
+        built_gmo="$(built_locale)"
+        [ -w "$loc_dir/$LOCALE_LANG/LC_MESSAGES" ] || \
+            die "$loc_dir/$LOCALE_LANG/LC_MESSAGES is not writable"
+    fi
     current="$(readlink "$link")"
 
     # ---- changes, each undoable -----------------------------------------
@@ -273,6 +369,56 @@ cmd_install() {
     ln -sfn "$name" "$link" || abort "cannot repoint $LINK_NAME"
     echo "installed $dir/$name and repointed $LINK_NAME at it"
 
+    if [ -n "$loc_dir" ]; then
+        local loc_cat loc_backup loc_absent loc_hash
+        loc_cat="$loc_dir/$LOCALE_LANG/LC_MESSAGES/$LOCALE_DOMAIN"
+        loc_backup="$loc_cat$LOCALE_BACKUP_SUFFIX"
+        loc_absent="$loc_cat$LOCALE_ABSENT_SUFFIX"
+        if [ ! -e "$loc_backup" ] && [ ! -e "$loc_absent" ]; then
+            # First install here: preserve exactly what was there before,
+            # one way or the other, so uninstall can put it back without
+            # guessing. Never taken again once one of the two exists.
+            if [ -e "$loc_cat" ]; then
+                cp -a "$loc_cat" "$loc_backup" || abort "cannot back up $loc_cat"
+                rollback_push "rm -f '$loc_backup'"
+            else
+                : > "$loc_absent" || abort "cannot record that $loc_cat did not exist"
+                rollback_push "rm -f '$loc_absent'"
+            fi
+        fi
+        # This run's own undo, separate from the one-time backup above: if
+        # $loc_cat already exists (the distribution's on a first install,
+        # or ours from a previous run), keep a copy and push its restore;
+        # if not, push a plain removal. Mirrors the library's $name.prev.
+        if [ -e "$loc_cat" ]; then
+            cp -a "$loc_cat" "$loc_cat.prev" || abort "cannot back up $loc_cat for this run"
+            rollback_push "mv -f '$loc_cat.prev' '$loc_cat'"
+        else
+            rollback_push "rm -f '$loc_cat'"
+        fi
+        cp -a "$built_gmo" "$loc_cat.new" || abort "cannot stage the Swedish catalog"
+        rollback_push "rm -f '$loc_cat.new'"
+        mv -f "$loc_cat.new" "$loc_cat" || abort "cannot install the Swedish catalog"
+        if [ -z "$ROOT" ] && command -v restorecon >/dev/null 2>&1; then
+            restorecon "$loc_cat" || true
+        fi
+        # Package-update detection: record what we just installed's hash,
+        # so a later uninstall/status can tell it apart from a
+        # replacement without trusting the (possibly since-changed) build.
+        loc_hash="$loc_cat$LOCALE_INSTALLED_SUFFIX"
+        if [ -e "$loc_hash" ]; then
+            cp -a "$loc_hash" "$loc_hash.prev" || abort "cannot back up $loc_hash"
+            rollback_push "mv -f '$loc_hash.prev' '$loc_hash'"
+        else
+            rollback_push "rm -f '$loc_hash'"
+        fi
+        sha256_of "$loc_cat" > "$loc_hash" || abort "cannot record the installed catalog's hash"
+        echo "installed the Swedish catalog at $loc_cat"
+    else
+        echo "sane_install: no sv/LC_MESSAGES locale directory found -- option text will" >&2
+        echo "              show in English; the library and genesys.conf were still installed." >&2
+    fi
+
     # Test hook: force a failure at this exact point (after the library and
     # the symlink have changed) so tests/test_sane_install.py can prove the
     # rollback. Staging roots only -- it is inert on the real system.
@@ -300,6 +446,10 @@ cmd_install() {
     trap - ERR
     ROLLBACK=()                                       # committed
     rm -f "$dir/$name.prev"
+    if [ -n "$loc_dir" ]; then
+        rm -f "$loc_dir/$LOCALE_LANG/LC_MESSAGES/$LOCALE_DOMAIN.prev"
+        rm -f "$loc_dir/$LOCALE_LANG/LC_MESSAGES/$LOCALE_DOMAIN$LOCALE_INSTALLED_SUFFIX.prev"
+    fi
     echo
     echo "Next: tools/sane_install.sh status, then (hardware session) tools/sane_install.sh verify"
 }
@@ -371,7 +521,60 @@ cmd_uninstall() {
     rm -f "$dir/$ORIG_MARK"
 
     uninstall_conf
+    uninstall_locale
     echo "the distribution's own libsane-genesys.so.1.* was never modified"
+}
+
+# Restore the sv locale catalog to its pre-install state. Two questions,
+# answered in order, neither guessed at:
+#
+#   1. Did WE ever touch this file? Install always writes a backup or an
+#      absence marker before its first overwrite here, so neither existing
+#      means we never did -- the file, if any, is the distribution's, as
+#      found, and is left alone (this is the state a system installed with
+#      a pre-2026-09-27 script, or never installed by this script at all,
+#      is in: not an error, just nothing of ours to undo).
+#   2. If we DID touch it, is it still what we installed? The hash
+#      recorded at install time answers that without trusting the
+#      CURRENT build, which may have moved on: a mismatch means a package
+#      update (or someone else) replaced our file since, and that
+#      replacement is not ours to remove or overwrite -- only our own
+#      backup/marker/record are cleaned up.
+uninstall_locale() {
+    local loc_dir loc_cat loc_backup loc_absent loc_hash live_hash
+    if ! loc_dir="$(locale_dir 2>/dev/null)"; then
+        echo "no $LOCALE_LANG/LC_MESSAGES locale directory found; nothing to restore for the Swedish catalog" >&2
+        return 0
+    fi
+    loc_cat="$loc_dir/$LOCALE_LANG/LC_MESSAGES/$LOCALE_DOMAIN"
+    loc_backup="$loc_cat$LOCALE_BACKUP_SUFFIX"
+    loc_absent="$loc_cat$LOCALE_ABSENT_SUFFIX"
+    loc_hash="$loc_cat$LOCALE_INSTALLED_SUFFIX"
+
+    if [ ! -e "$loc_backup" ] && [ ! -e "$loc_absent" ]; then
+        rm -f "$loc_hash"     # a hash record with neither is not meaningful
+        echo "$loc_cat: not ours (no pre-install record here) -- left untouched"
+        return 0
+    fi
+
+    if [ -e "$loc_cat" ] && [ -e "$loc_hash" ]; then
+        live_hash="$(sha256_of "$loc_cat")"
+        if [ "$live_hash" != "$(cat "$loc_hash")" ]; then
+            rm -f "$loc_backup" "$loc_absent" "$loc_hash"
+            echo "$loc_cat was replaced since our install (its hash no longer matches our"
+            echo "record) -- left as found; our backup/marker/record were removed"
+            return 0
+        fi
+    fi
+
+    if [ -e "$loc_backup" ]; then
+        cp -a "$loc_backup" "$loc_cat" || die "cannot restore $loc_cat from $loc_backup"
+        rm -f "$loc_backup" "$loc_hash"
+        echo "restored $loc_cat from the pre-install backup"
+    elif [ -e "$loc_absent" ]; then
+        rm -f "$loc_cat" "$loc_absent" "$loc_hash"
+        echo "removed $loc_cat (nothing existed there before install)"
+    fi
 }
 
 # Remove only our marked block; keep everything else, including edits made

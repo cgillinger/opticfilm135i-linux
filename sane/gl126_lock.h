@@ -213,8 +213,12 @@ bool magazine_mark_read(MagazineMarkKind* kind, std::string* device_key);
     callers as the write overload above). */
 bool magazine_mark_read(std::string* device_key);
 
-/** Remove the mark. No-op when there is none. */
-void magazine_mark_clear();
+/** What magazine_mark_clear() actually did, so a caller that logs the
+    outcome (sane/gl126.cpp's clear_magazine_mark()) can say which. */
+enum class MagazineMarkClearResult { Removed, NonePresent, Error };
+
+/** Remove the mark. Removing nothing (there was none) is not an error. */
+MagazineMarkClearResult magazine_mark_clear();
 
 } // namespace gl126
 } // namespace genesys
