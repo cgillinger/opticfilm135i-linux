@@ -21,10 +21,9 @@
 /* GL126 registers the backend addresses by name.
 
    Only the registers whose meaning is established from the captures are
-   named here (docs/protocol-notes.md); the rest are written as opaque
-   values from the generated tables in gl126_tables.h, which is what the
-   vendor driver does. Naming a register we have not established would
-   invite reasoning about it.
+   named here; the rest are written as opaque values from the generated
+   tables in gl126_tables.h, which is what the vendor driver does. Naming
+   a register we have not established would invite reasoning about it.
 */
 
 #ifndef BACKEND_GENESYS_GL126_REGISTERS_H

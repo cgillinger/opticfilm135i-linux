@@ -17,11 +17,21 @@ submitted, and by whom, is Christian's decision.
 
 | | |
 |---|---|
-| Branch | `wp3-gl126-submission-v3` |
-| Worktree | `~/Dokument/Github/sane-wp3-v3` (a `git worktree` of the sane-backends clone) |
+| Branch | `wp3-gl126-submission-v4` |
+| Worktree | `~/Dokument/Github/sane-wp3-v4` (a `git worktree` of the sane-backends clone) |
 | Base | `f8b5e16`, "Merge branch 'saned_unit_tests' into 'master'", fetched 2026-09-28 |
 | Commits | 5 |
-| Tip tree | `d891db5dfc1e2aa7815180193046e5df153ababe` |
+| Tip tree | `16671d82bde8b107c921e8d789452dba442ee01f` |
+
+Fourth revision, 2026-09-28 evening: the comment cleanup. Every source
+comment and log message that cited the project's private documents,
+test-log numbers, work packages, review rounds, reviewers or dates was
+rewritten to state the fact without the citation, so the series reads
+as ordinary upstream code; one pointer to the public protocol
+documentation was added to `gl126.h`'s header and the generated tables'
+header. Compiled code identical to v3 (comment-stripped comparison of
+all 21 files, generator `--check`, full offline suite). Same base and
+commit messages as v3.
 
 Third revision, 2026-09-28: refreshed from the repository's current
 `sane/` (everything since the 2026-09-15 export — the strict cold-start
@@ -38,10 +48,10 @@ top of it and nothing in this series interacts with it. Should upstream
 move again before a submission, only the then-relevant difference needs
 assessing; the package is not invalidated wholesale (§7).
 
-Previous revisions: v2 (2026-09-15, base `7fb102b`, tip tree
-`65a7b8bd…`), v1 (2026-09-13, base `1d47d7c`, four commits). Both
-branches still exist in the sane-backends clone; the exported package
-is v3.
+Previous revisions: v3 (2026-09-28, same base, tip tree `d891db5d…`),
+v2 (2026-09-15, base `7fb102b`, tip tree `65a7b8bd…`), v1 (2026-09-13,
+base `1d47d7c`, four commits). All branches still exist in the
+sane-backends clone; the exported package is v4.
 
 The worktree is separate from `~/Dokument/Github/sane-backends`, which
 keeps the development arrangement (symlinks into this repo's `sane/`)
@@ -61,8 +71,8 @@ To recreate it from scratch by hand instead:
 
 ```
 cd ~/Dokument/Github/sane-backends
-git worktree add -b wp3-gl126-submission-v3 ~/Dokument/Github/sane-wp3-v3 f8b5e16
-cd ~/Dokument/Github/sane-wp3-v3
+git worktree add -b wp3-gl126-submission-v4 ~/Dokument/Github/sane-wp3-v4 f8b5e16
+cd ~/Dokument/Github/sane-wp3-v4
 cp -L ~/Dokument/Github/opticfilm135i-linux/sane/gl126*.{h,cpp} backend/genesys/
 git apply ~/Dokument/Github/opticfilm135i-linux/sane/gl126-integration.patch
 # the man page, AUTHORS and .desc-status hunks of commit 5 are not in the
@@ -101,7 +111,7 @@ git apply --include=AUTHORS --include=doc/sane-genesys.man \
 
 ## 3. What was verified, and how
 
-**Build.** Configured and built from the branch alone (2026-09-28,
+**Build.** Configured and built from the branch alone (v4, 2026-09-28,
 `./autogen.sh && ./configure --sysconfdir=/etc`, then `lib`, `sanei` and
 `backend/libsane-genesys.la`). Exit 0, **zero compiler errors or
 warnings**. This is the check that matters most: it proves the package
@@ -139,8 +149,8 @@ the man page chip list, and the `.desc` status and comment.
 `indent -gnu` was not run — genesys is C++ and does not follow it; the
 new code follows the surrounding style.
 
-**`tstbackend -l 1` — run 2026-09-28 against this build (Test 93):
-`warnings: 0  error: 0  checks: 22965`, exit 0.** The tool was built
+**`tstbackend -l 1` — run 2026-09-28 against the v3 build (Test 93) and
+again against this v4 build (Test 94): `warnings: 0  error: 0  checks: 22965`, exit 0, both times.** The tool was built
 from the package tree's own `frontend/tstbackend.c` and linked directly
 against its `libsane-genesys.la`; level 1 covers init/exit, ten
 open/close cycles and the option-consistency walk (recursion depth 1;
@@ -179,7 +189,9 @@ Earlier work covering the profiles, geometry and image path is in
 
 ## 5. Draft contribution description
 
-*Not sent. Text only, for review.*
+*Not sent. Text only, for review. Written to stand on its own as a merge
+request description: no dates, no internal document names, no test
+numbers. Rewritten 2026-09-28 to that standard.*
 
 > **genesys: support for the GL126 and the Plustek OpticFilm 135i**
 >
@@ -190,87 +202,86 @@ Earlier work covering the profiles, geometry and image path is in
 > its scan flow is the vendor's rather than GL124's, so it is implemented
 > as its own command set rather than a GL124 model variant. The register
 > sequences are generated from USB captures of the vendor driver and
-> verified byte-exact against them; the generator is not part of this
-> series, but the tables it emits are, with the provenance recorded in
-> their header.
+> verified byte-exact against them. The generator is not part of this
+> series; the tables it emits are, with the provenance recorded in their
+> header. The protocol notes and the reverse-engineering record are
+> public: https://github.com/cgillinger/opticfilm135i-linux
 >
 > The scanner works differently enough from a flatbed to be worth
 > describing. It scans one frame of a loaded film strip per pass,
 > addressed by number through a `frame` option rather than by a scan
 > area, because the geometry is fixed by the holder and positioning is a
 > single absolute feed from the load reference. The film magazine is
-> handled through three further options: the vendor's own insert flow
+> handled through three further options. The vendor's own insert flow
 > requires the operator to remove the magazine and re-seat it to a
-> mechanical stop in the middle of the sequence, and since SANE offers no
-> way to ask for that during `sane_start`, `load-film` does the whole
-> thing in one call — it releases the magazine, then polls the loader
-> sensor read-only (up to 120 s) until it has seen the magazine taken
-> out and pushed back in, and then loads it. A scan never loads the
-> magazine itself: with nothing loaded, `sane_start` refuses after one
-> register read. `eject-film` ejects, and `check-status` re-reads the
-> hardware. A `magazine` option tells the operator the next step; it
-> accepts a SET (so a frontend that greys out a strictly read-only
-> option still renders it legibly), but the value is fixed by the state
-> machine, not by the caller. All five options are inactive on every
-> other ASIC, and the options the GL126 does not implement are inactive
-> for it.
+> mechanical stop in the middle of the sequence, and SANE offers no way
+> to ask for that during `sane_start`, so `load-film` does the whole
+> thing in one call: it releases the magazine, polls the loader sensor
+> read-only (up to 120 s) until it has seen the magazine taken out and
+> pushed back in, and then loads it. A scan never loads the magazine
+> itself; with nothing loaded, `sane_start` refuses after one register
+> read. `eject-film` ejects, and `check-status` re-reads the hardware.
+> A `magazine` option tells the operator the next step. It accepts a SET
+> so that a frontend which greys out strictly read-only options still
+> renders it legibly, but its value is fixed by the state machine, not
+> by the caller. All five options are inactive on every other ASIC, and
+> the genesys options the GL126 does not implement are inactive for it.
 >
 > The motor waits fall into two kinds, and which kind each one is, is
 > marked at the site in the generated tables.
 >
 > The waits that gate a film-bearing move or a scan fail closed: the feed
-> and traverse completions of the load and the operator-reseat jog, the
-> per-frame positioning move, and the park. A timeout on any of these —
-> like an unacknowledged write or a short transfer — ends the sequence
+> and traverse completions of the load and of the release jog, the
+> per-frame positioning move, and the park. A timeout on any of these,
+> like an unacknowledged write or a short transfer, ends the sequence
 > with nothing further written and no recovery attempted, because this
 > hardware has a documented history of stalling when driven from an
-> undefined state.
+> undefined state. The nine motor completions inside the vendor's
+> power-on sequence fail closed as well. Each is the only wait between
+> one motor start and the next, and a timeout that continued would start
+> the following move, up to eight of them before the closing check, on
+> an engine not known to have finished. Every logged cold start, with
+> the magazine latched or loose, has completed each of the nine moves in
+> 1.0 to 1.9 s, so this rule changes no observed run, only the
+> never-observed one.
 >
-> The nine motor completions inside the vendor's power-on sequence fail
-> closed as well (since 2026-09-15; the companion driver's own wait there
-> is strict too). Each is the only wait between one motor start and the
-> next, and a timeout that continued would start the following move — up
-> to eight of them before the closing check — on an engine not known to
-> have finished; nothing about this hardware makes that safe, and the one
-> recorded command sent on top of a running engine hung the firmware.
-> Every logged cold start, with the magazine latched or loose, has
-> completed each of the nine moves in 1.0–1.9 s, so this rule changes no
-> observed run — only the never-observed one.
->
-> The remaining waits inside the power-on sequence — its opening ready
-> poll, the per-round ready polls and the settle reads — and the eject
+> The remaining waits inside the power-on sequence (its opening ready
+> poll, the per-round ready polls and the settle reads) and the eject
 > completion are best-effort: a timeout is recorded and the sequence
-> continues, mirroring the companion driver's own non-raising status
-> reads. This is not a relaxation of the rule above but a consequence of
-> it. The opening ready poll times out on every cold start (at power-on
-> the engine is not yet in the class it waits for), a latched magazine
-> adds nothing to that, and the sequence must still complete — that is a
-> required, supported operation. The eject completion is deliberately
-> checked against the eject-done state rather than full idle, which a
-> successful eject never re-enters. What makes these safe is that none of
-> them separates one motor start from the next, and that the gates are
+> continues. This is not a relaxation of the rule above but a
+> consequence of it. The opening ready poll times out on every cold
+> start, because at power-on the engine is not yet in the class it waits
+> for; a latched magazine adds nothing to that, and the sequence must
+> still complete, since freeing a latched magazine after a power cycle
+> is a required, supported operation. The eject completion is checked
+> against the eject-done state rather than full idle, which a successful
+> eject never re-enters. What makes these safe is that none of them
+> separates one motor start from the next, and that the gates are
 > downstream and hard: after the power-on sequence the backend reads
-> reg 0x01 and fails the session unless it is the idle-homed 0x22; before
-> the load it re-reads reg 0x01, the loader sensor and the base-table
-> registers and refuses unless the unit is idle-homed with the magazine
-> present; and every session opens with the same start-state check. So a
-> best-effort timeout never reaches a film-bearing move — it leaves the
-> transport in a state the next check evaluates, and the recovery is a
-> power cycle, never an automatic retry.
+> reg 0x01 and fails the session unless it is the idle-homed 0x22;
+> before the load it re-reads reg 0x01, the loader sensor and the
+> base-table registers and refuses unless the unit is idle-homed with
+> the magazine present; and every session opens with the same
+> start-state check. So a best-effort timeout never reaches a
+> film-bearing move. It leaves the transport in a state the next check
+> evaluates, and the recovery is a power cycle, never an automatic
+> retry.
 >
 > Testing: one unit, over an extended bring-up. Every resolution the
-> vendor's captures cover, plus the infrared pass, has been scanned
-> through the backend from `scanimage`, with the magazine loaded by the
-> companion command-line driver. The backend-driven magazine flow — a
-> full load → scan → eject cycle with no external command, from
-> `scanimage` and from digiKam, including a power-cycled unit with a
-> latched magazine — has been run at 3600 dpi in its earlier two-call
-> form and at 600 dpi in the one-call form this series ships (five loads
-> on one power-on, the timeout and both refusals exercised). Interrupting a scan
-> mid-pass leaves the transport unparked and needs a power cycle; no
-> automatic recovery exists, by design. Known limitations are listed in
-> the accompanying notes; the most important is that a single unit
-> exists for this work, so nothing here is verified across units.
+> vendor's captures cover (600, 1200, 2400, 3600, 7200 dpi) plus the
+> infrared pass has been scanned through the backend from `scanimage`.
+> The backend-driven magazine flow, a full load, scan and eject cycle
+> with no external command, has been run from `scanimage` and from
+> digiKam, including a power-cycled unit with a latched magazine, the
+> 120 s timeout and both refusals. `tstbackend -l 1` passes against this
+> series (22 965 checks, 0 warnings, 0 errors, no writes to the device);
+> `tstbackend -l 2` and `scanimage -T` were not run, because they cancel
+> a scan mid-pass, which on this unit needs a power cycle, and there is
+> one unit. Interrupting a scan mid-pass leaves the transport unparked
+> and needs a power cycle; no automatic recovery exists, by design.
+> Known limitations are listed below; the most important is that a
+> single unit exists for this work, so nothing here is verified across
+> units.
 
 ## 6. Known limitations, to accompany any submission
 
@@ -284,13 +295,13 @@ Earlier work covering the profiles, geometry and image path is in
    software scans a whole strip in one operation; ours does not, and the
    protocol work for it is described in the roadmap but not done.
 4. **GL126 always calibrates.** The calibration cache is deliberately not
-   reused — a restored cache made `begin_scan` refuse — so every scan
+   reused (a restored cache made `begin_scan` refuse), so every scan
    pays roughly four seconds of calibration.
 5. **The interrupt endpoint is not drained.** The genesys USB abstraction
    has no interrupt transfer. Nothing in the SANE flow reads that
    endpoint, so nothing here is harmed. Whether a backend-driven load
    leaves it in an overflow state for other software was predicted but
-   not observed: the one direct check afterwards (Test 75) read the
+   not observed: the one direct check afterwards on hardware read the
    endpoint normally.
 6. **A process lock shared with an external driver.** The backend takes a
    `flock` on a well-known path to keep itself and the reverse-engineered
@@ -308,7 +319,7 @@ Earlier work covering the profiles, geometry and image path is in
    data; rendering a negative is the frontend's job. The companion
    driver's preview shows a cast on some strips that also appears in the
    vendor's own rendering and has not been traced to any code
-   (`docs/colour-rendering-analysis.md`). Nothing in this series depends
+   (the analysis is in the companion repository). Nothing in this series depends
    on it.
 
 ## 8. Changes to shared genesys code, hunk by hunk
@@ -515,8 +526,8 @@ Listed so the decision is informed, not to schedule it.
    then-relevant difference.
 2. **Run the SANE test tools, or state they were not run — done for
    this revision.** `tstbackend -l 1` ran 2026-09-28 against the v3
-   build (Test 93): 22 965 checks, 0 warnings, 0 errors, zero writes to
-   the device. `tstbackend -l 2+` and `scanimage -T` drive the motor and
+   build (Test 93) and again against v4 (Test 94): 22 965 checks, 0
+   warnings, 0 errors, zero writes to the device, both times. `tstbackend -l 2+` and `scanimage -T` drive the motor and
    cancel a scan mid-pass and are documented as not run (§3). A later
    revision of the package needs the run repeated, since the evidence
    is version-bound.
@@ -544,8 +555,10 @@ Listed so the decision is informed, not to schedule it.
    option and the test-mode counters (§8's addenda, all now in the
    package). Rebuilt standalone (0 warnings, 111 gl126 symbols), the
    three backend suites pass against it, and it is re-exported to
-   `sane/wp3-package/`. The package is now exactly the repository's
-   `sane/` at the commit that records Test 92.
+   `sane/wp3-package/`. v4 (2026-09-28 evening) is v3 with the source
+   comments and log messages cleaned of every internal citation; code
+   identical. The package is exactly the repository's `sane/` at the
+   commit that records the cleanup.
 5. **Decide how much of the magazine machinery to offer.** Items 6 and 7
    of §6 are the two most likely to be challenged; the file handling
    behind them is hardened and documented in `gl126_lock.h`.

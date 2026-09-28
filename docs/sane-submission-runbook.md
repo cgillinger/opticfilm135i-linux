@@ -11,8 +11,9 @@ re-deliberation.
 ## Where the three stand
 
 The rebase and the package preparation (blockers 6 and 4) are **done for
-the current revision** (v3, 2026-09-28): the series is refreshed from the
-repository's `sane/` as of Test 92, rebased onto `f8b5e16`, split so the
+the current revision** (v4, 2026-09-28): the series is refreshed from the
+repository's `sane/` as of Test 92, its comments cleaned of every internal
+citation, rebased onto `f8b5e16`, split so the
 shared `ImagePipelineNodeExtract` fix is its own first commit, built
 standalone (0 warnings, 111 gl126 symbols), verified by the three backend
 suites, and exported to `sane/wp3-package/` with its ids and a
@@ -29,9 +30,9 @@ What is still version-bound, and so is left for the submission session:
 - **The conformance run (7) must describe the submitted build.** A
   maintainer's implicit question is "did these pass on the code you are
   submitting?" So `tstbackend -l 1` runs against the final build, after
-  any final re-rebase. **Done for v3, 2026-09-28 (Test 93): 22 965
-  checks, 0 warnings, 0 errors, zero writes.** Repeat only if the
-  package is re-exported again.
+  any final re-rebase. **Done for v3 and again for v4, 2026-09-28
+  (Tests 93, 94): 22 965 checks, 0 warnings, 0 errors, zero writes, both
+  times.** Repeat only if the package is re-exported again.
 - **The decision (8) follows the evidence (7).**
 
 ## Trigger
@@ -81,7 +82,7 @@ revision table. If it has not, the current package stands unchanged.
 known idle state (reg 0x01 = 0x22) and nothing else owning the device
 (watch for VMware autoConnect), run `tstbackend -l 1` against the final
 build. Record the result verbatim. It is read-only; no motor moves.
-How it was done for v3 (Test 93): build the tool from the package tree
+How it was done for v3 and v4 (Tests 93, 94): build the tool from the package tree
 with `make -C frontend tstbackend tstbackend_LDADD="../lib/liblib.la
 ../backend/libsane-genesys.la -lstdc++" tstbackend_DEPENDENCIES="../lib/
 liblib.la ../backend/libsane-genesys.la"` (linked straight to the
