@@ -150,7 +150,9 @@ one exists; "offline" means implemented and tested without the scanner.
   (strict cold-start completions, the post-eject precondition fix, the
   dialog cleanup, English-only strings, WP-5 one-button loading); builds
   standalone with zero warnings; recreated identically from the bundle and
-  from the patches. Still prepared only, nothing sent.
+  from the patches. Still prepared only, nothing sent. The SANE
+  project's `tstbackend -l 1` run against that build (Test 93): 22 965
+  checks, 0 warnings, 0 errors, zero writes to the scanner.
 
 ## v0.1.2 — 2026-09-12
 IR channel alignment fix. See [docs/release-notes-v0.1.2.md](docs/release-notes-v0.1.2.md).

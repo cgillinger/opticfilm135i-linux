@@ -29,7 +29,9 @@ What is still version-bound, and so is left for the submission session:
 - **The conformance run (7) must describe the submitted build.** A
   maintainer's implicit question is "did these pass on the code you are
   submitting?" So `tstbackend -l 1` runs against the final build, after
-  any final re-rebase.
+  any final re-rebase. **Done for v3, 2026-09-28 (Test 93): 22 965
+  checks, 0 warnings, 0 errors, zero writes.** Repeat only if the
+  package is re-exported again.
 - **The decision (8) follows the evidence (7).**
 
 ## Trigger
@@ -78,7 +80,15 @@ revision table. If it has not, the current package stands unchanged.
 **2. Conformance run (blocker 7).** With Christian's go, the scanner in a
 known idle state (reg 0x01 = 0x22) and nothing else owning the device
 (watch for VMware autoConnect), run `tstbackend -l 1` against the final
-build. Record the result verbatim. It is read-only; no motor moves. Write
+build. Record the result verbatim. It is read-only; no motor moves.
+How it was done for v3 (Test 93): build the tool from the package tree
+with `make -C frontend tstbackend tstbackend_LDADD="../lib/liblib.la
+../backend/libsane-genesys.la -lstdc++" tstbackend_DEPENDENCIES="../lib/
+liblib.la ../backend/libsane-genesys.la"` (linked straight to the
+package's genesys library — the dll backend would dlopen the installed
+one instead), then `./tstbackend -l 1 -r 1` with `SANE_DEBUG_GENESYS=8`
+to a file; the default recursion depth 5 does not finish in ten
+minutes. Write
 the "not run, because …" note for the scan-driving tools. Fold both into
 `docs/sane-wp3-submission.md` (§3 and §7).
 

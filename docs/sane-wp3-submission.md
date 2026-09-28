@@ -139,9 +139,20 @@ the man page chip list, and the `.desc` status and comment.
 `indent -gnu` was not run — genesys is C++ and does not follow it; the
 new code follows the surrounding style.
 
-**Not run, deliberately: `scanimage -T` and `tstbackend`.** Neither is an
-offline test. Both open a device and would drive the scanner, and neither
-can be isolated to a mock. The nearest isolated equivalent already exists
+**`tstbackend -l 1` — run 2026-09-28 against this build (Test 93):
+`warnings: 0  error: 0  checks: 22965`, exit 0.** The tool was built
+from the package tree's own `frontend/tstbackend.c` and linked directly
+against its `libsane-genesys.la`; level 1 covers init/exit, ten
+open/close cycles and the option-consistency walk (recursion depth 1;
+the default depth 5 is combinatorial and was stopped by a timeout with
+the same clean partial report). The backend's log shows 21 control
+transfers in the whole run, every one a read of reg 0x01, and zero
+writes. Its two info classes are the genesys-wide named groups and the
+vendor-string documentation note.
+
+**Not run, deliberately: `scanimage -T` and `tstbackend -l 2` and up.**
+Neither is an offline test. Both start a scan and cancel it mid-pass,
+and neither can be isolated to a mock. The nearest isolated equivalent already exists
 and passes: `tests/gl126_calibration_cache_probe.cpp` and
 `tests/gl126_magazine_probe.cpp` drive the real public flow
 (`sane_open` → `sane_control_option` → `sane_start`) through genesys's own
@@ -502,12 +513,13 @@ Listed so the decision is informed, not to schedule it.
    one line this series does not use (§1), and the patch applied clean.
    If upstream moves again before a submission, re-assess only the
    then-relevant difference.
-2. **Run the SANE test tools, or state they were not run.** Source-read
-   2026-09-15 (`docs/sane-submission-runbook.md`): `tstbackend -l 1` is
-   read-only (no motor) and is the one to run, against the final build;
-   `tstbackend -l 2+` and `scanimage -T` drive the motor and cancel a
-   scan mid-pass and are documented as not run. All need Christian's go
-   and a hardware session, which this work package does not open.
+2. **Run the SANE test tools, or state they were not run — done for
+   this revision.** `tstbackend -l 1` ran 2026-09-28 against the v3
+   build (Test 93): 22 965 checks, 0 warnings, 0 errors, zero writes to
+   the device. `tstbackend -l 2+` and `scanimage -T` drive the motor and
+   cancel a scan mid-pass and are documented as not run (§3). A later
+   revision of the package needs the run repeated, since the evidence
+   is version-bound.
 3. **The generated-table question, answered rather than avoided.**
    `gl126_tables.cpp` is 1.9 MB of generated data whose generator lives
    in this repository. The prepared answer: the tables are the vendor's
