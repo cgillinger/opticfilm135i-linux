@@ -212,8 +212,8 @@ digiKam, the NO_DOCS dialog text is digiKam's own).
 
 Supersedes the two-call protocol of WP-4 §3 and §10 for the frontend
 path (WP-4's programs and preconditions remain the building blocks). The
-WP-3 submission package must be re-exported after this (its §8 gets the
-new hunks). The Python driver's `of135i load` keeps its Enter prompt; it
+WP-3 submission package was re-exported after this (2026-09-28, v3, once
+Test 92 had passed; its §8 carries the new hunks). The Python driver's `of135i load` keeps its Enter prompt; it
 could adopt the same sensor edge later (candidate, not part of WP-5).
 
 ## 9. Implementation notes (2026-09-27, offline)
@@ -455,9 +455,9 @@ operates.)
   the owner's call, in the owner's own future session.
 - `docs/sane-wp3-submission.md` §8 was given the new hunks (`OPT_CHECK_
   STATUS`, the option handlers, the two test-mode-only genesys fixes) --
-  the WP-3 branch/bundle itself was NOT re-exported (that is a separate,
-  explicit "re-export" action the submission runbook gates, not part of
-  this task's instructions).
+  the WP-3 branch/bundle itself was NOT re-exported by that task (a
+  separate, explicit action the submission runbook gates); it was done
+  2026-09-28 after Test 92 (v3).
 - The Python driver's `of135i load` was not touched, per the task's hard
   rule; WP-5 §8 already notes it as a later candidate, unchanged here.
 

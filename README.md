@@ -42,7 +42,8 @@ The project has two parts, at different stages:
   2026-09-28: five loads, two traps read-only, cross-process):
   **[docs/sane-wp5-load-button.md](docs/sane-wp5-load-button.md)**.
   What it does not do is anything upstream: a submission package for the
-  SANE project is prepared and reviewable, and nothing has been sent. Its
+  SANE project is prepared and reviewable, current with the backend as of
+  Test 92 (re-exported 2026-09-28), and nothing has been sent. Its
   verification is tracked independently of the CLI driver's — see the
   roadmap.
 
@@ -78,15 +79,15 @@ functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md]
   Ordinary scanning needs no
   `--force-calibration`. Install:
   **[docs/sane-install.md](docs/sane-install.md)**. A submission package
-  for the SANE project is prepared and under review
-  (**[docs/sane-wp3-submission.md](docs/sane-wp3-submission.md)**);
-  nothing has been submitted. Per-profile detail:
+  for the SANE project is prepared, current with the backend
+  (**[docs/sane-wp3-submission.md](docs/sane-wp3-submission.md)**,
+  re-exported 2026-09-28); nothing has been submitted. Per-profile detail:
   **[docs/ROADMAP.md](docs/ROADMAP.md)**
 
 **digiKam cheat sheet, the one rule** (SANE has no dialogs, so this and
 the "Magazine — next step" status line on the Film tab are the whole
 interface — **[docs/sane-wp5-load-button.md](docs/sane-wp5-load-button.md)**,
-offline only so far):
+hardware-verified in Test 92):
 
 1. **Press Load film first**, then take the magazine fully out and push
    it back in to the mechanical stop — it loads by itself, no further

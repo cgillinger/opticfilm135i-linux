@@ -958,6 +958,6 @@ timeout, calibration, POSITION, PARK, the image path, or the Python
 driver -- `docs/sane-wp5-load-button.md` section 4 says so explicitly,
 and it is the same claim this document makes throughout. The WP-3
 submission package (§ "Relation to the other packages" in
-`docs/sane-wp5-load-button.md`) must be re-exported after WP-5, since its
-§8 gets the new hunks (`OPT_CHECK_STATUS`, the option handlers, the test-
-mode register defaults).
+`docs/sane-wp5-load-button.md`) was re-exported after WP-5 (2026-09-28,
+v3), its §8 carrying the new hunks (`OPT_CHECK_STATUS`, the option
+handlers, the test-mode register defaults).

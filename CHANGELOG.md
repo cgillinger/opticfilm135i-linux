@@ -117,7 +117,8 @@ one exists; "offline" means implemented and tested without the scanner.
   process now resets a stale Loaded/Failed claim instead of refusing
   forever; the sensor-clear debounce needs 2 consecutive reads, not one.
   Full list and rationale: `docs/sane-wp5-load-button.md` §9.5. 389
-  offline tests pass (was 380). Still offline only.
+  offline tests pass (was 380). Hardware-verified the next day (Test
+  92, above).
 
 ### Film and holders
 - **110 (Pocket Instamatic) film in the 35 mm strip holder**: `--film 110`
@@ -144,6 +145,12 @@ one exists; "offline" means implemented and tested without the scanner.
 - SANE lock and magazine-mark files hardened against hard links and FIFOs.
 - WP-3 submission package prepared and rebased onto current upstream —
   prepared only, nothing sent.
+- WP-3 package re-exported 2026-09-28 (v3, `sane/wp3-package/`): rebased
+  onto upstream `f8b5e16` and refreshed with everything since 2026-09-15
+  (strict cold-start completions, the post-eject precondition fix, the
+  dialog cleanup, English-only strings, WP-5 one-button loading); builds
+  standalone with zero warnings; recreated identically from the bundle and
+  from the patches. Still prepared only, nothing sent.
 
 ## v0.1.2 — 2026-09-12
 IR channel alignment fix. See [docs/release-notes-v0.1.2.md](docs/release-notes-v0.1.2.md).

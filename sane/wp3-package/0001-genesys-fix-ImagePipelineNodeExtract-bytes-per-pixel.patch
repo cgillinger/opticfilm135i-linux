@@ -1,6 +1,6 @@
-From 077df55d3e264b173cca2a1c317759a9e98d483b Mon Sep 17 00:00:00 2001
+From b7b4142eded3a1a15090ed89c819bd286c042d58 Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
-Date: Tue, 15 Sep 2026 12:05:27 +0200
+Date: Mon, 28 Sep 2026 19:07:54 +0200
 Subject: [PATCH 1/5] genesys: fix ImagePipelineNodeExtract bytes-per-pixel for
  multi-channel rows
 
@@ -10,9 +10,9 @@ CHANNEL. For a three-channel 16-bit format that is 2, so it copied one
 third of each row and zero-padded the rest. Use get_pixel_row_bytes(
 format, 1), the bytes of one whole pixel.
 
-No in-tree model reached this node with a multi-channel format before the
-GL126 infrared crop is the first, so no existing model's output changes;
-it is a latent bug fixed ahead of the first user.
+No in-tree model reached this node with a multi-channel format before;
+the GL126 infrared crop is the first, so no existing model's output
+changes. It is a latent bug fixed ahead of the first user.
 ---
  backend/genesys/image_pipeline.cpp | 6 +++++-
  1 file changed, 5 insertions(+), 1 deletion(-)

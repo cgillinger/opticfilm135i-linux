@@ -11,17 +11,19 @@ re-deliberation.
 ## Where the three stand
 
 The rebase and the package preparation (blockers 6 and 4) are **done for
-the current revision** (2026-09-15): the series is rebased onto `7fb102b`,
-split so the shared `ImagePipelineNodeExtract` fix is its own first
-commit, built standalone (0 warnings, 107 gl126 symbols), verified by the
-three backend suites, and exported to `sane/wp3-package/` with its ids and
-a verification table. A concrete package exists for Christian to assess.
+the current revision** (v3, 2026-09-28): the series is refreshed from the
+repository's `sane/` as of Test 92, rebased onto `f8b5e16`, split so the
+shared `ImagePipelineNodeExtract` fix is its own first commit, built
+standalone (0 warnings, 111 gl126 symbols), verified by the three backend
+suites, and exported to `sane/wp3-package/` with its ids and a
+verification table. A concrete package exists for Christian to assess.
 
 What is still version-bound, and so is left for the submission session:
 
 - **A final upstream re-check.** Upstream sane-backends keeps moving. At
   submission time, re-fetch and compare: if it has touched the paths this
-  series changes (it had not between `1d47d7c` and `7fb102b`), re-rebase
+  series changes (between `7fb102b` and `f8b5e16` it had, by one line in
+  a helper the series does not use — assessed and folded in), re-rebase
   and re-export; if not, the current package stands. Not a wholesale
   redo — only the then-relevant difference is assessed.
 - **The conformance run (7) must describe the submitted build.** A
@@ -65,10 +67,10 @@ implied by "finish B2", "prepare upstream", or any earlier go.
 exported (`sane/wp3-package/`).
 
 **1. Final upstream re-check (blockers 6 and 4 — already prepared).** The
-five-commit series is current against `7fb102b` and exported. Fetch
+five-commit series is current against `f8b5e16` and exported. Fetch
 `origin/master` again; if it has touched `backend/genesys/`, the
 `Makefile.am`, `genesys.conf.in`, the `.desc`, the man page or `AUTHORS`
-since `7fb102b`, re-rebase as a real port (read the new upstream, do not
+since `f8b5e16`, re-rebase as a real port (read the new upstream, do not
 paste), rebuild standalone with zero warnings, re-run the offline checks
 against the branch, and re-export to `sane/wp3-package/` with a fresh
 revision table. If it has not, the current package stands unchanged.
