@@ -6666,3 +6666,25 @@ package, version-bound to tip tree `d891db5d…`. `scanimage -T` and
 `tstbackend -l 2` and up remain deliberately not run (they start and
 cancel scans mid-pass; this unit needs a power cycle after an aborted
 pass and there is one unit).
+
+
+### Test 94: `tstbackend -l 1` repeated against the WP-3 v4 build — PASS, zero writes (2026-09-28)
+
+**What.** The package was re-exported as v4 the same evening: source
+comments and log messages cleaned of every internal citation, compiled
+code identical to v3 (comment-stripped comparison of all 21 files,
+generator `--check`, full offline suite). Since the conformance evidence
+is version-bound, Test 93 was repeated against the v4 build (worktree
+`wp3-gl126-submission-v4`, tip tree `16671d82…`), same method: the tool
+built from the tree's own `frontend/tstbackend.c`, linked directly to its
+`libsane-genesys.la`, `-l 1 -r 1`, `SANE_DEBUG_GENESYS=8`. Scanner freshly
+power-cycled by the owner (reg 0x01 = 0x00, cold; the level-1 tests only
+read that register), magazine loose in the slot, device `libusb:001:009`.
+Files: `tstbackend-v4-l1-r1.{out,genesys.log,exit}` in the private
+analysis area `tstbackend-20260928/`.
+
+**Result.** Identical to Test 93: `warnings: 0  error: 0  checks: 22965`,
+exit 0, the same two info classes (named groups, vendor-string note). The
+backend's log: 21 control transfers, all `read_register (0x01) -> 0x00`,
+zero writes. **PASS.** Blocker 7's evidence now describes the exported v4
+package.

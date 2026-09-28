@@ -36,12 +36,12 @@ namespace gl126 {
 
 namespace {
 
-/* One fd for the whole process -- one lock path per host, exactly like
-   the driver (of135i/safety.py: a single ProcessLock instance per
-   session, no per-device path). -1 means not held. flock() is a
-   property of the open file description, so a second fd in the same
-   process would conflict with the first rather than share it -- hence
-   one fd, reference-counted rather than reopened. */
+/* One fd for the whole process, one lock path per host, exactly like
+   the driver (a single process lock instance per session, no per-device
+   path). -1 means not held. flock() is a property of the open file
+   description, so a second fd in the same process would conflict with
+   the first rather than share it, hence one fd, reference-counted rather
+   than reopened. */
 int g_lock_fd = -1;
 
 /* How many acquire() calls are currently outstanding. 0 means not held
@@ -68,8 +68,8 @@ std::string now_iso8601_utc()
    O_NOFOLLOW makes the open() itself fail (ELOOP) on the symlink case;
    this check catches what O_NOFOLLOW does not: a directory (an
    O_RDONLY open of a directory succeeds), a device node created at the
-   path, or -- since a hard link is not a symlink at all, just another
-   directory entry for the same regular-file inode -- a hard link onto
+   path, or, since a hard link is not a symlink at all, just another
+   directory entry for the same regular-file inode, a hard link onto
    a victim file (st_nlink >= 2; an ordinary, never-linked lock/mark
    file always has st_nlink == 1). Throws with `path` in the message;
    the caller has not touched the fd's content yet. */
@@ -139,14 +139,14 @@ bool process_lock_acquire(std::string* holder)
     std::string path = process_lock_path();
 
     // O_NOFOLLOW: the lock lives at a predictable path in a shared,
-    // world-writable directory (/tmp) -- never follow a symlink planted
+    // world-writable directory (/tmp), never follow a symlink planted
     // there onto some other file this process happens to be able to
     // write to. A symlink at the path fails open() with ELOOP.
     // O_NONBLOCK: the same predictable path could instead hold a FIFO or
     // a device node; without O_NONBLOCK, opening a FIFO for reading (or
     // some character devices) blocks the open() itself until a writer
     // shows up, which would hang this call before the regular-file check
-    // below ever runs. On a regular file O_NONBLOCK is a no-op -- it does
+    // below ever runs. On a regular file O_NONBLOCK is a no-op, it does
     // not affect the flock() or the later read()/write() calls.
     int fd = open(path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0666);
     if (fd < 0 && (errno == EACCES || errno == EPERM)) {
@@ -182,9 +182,9 @@ bool process_lock_acquire(std::string* holder)
     g_lock_fd = fd;
     g_lock_refs = 1;
 
-    // Best-effort holder line, exactly the driver's format (safety.py
-    // ProcessLock.acquire); a read-only fd cannot be written to, and
-    // that is fine -- the lock itself is what matters.
+    // Best-effort holder line, exactly the driver's own format; a
+    // read-only fd cannot be written to, and that is fine, the lock
+    // itself is what matters.
     if (ftruncate(g_lock_fd, 0) == 0) {
         std::string line = "pid " + std::to_string(static_cast<long>(getpid())) +
                            " since " + now_iso8601_utc() + " (sane genesys gl126)\n";
@@ -199,7 +199,7 @@ void process_lock_release()
 {
     if (g_lock_refs == 0) {
         // No-op: nothing to release. Covers both "never acquired" and
-        // "already released" -- callers are not required to track
+        // "already released"; callers are not required to track
         // whether their own acquire succeeded before calling this.
         return;
     }
@@ -223,7 +223,7 @@ int process_lock_refs()
     return g_lock_refs;
 }
 
-// ------------------------------------------------ the magazine mark (WP-4)
+// ------------------------------------------------ the magazine mark
 
 std::string magazine_mark_path()
 {
@@ -248,14 +248,14 @@ bool magazine_mark_write(MagazineMarkKind kind, const std::string& device_key)
     // place would follow a symlink planted at the mark path straight
     // into its target, and would leave a half-written file visible to a
     // concurrent reader. rename() replaces the mark path's directory
-    // entry itself -- including a symlink entry -- without ever opening
+    // entry itself, including a symlink entry, without ever opening
     // or following what that entry used to point to.
     std::string mark_path = magazine_mark_path();
     std::string tmp_path = mark_path + ".tmp." + std::to_string(static_cast<long>(getpid()));
 
     // O_EXCL already refuses a pre-existing FIFO/device at the temp path
     // (the path is fresh, PID-suffixed); O_NONBLOCK is added for the same
-    // uniformity as every other open() in this file -- it costs nothing
+    // uniformity as every other open() in this file, it costs nothing
     // here since O_EXCL guarantees this process created the file.
     int fd = ::open(tmp_path.c_str(),
                     O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0666);
@@ -263,12 +263,12 @@ bool magazine_mark_write(MagazineMarkKind kind, const std::string& device_key)
         return false;
     }
 
-    // The device key goes on its OWN line: it is whatever string the SANE
+    // The device key goes on its own line: it is whatever string the SANE
     // frontend uses to name the device, and it can contain spaces (the
     // backend's own test mode produces "test device:0x07b3:0x1436"), so a
     // space-delimited field would truncate it and silently look like a
     // mark for some other device. First line stays human-readable, since
-    // `cat` on this file should say what it is -- and its FIRST WORD is
+    // `cat` on this file should say what it is, and its first word is
     // the kind ("released" or "ejected"), not a fixed constant any more.
     std::string line = std::string(magazine_mark_kind_name(kind)) + " " +
                        now_iso8601_utc() + " (sane genesys gl126)\n" + device_key + "\n";
@@ -293,7 +293,7 @@ bool magazine_mark_write(const std::string& device_key)
 bool magazine_mark_read(MagazineMarkKind* kind, std::string* device_key)
 {
     // O_NONBLOCK: this path is read unconditionally before every load, so
-    // the open() itself must never block -- a FIFO planted here (no
+    // the open() itself must never block, a FIFO planted here (no
     // writer attached) would otherwise hang the open() before the
     // regular-file check below is ever reached. On the regular file this
     // function actually expects, O_NONBLOCK has no effect on the read().
@@ -306,7 +306,7 @@ bool magazine_mark_read(MagazineMarkKind* kind, std::string* device_key)
         struct stat st{};
         if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1) {
             // Not a mark we wrote (symlink, directory, FIFO, hard link to
-            // a victim file, ...): treat exactly like "no mark" -- this
+            // a victim file, ...): treat exactly like "no mark", this
             // function must never throw.
             ::close(fd);
             return false;
@@ -366,7 +366,7 @@ bool magazine_mark_read(std::string* device_key)
         return false;
     }
     // Back-compat: this overload only ever meant a Released mark, so an
-    // Ejected one reads as "no mark" through it -- exactly as it would
+    // Ejected one reads as "no mark" through it, exactly as it would
     // have before that kind existed.
     return kind == MagazineMarkKind::Released;
 }

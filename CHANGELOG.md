@@ -4,7 +4,8 @@ Notable changes to the Plustek OpticFilm 135i Linux driver and its SANE
 backend port. Entries name the hardware evidence (docs/test-log.md) where
 one exists; "offline" means implemented and tested without the scanner.
 
-## Unreleased (master since v0.1.2)
+## v0.2.0 — 2026-09-28
+The SANE backend, one-button loading, next-strip loading, 110 film. See [docs/release-notes-v0.2.0.md](docs/release-notes-v0.2.0.md).
 
 ### Magazine handling
 - **`of135i load --next-strip`** (2026-09-25): load the next strip after an
@@ -73,8 +74,8 @@ one exists; "offline" means implemented and tested without the scanner.
   step`, its seven values now each name the frontend's own button
   ("... push in, Scan" instead of "... push in and scan"), and its
   tooltip (`desc`) spells out the whole load/scan/eject procedure. The
-  README gained a matching six-line "digiKam cheat sheet". Not yet seen
-  live.
+  README gained a matching six-line "digiKam cheat sheet". Seen live in
+  Test 92.
 - **One-button loading verified on hardware** (2026-09-28, Test 92): from
   digiKam and from `scanimage`, five loads on one power-on (one cold with
   jog, four without), feed and traverse on the first poll every time; the
@@ -99,7 +100,7 @@ one exists; "offline" means implemented and tested without the scanner.
   --load-film` hand off to a separate scanning invocation. Status line
   values grew from seven to twelve (`docs/sane-wp5-load-button.md` §3.6).
   Design and implementation notes: `docs/sane-wp5-load-button.md`.
-  **Test 92 (hardware) pending, owner's go required.**
+  Hardware-verified the next day (Test 92, above).
 - **WP-5 review round two** (offline, 2026-09-27, later the same day --
   an independent reviewer plus the coordinator, nine findings): an
   Ejected-origin retry could lose its no-jog/lenient-regs treatment the
@@ -153,6 +154,14 @@ one exists; "offline" means implemented and tested without the scanner.
   from the patches. Still prepared only, nothing sent. The SANE
   project's `tstbackend -l 1` run against that build (Test 93): 22 965
   checks, 0 warnings, 0 errors, zero writes to the scanner.
+- **Source comments cleaned for submission** (2026-09-28 evening, v4 of
+  the package): every comment and log message in the nine GL126 files,
+  the generated tables and the shared genesys hunks that cited the
+  project's private documents, test numbers, work packages, review rounds,
+  reviewers or dates now states the fact without the citation; one
+  pointer to the public protocol documentation added to the headers.
+  Compiled code identical (comment-stripped comparison of all 21 files);
+  389 offline tests; `tstbackend -l 1` repeated against v4 (Test 94).
 
 ## v0.1.2 — 2026-09-12
 IR channel alignment fix. See [docs/release-notes-v0.1.2.md](docs/release-notes-v0.1.2.md).

@@ -1,4 +1,4 @@
-From ea469909ae046c91459ae6416a208b2a05baa87b Mon Sep 17 00:00:00 2001
+From ba843c0eedde54f45c8bc0463ba5f84d7dc127fb Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
 Date: Mon, 28 Sep 2026 19:07:54 +0200
 Subject: [PATCH 3/5] genesys: add the Plustek OpticFilm 135i (07b3:1436)
@@ -10,10 +10,10 @@ consulted by any GL126 hook; the entries carry valid ids only so the
 model registers.
 ---
  backend/genesys.conf.in           |   3 +
- backend/genesys/tables_model.cpp  | 115 ++++++++++++++++++++++++++++++
+ backend/genesys/tables_model.cpp  | 113 ++++++++++++++++++++++++++++++
  backend/genesys/tables_sensor.cpp |  52 ++++++++++++++
  doc/descriptions/genesys.desc     |   6 ++
- 4 files changed, 176 insertions(+)
+ 4 files changed, 174 insertions(+)
 
 diff --git a/backend/genesys.conf.in b/backend/genesys.conf.in
 index 6e6a8d7..1153059 100644
@@ -27,10 +27,10 @@ index 6e6a8d7..1153059 100644
 +# Plustek OpticFilm 135i
 +usb 0x07b3 0x1436
 diff --git a/backend/genesys/tables_model.cpp b/backend/genesys/tables_model.cpp
-index 321d179..4b587a3 100644
+index 321d179..81e890b 100644
 --- a/backend/genesys/tables_model.cpp
 +++ b/backend/genesys/tables_model.cpp
-@@ -2311,6 +2311,121 @@ void genesys_init_usb_device_tables()
+@@ -2311,6 +2311,119 @@ void genesys_init_usb_device_tables()
  
  
  
@@ -55,16 +55,15 @@ index 321d179..4b587a3 100644
 +    /* Every resolution is captured with the dual-light (IR + visible) pass
 +       except 3600 dpi, which also has the vendor's visible-only pass; the
 +       IR method delivers the IR lines of the same dual pass as a separate
-+       scan (docs/sane-hook8-dual.md).
++       scan.
 +
-+       This array's OWN order has no effect on anything -- found while
-+       fixing the libksane resolution-combo bug (docs/sane-install.md S6):
++       This array's own order has no effect on anything:
 +       MethodResolutions::get_resolutions() (device.cpp) unconditionally
-+       re-sorts DESCENDING and deduplicates whatever is here before any
++       re-sorts descending and deduplicates whatever is here before any
 +       caller sees it, so listing it ascending (which was tried first)
 +       changed nothing. Left in the upstream convention (highest first)
-+       for that reason; the actual fix -- GL126's word list reversed to
-+       ascending for the frontend combo only -- lives where the ordering
++       for that reason; the actual fix, GL126's word list reversed to
++       ascending for the frontend combo only, lives where the ordering
 +       is real, genesys.cpp's set_resolution_option_values(). */
 +    model.resolutions = {
 +        {
@@ -105,11 +104,10 @@ index 321d179..4b587a3 100644
 +    model.eject_feed = 0.0;
 +
 +    /* Colour-line shift at the motor's base 3600 dpi: in the raw stream a
-+       feature appears in R 24 lines after B, in G 12 lines after B
-+       (docs/protocol-notes.md pass 18; the driver's image.align_channels,
-+       whose output the core's ComponentShiftLines node reproduces exactly:
-+       output line k = R[k+24], G[k+12], B[k]; verified offline on the
-+       Test 52/53 images, docs/test-log.md). */
++       feature appears in R 24 lines after B, in G 12 lines after B,
++       matching the driver's own align_channels(), whose output the
++       core's ComponentShiftLines node reproduces exactly: output line k
++       = R[k+24], G[k+12], B[k]; verified offline on captured images. */
 +    model.ld_shift_r = 24;
 +    model.ld_shift_g = 12;
 +    model.ld_shift_b = 0;
@@ -119,12 +117,12 @@ index 321d179..4b587a3 100644
 +    model.is_cis = false;
 +    /* Not sheetfed: that path ejects after every scan and reloads before
 +       calibration, which breaks scanning several frames of one strip on
-+       one load (docs/sane-port.md, decision 4). The magazine is handled
-+       through the load-film / eject-film options instead. */
++       one load. The magazine is handled through the load-film /
++       eject-film options instead. */
 +    model.is_sheetfed = false;
 +
 +    model.sensor_id = SensorId::CCD_PLUSTEK_OPTICFILM_135I;
-+    /* Never consulted by the GL126 hooks -- see the note above. */
++    /* Never consulted by the GL126 hooks, see the note above. */
 +    model.adc_id = AdcId::PLUSTEK_OPTICFILM_7200;
 +    model.gpio_id = GpioId::PLUSTEK_OPTICFILM_7200;
 +    model.motor_id = MotorId::PLUSTEK_OPTICFILM_7200;
@@ -132,16 +130,16 @@ index 321d179..4b587a3 100644
 +    /* No ModelFlag::WARMUP: the core's warm-up moves the head to the
 +       calibration area and runs a lamp warm-up before every scan, neither
 +       of which the vendor does on this unit. The lamp warm-up that exists
-+       is the retry inside the gain calibration (docs/sane-hook2-offset.md,
-+       section 4).
++       is the retry inside the gain calibration.
 +       DISABLE_SHADING_CALIBRATION: the shading tables are measured and
 +       uploaded by the backend's own calibration hook, in the vendor's
 +       format; the core's shading pass, repark and coefficient upload are
-+       never used (docs/sane-hook4-shading.md, section 5). */
++       never used. */
 +    /* HOST_SIDE_GRAY: the vendor's scan pass is always 3-channel; a gray
 +       request is scanned in colour and merged on the host by the core's
-+       pipeline, so the hooks see one and the same session (Test 52,
-+       attempt 2: a gray default request was refused by the frame check). */
++       pipeline, so the hooks see one and the same session (seen on
++       hardware: a gray default request was refused by the frame
++       check). */
 +    model.flags = ModelFlag::DISABLE_SHADING_CALIBRATION |
 +                  ModelFlag::HOST_SIDE_GRAY;
 +

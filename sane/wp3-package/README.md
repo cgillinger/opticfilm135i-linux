@@ -5,19 +5,21 @@ issue, mail or contact with the SANE project or anyone else, and nothing
 here initiates one. This directory holds the five-commit series in two
 forms that recreate it without manual reconstruction.
 
-**Revision v3, exported 2026-09-28.** The series is exactly the
-repository's `sane/` (the nine `gl126_*` files and
-`gl126-integration.patch`) at the commit that records Test 92 — WP-5's
-one-button loading verified on hardware the same day — rebased onto
-current upstream. It supersedes v2 (2026-09-15, base `7fb102b`, tip tree
-`65a7b8bd…`), which predated the strict cold-start completions, Test 90's
-post-eject fix, the digiKam dialog cleanup and WP-5.
+**Revision v4, exported 2026-09-28 (evening).** The series is exactly
+the repository's `sane/` (the nine `gl126_*` files and
+`gl126-integration.patch`) after the comment cleanup that followed Test
+92, rebased onto current upstream. Its compiled code is identical to v3
+(exported earlier the same day): v4 differs from v3 only in comments and
+in the wording of log messages. v3 in turn superseded v2 (2026-09-15,
+base `7fb102b`, tip tree `65a7b8bd…`), which predated the strict
+cold-start completions, the post-eject fix, the digiKam dialog cleanup
+and one-button loading.
 
 ## What is in here
 
 | file | what |
 |---|---|
-| `wp3-gl126-submission.bundle` | `git bundle` of the series, `f8b5e16..wp3-gl126-submission-v3`. Preserves the exact commit ids. |
+| `wp3-gl126-submission.bundle` | `git bundle` of the series, `f8b5e16..wp3-gl126-submission-v4`. Preserves the exact commit ids. |
 | `0001-genesys-fix-ImagePipelineNodeExtract-bytes-per-pixel.patch` | commit 1 |
 | `0002-genesys-add-support-for-the-GL126-ASIC.patch` | commit 2 |
 | `0003-genesys-add-the-Plustek-OpticFilm-135i-07b3-1436.patch` | commit 3 |
@@ -32,16 +34,32 @@ branch 'saned_unit_tests' into 'master'", `origin/master` as fetched
 
 | # | commit | tree | subject |
 |---|---|---|---|
-| 1 | `b7b4142eded3a1a15090ed89c819bd286c042d58` | `f1d6d51fdf7809def518fe46a409488a6af29c65` | genesys: fix ImagePipelineNodeExtract bytes-per-pixel for multi-channel rows |
-| 2 | `49191cf37aa1304403f1710f3db984694909ce3e` | `d49bc14e5fe41dabbacb12ead9702c75c5c0e362` | genesys: add support for the GL126 ASIC |
-| 3 | `ea469909ae046c91459ae6416a208b2a05baa87b` | `24d6ded320c5dfcc85e82c3264e60b72c1796ef8` | genesys: add the Plustek OpticFilm 135i (07b3:1436) |
-| 4 | `9ff847a3da90955bed646bc2cdfd3c90b5013381` | `6f12ecc68d3574bcf3a6a4101e60432044d408ad` | genesys: frame selection and magazine handling for the OpticFilm 135i |
-| 5 | `030641e1b41f5d439a84dab7450bffc538a0e83d` | `d891db5dfc1e2aa7815180193046e5df153ababe` | genesys: document the GL126 and the OpticFilm 135i |
+| 1 | `94727815e8e653bb5e0d4ca7782e7634f31d8b02` | `f1d6d51fdf7809def518fe46a409488a6af29c65` | genesys: fix ImagePipelineNodeExtract bytes-per-pixel for multi-channel rows |
+| 2 | `d29d1bb9828a07ef220b735dd0de09263d4189ce` | `9c0df55c7d6d76c527238fd92261422e75481b5f` | genesys: add support for the GL126 ASIC |
+| 3 | `ba843c0eedde54f45c8bc0463ba5f84d7dc127fb` | `d766ce69e99d80f4f65486f799b54e0c99289f7d` | genesys: add the Plustek OpticFilm 135i (07b3:1436) |
+| 4 | `119019414f237ca035dfc347837f7ea4727f337c` | `eb6993ec95b38c3afcccd5f744e21e1f5399143c` | genesys: frame selection and magazine handling for the OpticFilm 135i |
+| 5 | `f46b829263957610e3565d63c0197c05a2577504` | `16671d82bde8b107c921e8d789452dba442ee01f` | genesys: document the GL126 and the OpticFilm 135i |
 
-The tip tree `d891db5d…` is the identity of the package: any route below
+The tip tree `16671d82…` is the identity of the package: any route below
 that ends on that tree has recreated it exactly.
 
-### What changed since the previous export (v2, base `7fb102b`)
+### What changed since v3 (same day, same base, tip tree `d891db5d…`)
+
+Comments and log-message wording only; the compiled code is identical.
+Every source comment that referred to the project's private working
+documents, test-log numbers, work packages, review rounds, reviewers or
+dates was rewritten to state the technical fact without the citation,
+and one pointer to the public protocol documentation was added to
+`gl126.h`'s header and to the generated tables' header. Debug and error
+message strings lost the same citations and their double-hyphen dashes;
+no option name, title, description, status value, mark keyword or device
+string changed. Verified by stripping comments from every file of v3 and
+v4 and comparing the remainder (identical for all 21 files touched;
+string literals differ only in `gl126.cpp` and `gl126_ops.cpp`, in
+messages), by the generator's `--check`, and by the full offline suite.
+The commit messages are v3's.
+
+### What changed between v2 (base `7fb102b`) and v3
 
 - **Rebased onto current upstream** (`7fb102b` → `f8b5e16`, 14 upstream
   commits). One of them touches a file this series changes: `f561b04`,
@@ -90,10 +108,10 @@ Either route needs a clone of sane-backends containing the base commit.
 ```
 git clone https://gitlab.com/sane-project/backends.git sane-backends
 cd sane-backends
-git fetch /path/to/wp3-gl126-submission.bundle wp3-gl126-submission-v3
+git fetch /path/to/wp3-gl126-submission.bundle wp3-gl126-submission-v4
 git checkout -b wp3-gl126-submission FETCH_HEAD
-git rev-parse HEAD            # 030641e1b41f5d439a84dab7450bffc538a0e83d
-git rev-parse HEAD^{tree}     # d891db5dfc1e2aa7815180193046e5df153ababe
+git rev-parse HEAD            # f46b829263957610e3565d63c0197c05a2577504
+git rev-parse HEAD^{tree}     # 16671d82bde8b107c921e8d789452dba442ee01f
 ```
 
 **Route B — the patches (same trees, new commit ids):**
@@ -103,7 +121,7 @@ git clone https://gitlab.com/sane-project/backends.git sane-backends
 cd sane-backends
 git checkout -b wp3-gl126-submission f8b5e16
 git am /path/to/000[1-5]-*.patch
-git rev-parse HEAD^{tree}     # d891db5dfc1e2aa7815180193046e5df153ababe
+git rev-parse HEAD^{tree}     # 16671d82bde8b107c921e8d789452dba442ee01f
 ```
 
 `git bundle verify wp3-gl126-submission.bundle` lists the one prerequisite
@@ -122,9 +140,9 @@ make -j8 -C backend libsane-genesys.la
 nm -D backend/.libs/libsane-genesys.so | grep -c gl126     # 111
 ```
 
-## Verification of this export (2026-09-28)
+## Verification of this export (v4, 2026-09-28 evening)
 
-Done in the v3 worktree and in two fresh clones in a scratch directory,
+Done in the v4 worktree and in two fresh clones in a scratch directory,
 separate from the development clone:
 
 | check | result |
@@ -135,17 +153,19 @@ separate from the development clone:
 | `tests/test_sane_calibration_cache.py` against that build | 6 passed |
 | `tests/test_sane_magazine.py` against that build | 42 passed |
 | `tools/gen_sane_tables.py --check` (tables == generator output) | up to date |
-| Route B: `git am` of the five patches onto `f8b5e16` in a clean clone | tip tree `d891db5d…` — **identical** |
-| Route A: fetch from the bundle in a clean clone | tip `030641e…`, tree `d891db5d…` — **identical** |
+| Route B: `git am` of the five patches onto `f8b5e16` in a clean clone | tip tree `16671d82…` — **identical** |
+| Route A: fetch from the bundle in a clean clone | tip `f46b829…`, tree `16671d82…` — **identical** |
+| comment-stripped code of every file vs v3 | identical (21 files) |
 | symlinks in the recreated tree | 0 (`git ls-files -s`, mode 120000) |
 
 The full offline gate of this repository (`tools/release_check.py`)
 reports FULL VERIFICATION, 389 tests, 0 skipped, against the development
 build (which includes the same GL126 files); see `docs/offline-checks.md`.
 
-Not run: `scanimage -T`, `tstbackend` (both drive the device; the plan is
-in `docs/sane-submission-runbook.md`, and only `tstbackend -l 1` is judged
-safe — read-only, no motor — to be run against the final version).
+`tstbackend -l 1 -r 1`, built from this tree and linked directly against
+its `libsane-genesys.la`, against this build (Test 94): `warnings: 0  error: 0  checks: 22965`, exit 0; the backend saw 21 control transfers, all reads of reg 0x01, and no write. Not run:
+`scanimage -T` and `tstbackend -l 2` and up (they cancel a scan mid-pass;
+`docs/sane-submission-runbook.md`).
 
 ## Nothing leaves this repository
 

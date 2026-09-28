@@ -18,20 +18,22 @@
    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-/* GL126 command set -- Plustek OpticFilm 135i (07b3:1436).
+/* GL126 command set: Plustek OpticFilm 135i (07b3:1436).
 
-   STATUS: stage 1 skeleton, UNTESTED against hardware. Every hook that
-   would move the motor refuses with a clear message instead of guessing a
-   sequence; those are brought up one at a time in stage 3, on the one
+   Every hook that moves the motor refuses with a clear message instead
+   of guessing a sequence; hooks are brought up one at a time, on the one
    reference unit that exists, with the operator listening for a
-   mechanical fault (docs/hardware-safety.md). Do not "fill in" a motor
-   hook from the register tables alone.
+   mechanical fault. Do not fill in a motor hook from the register tables
+   alone.
 
    The register values come from gl126_tables.h, generated from the
-   Python driver's captured tables (docs/sane-port.md stage 2). The chip
-   is close enough to GL124 for the genesys framework to fit, but its
-   scan flow is the vendor's, not GL124's -- hence a separate command set
-   rather than a GL124 model variant.
+   Python driver's captured tables. The chip is close enough to GL124 for
+   the genesys framework to fit, but its scan flow is the vendor's, not
+   GL124's, hence a separate command set rather than a GL124 model
+   variant.
+
+   Protocol notes and the reverse-engineering record:
+   https://github.com/cgillinger/opticfilm135i-linux
 */
 
 #ifndef BACKEND_GENESYS_GL126_H
@@ -43,18 +45,17 @@
 namespace genesys {
 namespace gl126 {
 
-/** The film holder's aperture count -- the largest frame number the
+/** The film holder's aperture count: the largest frame number the
     "frame" SANE option and the driver's own frame checks (begin_scan(),
     gl126_ops::feedl_for_frame()) will accept. Six, not four: the
     vendor's whole-holder 600 dpi pass images the empty holder end to
-    end and shows six apertures on a constant pitch (measured,
-    docs/holder-geometry.md), and the vendor's own WIA batch capture
-    positioned to frames 5 and 6 directly (FEEDL 49796 and 60174).
-    Declared here, not file-local to gl126.cpp, so the "frame" option's
-    constraint range (genesys.cpp, patched in by gl126-integration.patch)
-    is derived from it rather than carrying its own copy of the number.
-    Mirrors of135i/holder.py::STRIP.frames, the driver's own authority on
-    the same holder. */
+    end and shows six apertures on a constant pitch (measured), and the
+    vendor's own WIA batch capture positioned to frames 5 and 6 directly
+    (FEEDL 49796 and 60174). Declared here, not file-local to gl126.cpp,
+    so the "frame" option's constraint range (genesys.cpp) is derived
+    from it rather than carrying its own copy of the number. Mirrors the
+    companion userspace driver's own frame count, the same authority on
+    this holder. */
 constexpr unsigned kFrameMax = 6;
 
 class CommandSetGl126 : public CommandSetCommon
@@ -116,12 +117,12 @@ public:
                            std::uint8_t* data, int size) const override;
 
     /* The backend uploads its own shading tables, in the vendor's format,
-       from the calibration hook (docs/sane-hook4-shading.md). Answering
-       "true" here is what keeps the core's own shading machinery off the
-       wire: with "false" the core pushes a default table and later its
-       coefficients to scanner RAM through write_buffer (a transfer this
-       unit has never been driven with). send_shading_data() itself is a
-       no-op: the core's coefficients are never used, and the model sets
+       from the calibration hook. Answering "true" here is what keeps the
+       core's own shading machinery off the wire: with "false" the core
+       pushes a default table and later its coefficients to scanner RAM
+       through write_buffer (a transfer this unit has never been driven
+       with). send_shading_data() itself is a no-op: the core's
+       coefficients are never used, and the model sets
        DISABLE_SHADING_CALIBRATION so they are never computed either. */
     bool has_send_shading_data() const override { return true; }
 
@@ -132,43 +133,39 @@ public:
     void asic_boot(Genesys_Device* dev, bool cold) const override;
 };
 
-/* The image path (docs/sane-hook5-frame.md, section 4): the core's image
-   pipeline asks ScannerInterfaceUsb::bulk_read_data for one chunk at a
-   time (sized by the session to the captured 519156 B); for GL126 that
-   call is forwarded here, which emits the vendor's per-chunk sequence
+/* The image path: the core's image pipeline asks
+   ScannerInterfaceUsb::bulk_read_data for one chunk at a time (sized by
+   the session to the captured 519156 B); for GL126 that call is
+   forwarded here, which emits the vendor's per-chunk sequence
    (descriptor with wIndex 8 for the first chunk of a scan, 0 after; ack;
    bulk IN; bulk-done read). */
 void read_image_chunk_usb(Genesys_Device* dev, std::uint8_t* data, std::size_t size);
 
-/** Hook 8 (docs/sane-hook8-dual.md): the dual-light profiles' image stream
-    alternates IR (even) and visible (odd) lines. Called by the core's
-    build_image_pipeline() right after the USB source node for GL126;
-    pushes, when the session asks for it (ScanSession::gl126_keep_parity),
-    a node that keeps every second line. No-op for the plain profile. The
-    IR pass is colour-aligned by the core's own ComponentShiftLines node
-    like the visible image (Test 70). */
+/** The dual-light profiles' image stream alternates IR (even) and
+    visible (odd) lines. Called by the core's build_image_pipeline()
+    right after the USB source node for GL126; pushes, when the session
+    asks for it (ScanSession::gl126_keep_parity), a node that keeps every
+    second line. No-op for the plain profile. The IR pass is colour-
+    aligned by the core's own ComponentShiftLines node like the visible
+    image. */
 void push_dual_light_nodes(const ScanSession& session, ImagePipelineStack& pipeline);
 
-/** WP-5 (docs/sane-wp5-load-button.md): the magazine flow is now ONE
-    button. "Load film" (magazine_load_film()) runs the whole thing in a
-    single call: a cold unit's bring-up if needed, the vendor device-open
-    table and the jog (skipped when nothing needs releasing -- the
-    Ejected case), a read-only wait for the operator's reseat -- present
-    to clear to present on the loader sensor, reg 0x101 -- and then LOAD.
-    A timeout (120 s) ends the call with no LOAD and the magazine
-    considered Released; SANE_STATUS_GOOD either way, since the operator
-    doing nothing is not an error. "Check status" (magazine_check_status())
-    is a third button that is allowed to read the hardware and reconcile
-    the status line with it, without ever promoting anything to Loaded on
-    hardware evidence alone.
+/** The magazine flow is one button. "Load film" (magazine_load_film())
+    runs the whole thing in a single call: a cold unit's bring-up if
+    needed, the vendor device-open table and the jog (skipped when
+    nothing needs releasing, the Ejected case), a read-only wait for the
+    operator's reseat (present to clear to present on the loader sensor,
+    reg 0x101), and then LOAD. A timeout (120 s) ends the call with no
+    LOAD and the magazine considered Released; SANE_STATUS_GOOD either
+    way, since the operator doing nothing is not an error. "Check status"
+    (magazine_check_status()) is a third button that is allowed to read
+    the hardware and reconcile the status line with it, without ever
+    promoting anything to Loaded on hardware evidence alone.
 
-    load_document() (CommandSetGl126, gl126.cpp) no longer loads anything:
-    since WP-5 it is a pure checker of the in-process state and the
-    cross-process mark (gl126_lock.h MagazineMarkKind, now Released,
-    Ejected or Loaded), called from genesys_start_scan before calibration
-    (gl126-integration.patch). This superseded WP-4's two-step protocol
-    (docs/sane-wp4-magazine.md section 3, section 10: "load at next
-    sane_start"), which is kept there as historical background. */
+    load_document() (CommandSetGl126, gl126.cpp) does not load anything:
+    it is a pure checker of the in-process state and the cross-process
+    mark (gl126_lock.h MagazineMarkKind, now Released, Ejected or
+    Loaded), called from genesys_start_scan before calibration. */
 void magazine_load_film(Genesys_Device* dev);
 void magazine_eject(Genesys_Device* dev);
 void magazine_check_status(Genesys_Device* dev);
@@ -177,7 +174,7 @@ std::string magazine_state_text(const Genesys_Device* dev);
 /** Every value magazine_state_text() can return, NULL-terminated, for the
     "magazine" option's SANE_CONSTRAINT_STRING_LIST. Constraining it makes
     KSane draw a plain combo showing the current value rather than an edit
-    box with Add/Remove buttons beside it (Test 76). */
+    box with Add/Remove buttons beside it. */
 const char* const* magazine_state_values();
 
 } // namespace gl126

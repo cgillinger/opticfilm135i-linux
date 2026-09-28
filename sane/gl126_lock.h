@@ -18,25 +18,25 @@
    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-/* GL126 process lock -- mutual exclusion with the of135i driver.
+/* GL126 process lock: mutual exclusion with the companion userspace
+   driver.
 
-   The Python driver (of135i/safety.py, ProcessLock) and this backend are
-   two independent programs that can both open the same physical unit
-   (07b3:1436, one reference device in existence). Claiming the USB
-   interface alone is not enough to keep them apart: the driver's
-   read-only sessions (`of135i status`, `doctor`) hold no interface claim
-   at all -- they talk to the device just enough to read a register --
-   so a `sane_open` racing one of them would not see it and could send a
-   command while the driver is mid-read.
+   The companion driver and this backend are two independent programs
+   that can both open the same physical unit (07b3:1436, one reference
+   device in existence). Claiming the USB interface alone is not enough
+   to keep them apart: the driver's read-only sessions (e.g. a status
+   check) hold no interface claim at all, they talk to the device just
+   enough to read a register, so a `sane_open` racing one of them would
+   not see it and could send a command while the driver is mid-read.
 
    The fix is a convention, not a protocol: both programs take a
    non-blocking exclusive `flock` on the same well-known file before
    touching the device, and release it when they are done. This header
    is the C++ side of that convention, kept byte-for-byte compatible with
-   the Python implementation:
+   the driver's own implementation:
 
      - path: `$OF135I_LOCK_FILE`, or `/tmp/of135i-07b3-1436.lock` if unset
-       (one lock path per host, exactly like the driver -- there is only
+       (one lock path per host, exactly like the driver: there is only
        ever one unit, so this is not a per-device lock).
      - held file content on success: `pid <pid> since <ISO8601 UTC>
        (sane genesys gl126)\n`, so `cat` on the lock file names the
@@ -47,8 +47,8 @@
 
    File handling: the path is deliberately predictable, in a directory
    (/tmp) any local user can write to, and the file is created mode
-   0666 -- two independent programs, potentially run by two different
-   users on a shared machine, need to take the SAME lock, so it cannot
+   0666: two independent programs, potentially run by two different
+   users on a shared machine, need to take the same lock, so it cannot
    be owner-only. That combination (fixed path, shared directory, open
    permissions) is exactly the setup a symlink, hard-link, or FIFO/
    device-node attack targets, so every open() of the lock or the
@@ -56,21 +56,21 @@
      - O_NOFOLLOW, so a symlink planted at the path fails the open()
        itself with ELOOP rather than being followed onto whatever it
        points at;
-     - O_NONBLOCK, so the open() itself can never block -- a FIFO (or
+     - O_NONBLOCK, so the open() itself can never block: a FIFO (or
        certain device nodes) dropped at the path would otherwise hang
        an O_RDONLY open with no writer attached, before any later check
        ever runs; it has no effect on a regular file's later read()/
        write(), and none on flock();
    and the resulting fd is then checked to be a regular file with
    exactly one hard link (S_ISREG && st_nlink == 1) before anything is
-   locked, read or written -- refused otherwise (process_lock_acquire()
+   locked, read or written, refused otherwise (process_lock_acquire()
    throws; magazine_mark_read() returns false, since it runs before
    every load and must never fail the session). That check catches what
    O_NOFOLLOW/O_NONBLOCK do not: a directory (an O_RDONLY open of a
    directory succeeds), a device node, or a hard link onto some other
-   file this process can write to (not a symlink at all -- st_nlink
+   file this process can write to (not a symlink at all: st_nlink
    climbs to 2 or more, which a lock/mark file this code created never
-   has). The mark is additionally never modified in place --
+   has). The mark is additionally never modified in place:
    magazine_mark_write() writes a private temp file next to it and
    rename()s that over the mark path, so the write can never land
    inside whatever the mark path used to point to. A mark that cannot
@@ -79,8 +79,8 @@
    before every load anyway (see the comment below), so the worst case
    is falling back to asking the operator to reseat the magazine.
 
-   What this is NOT: a security boundary against a privileged or
-   same-user attacker who can also write to /tmp at will -- it is a
+   What this is not: a security boundary against a privileged or
+   same-user attacker who can also write to /tmp at will. It is a
    cooperative convention between two trusted programs (the driver and
    this backend) sharing one predictable, world-writable path, hardened
    against the ordinary local hazards of that spot (stale symlinks,
@@ -90,16 +90,15 @@
    Reference-counted within a process: process_lock_acquire() and
    process_lock_release() must be called in matched pairs (an acquire
    while already held just adds a reference), so that one owner's
-   release -- e.g. a failed sane_open of a second handle -- cannot drop
+   release, e.g. a failed sane_open of a second handle, cannot drop
    another owner's still-open session. genesys.cpp's sane_open_impl/
    sane_close_impl ties one reference to the lifetime of one successful
-   open via a small RAII guard; see the "Mutual exclusion with the
-   driver" section of docs/sane-port.md for why.
+   open via a small RAII guard, matching the driver's own lock semantics.
 
    Deliberately free of genesys headers (no genesys.h, no Genesys_Device)
    so it can be compiled and exercised standalone, without pulling in the
-   rest of the backend -- see tests/test_sane_lock.py in the driver repo,
-   which builds this file with a tiny probe program. */
+   rest of the backend, using a small probe program that links only this
+   file. */
 
 #ifndef BACKEND_GENESYS_GL126_LOCK_H
 #define BACKEND_GENESYS_GL126_LOCK_H
@@ -116,15 +115,15 @@ const char* process_lock_default_path();
 std::string process_lock_path();
 
 /** Acquire the driver's process lock, non-blocking. Reference-counted:
-    each successful call to process_lock_acquire() -- whether it takes
+    each successful call to process_lock_acquire(), whether it takes
     the flock for the first time or finds it already held by this
-    process -- increments an internal reference count, and must be
+    process, increments an internal reference count, and must be
     paired with exactly one call to process_lock_release(). This lets
     two independent owners in the same process (e.g. one open session
     and a second, still-being-opened one) hold the lock without either
     one's release dropping the other's.
 
-    Returns true once the lock is held -- either newly acquired (fresh
+    Returns true once the lock is held, either newly acquired (fresh
     flock, reference count set to 1), or already held by this process
     (idempotent: the flock is not retaken, the reference count is
     incremented). Returns false if another process holds it
@@ -134,7 +133,7 @@ std::string process_lock_path();
 
     Throws std::runtime_error, with strerror() text, on any other
     failure (open() or flock() erroring for a reason other than the lock
-    being held) -- nothing is considered acquired in that case. */
+    being held); nothing is considered acquired in that case. */
 bool process_lock_acquire(std::string* holder);
 
 /** Release one reference taken by process_lock_acquire(). No-op if the
@@ -149,16 +148,15 @@ bool process_lock_held();
     the test suite; not needed by ordinary callers. */
 int process_lock_refs();
 
-// ------------------------------------------------ the magazine mark (WP-4)
+// ------------------------------------------------ the magazine mark
 
-/* docs/sane-wp4-magazine.md section 2.1. The magazine flow is two steps
-   with the OPERATOR in between: the "Load film" option releases the
-   magazine (the vendor's jog), the person takes it out and reseats it to
-   the stop, and the NEXT scan runs the load. Inside one frontend that
-   holds the device open (digiKam) the "released" fact can live in memory;
-   `scanimage` cannot -- each invocation is a new process -- and a load
-   without the jog before it, in the same power cycle, is precisely the
-   failure the project spent Tests 11b-15 on.
+/* The magazine flow can span two steps with the operator in between: the
+   "Load film" option releases the magazine (the vendor's jog), the
+   person takes it out and reseats it to the stop, and the load itself
+   waits for that reseat before running. Inside one frontend that holds
+   the device open (digiKam) a fact like "released" can live in memory;
+   `scanimage` cannot, each invocation is a new process, and a load
+   without the jog before it, in the same power cycle, fails.
 
    So the fact is also written next to the process lock, as
    `<lock path>.magazine`, holding the device it applies to. It is never
@@ -168,46 +166,41 @@ int process_lock_refs();
    new address and leaves reg 0x01 cold, so a stale mark cannot authorise
    anything. The mark is a hint that survives a process, not a state.
 
-   Section 10 (2026-09-25) added a second KIND of pending mark: "released"
-   (the original -- Load film's jog already ran, only the bare "load"
-   program is needed) and "ejected" (an eject completed; the next scan
-   must also replay the device-open table first, since nothing has
-   written it since -- docs/protocol-notes.md Pass 14 addendum 4). The
-   kind is not a new field: it is the mark's existing first word, which
-   used to be the constant "released" and is now whichever of the two
-   names applies -- so a mark written by this WP still reads back byte-
-   identically to one written before it.
+   The mark carries one of four kinds. "released" (the original: Load
+   film's jog already ran, only the bare "load" program is needed) and
+   "ejected" (an eject completed; the next scan must also replay the
+   device-open table first, since nothing has written it since) are both
+   read from the mark's first word, which used to be the constant
+   "released" and is now whichever name applies, so an old-format mark
+   still reads back byte-identically to a new one.
 
-   WP-5 (docs/sane-wp5-load-button.md, 2026-09-27) adds a third kind,
-   "loaded": since "Load film" now runs the WHOLE flow (release, wait for
-   the reseat edge, and LOAD) in one button press, a load can complete in
-   a process that then exits (`scanimage -n --load-film`) before the scan
-   that uses it runs in a SEPARATE process -- so a cross-process "the
-   magazine is loaded" fact is needed the same way "a release/eject is
-   pending" already was. `load_document()` no longer runs LOAD at all
-   (WP-5 section 3.4): it only checks this mark (or the in-process state)
-   to decide whether to let a scan through.
+   A third kind, "loaded", covers the case where "Load film" runs the
+   whole flow (release, wait for the reseat edge, and LOAD) in one button
+   press: a load can complete in a process that then exits
+   (`scanimage -n --load-film`) before the scan that uses it runs in a
+   separate process, so a cross-process "the magazine is loaded" fact is
+   needed the same way "a release/eject is pending" already is.
+   `load_document()` never runs LOAD itself: it only checks this mark (or
+   the in-process state) to decide whether to let a scan through.
 
-   The same review round (2026-09-27, finding E) adds a FOURTH kind,
-   "failed": a magazine sequence that fails leaves the transport in a
-   state nobody can name, and that fact used to be dropped the moment the
-   failing process exited (the old code cleared the mark on failure) --
-   so a SECOND process (a following `scanimage` invocation) had no way to
-   know the previous one had failed, and would try a scan (or another
-   magazine action) against a transport whose state was never
-   established. `MagazineFailGuard` (sane/gl126.cpp) now WRITES this mark
-   on any failure instead of clearing whatever was there; every entry
-   point that already refuses on an in-process Failed state (Load film,
-   Eject film, load_document()) refuses the same way on a matching
-   `failed` mark from Unknown. Only a cold reg 0x01 read clears it --
-   the one event that actually re-establishes a known transport state
-   (a power cycle), checked at Load film's own start and by Check
-   status. */
+   A fourth kind, "failed", covers a magazine sequence that fails and
+   leaves the transport in a state nobody can name: that fact must not be
+   dropped the moment the failing process exits, or a following
+   `scanimage` invocation would have no way to know the previous one had
+   failed, and would try a scan (or another magazine action) against a
+   transport whose state was never established. `MagazineFailGuard`
+   (sane/gl126.cpp) writes this mark on any failure instead of clearing
+   whatever was there; every entry point that already refuses on an
+   in-process Failed state (Load film, Eject film, load_document())
+   refuses the same way on a matching `failed` mark from Unknown. Only a
+   cold reg 0x01 read clears it, the one event that actually
+   re-establishes a known transport state (a power cycle), checked at
+   Load film's own start and by Check status. */
 
 /** The four things a magazine mark can mean. */
 enum class MagazineMarkKind { Released, Ejected, Loaded, Failed };
 
-/** "released", "ejected", "loaded" or "failed" -- also the word the mark
+/** "released", "ejected", "loaded" or "failed", also the word the mark
     file leads with. */
 const char* magazine_mark_kind_name(MagazineMarkKind kind);
 
@@ -215,7 +208,7 @@ const char* magazine_mark_kind_name(MagazineMarkKind kind);
 std::string magazine_mark_path();
 
 /** Record that `device_key` (the SANE device name, e.g.
-    "libusb:001:007" -- it carries the USB address, which a power cycle
+    "libusb:001:007", it carries the USB address, which a power cycle
     changes) is waiting for a load of the given kind. Returns false if the
     file could not be written; a mark that cannot be written is not fatal
     (the in-process record still works for a frontend that stays open),
@@ -224,20 +217,18 @@ bool magazine_mark_write(MagazineMarkKind kind, const std::string& device_key);
 
 /** Back-compat convenience: writes a Released mark, byte-identical to
     what this function always produced before the Ejected kind existed.
-    tests/gl126_lock_probe.cpp and tests/test_sane_lock.py call this form
-    and are outside this WP's edit scope -- they must keep working
-    unmodified. */
+    Existing callers of this form must keep working unmodified. */
 bool magazine_mark_write(const std::string& device_key);
 
 /** The kind and device key of a pending mark, or false when there is none
     (or it could not be read). */
 bool magazine_mark_read(MagazineMarkKind* kind, std::string* device_key);
 
-/** Back-compat convenience: true only for a Released mark -- what this
+/** Back-compat convenience: true only for a Released mark, what this
     function always meant before the Ejected kind existed. An Ejected
     mark reads as "no mark" through this overload, exactly as it would
-    have before that kind existed (kept for the same out-of-scope
-    callers as the write overload above). */
+    have before that kind existed (kept for the same callers as the
+    write overload above). */
 bool magazine_mark_read(std::string* device_key);
 
 /** What magazine_mark_clear() actually did, so a caller that logs the

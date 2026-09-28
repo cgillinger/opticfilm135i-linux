@@ -1,4 +1,4 @@
-From b7b4142eded3a1a15090ed89c819bd286c042d58 Mon Sep 17 00:00:00 2001
+From 94727815e8e653bb5e0d4ca7782e7634f31d8b02 Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
 Date: Mon, 28 Sep 2026 19:07:54 +0200
 Subject: [PATCH 1/5] genesys: fix ImagePipelineNodeExtract bytes-per-pixel for

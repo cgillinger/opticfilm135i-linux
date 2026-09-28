@@ -47,10 +47,10 @@ namespace {
 
 // ------------------------------------------------------------- run_program
 
-// Checked once, before any transfer (docs/sane-hook3-gain.md section 6,
-// Part B/1): every injection this program needs must be present in
-// `values` (a null `values` counts as none present). Names in `values`
-// the program has no injection for are ignored -- not checked here.
+// Checked once, before any transfer: every injection this program needs
+// must be present in `values` (a null `values` counts as none present).
+// Names in `values` the program has no injection for are ignored, not
+// checked here.
 void check_injections(const OpProgram& prog,
                       const std::map<std::string, std::uint8_t>* values)
 {
@@ -60,15 +60,14 @@ void check_injections(const OpProgram& prog,
             std::ostringstream oss;
             oss << "gl126_ops: missing injection value for \"" << inj.name
                 << "\" (op " << inj.op_index << ", byte " << inj.byte_offset
-                << ") -- nothing sent";
+                << "), nothing sent";
             throw OpsError(OpsFailure::MissingInjection, inj.op_index, oss.str());
         }
     }
 }
 
 // The combined length (bytes) of the BulkOut ops a bulk injection
-// covers -- the total a payload is zero-padded to before slicing
-// (docs/sane-hook4-shading.md section 6, Part B/2).
+// covers, the total a payload is zero-padded to before slicing.
 std::size_t bulk_injection_total(const OpProgram& prog, const OpBulkInjection& inj)
 {
     std::size_t total = 0;
@@ -78,13 +77,13 @@ std::size_t bulk_injection_total(const OpProgram& prog, const OpBulkInjection& i
     return total;
 }
 
-// Checked once, before any transfer -- and before check_injections()'s
+// Checked once, before any transfer, and before check_injections()'s
 // byte-injection check, so a program with both kinds missing reports the
-// bulk one first, deterministically (docs/sane-hook4-shading.md section
-// 6, Part B/2): every bulk injection this program needs must be present
-// in `bulk_values` (a null `bulk_values` counts as none present), and
-// not longer than the BulkOut ops it covers. Names in `bulk_values` the
-// program has no bulk injection for are ignored -- not checked here.
+// bulk one first, deterministically: every bulk injection this program
+// needs must be present in `bulk_values` (a null `bulk_values` counts as
+// none present), and not longer than the BulkOut ops it covers. Names in
+// `bulk_values` the program has no bulk injection for are ignored, not
+// checked here.
 void check_bulk_injections(const OpProgram& prog,
                            const std::map<std::string, std::vector<std::uint8_t>>* bulk_values)
 {
@@ -94,7 +93,7 @@ void check_bulk_injections(const OpProgram& prog,
             std::ostringstream oss;
             oss << "gl126_ops: missing bulk injection value for \"" << inj.name
                 << "\" (ops " << inj.first_op << "-" << inj.last_op
-                << ") -- nothing sent";
+                << "), nothing sent";
             throw OpsError(OpsFailure::MissingInjection, inj.first_op, oss.str());
         }
         std::size_t total = bulk_injection_total(prog, inj);
@@ -104,7 +103,7 @@ void check_bulk_injections(const OpProgram& prog,
             oss << "gl126_ops: bulk injection \"" << inj.name << "\" (ops "
                 << inj.first_op << "-" << inj.last_op << ") is " << val.size()
                 << " B, longer than the covered ops' combined " << total
-                << " B -- nothing sent";
+                << " B, nothing sent";
             throw OpsError(OpsFailure::BadInjection, inj.first_op, oss.str());
         }
     }
@@ -149,7 +148,7 @@ void do_ack_read(Wire& wire, const Op& op, std::size_t idx)
         oss << "gl126_ops: ack read at op " << idx << " (wValue=0x" << std::hex
             << op.value << " wIndex=0x" << op.index << std::dec
             << ") got 0x" << std::hex << static_cast<int>(reply)
-            << ", want 0x55 -- nothing further sent";
+            << ", want 0x55, nothing further sent";
         throw OpsError(OpsFailure::BadAck, idx, oss.str());
     }
 }
@@ -172,12 +171,11 @@ void record_read(RunResult& out, const Op& op, std::size_t idx,
     out.reads.push_back(rec);
 }
 
-// The op's OWN reply length, not a fixed two bytes: the magazine flow's
-// device-open phase reads a 3-byte and a 19/64-byte EEPROM block
-// (of135i/device.py _cold_write_table_and_afe, tables_load.OPEN), and a
-// short control read is a DIFFERENT transfer on the wire, which the
+// The op's own reply length, not a fixed two bytes: the magazine flow's
+// device-open phase reads a 3-byte and a 19/64-byte EEPROM block, and a
+// short control read is a different transfer on the wire, which the
 // wire-equality test would (and did) catch. Only the first two bytes are
-// recorded -- a Read is provenance, and no reply here is consumed.
+// recorded, a Read is provenance, and no reply here is consumed.
 void do_read(Wire& wire, const Op& op, std::size_t idx, RunResult& out)
 {
     constexpr std::size_t kMaxRead = 64;
@@ -194,12 +192,12 @@ void do_bulk_done(Wire& wire, const Op& op, std::size_t idx, RunResult& out)
     record_read(out, op, idx, &reply, 1);
 }
 
-// A poll site's budget: its OWN, when the table gives it one, else the
-// RunPolicy's. Only the magazine programs carry per-op budgets
-// (docs/sane-wp4-magazine.md section 3): their captured poll durations
-// span 4 ms to 1.6 s, and the driver scales each site's timeout to its
-// own captured duration. Every pre-WP-4 op has timeout_ms == 0 and is
-// therefore governed by the policy exactly as before.
+// A poll site's budget: its own, when the table gives it one, else the
+// RunPolicy's. Only the magazine programs carry per-op budgets: their
+// captured poll durations span 4 ms to 1.6 s, and the driver scales each
+// site's timeout to its own captured duration. Every other op has
+// timeout_ms == 0 and is therefore governed by the policy exactly as
+// before.
 unsigned poll_budget_ms(const Op& op, unsigned policy_ms, const RunPolicy& policy)
 {
     unsigned budget = op.timeout_ms != 0 ? op.timeout_ms : policy_ms;
@@ -238,7 +236,7 @@ void do_poll(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
             oss << "gl126_ops: PollDataReady at op " << idx << " (DATAENB, reg 0x101) "
                 << "timed out after " << elapsed << "ms: first 0x" << std::hex
                 << static_cast<int>(first) << ", last 0x" << static_cast<int>(last)
-                << std::dec << " -- bit 0x01 never set, nothing further sent";
+                << std::dec << ", bit 0x01 never set, nothing further sent";
             throw OpsError(OpsFailure::PollTimeout, idx, oss.str());
         }
         wire.sleep_ms(policy.poll_interval_ms);
@@ -250,18 +248,18 @@ void do_bulk_in(Wire& wire, const Op& op, std::size_t idx, RunResult& out)
     std::vector<std::uint8_t> buf(op.len);
     std::size_t got = wire.bulk_read(buf.data(), buf.size());
     buf.resize(got);
-    // Kept even on a short read: "the partial data is kept in
-    // out.buffers before throwing" (docs/sane-hook2-offset.md section 6).
+    // Kept even on a short read: the partial data is kept in
+    // out.buffers before throwing.
     out.buffers.push_back(buf);
     if (got != static_cast<std::size_t>(op.len)) {
         std::ostringstream oss;
         oss << "gl126_ops: BulkIn at op " << idx << " got " << got
-            << " B, want " << op.len << " B -- nothing further sent";
+            << " B, want " << op.len << " B, nothing further sent";
         throw OpsError(OpsFailure::ShortBulk, idx, oss.str());
     }
 }
 
-// The bulk injection (if any) covering op `idx`, or nullptr -- at most
+// The bulk injection (if any) covering op `idx`, or nullptr: at most
 // one can, since a program's OpBulkInjection ranges never overlap (each
 // names a distinct contiguous run of BulkOut ops).
 const OpBulkInjection* bulk_injection_covering(const OpProgram& prog, std::size_t idx)
@@ -276,15 +274,15 @@ const OpBulkInjection* bulk_injection_covering(const OpProgram& prog, std::size_
 }
 
 // Checked once, before any transfer, and before check_bulk_injections()'s
-// value-presence check (docs/sane-hook4-shading.md section 6): every
-// BulkOut op whose captured payload was stripped at generation time
-// (`data == nullptr` -- tools/gen_sane_tables.py never keeps a captured
-// chunk that is a bulk injection's own reference-unit calibration data)
-// must be covered by an OpBulkInjection. This is a structural check on
-// the generated table itself, not on the caller's `bulk_values` map --
-// a BulkOut with no data and no covering injection is a mis-generated
-// table (see the module doc comment on `Op` in gl126_tables.h) and must
-// fail closed rather than hand a null pointer to bulk_write().
+// value-presence check: every BulkOut op whose captured payload was
+// stripped at generation time (`data == nullptr`: tools/gen_sane_tables.py
+// never keeps a captured chunk that is a bulk injection's own
+// reference-unit calibration data) must be covered by an OpBulkInjection.
+// This is a structural check on the generated table itself, not on the
+// caller's `bulk_values` map: a BulkOut with no data and no covering
+// injection is a mis-generated table (see the module doc comment on `Op`
+// in gl126_tables.h) and must fail closed rather than hand a null
+// pointer to bulk_write().
 void check_bulk_out_coverage(const OpProgram& prog)
 {
     for (std::size_t i = 0; i < prog.count; ++i) {
@@ -295,7 +293,7 @@ void check_bulk_out_coverage(const OpProgram& prog)
         if (bulk_injection_covering(prog, i) == nullptr) {
             std::ostringstream oss;
             oss << "gl126_ops: BulkOut at op " << i << " has no captured "
-                << "payload and is not covered by any bulk injection -- "
+                << "payload and is not covered by any bulk injection, "
                 << "nothing sent";
             throw OpsError(OpsFailure::MissingInjection, i, oss.str());
         }
@@ -314,7 +312,7 @@ void do_bulk_out(Wire& wire, const Op& op, const OpProgram& prog, std::size_t id
         // check_bulk_injections() already guaranteed `bulk_values` has
         // this name and it is not longer than the covered ops' combined
         // length. Zero-pad to that combined length, then slice out this
-        // op's share -- of135i/tables.py's Phase.patched() "bo" rule.
+        // op's share, matching the driver's own "bo" slicing rule.
         const std::vector<std::uint8_t>& val = bulk_values->at(inj->name);
         std::size_t offset = 0;
         for (std::size_t i = inj->first_op; i < idx; ++i) {
@@ -332,7 +330,7 @@ void do_bulk_out(Wire& wire, const Op& op, const OpProgram& prog, std::size_t id
     if (written != len) {
         std::ostringstream oss;
         oss << "gl126_ops: BulkOut at op " << idx << " wrote " << written
-            << " B, want " << len << " B -- nothing further sent";
+            << " B, want " << len << " B, nothing further sent";
         throw OpsError(OpsFailure::ShortBulkOut, idx, oss.str());
     }
 }
@@ -368,7 +366,7 @@ void do_poll_class(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
             oss << "gl126_ops: PollClass at op " << idx << " (reg 0x100) "
                 << "timed out after " << elapsed << "ms: first 0x" << std::hex
                 << static_cast<int>(first) << ", last 0x" << static_cast<int>(last)
-                << std::dec << " -- class 0x" << std::hex << static_cast<int>(want_class)
+                << std::dec << ", class 0x" << std::hex << static_cast<int>(want_class)
                 << std::dec << " never reached, nothing further sent";
             throw OpsError(OpsFailure::PollTimeout, idx, oss.str());
         }
@@ -406,28 +404,27 @@ void do_poll_masked(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
                 << static_cast<int>(op.mask) << " want 0x" << static_cast<int>(op.want)
                 << ") timed out after " << std::dec << elapsed << "ms: first 0x" << std::hex
                 << static_cast<int>(first) << ", last 0x" << static_cast<int>(last)
-                << std::dec << " -- nothing further sent";
+                << std::dec << ", nothing further sent";
             throw OpsError(OpsFailure::PollTimeout, idx, oss.str());
         }
         wire.sleep_ms(policy.poll_interval_ms);
     }
 }
 
-// docs/sane-wp4-magazine.md section 3: a poll the DRIVER does not fail
-// on. usbio.poll_status_word()'s default form and _eject_body()'s
-// completion loop log a warning and carry on with the last value read,
-// and device.py's _poll_one() does the same for every non-strict poll --
-// which is what keeps a cold start with a LATCHED magazine (the OPENING
-// ready poll times out every time, Tests 45/51/77, and on every cold
-// start at all, Test 78) a supported operation rather than a failed
-// session. Reproducing that faithfully means this poll never throws: it
-// records what it saw, like a settled one, and the program continues.
+// A poll the driver does not fail on. Its default status-word poll and
+// the eject completion loop log a warning and carry on with the last
+// value read, and every non-strict poll does the same, which is what
+// keeps a cold start with a latched magazine (the opening ready poll
+// times out every time, and on every cold start at all) a supported
+// operation rather than a failed session. Reproducing that faithfully
+// means this poll never throws: it records what it saw, like a settled
+// one, and the program continues.
 //
 // It is never used for a motor completion. The generated tables carry
-// those -- the cold start's nine, JOG's four, LOAD's two -- as PollMasked,
+// those (the cold start's nine, JOG's four, LOAD's two) as PollMasked,
 // because a completion is the only wait between one motor start and the
 // next, and continuing past it would start the next move on an engine
-// not known to be done (docs/test-log.md "Offline 2026-09-15").
+// not known to be done.
 void do_poll_best_effort(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
                          const RunPolicy& policy)
 {
@@ -456,10 +453,9 @@ void do_poll_best_effort(Wire& wire, const Op& op, std::size_t idx, RunResult& o
     }
 }
 
-// docs/sane-wp4-magazine.md section 3: the replayer's pacing. No
-// transfer; of135i/device.py _exec_ops sleeps min(dt, 2 s) before an op
-// whose captured gap exceeds 50 ms, and the magazine flow is verified
-// WITH those pauses in place (Tests 17-23).
+// The replayer's pacing. No transfer; the driver's own _exec_ops sleeps
+// min(dt, 2 s) before an op whose captured gap exceeds 50 ms, and the
+// magazine flow is verified with those pauses in place.
 void do_sleep(Wire& wire, const Op& op)
 {
     // Unconditional, even for a 0 ms op: sleep_ms() is this op's only
@@ -467,28 +463,26 @@ void do_sleep(Wire& wire, const Op& op)
     wire.sleep_ms(op.dur_ms);
 }
 
-// docs/sane-hook5-frame.md section 4: no ack read -- park_semantic()'s
-// own read-modify-write sites go through Scanner.io.write_regs(), which
-// performs one control write and nothing else (see gl126_tables.h's Op
-// doc comment and build_park_program()'s docstring in
-// tools/gen_sane_tables.py for the evidence).
+// No ack read: park_semantic()'s own read-modify-write sites go through
+// Scanner.io.write_regs(), which performs one control write and nothing
+// else (see gl126_tables.h's Op doc comment and build_park_program()'s
+// docstring in tools/gen_sane_tables.py for the evidence).
 //
-// DEVIATION found by tests/test_sane_ops.py's wire-equality test (its
-// own docstring calls that test "the arbiter"): PARK's reg-0x35 RMW
-// (clearing bit 0x40 after Wait A) does NOT re-read the register on the
-// real driver -- of135i/device.py's _park_semantic_steps() reuses
-// Wait A's own poll loop's last read (`v35`) directly:
+// Deviation, found by the wire-equality tests (their own docstring calls
+// that test "the arbiter"): PARK's reg-0x35 RMW (clearing bit 0x40 after
+// Wait A) does not re-read the register on the real driver: its own park
+// sequence reuses Wait A's own poll loop's last read (`v35`) directly:
 //     v35 = self.io.read_reg(0x35)
 //     while not (v35 & 0x40):
 //         ...
 //         v35 = self.io.read_reg(0x35)
 //     self.io.write_regs([(0x35, v35 & ~0x40 & 0xFF)])   # no fresh read
 // So here: a ReadModifyWrite op immediately preceded (in the program) by
-// a PollMasked op with the SAME (request, value, index) -- exactly
-// Wait A followed by the reg-0x35 clear -- reuses that PollMasked op's
-// last polled value instead of issuing its own control_read(); every
-// other RMW site in PARK (0x15, 0x32 x2) has no such immediately
-// preceding same-register poll and reads fresh, as originally designed.
+// a PollMasked op with the same (request, value, index), exactly Wait A
+// followed by the reg-0x35 clear, reuses that PollMasked op's last
+// polled value instead of issuing its own control_read(); every other
+// RMW site in PARK (0x15, 0x32 x2) has no such immediately preceding
+// same-register poll and reads fresh, as originally designed.
 void do_read_modify_write(Wire& wire, const OpProgram& prog, const Op& op,
                           std::size_t idx, RunResult& out)
 {
@@ -574,7 +568,7 @@ void run_program(Wire& wire, const OpProgram& prog, RunResult& out,
     }
 }
 
-// ----------------------------------------------------------- magazine (WP-4)
+// ----------------------------------------------------------- magazine
 
 const OpProgram* magazine_program(const char* name)
 {
@@ -589,11 +583,11 @@ const OpProgram* magazine_program(const char* name)
     return nullptr;
 }
 
-// -------------------------------------------------------------------- S5/S6
+// ------------------------------------------------------ offset calibration
 
 namespace {
 
-// docs/sane-hook2-offset.md section 5 / of135i/calibrate.py.
+// Matching the driver's own offset_codes().
 constexpr double kMargin[3] = {211.0, 198.0, 215.0};              // R, G, B
 constexpr std::uint16_t kDefault[3] = {0x010B, 0x010A, 0x010B};   // R, G, B
 constexpr double kBracketLo = 0x80;   // offset code for dark_a
@@ -602,11 +596,11 @@ constexpr double kMinSlope = 1.0;     // counts per code step
 constexpr int kDarkMinUnique = 32;    // dark_is_residual: 1 < unique < this
 
 // Python's round() is round-half-to-even; std::lround/round() round
-// half away from zero, which differs at an exact .5 -- match Python
-// exactly so the two implementations agree on any input (docs/sane-
-// hook2-offset.md section 5). Callers here only ever pass non-negative
-// values (margin/slope with slope > 0 in the branch that computes it),
-// but this handles the general case correctly too.
+// half away from zero, which differs at an exact .5, match Python
+// exactly so the two implementations agree on any input. Callers here
+// only ever pass non-negative values (margin/slope with slope > 0 in
+// the branch that computes it), but this handles the general case
+// correctly too.
 double round_half_even(double x)
 {
     double floor_x = std::floor(x);
@@ -705,11 +699,11 @@ bool dark_is_residual(const std::uint8_t* buf, std::size_t len)
     return distinct > 1;
 }
 
-// --------------------------------------------------------- hook 3: gain
+// --------------------------------------------------------- gain calibration
 
 namespace {
 
-// docs/sane-hook3-gain.md section 4 / of135i/calibrate.py's gain_codes().
+// Matching the driver's own gain_codes().
 constexpr double kGainTarget = 31673.0;
 constexpr double kGainDivisor = 32.0;
 constexpr std::uint8_t kGainMaxCode = 63;
@@ -859,10 +853,9 @@ WarmupOutcome gain_with_warmup(const std::function<std::vector<std::uint8_t>()>&
     }
 }
 
-// ------------------------------------------------------- hook 4: shading
+// ------------------------------------------------------- shading calibration
 
-// docs/sane-hook4-shading.md section 4 / of135i/calibrate.py's shading
-// section.
+// Matching the driver's own shading section.
 const double kShading2Targets[3] = {81752.0, 83490.0, 87083.0};   // R, G, B
 
 namespace {
@@ -874,7 +867,7 @@ constexpr std::size_t kTrailerPairsPerFullBlock = 2;
 // Walks the 512 B block structure once, calling `emit_payload(i, n)` for
 // each block's payload run (starting pair index `i`, count `n`) and
 // `emit_trailer(n)` for its zero trailer pairs (n == 0 or
-// kTrailerPairsPerFullBlock) -- the single place that owns the block
+// kTrailerPairsPerFullBlock), the single place that owns the block
 // layout, shared by shading_upload_len() and pack_shading() so they
 // cannot drift apart.
 template <typename EmitPayload, typename EmitTrailer>
@@ -947,9 +940,9 @@ std::vector<std::uint8_t> pack_shading(const std::vector<std::uint16_t>& offsets
 namespace {
 
 // Per-pixel/channel mean over `lines` of a `lines * width * 6` byte
-// RGB16LE buffer, pixel-interleaved (docs/sane-hook4-shading.md section
-// 4). `p` indexes the flattened (pixel, channel) pair, 0..width*3-1,
-// same order as a scanned line's own bytes.
+// RGB16LE buffer, pixel-interleaved. `p` indexes the flattened (pixel,
+// channel) pair, 0..width*3-1, same order as a scanned line's own
+// bytes.
 double mean_over_lines(const std::uint8_t* buf, unsigned lines, unsigned width, std::size_t p)
 {
     std::size_t row_stride = static_cast<std::size_t>(width) * 6;
@@ -1024,7 +1017,7 @@ std::vector<std::uint8_t> shading_table2(const std::uint8_t* white, std::size_t 
     return shading_table2(white, white_len, dark, dark_len, lines, width, kShading2Targets);
 }
 
-// ------------------------------------------- hook 8: dual-light profiles
+// ------------------------------------------- dual-light profiles
 
 std::vector<std::uint8_t> alternate_lines(const std::uint8_t* buf, std::size_t len,
                                           unsigned lines, unsigned width, unsigned parity)
@@ -1065,7 +1058,7 @@ std::vector<std::uint8_t> shading_table2_dual(const std::uint8_t* white, std::si
     return pack_shading(f0, gains, width);
 }
 
-// ------------------------------------------------- hooks 5-7: the frame
+// ------------------------------------------------- positioning, scanning and park
 
 namespace {
 
@@ -1080,7 +1073,7 @@ void check_frame_in_holder(unsigned frame)
     if (frame < 1 || frame > kFeedlFrameMax) {
         std::ostringstream oss;
         oss << "gl126_ops: frame " << frame << " is outside 1-"
-            << kFeedlFrameMax << " (the holder's aperture count, of135i/holder.py); "
+            << kFeedlFrameMax << " (the holder's aperture count); "
                "nothing was computed";
         throw std::invalid_argument(oss.str());
     }
@@ -1092,18 +1085,18 @@ void check_feedl_ceiling(unsigned feedl)
         std::ostringstream oss;
         oss << "gl126_ops::feedl_for_frame: computed FEEDL " << feedl << " exceeds the "
                "proven travel ceiling " << kFeedlCeiling
-            << " (of135i/holder.py::FEEDL_CEILING)";
+            << " (matching the driver's own FEEDL_CEILING)";
         throw std::invalid_argument(oss.str());
     }
 }
 
 } // namespace
 
-// The A+C production geometry since the Test 58/61 migration: every
-// value is sourced from profile.frames[frame-1] (the frozen ledger
-// gen_sane_tables.frame_geom_entries() emits from of135i/holder.py), NOT
-// from profile.captured_lines/chunk_count -- those legacy fields are
-// capture-evidence only now (docs/holder-position-design.md).
+// The production geometry: every value is sourced from
+// profile.frames[frame-1] (the frozen ledger
+// gen_sane_tables.frame_geom_entries() emits from the driver's own
+// holder geometry), not from profile.captured_lines/chunk_count, those
+// legacy fields are capture-evidence only now.
 FrameGeometry frame_geometry(const Profile& profile, unsigned frame)
 {
     check_frame_in_holder(frame);
@@ -1146,11 +1139,10 @@ FrameGeometry frame_geometry(const Profile& profile, unsigned frame)
     return g;
 }
 
-/* LEGACY: the vendor capture grid (kFeedlFrame1/kFeedlPitch), not the
-   runtime positioning authority since Test 58 -- kept for capture-
-   evidence callers (tests/diag; see gl126_ops.h's own doc comment on
-   kFeedlFrame1/kFeedlPitch). Production code calls the profile overload
-   below, which reads profile.frames[]. */
+/* Legacy: the vendor capture grid (kFeedlFrame1/kFeedlPitch), not the
+   runtime positioning authority, kept for capture-evidence callers (see
+   gl126_ops.h's own doc comment on kFeedlFrame1/kFeedlPitch). Production
+   code calls the profile overload below, which reads profile.frames[]. */
 unsigned feedl_for_frame(unsigned frame)
 {
     check_frame_in_holder(frame);
@@ -1159,11 +1151,11 @@ unsigned feedl_for_frame(unsigned frame)
     return feedl;
 }
 
-// The A+C production authority: profile.frames[frame-1].feedl (the
-// commanded POSITION target the ledger computed), re-checking both the
-// FEEDL itself and the pass's furthest reach (end_hwdpi) against the
-// same travel ceiling overscan_geometry() already checked in Python --
-// inherited verbatim, not re-derived (Astra's requirement).
+// The production positioning authority: profile.frames[frame-1].feedl
+// (the commanded POSITION target the ledger computed), re-checking both
+// the FEEDL itself and the pass's furthest reach (end_hwdpi) against the
+// same travel ceiling the driver's own overscan_geometry() already
+// checked, inherited verbatim, not re-derived.
 unsigned feedl_for_frame(unsigned frame, const Profile& profile)
 {
     check_frame_in_holder(frame);
@@ -1172,7 +1164,7 @@ unsigned feedl_for_frame(unsigned frame, const Profile& profile)
         std::ostringstream oss;
         oss << "gl126_ops::feedl_for_frame: profile '" << profile.name << "' frame " << frame
             << " end_hwdpi " << fg.end_hwdpi << " exceeds the proven travel ceiling "
-            << kFeedlCeiling << " (of135i/holder.py::FEEDL_CEILING); nothing was written";
+            << kFeedlCeiling << " (matching the driver's own FEEDL_CEILING); nothing was written";
         throw std::invalid_argument(oss.str());
     }
     check_feedl_ceiling(fg.feedl);   // defensive; feedl <= end_hwdpi so this is subsumed
@@ -1190,11 +1182,11 @@ FeedlBytes feedl_bytes(unsigned feedl)
 
 unsigned position_timeout_ms(unsigned feedl)
 {
-    // docs/sane-hook5-frame.md section 3/6: "3 * 1.6141 * position_
-    // timeout_scale" -- POSITION's captured completion duration for
-    // frame 1 (1.6141 s, tables.POSITION's own op 47/W3) times 3, scaled
-    // linearly by FEEDL relative to frame 1's (never below 1x, matching
-    // of135i/device.py's position_timeout_scale()).
+    // "3 * 1.6141 * position_timeout_scale": POSITION's captured
+    // completion duration for frame 1 (1.6141 s, tables.POSITION's own
+    // op 47/W3) times 3, scaled linearly by FEEDL relative to frame 1's
+    // (never below 1x, matching the driver's own
+    // position_timeout_scale()).
     constexpr double kCapturedMs = 1614.1;
     double scale = std::max(1.0, static_cast<double>(feedl) / static_cast<double>(kFeedlFrame1));
     double ms = 3.0 * kCapturedMs * scale;
@@ -1203,10 +1195,10 @@ unsigned position_timeout_ms(unsigned feedl)
 
 void read_image_chunk(Wire& wire, std::uint8_t* data, std::size_t len, bool first)
 {
-    // docs/sane-hook5-frame.md section 2/4, hook 6b: descriptor address
-    // fixed at 0x10000000 (IMAGE_READ_ADDR, of135i/tables.py), length is
-    // this chunk's own `len`, LE32; wIndex 8 arms the FIRST chunk of a
-    // scan, 0 every chunk after (a flag begin_scan sets, per the plan).
+    // Descriptor address fixed at 0x10000000 (IMAGE_READ_ADDR, matching
+    // the driver's own tables), length is this chunk's own `len`, LE32;
+    // wIndex 8 arms the first chunk of a scan, 0 every chunk after (a
+    // flag begin_scan sets).
     std::uint8_t desc[8] = {
         0x00, 0x00, 0x00, 0x10,
         static_cast<std::uint8_t>(len & 0xFF),
@@ -1221,11 +1213,11 @@ void read_image_chunk(Wire& wire, std::uint8_t* data, std::size_t len, bool firs
     if (ack != 0x55) {
         std::ostringstream oss;
         oss << "gl126_ops: read_image_chunk descriptor ack got 0x" << std::hex
-            << static_cast<int>(ack) << ", want 0x55 -- nothing further sent";
+            << static_cast<int>(ack) << ", want 0x55, nothing further sent";
         throw OpsError(OpsFailure::BadAck, 0, oss.str());
     }
 
-    // ONE logical bulk IN of the whole chunk -- see read_image_chunk()'s
+    // One logical bulk IN of the whole chunk, see read_image_chunk()'s
     // doc comment (gl126_ops.h) for why the captured ~33-fragment/chunk
     // USB-packet breakdown is not reproduced here, and why there is no
     // trailing bulk-done read.
@@ -1233,7 +1225,7 @@ void read_image_chunk(Wire& wire, std::uint8_t* data, std::size_t len, bool firs
     if (got != len) {
         std::ostringstream oss;
         oss << "gl126_ops: read_image_chunk bulk IN got " << got << " B, want "
-            << len << " B -- nothing further sent";
+            << len << " B, nothing further sent";
         throw OpsError(OpsFailure::ShortBulk, 1, oss.str());
     }
 }

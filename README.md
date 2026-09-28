@@ -2,7 +2,7 @@
 
 ![License: GPL-2.0-or-later or MIT (driver), CC BY 4.0 (docs)](https://img.shields.io/badge/License-GPL--2.0--or--later%20%7C%20MIT%20%7C%20CC--BY--4.0-blue.svg)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
-![Release: v0.1.2](https://img.shields.io/badge/Release-v0.1.2-blue.svg)
+![Release: v0.2.0](https://img.shields.io/badge/Release-v0.2.0-blue.svg)
 ![Status: CLI driver complete, SANE backend working locally](https://img.shields.io/badge/Status-CLI%20driver%20complete%2C%20SANE%20backend%20working%20locally-green.svg)
 
 **Unofficial, community-built Linux driver for the Plustek OpticFilm 135i**
@@ -22,7 +22,7 @@ other units are not yet known.
 
 The project has two parts, at different stages:
 
-- **Python / pyusb command-line driver — released (v0.1.2), working on the
+- **Python / pyusb command-line driver — released (v0.2.0), working on the
   test unit.** Scans to raw 16-bit TIFF/PNM at all five resolutions
   (600 / 1200 / 2400 / 3600 / 7200 dpi), with an infrared dust/scratch channel,
   whole-strip batch scanning, and a resumable bulk-digitisation workflow.
@@ -165,16 +165,17 @@ for wider distribution, and it has not happened.
 
 ## Development status
 
-**Status: v0.1.2 released (the CLI driver;
-[release notes](docs/release-notes-v0.1.2.md)).** The standalone Python/pyusb
+**Status: v0.2.0 released (2026-09-28, the CLI driver and the SANE
+backend; [release notes](docs/release-notes-v0.2.0.md)).** The standalone Python/pyusb
 command-line driver reached its defined milestone — magazine loading,
 single-frame and whole-strip batch scanning, all five resolutions, IR and dust
 removal, and eject — with scan, calibration, IR and dust removal
 hardware-verified per frame and across a 4-frame strip in one invocation,
 frame for frame against the vendor application's output of the same strip
 (2026-09-05), and six-frame strips since 2026-09-10 (Tests 59–60). v0.1.2
-(2026-09-12) fixes the infrared channel's colour-line alignment: before it,
-every dust speck appeared three times in the IR image. "Complete" here means that functional milestone is met **within
+(2026-09-12) fixed the infrared channel's colour-line alignment; v0.2.0
+(2026-09-28) adds next-strip loading, 110 film, and is the first release
+whose scope includes the SANE backend with one-button magazine handling. "Complete" here means that functional milestone is met **within
 its frozen scope on the one test unit** — it is **not** broad field testing or
 proof of compatibility with other scanners or Linux systems. The **SANE
 backend is a separate effort with its own status** — working locally, not
