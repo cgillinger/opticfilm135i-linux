@@ -639,12 +639,19 @@ promised scope require them. VueScan stays out of public docs.
   after LOAD or during calibration. Full details and all nine items:
   `docs/sane-wp5-load-button.md` §9.5. 389 offline tests pass (was
   380), 0 warnings, patch re-regenerated and re-verified.
-- Test 92 (hardware, owner's go required): `docs/sane-wp5-load-button.md`
-  §7 — the rule (cold scanner, Load film, reseat, loads by itself), the
-  two traps read-only (do nothing → 120 s timeout, no `0xfc` anywhere;
-  press again while loaded → refused), Check status after every step,
-  and the cross-process case from `scanimage`.
-- Stop condition: any deviation stops Test 92; no blind retry.
+- Test 92 **PASSED on hardware 2026-09-28** (`docs/test-log.md`):
+  the rule (cold scanner, Load film, reseat, loads by itself, then a
+  no-jog load for the next strip), the two traps read-only (do nothing
+  → 120 s timeout, no feed failure anywhere; press again while loaded →
+  refused), Check status after every step, and the cross-process case
+  from `scanimage`. WP-5 is DONE; the WP-3 package must be re-exported
+  after it (its §8).
+- Candidate raised by the owner during Test 92 (not scheduled): a
+  "push in first, then press" order like the Python driver's `--next-
+  strip` — from Ejected with the sensor already present at the press,
+  load directly without the edge wait. The sensor bit reports presence,
+  not seated-at-the-stop, so this fast path carries Test 91's
+  feed-failure risk; owner's decision.
 
 **WP-3 — SANE submission package, prepared only (B2). PREPARED,
 rebased onto current upstream 2026-09-15 — see
@@ -790,8 +797,8 @@ Not in scope: a 110 FEEDL grid, 126 Instamatic, holder-ID detection,
 Recorded so they are not lost. None is committed work; each needs a
 decision before it starts.
 
-**WP-5 — one-button loading (design written 2026-09-27, not
-implemented, owner's go for the design).** `docs/sane-wp5-load-button.md`:
+**WP-5 — one-button loading (designed 2026-09-27, implemented and
+hardware-verified 2026-09-28, Test 92 — DONE).** `docs/sane-wp5-load-button.md`:
 `Load film` waits for the loader sensor's out-then-in edge and runs LOAD
 itself; Scan never loads (refuses read-only when nothing is loaded); a
 `Check status` button reads the hardware. Removes the button sequence

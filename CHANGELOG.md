@@ -75,6 +75,15 @@ one exists; "offline" means implemented and tested without the scanner.
   tooltip (`desc`) spells out the whole load/scan/eject procedure. The
   README gained a matching six-line "digiKam cheat sheet". Not yet seen
   live.
+- **One-button loading verified on hardware** (2026-09-28, Test 92): from
+  digiKam and from `scanimage`, five loads on one power-on (one cold with
+  jog, four without), feed and traverse on the first poll every time; the
+  120 s timeout and the two refusals (Scan without a load, Load film while
+  loaded) caught read-only; Check status correct after every step; the
+  `ejected` / `loaded` marks carried the state across processes. The
+  frontend limits of the design (instruction visible only for an instant,
+  button errors invisible in digiKam, digiKam's own text for the NO_DOCS
+  refusal) were all seen live.
 - **One-button loading (WP-5)** (offline, 2026-09-27, following a live
   session that passed on the mechanics but whose operator still needed
   outside guidance, and a defect the same session hit for real: a second
