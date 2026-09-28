@@ -358,9 +358,11 @@ parentheses.
    longer a "released, waiting for a following Scan" state a second press
    can disturb: a second `Load film` press either safely re-runs the
    release (if the operator never actually touched the magazine) or
-   safely waits again (if they already had). **None of this has been
-   tried live** -- the next digiKam session is what would confirm WP-5
-   actually closes the gap the owner's verdict named.
+   safely waits again (if they already had). **Seen live 2026-09-28
+   (Test 92, `docs/test-log.md`):** every branch above behaved as
+   written from digiKam and from `scanimage`; a refused `Load film`
+   shows nothing in digiKam (libksane swallows a button option's error),
+   so the status line and `Check status` are the only channel.
 3. Back on the **Grundalternativ** tab, press **Läs in** (Scan/Read — not
    "Förhandsgranskning": that runs a full 600 dpi pass, never a cheap
    preview, on this scanner). It refuses (`SANE_STATUS_NO_DOCS`,
@@ -493,8 +495,8 @@ protocol described in `docs/sane-wp4-magazine.md`).** `load_document()` /
 `check-status` / `magazine` option set, and the whole load → scan → eject
 cycle has run on hardware from `scanimage` and from digiKam with no
 command-line step, including freeing a latched magazine after a power
-cycle (Tests 75–77, 2026-09-13; the one-button flow itself is **offline
-only so far**, Test 92 pending, `docs/sane-wp5-load-button.md` §7).
+cycle (Tests 75–77, 2026-09-13; the one-button flow itself
+hardware-verified 2026-09-28, Test 92, `docs/sane-wp5-load-button.md` §7).
 
 **The one rule:** press **Load film** first, then take the magazine out
 and push it back in to the mechanical stop — it loads itself, no further

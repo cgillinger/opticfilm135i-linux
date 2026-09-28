@@ -38,7 +38,8 @@ The project has two parts, at different stages:
   the whole load → scan → eject cycle has run from `scanimage` and from
   digiKam with no command-line step, including a power-cycled unit with a
   latched magazine (Tests 75–77, 2026-09-13). The one-button flow itself
-  (**offline only so far**, hardware run pending) is
+  is hardware-verified from digiKam and from `scanimage` (Test 92,
+  2026-09-28: five loads, two traps read-only, cross-process):
   **[docs/sane-wp5-load-button.md](docs/sane-wp5-load-button.md)**.
   What it does not do is anything upstream: a submission package for the
   SANE project is prepared and reviewable, and nothing has been sent. Its

@@ -6531,3 +6531,75 @@ from outside the dialog to run the session (the owner's finding,
 follow-up (the status line rendering enabled, the seven values naming
 "Scan", the tooltip spelling out the whole procedure) address this
 offline, in this same change, and have **not** been seen live.
+
+
+### Test 92: WP-5 one-button loading on hardware — PASS (2026-09-28)
+
+**What.** First live run of WP-5 (`docs/sane-wp5-load-button.md`, commit
+c5fc847), installed with `sudo tools/sane_install.sh install` at 18:27
+(`status`: installed library identical to the current build). Scanner
+power-cycled beforehand, magazine loose in the slot with strip A, strip B
+at hand. digiKam started with `SANE_DEBUG_GENESYS=8`; log
+`digikam-session1.log`, part D's logs `d-load.log` / `d-scan.log` /
+`d-eject.log`, and the three scans `a-f1-600.png`, `b-f1-600.png`,
+`d-f1-600.tiff` in the private analysis area `t92-20260928/`; positive
+previews in `~/Bilder/opticfilm-granskning/t92-20260928/`. No
+`of135i` command in the whole session. Plan: WP-5 §7, parts A–D.
+
+**What happened, in order.** All register values from the log.
+
+| time | action | result |
+|---|---|---|
+| 18:30 | **C** Check status after the power cycle | `cold -- press Load film` |
+| 18:31:41 | **A** Load film (cold) | cold start (nine completions, all end 0xf8), `open`, jog; unknown -> Released, mark written; edge wait started (budget 120 s) |
+| — | operator took the magazine out, pushed it in to the stop | edge seen after 43 polls (~4.3 s), 600 ms settle, `load`: feed 0xf4 first poll, traverse 0xdc 107 ms; Released -> Loaded, mark `loaded` written; status `loaded -- set Frame, press Scan` |
+| 18:33:47, 18:33:59 | Check status, twice | reg 0x01 0x22, reg 0x101 0xdc, 0x3b/0x3c 0x00/0x00; text unchanged (correct) |
+| 18:34 | Scan, frame 1, 600 dpi Color | gain 0x2c/0x20/0x27; FEEDL 6519; POSITION 1432 ms; PARK 3841 ms; PNG 876 x 927, 16-bit RGB, `low_byte_nonzero` 0.996 |
+| 18:35:21 | Eject film | 0xf8 after 937 ms; Loaded -> Ejected, mark `ejected`; status `ejected -- swap strip, then Load film`; Check status: 0x22 / 0xf8 / 0x02/0x00 (Test 90's post-eject leftovers, now only logged) |
+| 18:40:27 | Load film (magazine already out, strip B in it) | **no jog**; edge wait started from Ejected; pushed in -> edge seen after 85 polls (~8.5 s); feed 0xf4 first poll, traverse 0xdc 54 ms; Ejected -> Loaded |
+| 18:43 | Scan; Eject film; Check status | FEEDL 6519; PARK 3835 ms; PNG 876 x 927 16-bit; eject 0xf8 after 938 ms -> Ejected; 0x22 / 0xf8 / 0x02/0x00 |
+| 18:48:31 | **B1** Load film, magazine not touched | 1200 polls, 120 s, first 0xf8 last 0xf8, "saw a clear read: no" -> Ejected -> Released (mark `released`); status `did not come loose? Load film again`; **no LOAD, no motor** |
+| 18:52:13 | **B2** Scan | `magazine_check_scan_allowed`: ONE register read (0x01 = 0x22) -> refused, `SANE_STATUS_NO_DOCS`, "the magazine is not loaded -- press Load film first. Nothing was written."; digiKam's dialog: "Slut på dokument i dokumentmataren"; cancel path: end_scan "already parked", move_back_home refused (no motor) |
+| 18:52:44 | **B3** Load film, then reseat | edge seen after 54 polls (~5.4 s); feed 0xf4 first poll, traverse 0xdc 51 ms; Released -> Loaded |
+| 18:53:01, :02, :22 | **B4** Load film three times while loaded | each refused after one register read: "the magazine is already loaded -- press Scan or Eject film. Nothing was written." (`SANE_STATUS_INVAL`); digiKam showed nothing |
+| 18:54:13 | Eject film; Check status; digiKam closed | 0xf8 after 937 ms -> Ejected; 0x22 / 0xfc / 0x00/0x00 |
+| 18:55:59 | **D** `scanimage -n --load-film` (new process) | the `ejected` mark from digiKam's process honoured: **no jog**, edge wait started; reseat -> edge seen after 182 polls (~18.2 s); feed 0xf4 first poll, traverse 0xdc 43 ms; -> Loaded, mark `loaded` |
+| 18:57:09 | **D** plain `scanimage` scan (new process) | `magazine_check_scan_allowed` passed on the `loaded` mark; gain 0x2c/0x21/0x27; FEEDL 6519; POSITION 1433 ms; PARK 3841 ms; TIFF 876 x 927 16-bit, `low_byte_nonzero` 0.996 |
+| 18:57:28 | **D** `scanimage -n --eject-film` | 0xf8 after 937 ms -> Ejected, mark `ejected` |
+
+**Verdict: PASS.** Parts A, B, C and D completed as written in WP-5 §7.
+No feed failure anywhere (the `0xfc` bytes in the log are register
+status reads — reg 0x101 after an eject, the gain-check reads — not the
+feed completion's timeout value). Five loads on one power-on, four of
+them without a jog, feed and traverse on the first poll every time.
+The operator needed nothing but the one rule; the two traps were caught
+read-only. The three frames are real, whole, distinct frames (inspected
+by the session as work images; not a production eye acceptance).
+
+**Frontend observations (owner's, all WP-5 §5 limitations, none a
+backend defect).**
+
+1. The "take out, push in" instruction is visible only for an instant:
+   the whole dialog is locked while `Load film` waits, and the status
+   line is re-read only after the button returns. The tooltip is the one
+   persistent instruction.
+2. A refused `Load film` (already loaded) shows **nothing** in digiKam:
+   libksane swallows a button option's error. The status line (or
+   `Check status`) is the only channel.
+3. The refused Scan shows digiKam's own translated text for
+   `SANE_STATUS_NO_DOCS` ("Slut på dokument i dokumentmataren"), not the
+   backend's message. No other SANE status would read better in a
+   frontend ("Invalid argument", "Cover open").
+4. The owner asked why the order is "press, then push in" when the
+   Python driver's "Nästa remsa" button is "push in, then press". The
+   loader sensor bit (reg 0x101 bit 0x08) reports *presence*, not
+   *seated at the stop*: a loose magazine in the slot reads present too
+   (this session: 0xf8/0xfc after every eject). The out-then-in edge is
+   the only evidence the backend can get that the magazine was just
+   seated; a "present at press -> load directly" fast path from Ejected
+   would carry exactly the feed-failure risk of Test 91 session 1.
+   Recorded as a candidate in `docs/ROADMAP.md`; owner's decision.
+
+One correction from the session itself: the session first read reg
+0x101 = 0xf8 after the eject as "sensor clear"; it is *present* (bit
+0x08 set), which is right for a loose magazine in the slot.

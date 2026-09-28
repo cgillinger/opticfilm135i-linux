@@ -194,6 +194,20 @@ Stop on any deviation; recovery is the standing one (power cycle, Load
 film). Acceptance: A and B complete as written, no `0xfc` anywhere, and
 the operator needed nothing but the one rule.
 
+**Result (Test 92, 2026-09-28): PASS**, parts A–D as written, on the
+build of c5fc847 installed that day. Five loads on one power-on (one
+cold with jog, four from Ejected/Released without a jog), feed 0xf4 and
+traverse 0xdc on the first poll every time; both traps caught read-only
+(120 s timeout -> "did not come loose? Load film again", Scan refused
+with `SANE_STATUS_NO_DOCS` after one register read, Load film while
+loaded refused with `SANE_STATUS_INVAL`); Check status correct after
+every step including "cold" after the power cycle; the cross-process
+case (`scanimage -n --load-film` honouring digiKam's `ejected` mark, then
+a plain scan on the `loaded` mark, then eject) complete. Full table in
+`docs/test-log.md` Test 92. The §5 frontend limits were all seen live
+(instruction visible only for an instant, button errors invisible in
+digiKam, the NO_DOCS dialog text is digiKam's own).
+
 ## 8. Relation to the other packages
 
 Supersedes the two-call protocol of WP-4 §3 and §10 for the frontend
