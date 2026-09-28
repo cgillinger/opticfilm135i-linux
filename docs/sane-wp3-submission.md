@@ -17,20 +17,31 @@ submitted, and by whom, is Christian's decision.
 
 | | |
 |---|---|
-| Branch | `wp3-gl126-submission-v2` |
-| Worktree | `~/Dokument/Github/sane-wp3-v2` (a `git worktree` of the sane-backends clone) |
-| Base | `7fb102b`, "Merge branch 'fix/scanimage-abort-status' into 'master'", fetched 2026-09-15 |
+| Branch | `wp3-gl126-submission-v3` |
+| Worktree | `~/Dokument/Github/sane-wp3-v3` (a `git worktree` of the sane-backends clone) |
+| Base | `f8b5e16`, "Merge branch 'saned_unit_tests' into 'master'", fetched 2026-09-28 |
 | Commits | 5 |
-| Tip tree | `65a7b8bd1416968ad3630a617e7aebdc9bfcf068` |
+| Tip tree | `d891db5dfc1e2aa7815180193046e5df153ababe` |
 
-Rebased onto current upstream 2026-09-15 (from the earlier `1d47d7c`
-base). Upstream touched **none** of the files this series changes between
-the two bases — `backend/genesys/`, `backend/Makefile.am`,
-`backend/genesys.conf.in`, the `.desc`, the man page and `AUTHORS` each
-have zero upstream commits in that range — so the rebase was clean and no
-GL126 behaviour changed. Should upstream move again before a submission,
-only the then-relevant difference needs assessing; the package is not
-invalidated wholesale (§7).
+Third revision, 2026-09-28: refreshed from the repository's current
+`sane/` (everything since the 2026-09-15 export — the strict cold-start
+completions, the post-eject precondition fix of Test 90, the digiKam
+dialog cleanup, English-only strings, the settable status line, and
+WP-5's one-button loading, hardware-verified in Test 92 the same day)
+and rebased onto current upstream (from `7fb102b`). Between the two
+bases upstream made 14 commits, **one** of them in the files this
+series changes: `f561b04`, "genesys: count NUL byte in max_string_size
+for `std::vector`", a one-line change in `genesys.cpp` to a helper this
+series does not call (the `magazine` option's size is a fixed GL126
+constant, not `max_string_size`). The integration patch applied clean on
+top of it and nothing in this series interacts with it. Should upstream
+move again before a submission, only the then-relevant difference needs
+assessing; the package is not invalidated wholesale (§7).
+
+Previous revisions: v2 (2026-09-15, base `7fb102b`, tip tree
+`65a7b8bd…`), v1 (2026-09-13, base `1d47d7c`, four commits). Both
+branches still exist in the sane-backends clone; the exported package
+is v3.
 
 The worktree is separate from `~/Dokument/Github/sane-backends`, which
 keeps the development arrangement (symlinks into this repo's `sane/`)
@@ -39,7 +50,7 @@ zero mode-120000 entries, and the nine GL126 files are real files
 committed to the branch. That was the point of building it this way —
 a reviewer clones, builds, and needs nothing from this repository.
 
-**Exported 2026-09-15 to `sane/wp3-package/`** — a bundle and the five
+**Exported 2026-09-28 to `sane/wp3-package/`** — a bundle and the five
 patches, with the base and every commit and tree id, recreation and build
 instructions, and the verification (standalone build, symbols, backend
 suites, both recreation routes). That is the reviewable form; the worktree
@@ -50,11 +61,16 @@ To recreate it from scratch by hand instead:
 
 ```
 cd ~/Dokument/Github/sane-backends
-git worktree add -b wp3-gl126-submission-v2 ~/Dokument/Github/sane-wp3-v2 7fb102b
-cd ~/Dokument/Github/sane-wp3-v2
-cp ~/Dokument/Github/opticfilm135i-linux/sane/gl126*.{h,cpp} backend/genesys/
+git worktree add -b wp3-gl126-submission-v3 ~/Dokument/Github/sane-wp3-v3 f8b5e16
+cd ~/Dokument/Github/sane-wp3-v3
+cp -L ~/Dokument/Github/opticfilm135i-linux/sane/gl126*.{h,cpp} backend/genesys/
 git apply ~/Dokument/Github/opticfilm135i-linux/sane/gl126-integration.patch
-# then commit in the five groups described below (the Extract fix first)
+# the man page, AUTHORS and .desc-status hunks of commit 5 are not in the
+# integration patch (the development clone carries no doc changes):
+git apply --include=AUTHORS --include=doc/sane-genesys.man \
+    ~/Dokument/Github/opticfilm135i-linux/sane/wp3-package/0005-*.patch
+# then commit in the five groups described below (the Extract fix first);
+# the .desc status flip is applied from the same 0005 patch before commit 5
 ```
 
 ## 2. The commit series
@@ -75,23 +91,24 @@ git apply ~/Dokument/Github/opticfilm135i-linux/sane/gl126-integration.patch
    and sensor entries, the USB id in `genesys.conf.in`, the `.desc`
    entry.
 4. **`genesys: frame selection and magazine handling for the OpticFilm
-   135i`** — the four options (`frame`, `load-film`, `eject-film`,
-   `magazine`) in `genesys.{h,cpp}` and the process lock in
-   `sane_open`/`sane_close`, inactive on every other ASIC.
+   135i`** — the five options (`frame`, `load-film`, `eject-film`,
+   `check-status`, `magazine`) in `genesys.{h,cpp}`, the options the
+   GL126 hooks do not implement made inactive for it, and the process
+   lock in `sane_open`/`sane_close`; all inactive on every other ASIC.
 5. **`genesys: document the GL126 and the OpticFilm 135i`** — the man
    page's chip list, an `AUTHORS` entry, and the `.desc` status moving
    from `:untested` to `:good`.
 
 ## 3. What was verified, and how
 
-**Build.** Configured and built from the branch alone
-(`./autogen.sh && ./configure --sysconfdir=/etc`, then `lib`, `sanei` and
+**Build.** Configured and built from the branch alone (2026-09-28,
+`./autogen.sh && ./configure --sysconfdir=/etc`, then `lib`, `sanei` and
 `backend/libsane-genesys.la`). Exit 0, **zero compiler errors or
 warnings**. This is the check that matters most: it proves the package
 stands without this repository.
 
-**Exported symbols.** `nm -D` on the resulting library: 1519 dynamic
-symbols, **107 mentioning gl126 — identical to the development build**,
+**Exported symbols.** `nm -D` on the resulting library: **111 mentioning
+gl126 — identical to the development build**,
 and both the plain `sane_*` and the prefixed `sane_genesys_*` entry
 points present as genesys expects.
 
@@ -103,12 +120,11 @@ worktree rather than the development tree:
 |---|---|
 | `test_sane_open_params` | 7 passed |
 | `test_sane_calibration_cache` | 6 passed |
-| `test_sane_magazine` | 20 passed |
+| `test_sane_magazine` | 42 passed |
 
 The full offline suite passes in this repository against the development
-build: 316 tests at the `12d5193` baseline this package was exported
-from, 321 with the lock-file-hardening tests added afterwards (which
-belong to the next series revision, §7).
+build: `tools/release_check.py` FULL VERIFICATION, 389 tests, 0 skipped,
+at `19b7605` (the Test 92 commit this package was exported from).
 
 **Checklist items from `doc/backend-writing.txt`.** That checklist is
 written for a *new backend*; this is a new ASIC and model inside the
@@ -172,16 +188,21 @@ Earlier work covering the profiles, geometry and image path is in
 > addressed by number through a `frame` option rather than by a scan
 > area, because the geometry is fixed by the holder and positioning is a
 > single absolute feed from the load reference. The film magazine is
-> loaded and ejected through two further options: the vendor's own insert
-> flow requires the operator to remove the magazine and re-seat it to a
+> handled through three further options: the vendor's own insert flow
+> requires the operator to remove the magazine and re-seat it to a
 > mechanical stop in the middle of the sequence, and since SANE offers no
-> way to ask for that during `sane_start`, `load-film` performs the
-> release, the operator re-seats, and the next `sane_start` completes the
-> load. A `magazine` option reports where it is believed to be; it
+> way to ask for that during `sane_start`, `load-film` does the whole
+> thing in one call — it releases the magazine, then polls the loader
+> sensor read-only (up to 120 s) until it has seen the magazine taken
+> out and pushed back in, and then loads it. A scan never loads the
+> magazine itself: with nothing loaded, `sane_start` refuses after one
+> register read. `eject-film` ejects, and `check-status` re-reads the
+> hardware. A `magazine` option tells the operator the next step; it
 > accepts a SET (so a frontend that greys out a strictly read-only
 > option still renders it legibly), but the value is fixed by the state
-> machine, not by the caller. All four options are inactive on every
-> other ASIC.
+> machine, not by the caller. All five options are inactive on every
+> other ASIC, and the options the GL126 does not implement are inactive
+> for it.
 >
 > The motor waits fall into two kinds, and which kind each one is, is
 > marked at the site in the generated tables.
@@ -232,7 +253,9 @@ Earlier work covering the profiles, geometry and image path is in
 > companion command-line driver. The backend-driven magazine flow — a
 > full load → scan → eject cycle with no external command, from
 > `scanimage` and from digiKam, including a power-cycled unit with a
-> latched magazine — has been run at 3600 dpi only. Interrupting a scan
+> latched magazine — has been run at 3600 dpi in its earlier two-call
+> form and at 600 dpi in the one-call form this series ships (five loads
+> on one power-on, the timeout and both refusals exercised). Interrupting a scan
 > mid-pass leaves the transport unparked and needs a power cycle; no
 > automatic recovery exists, by design. Known limitations are listed in
 > the accompanying notes; the most important is that a single unit
@@ -262,10 +285,12 @@ Earlier work covering the profiles, geometry and image path is in
    `flock` on a well-known path to keep itself and the reverse-engineered
    Python driver off the device simultaneously. No other genesys ASIC
    needs this, and a reviewer may reasonably question it.
-7. **State on disk.** "A release is pending" is recorded beside that lock
-   so `scanimage`, which reaches the backend in a fresh process each
-   invocation, can complete a two-step load. Also likely to draw
-   questions.
+7. **State on disk.** The magazine state (released, loaded, ejected or
+   failed) is recorded beside that lock so `scanimage`, which reaches the
+   backend in a fresh process each invocation, knows whether a scan may
+   start and whether the next `load-film` needs a release. Never trusted
+   alone: the hardware is re-read before any motor move. Also likely to
+   draw questions.
 8. **2400 dpi is anisotropic** (3600 across, 2400 along) and is resampled
    on the host so delivered pixels are square.
 9. **Colour rendering is not addressed.** The backend delivers linear raw
@@ -302,9 +327,8 @@ they did before.
 
 **Addendum, 2026-09-27 (offline — digiKam dialog usability review,
 `docs/ROADMAP.md`).** Six more hunks in the shared files (two added in a
-follow-up review round the same day), none yet folded into the exported
-package in `sane/wp3-package/` (that export is a separate, deliberate step
-per §7; do it before any future submission).
+follow-up review round the same day); folded into the exported package
+in `sane/wp3-package/` with the 2026-09-28 re-export (v3).
 
 | file | change | class | effect on other ASICs |
 |---|---|---|---|
@@ -318,7 +342,7 @@ per §7; do it before any future submission).
 **Addendum, 2026-09-27 evening (Test 91 — the first live digiKam session,
 and two libksane display bugs found by reading `LabeledCombo`'s source;
 `docs/sane-install.md` §6 "Two libksane display bugs").** One more hunk,
-not yet folded into `sane/wp3-package/`. Earlier the same evening a
+folded into `sane/wp3-package/` with the 2026-09-28 re-export (v3). Earlier the same evening a
 Swedish `po/sv.po` catalog for this port's strings was added and briefly
 installed; the live session it enabled found the bugs above, and the
 owner decided afterwards that the backend should carry no translations at
@@ -337,8 +361,8 @@ inside the nine `gl126_*` files this table does not cover.
 **Addendum, 2026-09-27, later the same evening (this task -- the
 digiKam dialog's second live session, `docs/test-log.md` Test 91's
 second paragraph, and the owner's verdict "no one can do this process
-without a written manual").** One more hunk in shared code, not yet
-folded into `sane/wp3-package/`.
+without a written manual").** One more hunk in shared code, folded into
+`sane/wp3-package/` with the 2026-09-28 re-export (v3).
 
 | file | change | class | effect on other ASICs |
 |---|---|---|---|
@@ -374,7 +398,8 @@ English-only change in the addendum above, they need no row here.
 addendum above still describes: `OPT_LOAD_FILM` now runs release, wait
 and load in one call, and `OPT_MAGAZINE`'s twelve values (was seven)
 include four `Check status`-only diagnostic texts. Four hunks in shared
-code, none yet folded into `sane/wp3-package/`.
+code, folded into `sane/wp3-package/` with the 2026-09-28 re-export (v3),
+after Test 92 verified the flow on hardware.
 
 | file | change | class | effect on other ASICs |
 |---|---|---|---|
@@ -382,7 +407,7 @@ code, none yet folded into `sane/wp3-package/`.
 | `genesys.cpp`, `init_options` | the `OPT_CHECK_STATUS` button declared (type, title, desc, unit, constraint); added to the GL126-only active set and to the non-GL126 `SANE_CAP_INACTIVE` block alongside the other three film options; `OPT_LOAD_FILM`'s desc rewritten for the one-button procedure | gated (inactive elsewhere) | none |
 | `genesys.cpp`, `set_option_value` (new `case OPT_LOAD_FILM` body, new `case OPT_CHECK_STATUS`) | `OPT_LOAD_FILM`'s case now calls `gl126::magazine_load_film()` (was `magazine_release()`, a plain rename of the C++ function it forwards to -- the case's own three lines are otherwise the same shape); `OPT_CHECK_STATUS`'s case calls `gl126::magazine_check_status()` and sets `SANE_INFO_RELOAD_OPTIONS`, the same pattern the other two film buttons already use | additive (a new case in a switch shared by every ASIC, reached only when `option == OPT_CHECK_STATUS`; unreachable elsewhere since the option is `SANE_CAP_INACTIVE` there) | none |
 | `test_scanner_interface.{h,cpp}` | GL126's test-mode constructor now also seeds regs `0x3b`/`0x3c` to `0x00`, alongside the pre-existing `0x01`/`0x101` seeds; **review round two (finding F)**: every `write_*` method (`write_register`, `write_registers`, `write_0x8c`, `bulk_write_data`, `write_buffer`, `write_gamma`, `write_ahb`, `write_fe_register`) now increments a counter, exposed as `write_count()` alongside the pre-existing `out_transfer_count()`; a new `seed_register()` writes the cache directly, uncounted, for test setup | gated (the register seeds, `AsicType::GL126` branch only) / additive, test-mode only (the counter and `seed_register()`) | none -- test-mode-only, no other ASIC's branch touched, no production caller |
-| `test_usb_device.{h,cpp}` (new files, not yet in `sane/wp3-package/`'s file list) | a small `out_transfer_count()` counter on the test-mode USB mock, incremented on every OUT control transfer and `bulk_write` | additive, test-mode only | none -- these are test-harness classes with no production caller |
+| `test_usb_device.{h,cpp}` (in commit 2 of the series since v3) | a small `out_transfer_count()` counter on the test-mode USB mock, incremented on every OUT control transfer and `bulk_write` | additive, test-mode only | none -- these are test-harness classes with no production caller |
 
 **Rationale for the register-seed and counter additions.** Both are
 test-harness fixes needed by the new offline suite
@@ -456,14 +481,15 @@ is `PollMasked` and fails closed, and each of those sites is marked so
 too. `gl126_ops.h` documents the kinds; `tools/gen_sane_tables.py`
 refuses to emit a best-effort site it has no reason for. (Until
 2026-09-15 the cold start's nine completions were best-effort as well,
-22 sites in all; the exported package in `sane/wp3-package/` still
-carries that form — see §7.)
+22 sites in all; the exported package carried that form until the
+2026-09-28 re-export.)
 
 ## 7. What remains before anything could be submitted
 
 The rebase and the package preparation are **done for this revision**
-(2026-09-15): the series is current against `7fb102b`, builds standalone
-and is exported to `sane/wp3-package/`. What remains is frozen in
+(v3, 2026-09-28): the series is current with the repository's `sane/`
+and with upstream `f8b5e16`, builds standalone and is exported to
+`sane/wp3-package/`. What remains is frozen in
 **[docs/sane-submission-runbook.md](sane-submission-runbook.md)**: a
 re-check against whatever upstream is at submission time (re-rebase only
 if it has touched the affected paths), the `tstbackend -l 1` conformance
@@ -472,9 +498,10 @@ run against the final build, and Christian's go/no-go.
 Listed so the decision is informed, not to schedule it.
 
 1. **Re-fetch and rebase — done for this revision.** Rebased onto
-   `7fb102b` (2026-09-15); upstream had touched none of the affected
-   paths, so the rebase was clean. If upstream moves again before a
-   submission, re-assess only the then-relevant difference.
+   `f8b5e16` (2026-09-28); upstream had touched one affected file with
+   one line this series does not use (§1), and the patch applied clean.
+   If upstream moves again before a submission, re-assess only the
+   then-relevant difference.
 2. **Run the SANE test tools, or state they were not run.** Source-read
    2026-09-15 (`docs/sane-submission-runbook.md`): `tstbackend -l 1` is
    read-only (no motor) and is the one to run, against the final build;
@@ -493,20 +520,20 @@ Listed so the decision is informed, not to schedule it.
    asks for the generator, it can be offered as a follow-up; the captures
    themselves are not published. What is *not* prepared is a smaller
    file, on purpose.
-4. **Refresh the series — done.** This revision folds in the best-effort
-   poll reasons, the model-table `UNTESTED` removal, the `settings.h`
-   comment and the lock-file hardening, and splits the
-   `ImagePipelineNodeExtract` fix into its own first commit; rebuilt
-   standalone (0 warnings, 107 gl126 symbols), the three backend suites
-   pass against it, and it is re-exported to `sane/wp3-package/`.
-5. **The exported package predates the cold-start change of
-   2026-09-15.** The repository's `sane/` now runs the cold start's nine
-   motor completions as `PollMasked` (fail-closed) and carries the new
-   `gl126_magazine_armed` test checkpoint; the series in
-   `sane/wp3-package/` (tip tree `65a7b8bd…`) still has them best-effort.
-   Before anything is submitted the series has to be refreshed from the
-   current `sane/` and re-exported — a submission-time step, not done
-   here, since the submission is paused.
+4. **Refresh the series — done, twice.** v2 (2026-09-15) folded in the
+   best-effort poll reasons, the model-table `UNTESTED` removal, the
+   `settings.h` comment and the lock-file hardening, and split the
+   `ImagePipelineNodeExtract` fix into its own first commit. v3
+   (2026-09-28) folds in everything since: the strict cold-start
+   completions and the `gl126_magazine_armed` checkpoint, Test 90's
+   post-eject precondition fix, the digiKam dialog cleanup (dead options
+   inactive on GL126, Color default), English-only strings, the settable
+   status line, and WP-5's one-button loading with its `check-status`
+   option and the test-mode counters (§8's addenda, all now in the
+   package). Rebuilt standalone (0 warnings, 111 gl126 symbols), the
+   three backend suites pass against it, and it is re-exported to
+   `sane/wp3-package/`. The package is now exactly the repository's
+   `sane/` at the commit that records Test 92.
 5. **Decide how much of the magazine machinery to offer.** Items 6 and 7
    of §6 are the two most likely to be challenged; the file handling
    behind them is hardened and documented in `gl126_lock.h`.

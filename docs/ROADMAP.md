@@ -644,8 +644,8 @@ promised scope require them. VueScan stays out of public docs.
   no-jog load for the next strip), the two traps read-only (do nothing
   → 120 s timeout, no feed failure anywhere; press again while loaded →
   refused), Check status after every step, and the cross-process case
-  from `scanimage`. WP-5 is DONE; the WP-3 package must be re-exported
-  after it (its §8).
+  from `scanimage`. WP-5 is DONE; the WP-3 package was re-exported after
+  it the same day (v3, below).
 - Candidate raised by the owner during Test 92 (not scheduled): a
   "push in first, then press" order like the Python driver's `--next-
   strip` — from Ejected with the sensor already present at the press,
@@ -654,13 +654,14 @@ promised scope require them. VueScan stays out of public docs.
   feed-failure risk; owner's decision.
 
 **WP-3 — SANE submission package, prepared only (B2). PREPARED,
-rebased onto current upstream 2026-09-15 — see
+refreshed and rebased onto current upstream 2026-09-28 (v3) — see
 `docs/sane-wp3-submission.md`.** A five-commit series on branch
-`wp3-gl126-submission-v2`, based on sane-backends `7fb102b`, with the
-GL126 files as REAL files rather than the development symlinks: it builds
-clean from the branch alone (zero warnings), exports the same 107 gl126
+`wp3-gl126-submission-v3`, based on sane-backends `f8b5e16`, with the
+GL126 files as REAL files rather than the development symlinks: it is
+exactly the repository's `sane/` as of Test 92 (WP-5 included), builds
+clean from the branch alone (zero warnings), exports the same 111 gl126
 symbols as the development build, and passes the three backend-dependent
-offline suites (33 tests) run against it. The SANE checklist items that
+offline suites run against it (counts in the package README). The SANE checklist items that
 apply to a new ASIC in an existing backend are done, including a licence
 header the two generated files were missing. **Nothing has been sent, and
 B2 is not complete**; what remains before anything could be is §7 of that
@@ -704,11 +705,11 @@ Nothing in that mission runs before Christian says the code is ready.
 | # | Blocker | Closes when |
 |---|---|---|
 | 1 | Status drift between README, this roadmap and the submission document | The six questions in `updated-course.md` §3 get one answer everywhere; the submission text's motor-wait and testing claims match the code and the evidence. **Done in this revision.** |
-| 2 | The exact WP-3 series is not reproducible from this repository | **Done 2026-09-15:** bundle + five patches in `sane/wp3-package/`, recreated identically (tip tree `65a7b8bd…`) by both the `git am` and bundle routes in a clean clone. |
+| 2 | The exact WP-3 series is not reproducible from this repository | **Done 2026-09-15, repeated 2026-09-28 (v3):** bundle + five patches in `sane/wp3-package/`, recreated identically (tip tree `d891db5d…`) by both the `git am` and bundle routes in a clean clone. |
 | 3 | Lock and magazine-mark file handling (`/tmp`, mode 0666, no `O_NOFOLLOW`, truncating write) | **Done 2026-09-15:** both sides open `O_NOFOLLOW` + regular-file check, the mark is written via temp+`rename`, path/format unchanged; new probes in `test_sane_lock`/`test_safety` (see `gl126_lock.h`). |
 | 4 | Shared genesys code changed without a per-hunk rationale | **Done 2026-09-15:** every shared hunk classified in submission §8; each best-effort poll site carries its reason in the generated table; the `ImagePipelineNodeExtract` fix is now the series' own first commit. |
 | 5 | The offline checks are not fixed as a list | **Done 2026-09-15:** `docs/offline-checks.md` documents them with commands and expected results; `release_check.py` now reports PASS/FAIL/SKIP and refuses to call a run full when a mandatory suite skipped. Substantiated by a local run: **FULL VERIFICATION, 325 tests**. A GitHub Actions workflow file is provided but not activated (publishing it needs a `workflow`-scoped push); no CI run is claimed. |
-| 6 | The series is based on `1d47d7c`; upstream has moved | **Done for this revision 2026-09-15:** rebased onto `7fb102b` (upstream had touched none of the affected paths — clean), built standalone (0 warnings, 107 symbols), backend suites pass, re-exported to `sane/wp3-package/` (tip tree `65a7b8bd…`). At submission time, re-rebase only if upstream moved on the affected paths (runbook). |
+| 6 | The series is based on `1d47d7c`; upstream has moved | **Done for this revision 2026-09-28 (v3):** rebased onto `f8b5e16` (one upstream line in an affected file, in a helper the series does not use — clean), built standalone (0 warnings, 111 symbols), backend suites pass, re-exported to `sane/wp3-package/` (tip tree `d891db5d…`). At submission time, re-rebase only if upstream moved on the affected paths (runbook). |
 | 7 | `scanimage -T` and `tstbackend` neither run nor analysed | **Analysed 2026-09-15** (source read): run `tstbackend -l 1` only (read-only, no motor); document the scan-driving tools as "not run because". **Submission-time mission step 2**, against the rebased build. |
 | 8 | Decision | "Send this to SANE" or "not yet, for these reasons". Christian's. **Submission-time mission step 3.** |
 
@@ -969,7 +970,9 @@ jog, first-poll completions, identical positioning — after the first
 attempt exposed a backend bug (the post-eject precondition demanded the
 jog's 0x3b/0x3c = 0x00/0x00; an eject leaves the last scan profile's
 values) that was fixed offline in the same session (27/27 in the suite).
-The digiKam in-process variant has not been run.
+The digiKam in-process variant ran in Test 91's second session the same
+evening (PASS); under WP-5 the next-strip load is reached through Load
+film instead and was run four times in Test 92.
 
 **digiKam dialog usability (owner report, 2026-09-25).** The owner tried
 the backend from digiKam and found the dialog too cluttered to get a scan

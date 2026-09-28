@@ -1,16 +1,19 @@
-From b68756e6dc313883c719ebc84fde0f5909339600 Mon Sep 17 00:00:00 2001
+From ea469909ae046c91459ae6416a208b2a05baa87b Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
-Date: Tue, 15 Sep 2026 12:05:27 +0200
+Date: Mon, 28 Sep 2026 19:07:54 +0200
 Subject: [PATCH 3/5] genesys: add the Plustek OpticFilm 135i (07b3:1436)
 
-The model and sensor entries for the OpticFilm 135i, a 35 mm film
-scanner, and its USB id in genesys.conf.in and the .desc file.
+The model and sensor entries, the USB id in genesys.conf.in and the
+.desc entry. The GL126 command set drives the chip from generated
+register tables, so the adc/gpio/motor ids the core looks up are never
+consulted by any GL126 hook; the entries carry valid ids only so the
+model registers.
 ---
  backend/genesys.conf.in           |   3 +
- backend/genesys/tables_model.cpp  | 105 ++++++++++++++++++++++++++++++
- backend/genesys/tables_sensor.cpp |  52 +++++++++++++++
+ backend/genesys/tables_model.cpp  | 115 ++++++++++++++++++++++++++++++
+ backend/genesys/tables_sensor.cpp |  52 ++++++++++++++
  doc/descriptions/genesys.desc     |   6 ++
- 4 files changed, 166 insertions(+)
+ 4 files changed, 176 insertions(+)
 
 diff --git a/backend/genesys.conf.in b/backend/genesys.conf.in
 index 6e6a8d7..1153059 100644
@@ -24,10 +27,10 @@ index 6e6a8d7..1153059 100644
 +# Plustek OpticFilm 135i
 +usb 0x07b3 0x1436
 diff --git a/backend/genesys/tables_model.cpp b/backend/genesys/tables_model.cpp
-index 321d179..f68d5ab 100644
+index 321d179..4b587a3 100644
 --- a/backend/genesys/tables_model.cpp
 +++ b/backend/genesys/tables_model.cpp
-@@ -2311,6 +2311,111 @@ void genesys_init_usb_device_tables()
+@@ -2311,6 +2311,121 @@ void genesys_init_usb_device_tables()
  
  
  
@@ -52,7 +55,17 @@ index 321d179..f68d5ab 100644
 +    /* Every resolution is captured with the dual-light (IR + visible) pass
 +       except 3600 dpi, which also has the vendor's visible-only pass; the
 +       IR method delivers the IR lines of the same dual pass as a separate
-+       scan (docs/sane-hook8-dual.md). */
++       scan (docs/sane-hook8-dual.md).
++
++       This array's OWN order has no effect on anything -- found while
++       fixing the libksane resolution-combo bug (docs/sane-install.md S6):
++       MethodResolutions::get_resolutions() (device.cpp) unconditionally
++       re-sorts DESCENDING and deduplicates whatever is here before any
++       caller sees it, so listing it ascending (which was tried first)
++       changed nothing. Left in the upstream convention (highest first)
++       for that reason; the actual fix -- GL126's word list reversed to
++       ascending for the frontend combo only -- lives where the ordering
++       is real, genesys.cpp's set_resolution_option_values(). */
 +    model.resolutions = {
 +        {
 +            { ScanMethod::TRANSPARENCY, ScanMethod::TRANSPARENCY_INFRARED },
