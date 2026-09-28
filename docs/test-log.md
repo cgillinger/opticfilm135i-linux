@@ -6603,3 +6603,66 @@ backend defect).**
 One correction from the session itself: the session first read reg
 0x101 = 0xf8 after the eject as "sensor clear"; it is *present* (bit
 0x08 set), which is right for a loose magazine in the slot.
+
+
+### Test 93: `tstbackend -l 1` conformance run against the WP-3 v3 build — PASS, zero writes (2026-09-28)
+
+**What.** The SANE project's own backend test tool, run at level 1
+(init/exit, open/close, option consistency — no scan; level 2 and up
+drive the motor and are documented as not run), against the **exported
+package build**: the `wp3-gl126-submission-v3` worktree (base `f8b5e16`,
+tip tree `d891db5d…`), `tstbackend` built from that tree's
+`frontend/tstbackend.c` and linked directly against its
+`backend/libsane-genesys.la` (not the dll backend, which would have
+dlopened the installed development build from `/usr/lib64/sane`).
+Scanner idle-homed (reg 0x01 = 0x22, magazine ejected and loose,
+`ejected` mark on disk), nothing else owning the device, digiKam closed.
+`SANE_DEBUG_GENESYS=8` to a log. Files in the private analysis area
+`tstbackend-20260928/`: `tstbackend-l1-r1.out` (the tool's report,
+verbatim), `tstbackend-l1-r1.genesys.log`, and `tstbackend-l1.out` from
+a first attempt.
+
+**Two runs.** The first, with the tool's default option-recursion depth
+(5), was stopped by a 600 s timeout in the middle of the options test —
+combinatorial, not stuck (78 996 lines of the same info messages, no
+warning or error, 21 register reads). The second, `-l 1 -r 1`, ran to
+completion. Its report, verbatim except the licence banner:
+
+```
+          TEST: init/exit
+info    : unknown device vendor [PLUSTEK]. Update SANE doc section "Vendor Strings"
+          using device libusb:001:006
+          TEST: open/close
+          TEST: options consistency
+info    : option [1, scanmode-group] has a name       (x25, and the same for
+info    : option [8, geometry] has a name              geometry, film-group,
+info    : option [21, film-group] has a name           extras-group, sensors,
+info    : option [27, extras-group] has a name         buttons)
+info    : option [33, sensors] has a name
+info    : option [48, buttons] has a name
+warnings: 0  error: 0  checks: 22965
+```
+
+Exit 0. The two info classes: the group-option naming is the genesys
+backend's existing convention for every model (upstream's own groups
+carry names); the vendor-string note is about a documentation section
+(`doc/sane.tex`, vendor strings) and is what the tool says for any
+vendor not in that list.
+
+**What the backend saw.** The genesys log shows 21 control transfers in
+the whole run, all of them `read_register (0x01) -> 0x22` — one per
+`sane_open` (the GL126 open writes nothing; the ten open/close
+iterations, the ten init/open-default iterations and the options
+session) — and **zero writes** of any kind. The options test set
+`magazine` 475 times (the settable no-op status line), `mode`/`source`
+225 each, `resolution`, `frame`, the four geometry options 200 each,
+`preview` 175, `depth` 100; every set stayed host-side. The button
+options (`load-film`, `eject-film`, `check-status`) were skipped by the
+tool, as its source says for `SANE_TYPE_BUTTON`. Scanner afterwards:
+reg 0x01 = 0x22, mark unchanged.
+
+**Verdict: PASS.** This is blocker 7's conformance evidence for the v3
+package, version-bound to tip tree `d891db5d…`. `scanimage -T` and
+`tstbackend -l 2` and up remain deliberately not run (they start and
+cancel scans mid-pass; this unit needs a power cycle after an aborted
+pass and there is one unit).
