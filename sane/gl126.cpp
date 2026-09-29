@@ -125,33 +125,6 @@ void write_afe_base(Genesys_Device* dev)
     }
 }
 
-/** Write a phase's registers, with computed values patched in.
-
-    `values` supplies one byte per injection name; every injection the
-    phase declares must be present. A missing one is a programming error,
-    not a fallback to the captured byte: the captured byte is the
-    reference unit's calibration and writing it on another unit would
-    produce a plausible-looking, wrong scan. */
-[[maybe_unused]] void write_phase(Genesys_Device* dev, const Phase& phase,
-                 const std::map<std::string, std::uint8_t>& values)
-{
-    std::vector<RegPair> regs(phase.regs, phase.regs + phase.reg_count);
-
-    for (std::size_t i = 0; i < phase.injection_count; i++) {
-        const RegInjection& inj = phase.injections[i];
-        auto it = values.find(inj.name);
-        if (it == values.end()) {
-            throw SaneException(SANE_STATUS_INVAL,
-                                "gl126: phase '%s' needs a computed value for '%s'; "
-                                "the captured byte belongs to the reference unit and "
-                                "must not be written", phase.name, inj.name);
-        }
-        regs[inj.index].val = it->second;
-    }
-
-    write_table(dev, regs.data(), regs.size());
-}
-
 /** The profile for a scan: resolution plus whether the IR channel is
     captured. Non-3600 resolutions exist only as dual-light captures. */
 const Profile* find_profile(unsigned dpi, bool ir)
@@ -321,21 +294,6 @@ std::map<const Genesys_Device*, ScanPass>& scan_pass()
     static std::map<const Genesys_Device*, ScanPass> passes;
     return passes;
 }
-
-/* The one profile brought up for positioning and scanning, and its
-   captured line count (matching the driver's own DEFAULT_LINES: reg
-   0x25-0x27 of the frame-1 capture). Other profiles refuse in
-   begin_scan() until their own run. */
-constexpr unsigned kFrameLinesPlain3600 = 5137;
-/* The sensor reads R, G and B on separate CCD lines: at 3600 dpi the raw
-   stream carries R 24 lines after B and G halfway (vendor ini LineSpace,
-   matching the driver's own align_channels()). The model declares it as
-   ld_shift_r/g/b = 24/12/0 at the motor's base 3600 dpi and the core's
-   ComponentShiftLines node re-aligns the channels on the host, dropping
-   this many lines from the delivered image. The wire line count is
-   unchanged. Every profile's figures come from frame_geometry()
-   (gl126_ops); these two are the plain profile's, kept by name. */
-constexpr unsigned kColourShiftLinesPlain3600 = 24;
 
 /* The dual-light image stream keeps one line in two on the host.
    Height = source height / 2; row k of the output is source row 2k +

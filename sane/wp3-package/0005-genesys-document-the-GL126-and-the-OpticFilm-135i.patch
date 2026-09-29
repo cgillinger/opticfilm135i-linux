@@ -1,4 +1,4 @@
-From f46b829263957610e3565d63c0197c05a2577504 Mon Sep 17 00:00:00 2001
+From c026a333a6ff8b85a789e919f07047ac7140f3f9 Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
 Date: Mon, 28 Sep 2026 19:07:54 +0200
 Subject: [PATCH 5/5] genesys: document the GL126 and the OpticFilm 135i
@@ -12,7 +12,7 @@ The man page's chip list, an AUTHORS entry, and the .desc status from
  3 files changed, 7 insertions(+), 6 deletions(-)
 
 diff --git a/AUTHORS b/AUTHORS
-index 71d95ce..127e839 100644
+index 71d95ce58..127e83919 100644
 --- a/AUTHORS
 +++ b/AUTHORS
 @@ -33,7 +33,8 @@ Backends:
@@ -26,7 +26,7 @@ index 71d95ce..127e839 100644
   gt68xx:        Sergey Vlasov, Andreas Nowack, David Stevenson, and
                  Henning Geinitz
 diff --git a/doc/descriptions/genesys.desc b/doc/descriptions/genesys.desc
-index 83414f8..23146ef 100644
+index 83414f8d7..23146efe9 100644
 --- a/doc/descriptions/genesys.desc
 +++ b/doc/descriptions/genesys.desc
 @@ -20,8 +20,8 @@
@@ -41,7 +41,7 @@ index 83414f8..23146ef 100644
  :model "OpticFilm 7200"
  :interface "USB"
 diff --git a/doc/sane-genesys.man b/doc/sane-genesys.man
-index b4767ab..022b4c8 100644
+index b4767abb8..022b4c859 100644
 --- a/doc/sane-genesys.man
 +++ b/doc/sane-genesys.man
 @@ -1,12 +1,12 @@

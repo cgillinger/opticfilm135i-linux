@@ -321,6 +321,13 @@ numbers. Rewritten 2026-09-28 to that standard.*
    vendor's own rendering and has not been traced to any code
    (the analysis is in the companion repository). Nothing in this series depends
    on it.
+10. **Strip holder only.** The backend supports the 35 mm film-strip
+    holder (frames 1 to 6). The four-slide holder that ships with the
+    scanner and Plustek's optional panoramic holder are not supported:
+    the backend has no slide positioning and no long-scan mode, and
+    neither holder has been scanned through it. The slide holder has
+    only been tried with the companion driver, with one mounted slide
+    in one position.
 
 ## 8. Changes to shared genesys code, hunk by hunk
 

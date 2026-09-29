@@ -1,4 +1,4 @@
-From d29d1bb9828a07ef220b735dd0de09263d4189ce Mon Sep 17 00:00:00 2001
+From 2520d125fbe48970d403f801f793480252b5fca5 Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
 Date: Mon, 28 Sep 2026 19:07:54 +0200
 Subject: [PATCH 2/5] genesys: add support for the GL126 ASIC
@@ -21,7 +21,7 @@ read-only wait put nothing on the wire.
  backend/Makefile.am                        |     4 +
  backend/genesys/enums.cpp                  |     2 +
  backend/genesys/enums.h                    |     3 +
- backend/genesys/gl126.cpp                  |  2776 ++
+ backend/genesys/gl126.cpp                  |  2734 ++
  backend/genesys/gl126.h                    |   183 +
  backend/genesys/gl126_lock.cpp             |   386 +
  backend/genesys/gl126_lock.h               |   244 +
@@ -37,7 +37,7 @@ read-only wait put nothing on the wire.
  backend/genesys/test_scanner_interface.h   |    21 +
  backend/genesys/test_usb_device.cpp        |     3 +
  backend/genesys/test_usb_device.h          |    15 +
- 19 files changed, 31184 insertions(+), 4 deletions(-)
+ 19 files changed, 31142 insertions(+), 4 deletions(-)
  create mode 100644 backend/genesys/gl126.cpp
  create mode 100644 backend/genesys/gl126.h
  create mode 100644 backend/genesys/gl126_lock.cpp
@@ -49,7 +49,7 @@ read-only wait put nothing on the wire.
  create mode 100644 backend/genesys/gl126_tables.h
 
 diff --git a/backend/Makefile.am b/backend/Makefile.am
-index 64c6cb1..40ecbbc 100644
+index 64c6cb1c3..40ecbbcc0 100644
 --- a/backend/Makefile.am
 +++ b/backend/Makefile.am
 @@ -765,6 +765,10 @@ libgenesys_la_SOURCES = genesys/genesys.cpp genesys/genesys.h \
@@ -64,7 +64,7 @@ index 64c6cb1..40ecbbc 100644
      genesys/gl842.cpp genesys/gl842.h genesys/gl842_registers.h \
      genesys/gl843.cpp genesys/gl843.h genesys/gl843_registers.h \
 diff --git a/backend/genesys/enums.cpp b/backend/genesys/enums.cpp
-index 343a220..34f64c6 100644
+index 343a22084..34f64c6d4 100644
 --- a/backend/genesys/enums.cpp
 +++ b/backend/genesys/enums.cpp
 @@ -118,6 +118,7 @@ std::ostream& operator<<(std::ostream& out, ModelId id)
@@ -84,7 +84,7 @@ index 343a220..34f64c6 100644
          case SensorId::CCD_PLUSTEK_OPTICFILM_7400_V1: out << "CCD_PLUSTEK_OPTICFILM_7400_V1"; break;
          case SensorId::CCD_PLUSTEK_OPTICFILM_7400_V2: out << "CCD_PLUSTEK_OPTICFILM_7400_V2"; break;
 diff --git a/backend/genesys/enums.h b/backend/genesys/enums.h
-index 02cfc43..8813651 100644
+index 02cfc43e1..881365182 100644
 --- a/backend/genesys/enums.h
 +++ b/backend/genesys/enums.h
 @@ -179,6 +179,7 @@ enum class ModelId : unsigned
@@ -113,10 +113,10 @@ index 02cfc43..8813651 100644
  
 diff --git a/backend/genesys/gl126.cpp b/backend/genesys/gl126.cpp
 new file mode 100644
-index 0000000..6359b5b
+index 000000000..7d6d126d2
 --- /dev/null
 +++ b/backend/genesys/gl126.cpp
-@@ -0,0 +1,2776 @@
+@@ -0,0 +1,2734 @@
 +/* sane - Scanner Access Now Easy.
 +
 +   Copyright (C) 2026 Christian Gillinger
@@ -242,33 +242,6 @@ index 0000000..6359b5b
 +        };
 +        write_pairs(dev, triple, 3);
 +    }
-+}
-+
-+/** Write a phase's registers, with computed values patched in.
-+
-+    `values` supplies one byte per injection name; every injection the
-+    phase declares must be present. A missing one is a programming error,
-+    not a fallback to the captured byte: the captured byte is the
-+    reference unit's calibration and writing it on another unit would
-+    produce a plausible-looking, wrong scan. */
-+[[maybe_unused]] void write_phase(Genesys_Device* dev, const Phase& phase,
-+                 const std::map<std::string, std::uint8_t>& values)
-+{
-+    std::vector<RegPair> regs(phase.regs, phase.regs + phase.reg_count);
-+
-+    for (std::size_t i = 0; i < phase.injection_count; i++) {
-+        const RegInjection& inj = phase.injections[i];
-+        auto it = values.find(inj.name);
-+        if (it == values.end()) {
-+            throw SaneException(SANE_STATUS_INVAL,
-+                                "gl126: phase '%s' needs a computed value for '%s'; "
-+                                "the captured byte belongs to the reference unit and "
-+                                "must not be written", phase.name, inj.name);
-+        }
-+        regs[inj.index].val = it->second;
-+    }
-+
-+    write_table(dev, regs.data(), regs.size());
 +}
 +
 +/** The profile for a scan: resolution plus whether the IR channel is
@@ -440,21 +413,6 @@ index 0000000..6359b5b
 +    static std::map<const Genesys_Device*, ScanPass> passes;
 +    return passes;
 +}
-+
-+/* The one profile brought up for positioning and scanning, and its
-+   captured line count (matching the driver's own DEFAULT_LINES: reg
-+   0x25-0x27 of the frame-1 capture). Other profiles refuse in
-+   begin_scan() until their own run. */
-+constexpr unsigned kFrameLinesPlain3600 = 5137;
-+/* The sensor reads R, G and B on separate CCD lines: at 3600 dpi the raw
-+   stream carries R 24 lines after B and G halfway (vendor ini LineSpace,
-+   matching the driver's own align_channels()). The model declares it as
-+   ld_shift_r/g/b = 24/12/0 at the motor's base 3600 dpi and the core's
-+   ComponentShiftLines node re-aligns the channels on the host, dropping
-+   this many lines from the delivered image. The wire line count is
-+   unchanged. Every profile's figures come from frame_geometry()
-+   (gl126_ops); these two are the plain profile's, kept by name. */
-+constexpr unsigned kColourShiftLinesPlain3600 = 24;
 +
 +/* The dual-light image stream keeps one line in two on the host.
 +   Height = source height / 2; row k of the output is source row 2k +
@@ -2895,7 +2853,7 @@ index 0000000..6359b5b
 +} // namespace genesys
 diff --git a/backend/genesys/gl126.h b/backend/genesys/gl126.h
 new file mode 100644
-index 0000000..1f0a096
+index 000000000..1f0a096e8
 --- /dev/null
 +++ b/backend/genesys/gl126.h
 @@ -0,0 +1,183 @@
@@ -3084,7 +3042,7 @@ index 0000000..1f0a096
 +#endif // BACKEND_GENESYS_GL126_H
 diff --git a/backend/genesys/gl126_lock.cpp b/backend/genesys/gl126_lock.cpp
 new file mode 100644
-index 0000000..ef2a428
+index 000000000..ef2a42874
 --- /dev/null
 +++ b/backend/genesys/gl126_lock.cpp
 @@ -0,0 +1,386 @@
@@ -3476,7 +3434,7 @@ index 0000000..ef2a428
 +} // namespace genesys
 diff --git a/backend/genesys/gl126_lock.h b/backend/genesys/gl126_lock.h
 new file mode 100644
-index 0000000..45ece45
+index 000000000..45ece45d4
 --- /dev/null
 +++ b/backend/genesys/gl126_lock.h
 @@ -0,0 +1,244 @@
@@ -3726,7 +3684,7 @@ index 0000000..45ece45
 +#endif // BACKEND_GENESYS_GL126_LOCK_H
 diff --git a/backend/genesys/gl126_ops.cpp b/backend/genesys/gl126_ops.cpp
 new file mode 100644
-index 0000000..8d2e3b9
+index 000000000..8d2e3b9de
 --- /dev/null
 +++ b/backend/genesys/gl126_ops.cpp
 @@ -0,0 +1,1355 @@
@@ -5087,7 +5045,7 @@ index 0000000..8d2e3b9
 +} // namespace genesys
 diff --git a/backend/genesys/gl126_ops.h b/backend/genesys/gl126_ops.h
 new file mode 100644
-index 0000000..11ccc84
+index 000000000..11ccc84dc
 --- /dev/null
 +++ b/backend/genesys/gl126_ops.h
 @@ -0,0 +1,767 @@
@@ -5860,7 +5818,7 @@ index 0000000..11ccc84
 +#endif // BACKEND_GENESYS_GL126_OPS_H
 diff --git a/backend/genesys/gl126_registers.h b/backend/genesys/gl126_registers.h
 new file mode 100644
-index 0000000..3521c6d
+index 000000000..3521c6d88
 --- /dev/null
 +++ b/backend/genesys/gl126_registers.h
 @@ -0,0 +1,65 @@
@@ -5931,7 +5889,7 @@ index 0000000..3521c6d
 +#endif // BACKEND_GENESYS_GL126_REGISTERS_H
 diff --git a/backend/genesys/gl126_tables.cpp b/backend/genesys/gl126_tables.cpp
 new file mode 100644
-index 0000000..0d9230a
+index 000000000..0d9230ab7
 --- /dev/null
 +++ b/backend/genesys/gl126_tables.cpp
 @@ -0,0 +1,24987 @@
@@ -30924,7 +30882,7 @@ index 0000000..0d9230a
 +} // namespace genesys
 diff --git a/backend/genesys/gl126_tables.h b/backend/genesys/gl126_tables.h
 new file mode 100644
-index 0000000..321890e
+index 000000000..321890e28
 --- /dev/null
 +++ b/backend/genesys/gl126_tables.h
 @@ -0,0 +1,309 @@
@@ -31238,7 +31196,7 @@ index 0000000..321890e
 +
 +#endif // BACKEND_GENESYS_GL126_TABLES_H
 diff --git a/backend/genesys/low.cpp b/backend/genesys/low.cpp
-index 3ffc24a..2b236e4 100644
+index 3ffc24a1d..2b236e498 100644
 --- a/backend/genesys/low.cpp
 +++ b/backend/genesys/low.cpp
 @@ -35,6 +35,7 @@
@@ -31282,7 +31240,7 @@ index 3ffc24a..2b236e4 100644
      if (session.segment_count > 1) {
          auto output_width = session.output_segment_pixel_group_count * session.segment_count;
 diff --git a/backend/genesys/scanner_interface_usb.cpp b/backend/genesys/scanner_interface_usb.cpp
-index 542d4ff..01cfcfa 100644
+index 542d4ff62..01cfcfad0 100644
 --- a/backend/genesys/scanner_interface_usb.cpp
 +++ b/backend/genesys/scanner_interface_usb.cpp
 @@ -22,6 +22,7 @@
@@ -31340,7 +31298,7 @@ index 542d4ff..01cfcfa 100644
          reg.init_reg(0x5e, value & 0xff);
      } else {
 diff --git a/backend/genesys/settings.h b/backend/genesys/settings.h
-index 5713912..54e4f6f 100644
+index 5713912ae..54e4f6fa9 100644
 --- a/backend/genesys/settings.h
 +++ b/backend/genesys/settings.h
 @@ -64,6 +64,10 @@ struct Genesys_Settings
@@ -31367,7 +31325,7 @@ index 5713912..54e4f6f 100644
      // different color channels.
      unsigned max_color_shift_lines = 0;
 diff --git a/backend/genesys/test_scanner_interface.cpp b/backend/genesys/test_scanner_interface.cpp
-index ef7cdbb..c385fdc 100644
+index ef7cdbbcb..c385fdc75 100644
 --- a/backend/genesys/test_scanner_interface.cpp
 +++ b/backend/genesys/test_scanner_interface.cpp
 @@ -34,6 +34,26 @@ TestScannerInterface::TestScannerInterface(Genesys_Device* dev, std::uint16_t ve
@@ -31460,7 +31418,7 @@ index ef7cdbb..c385fdc 100644
  
  IUsbDevice& TestScannerInterface::get_usb_device()
 diff --git a/backend/genesys/test_scanner_interface.h b/backend/genesys/test_scanner_interface.h
-index 9a5f412..4683bc7 100644
+index 9a5f4124c..4683bc736 100644
 --- a/backend/genesys/test_scanner_interface.h
 +++ b/backend/genesys/test_scanner_interface.h
 @@ -80,6 +80,25 @@ public:
@@ -31499,7 +31457,7 @@ index 9a5f412..4683bc7 100644
  
  } // namespace genesys
 diff --git a/backend/genesys/test_usb_device.cpp b/backend/genesys/test_usb_device.cpp
-index a5dbd78..cac2741 100644
+index a5dbd784d..cac274182 100644
 --- a/backend/genesys/test_usb_device.cpp
 +++ b/backend/genesys/test_usb_device.cpp
 @@ -104,6 +104,8 @@ void TestUsbDevice::control_msg(int rtype, int reg, int value, int index, int le
@@ -31520,7 +31478,7 @@ index a5dbd78..cac2741 100644
  
  void TestUsbDevice::assert_is_open() const
 diff --git a/backend/genesys/test_usb_device.h b/backend/genesys/test_usb_device.h
-index ae8d4a2..aa599bc 100644
+index ae8d4a228..aa599bce2 100644
 --- a/backend/genesys/test_usb_device.h
 +++ b/backend/genesys/test_usb_device.h
 @@ -48,6 +48,20 @@ public:

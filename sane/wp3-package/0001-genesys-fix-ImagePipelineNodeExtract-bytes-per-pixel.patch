@@ -18,7 +18,7 @@ changes. It is a latent bug fixed ahead of the first user.
  1 file changed, 5 insertions(+), 1 deletion(-)
 
 diff --git a/backend/genesys/image_pipeline.cpp b/backend/genesys/image_pipeline.cpp
-index 8dae0c5..61d7e5f 100644
+index 8dae0c522..61d7e5f23 100644
 --- a/backend/genesys/image_pipeline.cpp
 +++ b/backend/genesys/image_pipeline.cpp
 @@ -740,7 +740,11 @@ bool ImagePipelineNodeExtract::get_next_row_data(std::uint8_t* out_data)
