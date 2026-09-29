@@ -4,6 +4,19 @@ Notable changes to the Plustek OpticFilm 135i Linux driver and its SANE
 backend port. Entries name the hardware evidence (docs/test-log.md) where
 one exists; "offline" means implemented and tested without the scanner.
 
+## Unreleased
+
+- The SANE backend was submitted to the SANE project on 2026-09-29 as
+  merge request !1032
+  (<https://gitlab.com/sane-project/backends/-/merge_requests/1032>),
+  by the owner, from his own fork. It is open and under review, not
+  merged.
+- Dead code removed from `sane/gl126.cpp` (42 lines: an uncalled helper
+  marked with the C++17 `[[maybe_unused]]` attribute and two unused
+  constants) after the upstream project's clang CI job rejected it under
+  `-Werror`; the submission package was re-exported as v5. The compiled
+  code is identical (Test 95), and all seven upstream CI jobs pass.
+
 ## v0.2.0 — 2026-09-28
 The SANE backend, one-button loading, next-strip loading, 110 film. See [docs/release-notes-v0.2.0.md](docs/release-notes-v0.2.0.md).
 

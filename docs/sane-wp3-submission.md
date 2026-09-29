@@ -1,27 +1,51 @@
-# WP-3 — the SANE submission package, prepared only
+# WP-3 — the SANE submission package
 
-**Status: PREPARED FOR REVIEW. Nothing has been sent.** No merge request,
-no issue, no mail, no contact with the SANE project or anyone else. B2 is
-**not** complete and must not be recorded as such: this work package
-produces a reviewable package and stops there. Whether anything is ever
-submitted, and by whom, is Christian's decision.
+**Status: SUBMITTED 2026-09-29 as merge request !1032; open, under
+review, not merged.** The owner (Christian) submitted the series to the
+SANE project himself:
+<https://gitlab.com/sane-project/backends/-/merge_requests/1032>,
+"genesys: support for the GL126 and the Plustek OpticFilm 135i", from
+his own fork (`gitlab.com/cgillinger/backends`, branch
+`wp3-gl126-submission-v5`) into `sane-project/backends` `master`. Its
+description is §5 of this document followed by the ten known limitations
+of §6. The merge request's pipeline is green. There has been no
+maintainer response yet, and no mail has been sent to the sane-devel
+list. Submitted is not accepted: whether and when anything is merged is
+the maintainers' decision. The completion of B2 is recorded in
+`docs/ROADMAP.md`.
 
 > **Safety note, read before touching the branch.** The package lives on a
 > branch inside a clone of *sane-backends*, whose `origin` is
 > `https://gitlab.com/sane-project/backends.git` — the real upstream. The
 > branch deliberately has **no upstream tracking set**, so a bare `git
 > push` from it fails rather than reaching SANE. Do not set tracking, and
-> do not push from that clone.
+> do not push from that clone. The owner pushed the v5 branch to his own
+> fork himself, from the v5 worktree, for the merge request; nothing was
+> pushed to the SANE project's own repository, and no automated session
+> pushed anything to GitLab.
 
 ## 1. Where it is
 
 | | |
 |---|---|
-| Branch | `wp3-gl126-submission-v4` |
-| Worktree | `~/Dokument/Github/sane-wp3-v4` (a `git worktree` of the sane-backends clone) |
-| Base | `f8b5e16`, "Merge branch 'saned_unit_tests' into 'master'", fetched 2026-09-28 |
+| Branch | `wp3-gl126-submission-v5` |
+| Worktree | `~/Dokument/Github/sane-wp3-v5` (a `git worktree` of the sane-backends clone) |
+| Base | `f8b5e16`, "Merge branch 'saned_unit_tests' into 'master'", fetched 2026-09-28, unchanged in v5 |
 | Commits | 5 |
-| Tip tree | `16671d82bde8b107c921e8d789452dba442ee01f` |
+| Tip tree | `b166a3daf8fd4da719cf52657e3c4e78e73ab002` |
+
+Fifth revision, 2026-09-29: 42 lines of dead code removed from
+`gl126.cpp`, all in commit 2; the difference between v4 and v5 is that
+one file, deletions only, and the commit messages are unchanged. Removed:
+`write_phase()`, a helper nothing called, marked `[[maybe_unused]]`
+(a C++17 attribute, while the backend builds as C++11), and two constants
+nothing read, `kFrameLinesPlain3600` and `kColourShiftLinesPlain3600`.
+The reason is the SANE project's own CI pipeline, run on the v4 branch in
+the owner's fork before anything was submitted; see §3. The compiled
+code is unchanged: the disassembly of `gl126.o` from the v4 and v5
+builds is identical, and the exported symbols are the same 111. Tip
+commit `c026a333a6ff8b85a789e919f07047ac7140f3f9`, tip tree
+`b166a3da…` (v4: tip `f46b829…`, tip tree `16671d82…`).
 
 Fourth revision, 2026-09-28 evening: the comment cleanup. Every source
 comment and log message that cited the project's private documents,
@@ -48,10 +72,11 @@ top of it and nothing in this series interacts with it. Should upstream
 move again before a submission, only the then-relevant difference needs
 assessing; the package is not invalidated wholesale (§7).
 
-Previous revisions: v3 (2026-09-28, same base, tip tree `d891db5d…`),
+Previous revisions: v4 (2026-09-28, same base, tip tree `16671d82…`),
+v3 (2026-09-28, same base, tip tree `d891db5d…`),
 v2 (2026-09-15, base `7fb102b`, tip tree `65a7b8bd…`), v1 (2026-09-13,
 base `1d47d7c`, four commits). All branches still exist in the
-sane-backends clone; the exported package is v4.
+sane-backends clone; the exported package is v5.
 
 The worktree is separate from `~/Dokument/Github/sane-backends`, which
 keeps the development arrangement (symlinks into this repo's `sane/`)
@@ -60,7 +85,7 @@ zero mode-120000 entries, and the nine GL126 files are real files
 committed to the branch. That was the point of building it this way —
 a reviewer clones, builds, and needs nothing from this repository.
 
-**Exported 2026-09-28 to `sane/wp3-package/`** — a bundle and the five
+**Exported to `sane/wp3-package/`** (v5 on 2026-09-29; earlier revisions on 2026-09-15 and 2026-09-28) — a bundle and the five
 patches, with the base and every commit and tree id, recreation and build
 instructions, and the verification (standalone build, symbols, backend
 suites, both recreation routes). That is the reviewable form; the worktree
@@ -71,8 +96,8 @@ To recreate it from scratch by hand instead:
 
 ```
 cd ~/Dokument/Github/sane-backends
-git worktree add -b wp3-gl126-submission-v4 ~/Dokument/Github/sane-wp3-v4 f8b5e16
-cd ~/Dokument/Github/sane-wp3-v4
+git worktree add -b wp3-gl126-submission-v5 ~/Dokument/Github/sane-wp3-v5 f8b5e16
+cd ~/Dokument/Github/sane-wp3-v5
 cp -L ~/Dokument/Github/opticfilm135i-linux/sane/gl126*.{h,cpp} backend/genesys/
 git apply ~/Dokument/Github/opticfilm135i-linux/sane/gl126-integration.patch
 # the man page, AUTHORS and .desc-status hunks of commit 5 are not in the
@@ -111,10 +136,10 @@ git apply --include=AUTHORS --include=doc/sane-genesys.man \
 
 ## 3. What was verified, and how
 
-**Build.** Configured and built from the branch alone (v4, 2026-09-28,
+**Build.** Configured and built from the branch alone (v5, 2026-09-29,
 `./autogen.sh && ./configure --sysconfdir=/etc`, then `lib`, `sanei` and
 `backend/libsane-genesys.la`). Exit 0, **zero compiler errors or
-warnings**. This is the check that matters most: it proves the package
+warnings** (GCC). This is the check that matters most: it proves the package
 stands without this repository.
 
 **Exported symbols.** `nm -D` on the resulting library: **111 mentioning
@@ -122,8 +147,28 @@ gl126 — identical to the development build**,
 and both the plain `sane_*` and the prefixed `sane_genesys_*` entry
 points present as genesys expects.
 
+**The upstream CI pipeline.** The SANE project's own CI pipeline was
+run on the v4 branch in the owner's fork before anything was submitted.
+Six jobs ran: `make-dist` (which includes the style check) and four
+compile jobs (debian-11-mini, debian-12-full, ubuntu-23.10,
+alpine-3.18-musl) passed; `fedora-39-clang` (clang 17.0.1, `-Werror`)
+failed with one error, `gl126.cpp:135: use of the 'maybe_unused'
+attribute is a C++17 extension [-Werror,-Wc++17-attribute-extensions]`,
+and `make-distcheck` was skipped because a compile job had failed. GCC
+accepts the attribute silently, which is why every earlier build was
+clean. Replaying the `make-dist` and `fedora-39-clang` jobs locally in
+the project's own CI container images
+(`registry.gitlab.com/sane-project/ci-envs`, tags `debian-bullseye-mini`
+and `fedora-39-clang`) then showed two more clang-only errors that the
+first had hidden: the two unused constants (`-Wunused-const-variable`).
+All three were removed in v5. The local replay of `fedora-39-clang` then
+builds with 0 errors and 0 warnings and `make check` passes every test,
+including `genesys_unit_tests`; the pipeline on the v5 branch in the
+fork passed all seven jobs (`make-dist`, the five compile jobs and
+`make-distcheck`).
+
 **Offline tests against the package build.** The three suites that need a
-built backend were re-run with `SANE_BACKENDS_DIR` pointed at the
+built backend were re-run against v5 (2026-09-29) with `SANE_BACKENDS_DIR` pointed at the
 worktree rather than the development tree:
 
 | suite | result |
@@ -134,7 +179,10 @@ worktree rather than the development tree:
 
 The full offline suite passes in this repository against the development
 build: `tools/release_check.py` FULL VERIFICATION, 389 tests, 0 skipped,
-at `19b7605` (the Test 92 commit this package was exported from).
+at the commit that records this revision. `tools/gen_sane_tables.py
+--check` reports the tables up to date, and both recreation routes
+(bundle and `git am` of the five patches) give tip tree `b166a3da…` in
+clean repositories.
 
 **Checklist items from `doc/backend-writing.txt`.** That checklist is
 written for a *new backend*; this is a new ASIC and model inside the
@@ -150,7 +198,10 @@ the man page chip list, and the `.desc` status and comment.
 new code follows the surrounding style.
 
 **`tstbackend -l 1` — run 2026-09-28 against the v3 build (Test 93) and
-again against this v4 build (Test 94): `warnings: 0  error: 0  checks: 22965`, exit 0, both times.** The tool was built
+again against the v4 build (Test 94): `warnings: 0  error: 0  checks: 22965`, exit 0, both times. It was not repeated for v5.** v5 removes only
+code nothing called or read, and the disassembly of `gl126.o` is
+identical between the v4 and v5 builds, so the evidence is for v4 and
+v5 shares its machine code. The tool was built
 from the package tree's own `frontend/tstbackend.c` and linked directly
 against its `libsane-genesys.la`; level 1 covers init/exit, ten
 open/close cycles and the option-consistency walk (recursion depth 1;
@@ -189,9 +240,10 @@ Earlier work covering the profiles, geometry and image path is in
 
 ## 5. Draft contribution description
 
-*Not sent. Text only, for review. Written to stand on its own as a merge
-request description: no dates, no internal document names, no test
-numbers. Rewritten 2026-09-28 to that standard.*
+*This text, with §6, is the description of merge request !1032 as
+submitted on 2026-09-29. Written to stand on its own as a merge request
+description: no dates, no internal document names, no test numbers.
+Rewritten 2026-09-28 to that standard.*
 
 > **genesys: support for the GL126 and the Plustek OpticFilm 135i**
 >
@@ -321,6 +373,13 @@ numbers. Rewritten 2026-09-28 to that standard.*
    vendor's own rendering and has not been traced to any code
    (the analysis is in the companion repository). Nothing in this series depends
    on it.
+10. **Strip holder only.** The backend supports the 35 mm film-strip
+    holder (frames 1 to 6). The four-slide holder that ships with the
+    scanner and Plustek's optional panoramic holder are not supported:
+    the backend has no slide positioning and no long-scan mode, and
+    neither holder has been scanned through it. The slide holder has
+    only been tried with the companion driver, with one mounted slide
+    in one position.
 
 ## 8. Changes to shared genesys code, hunk by hunk
 
@@ -506,31 +565,39 @@ refuses to emit a best-effort site it has no reason for. (Until
 22 sites in all; the exported package carried that form until the
 2026-09-28 re-export.)
 
-## 7. What remains before anything could be submitted
+## 7. What was done before the submission, and what remains
 
-The rebase and the package preparation are **done for this revision**
-(v3, 2026-09-28): the series is current with the repository's `sane/`
-and with upstream `f8b5e16`, builds standalone and is exported to
-`sane/wp3-package/`. What remains is frozen in
-**[docs/sane-submission-runbook.md](sane-submission-runbook.md)**: a
-re-check against whatever upstream is at submission time (re-rebase only
-if it has touched the affected paths), the `tstbackend -l 1` conformance
-run against the final build, and Christian's go/no-go.
+The items below are the record of what was prepared and decided before
+the submission of 2026-09-29. The rebase and the package preparation were
+done for each revision, the last being v5 (2026-09-29): the series is
+current with the repository's `sane/`, builds standalone and is exported
+to `sane/wp3-package/`. The mission that closed them is frozen in
+**[docs/sane-submission-runbook.md](sane-submission-runbook.md)**.
 
-Listed so the decision is informed, not to schedule it.
+What remains now: answering the maintainers' review comments; any
+changes a maintainer asks for, pushed by the owner to the same branch in
+his fork; and keeping this repository's `sane/` in step with whatever is
+merged. Nothing is merged yet.
 
 1. **Re-fetch and rebase — done for this revision.** Rebased onto
    `f8b5e16` (2026-09-28); upstream had touched one affected file with
    one line this series does not use (§1), and the patch applied clean.
    If upstream moves again before a submission, re-assess only the
-   then-relevant difference.
+   then-relevant difference. Re-checked 2026-09-29: upstream `master`
+   had moved to `ccabaad` (two commits: `3521c19`, "scanimage: fix xref
+   offsets and image stream length in PDF output", and its merge). They
+   touch only `frontend/jpegtopdf.c`, none of the files this series
+   changes, so no rebase was done; the five patches also apply clean on
+   top of `ccabaad`.
 2. **Run the SANE test tools, or state they were not run — done for
    this revision.** `tstbackend -l 1` ran 2026-09-28 against the v3
    build (Test 93) and again against v4 (Test 94): 22 965 checks, 0
    warnings, 0 errors, zero writes to the device, both times. `tstbackend -l 2+` and `scanimage -T` drive the motor and
    cancel a scan mid-pass and are documented as not run (§3). A later
    revision of the package needs the run repeated, since the evidence
-   is version-bound.
+   is version-bound. For v5 (2026-09-29) the run was not repeated:
+   the evidence is for v4, and v5 shares its machine code (identical
+   `gl126.o` disassembly).
 3. **The generated-table question, answered rather than avoided.**
    `gl126_tables.cpp` is 1.9 MB of generated data whose generator lives
    in this repository. The prepared answer: the tables are the vendor's
@@ -557,10 +624,15 @@ Listed so the decision is informed, not to schedule it.
    three backend suites pass against it, and it is re-exported to
    `sane/wp3-package/`. v4 (2026-09-28 evening) is v3 with the source
    comments and log messages cleaned of every internal citation; code
-   identical. The package is exactly the repository's `sane/` at the
-   commit that records the cleanup.
+   identical. v5 (2026-09-29) is v4 with 42 lines of dead code removed
+   from `gl126.cpp` after the upstream clang CI job rejected them (§1,
+   §3); compiled code identical. The package is exactly the repository's
+   `sane/` at the commit that records v5.
 5. **Decide how much of the magazine machinery to offer.** Items 6 and 7
    of §6 are the two most likely to be challenged; the file handling
    behind them is hardened and documented in `gl126_lock.h`.
 6. **Christian's own decision on contact.** Nothing in this package
    initiates it, and nothing should without him doing it himself.
+   Done 2026-09-29: the owner pushed the v5 branch to his own fork and
+   opened merge request !1032 himself. No mail has been sent to the
+   sane-devel list.

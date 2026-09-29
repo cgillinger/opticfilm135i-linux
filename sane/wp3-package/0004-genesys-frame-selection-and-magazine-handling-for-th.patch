@@ -1,4 +1,4 @@
-From 119019414f237ca035dfc347837f7ea4727f337c Mon Sep 17 00:00:00 2001
+From 7d93d623ba46bab5ac817041f3ad5ba2729f8d84 Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
 Date: Mon, 28 Sep 2026 19:07:54 +0200
 Subject: [PATCH 4/5] genesys: frame selection and magazine handling for the
@@ -24,7 +24,7 @@ a frontend shows only what the scanner does.
  2 files changed, 462 insertions(+), 23 deletions(-)
 
 diff --git a/backend/genesys/genesys.cpp b/backend/genesys/genesys.cpp
-index c18b076..e3d13fe 100644
+index c18b076be..e3d13fe48 100644
 --- a/backend/genesys/genesys.cpp
 +++ b/backend/genesys/genesys.cpp
 @@ -38,6 +38,14 @@
@@ -684,7 +684,7 @@ index c18b076..e3d13fe 100644
              auto& sensor = sanei_genesys_find_sensor_for_write(dev, dev->settings.xres,
                                                                 dev->settings.get_channels(),
 diff --git a/backend/genesys/genesys.h b/backend/genesys/genesys.h
-index 87855fd..b9344c7 100644
+index 87855fdc4..b9344c785 100644
 --- a/backend/genesys/genesys.h
 +++ b/backend/genesys/genesys.h
 @@ -88,6 +88,22 @@ enum Genesys_Option

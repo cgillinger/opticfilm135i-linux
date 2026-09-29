@@ -1,4 +1,4 @@
-From ba843c0eedde54f45c8bc0463ba5f84d7dc127fb Mon Sep 17 00:00:00 2001
+From 0d86c19fcd390b924dba7951e8287b77435e1fd6 Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
 Date: Mon, 28 Sep 2026 19:07:54 +0200
 Subject: [PATCH 3/5] genesys: add the Plustek OpticFilm 135i (07b3:1436)
@@ -16,7 +16,7 @@ model registers.
  4 files changed, 174 insertions(+)
 
 diff --git a/backend/genesys.conf.in b/backend/genesys.conf.in
-index 6e6a8d7..1153059 100644
+index 6e6a8d7b0..115305911 100644
 --- a/backend/genesys.conf.in
 +++ b/backend/genesys.conf.in
 @@ -169,3 +169,6 @@ usb 0x07b3 0x1300
@@ -27,7 +27,7 @@ index 6e6a8d7..1153059 100644
 +# Plustek OpticFilm 135i
 +usb 0x07b3 0x1436
 diff --git a/backend/genesys/tables_model.cpp b/backend/genesys/tables_model.cpp
-index 321d179..81e890b 100644
+index 321d17919..81e890b34 100644
 --- a/backend/genesys/tables_model.cpp
 +++ b/backend/genesys/tables_model.cpp
 @@ -2311,6 +2311,119 @@ void genesys_init_usb_device_tables()
@@ -151,7 +151,7 @@ index 321d179..81e890b 100644
      model.name = "plustek-opticfilm-7200";
      model.vendor = "PLUSTEK";
 diff --git a/backend/genesys/tables_sensor.cpp b/backend/genesys/tables_sensor.cpp
-index 09ca861..a8df6a0 100644
+index 09ca861f7..a8df6a008 100644
 --- a/backend/genesys/tables_sensor.cpp
 +++ b/backend/genesys/tables_sensor.cpp
 @@ -3355,6 +3355,58 @@ void genesys_init_sensor_tables()
@@ -214,7 +214,7 @@ index 09ca861..a8df6a0 100644
      sensor.sensor_id = SensorId::CCD_PLUSTEK_OPTICFILM_7300; // gl843
      sensor.full_resolution = 7200;
 diff --git a/doc/descriptions/genesys.desc b/doc/descriptions/genesys.desc
-index 43b0736..83414f8 100644
+index 43b07365c..83414f8d7 100644
 --- a/doc/descriptions/genesys.desc
 +++ b/doc/descriptions/genesys.desc
 @@ -17,6 +17,12 @@
