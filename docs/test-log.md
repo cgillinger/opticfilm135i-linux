@@ -6688,3 +6688,65 @@ exit 0, the same two info classes (named groups, vendor-string note). The
 backend's log: 21 control transfers, all `read_register (0x01) -> 0x00`,
 zero writes. **PASS.** Blocker 7's evidence now describes the exported v4
 package.
+
+
+### Test 95: the upstream CI pipeline on the WP-3 series — v4 fails on clang, v5 PASS (2026-09-29)
+
+**What.** Offline; no scanner was involved and no hardware was touched.
+Before submitting, the owner ran the SANE project's own CI pipeline on
+the v4 branch in his fork on GitLab. Six jobs ran. The failing job was then replayed locally in the project's own CI
+container images (`registry.gitlab.com/sane-project/ci-envs`, tags
+`debian-bullseye-mini` for `make-dist` and `fedora-39-clang` for the
+clang job), which is how the further findings below were found.
+
+**Result, v4.** `make-dist` (which includes the style check) and the
+four compile jobs (debian-11-mini, debian-12-full, ubuntu-23.10,
+alpine-3.18-musl) passed. `fedora-39-clang` (clang 17.0.1, `-Werror`)
+failed with one error:
+
+```
+genesys/gl126.cpp:135:3: error: use of the 'maybe_unused' attribute is a C++17 extension [-Werror,-Wc++17-attribute-extensions]
+```
+
+`make-distcheck` was skipped because a compile job had failed. GCC
+accepts the attribute silently in C++11 mode, which is why every earlier
+build had been clean. Replaying `fedora-39-clang` locally showed two
+more clang-only errors that the first had hidden: two constants nothing
+read, `kFrameLinesPlain3600` and `kColourShiftLinesPlain3600`
+(`-Wunused-const-variable`).
+
+**Fix.** v5: 42 lines removed from `gl126.cpp`, all in commit 2 —
+`write_phase()`, a helper nothing called and the source of the
+attribute, and the two constants. `git diff` between v4 and v5 is that
+one file, deletions only; commit messages unchanged. Tip commit
+`c026a333a6ff8b85a789e919f07047ac7140f3f9`, tip tree
+`b166a3daf8fd4da719cf52657e3c4e78e73ab002` (v4: `16671d82…`), base
+`f8b5e16` unchanged.
+
+**Result, v5.** The local replay of `fedora-39-clang` builds with 0
+errors and 0 warnings and `make check` passes every test, including
+`genesys_unit_tests`. The pipeline on the v5 branch in the fork passed
+all seven jobs: `make-dist`, the five compile jobs and `make-distcheck`.
+The disassembly of `gl126.o` from the v4 build and the v5 build is
+identical, and the exported symbols are the same 111. Other v5 checks: a
+standalone GCC build from the branch alone, exit 0, 0 compiler warnings;
+`test_sane_open_params` 7 passed, `test_sane_calibration_cache` 6 passed,
+`test_sane_magazine` 42 passed (with `SANE_BACKENDS_DIR` at the v5
+worktree); `tools/gen_sane_tables.py --check` up to date; the full
+offline suite 389 passed, 0 skipped; both recreation routes (bundle and
+`git am` of the five patches) give tip tree `b166a3da…` in clean
+repositories; zero symlinks.
+
+**Not repeated.** `tstbackend -l 1` (Tests 93, 94) was not run against
+v5. Since the compiled code is identical to v4's, the Test 94 evidence
+stands for the machine code v5 shares; it was not re-run.
+
+**Upstream re-check, same day.** Upstream `master` had moved from
+`f8b5e16` to `ccabaad` (two commits, `3521c19` "scanimage: fix xref
+offsets and image stream length in PDF output" and its merge), touching
+only `frontend/jpegtopdf.c`, none of the files this series changes. No
+rebase was done; the five patches apply clean on top of `ccabaad`.
+
+**Verdict: PASS for v5.** The submitted package passes all seven of the
+SANE project's CI jobs. Passing CI is not review: the merge request
+(!1032) is open and not merged.

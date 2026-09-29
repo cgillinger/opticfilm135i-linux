@@ -41,9 +41,12 @@ The project has two parts, at different stages:
   is hardware-verified from digiKam and from `scanimage` (Test 92,
   2026-09-28: five loads, two traps read-only, cross-process):
   **[docs/sane-wp5-load-button.md](docs/sane-wp5-load-button.md)**.
-  What it does not do is anything upstream: a submission package for the
-  SANE project is prepared and reviewable, current with the backend as of
-  Test 92 (re-exported 2026-09-28), and nothing has been sent. Its
+  Upstream: the backend was submitted to the SANE project on 2026-09-29
+  as [merge request !1032](https://gitlab.com/sane-project/backends/-/merge_requests/1032)
+  (package revision v5, see
+  [docs/sane-wp3-submission.md](docs/sane-wp3-submission.md)). It is
+  under review and **not merged**, so it is still installed from this
+  repository's build, not from a distribution package. Its
   verification is tracked independently of the CLI driver's — see the
   roadmap.
 
@@ -63,7 +66,7 @@ functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md]
 - **M3 — Robustness and honest limits** ✅ (every acceptance-matrix row met;
   the residual-dark_b fix is hardware-verified — A10/Test 36 — positioning
   verified, cross-unit a documented limitation)
-- **M4 — SANE backend** — **working locally; not offered upstream.**
+- **M4 — SANE backend** — **working locally; submitted upstream, under review, not merged.**
   Verified separately from the CLI driver. It installs as an ordinary
   genesys build, enumerates, and runs calibration, positioning, the scan
   pass and park on the unit through `scanimage` and from inside digiKam
@@ -78,10 +81,11 @@ functional thresholds, not test count — and the full plan: **[docs/ROADMAP.md]
   no reinsert step (hardware-verified from scanimage, Test 90, n = 1).
   Ordinary scanning needs no
   `--force-calibration`. Install:
-  **[docs/sane-install.md](docs/sane-install.md)**. A submission package
-  for the SANE project is prepared, current with the backend
-  (**[docs/sane-wp3-submission.md](docs/sane-wp3-submission.md)**,
-  re-exported 2026-09-28); nothing has been submitted. Per-profile detail:
+  **[docs/sane-install.md](docs/sane-install.md)**. It was submitted to
+  the SANE project on 2026-09-29 (merge request !1032, package
+  **[docs/sane-wp3-submission.md](docs/sane-wp3-submission.md)**); it is
+  under review and not merged, so this repository's build remains the way
+  to install it. Per-profile detail:
   **[docs/ROADMAP.md](docs/ROADMAP.md)**
 
 **digiKam cheat sheet, the one rule** (SANE has no dialogs, so this and
@@ -119,8 +123,9 @@ Today you scan either from the command line to raw 16-bit TIFF — including
 a resumable **bulk-digitisation** workflow (`of135i digitize`) for working
 through boxes of film strip by strip — or from inside a SANE frontend
 through the locally installed backend. The backend does not depend on the
-SANE project accepting it upstream; upstreaming is a separate, later step
-for wider distribution, and it has not happened.
+SANE project accepting it upstream. It was submitted on 2026-09-29 (merge
+request !1032) and is under review; until and unless it is merged, it is
+installed from this repository's build.
 
 ## What works today
 
@@ -178,8 +183,8 @@ frame for frame against the vendor application's output of the same strip
 whose scope includes the SANE backend with one-button magazine handling. "Complete" here means that functional milestone is met **within
 its frozen scope on the one test unit** — it is **not** broad field testing or
 proof of compatibility with other scanners or Linux systems. The **SANE
-backend is a separate effort with its own status** — working locally, not
-offered upstream (see Project status above and
+backend is a separate effort with its own status** — working locally, submitted
+upstream 2026-09-29 and not merged (see Project status above and
 [docs/ROADMAP.md](docs/ROADMAP.md)); do not read the CLI driver's hardware
 verification as the backend's. This is early software,
 verified on the single unit that exists, and these are the rough edges you
@@ -555,7 +560,7 @@ interoperability constants and our own code.
 - [x] Loader sensor and button event reading
 - [x] ICC-tagged output (`--positive` TIFFs carry an sRGB profile; raw negatives are untagged linear data)
 - [x] Baseline-conformant TIFF resolution tags (the file states its own dpi, so physical size survives; the 2400 dpi profile is anisotropic — 3600 across, 2400 along — and the TIFF carries per-axis X/Y resolution that follows the image's orientation)
-- [ ] SANE genesys backend support for GL126 (upstream goal) — the backend works locally: installed as a normal genesys build ([docs/sane-install.md](docs/sane-install.md)), all five resolutions and the infrared pass hardware-run and eye-accepted for geometry (Tests 62–71), scanning from `scanimage` and digiKam (Test 74), and the magazine loaded and ejected by the backend itself (Tests 75–77); design and hook history in [`docs/sane-port.md`](docs/sane-port.md). Open: the upstream submission — a package is prepared ([docs/sane-wp3-submission.md](docs/sane-wp3-submission.md)) and nothing has been sent
+- [ ] SANE genesys backend support for GL126 (upstream goal) — the backend works locally: installed as a normal genesys build ([docs/sane-install.md](docs/sane-install.md)), all five resolutions and the infrared pass hardware-run and eye-accepted for geometry (Tests 62–71), scanning from `scanimage` and digiKam (Test 74), and the magazine loaded and ejected by the backend itself (Tests 75–77); design and hook history in [`docs/sane-port.md`](docs/sane-port.md). Open: the upstream submission — submitted 2026-09-29 as merge request !1032 ([docs/sane-wp3-submission.md](docs/sane-wp3-submission.md)), under review, not merged
 
 ## Status & disclaimer
 

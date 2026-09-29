@@ -10,8 +10,24 @@ re-deliberation.
 
 ## Where the three stand
 
-The rebase and the package preparation (blockers 6 and 4) are **done for
-the current revision** (v4, 2026-09-28): the series is refreshed from the
+**Executed 2026-09-29; it ended in the submission.** Step 1 (the final
+upstream re-check): upstream `master` had moved to `ccabaad` (two
+commits, touching only `frontend/jpegtopdf.c`), so no rebase was done and
+the five patches apply clean on top of it. Step 2 (the conformance run):
+`tstbackend -l 1` had been run against v3 and v4 on 2026-09-28 (Tests 93,
+94) and was not repeated for v5, whose machine code is identical to v4's.
+Step 3 (the decision): Christian decided to send it, and on 2026-09-29
+he submitted the series himself as merge request !1032
+(<https://gitlab.com/sane-project/backends/-/merge_requests/1032>), from
+his own fork, branch `wp3-gl126-submission-v5`. The rest of this document
+is kept as the record of how it was prepared. The merge request is open
+and under review, not merged. The package became v5 that day: the
+SANE project's CI pipeline, run on the v4 branch in the fork, failed on
+clang-only findings (Test 95).
+
+The rebase and the package preparation (blockers 6 and 4) were **done for
+the revision current before the submission** (v4, 2026-09-28; the
+submitted package is v5, v4 minus 42 lines of dead code): the series is refreshed from the
 repository's `sane/` as of Test 92, its comments cleaned of every internal
 citation, rebased onto `f8b5e16`, split so the
 shared `ImagePipelineNodeExtract` fix is its own first commit, built
@@ -34,6 +50,13 @@ What is still version-bound, and so is left for the submission session:
   (Tests 93, 94): 22 965 checks, 0 warnings, 0 errors, zero writes, both
   times.** Repeat only if the package is re-exported again.
 - **The decision (8) follows the evidence (7).**
+- **The upstream CI pipeline (added 2026-09-29, for any future
+  revision).** Run the SANE project's CI pipeline on the branch before
+  submitting it: in the fork, and/or the `make-dist` and
+  `fedora-39-clang` jobs locally in the project's CI images
+  (`registry.gitlab.com/sane-project/ci-envs`, tags `debian-bullseye-mini`
+  and `fedora-39-clang`). A GCC-only build had missed three clang
+  `-Werror` findings in v4 (Test 95).
 
 ## Trigger
 
@@ -93,10 +116,19 @@ minutes. Write
 the "not run, because …" note for the scan-driving tools. Fold both into
 `docs/sane-wp3-submission.md` (§3 and §7).
 
+**2b. Upstream CI pipeline (added 2026-09-29, for any future
+revision).** Before the decision, run the project's CI pipeline on the
+branch in the owner's fork, and/or the `make-dist` and `fedora-39-clang`
+jobs locally in the images named above. All jobs must pass. GCC alone is
+not enough: clang 17 with `-Werror` rejected v4 (Test 95).
+
 **3. Present the decision (blocker 8).** Give Christian the go/no-go:
 "submit this to SANE" or "not yet, for these reasons." Stop there.
 
 ## Hard boundaries (unchanged)
+
+These remain the rule for automated sessions. The submission itself was
+made by the owner, not by a session (2026-09-29).
 
 - Nothing is pushed upstream. No merge request, issue, mail, or contact
   with the SANE project or anyone else — not as part of "prepare

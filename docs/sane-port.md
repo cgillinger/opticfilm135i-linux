@@ -38,7 +38,8 @@ with nothing to re-sync. The eventual merge request takes copies.
 
 > **Current status lives in `docs/ROADMAP.md`** (B1 done 2026-09-13;
 > backend-driven magazine handling hardware-verified, Tests 75–77; the
-> submission package prepared, `docs/sane-wp3-submission.md`). The stage
+> series submitted to the SANE project 2026-09-29 as merge request !1032,
+> open and not merged, `docs/sane-wp3-submission.md`). The stage
 > history below is kept as written: where it says an operation throws
 > `SANE_STATUS_UNSUPPORTED` or is pending, that was true on the date of
 > the entry.

@@ -1,9 +1,11 @@
 # WP-3 package — the exact SANE submission series, exported
 
-**Status: prepared for review. Nothing has been sent.** No merge request,
-issue, mail or contact with the SANE project or anyone else, and nothing
-here initiates one. This directory holds the five-commit series in two
-forms that recreate it without manual reconstruction.
+**Status: submitted 2026-09-29 as merge request !1032; open, under
+review, not merged.** This is the series the owner submitted to the SANE
+project (<https://gitlab.com/sane-project/backends/-/merge_requests/1032>),
+from his own fork. No mail has been sent to the sane-devel list. This
+directory holds the five-commit series in two forms that recreate it
+without manual reconstruction.
 
 **Revision v5, exported 2026-09-29.** The series is exactly the
 repository's `sane/` (the nine `gl126_*` files and
@@ -195,8 +197,11 @@ code is identical): `warnings: 0  error: 0  checks: 22965`, exit 0; the backend 
 `scanimage -T` and `tstbackend -l 2` and up (they cancel a scan mid-pass;
 `docs/sane-submission-runbook.md`).
 
-## Nothing leaves this repository
+## What was pushed, and from where
 
-This package is built and exported locally. It is committed only to
-`cgillinger/opticfilm135i-linux`. No branch is pushed from the
-sane-backends clone, which tracks the real upstream.
+This package is built and exported locally and committed to
+`cgillinger/opticfilm135i-linux`. The owner pushed the v5 branch to his
+own fork himself, from the v5 worktree, to open the merge request.
+Nothing is pushed to the SANE project's repository from the development
+clone, which tracks the real upstream, and no automated session pushed
+anything to GitLab.
