@@ -2,8 +2,11 @@
 
 **Status: merge request !1032 is open (v5 submitted 2026-09-29,
 <https://gitlab.com/sane-project/backends/-/merge_requests/1032>); this
-directory now holds revision v6, prepared locally on 2026-10-02 and NOT
-yet pushed to the merge request.** v6 exists because upstream moved: it
+directory holds revision v6, which the author pushed to the merge
+request's source branch on 2026-10-02. The merge request shows these four
+commits on base `7103e09b0`, no conflicts, and its GitLab pipeline passed
+all seven jobs. The branch in the fork keeps the name
+`wp3-gl126-submission-v5`; it holds the v6 commits.** v6 exists because upstream moved: it
 is v5 rebased onto current upstream. The series is exactly the
 repository's `sane/` (the nine `gl126_*` files and
 `gl126-integration.patch`), as four commits in two forms that recreate
@@ -131,7 +134,7 @@ Done offline, with no scanner contact. Results apply to the v6 build.
 | upstream `genesys_unit_tests` (`make -C testsuite/backend/genesys check`) | PASS |
 | Route A: fetch from the bundle in a clean repository | tip `ec21b712…`, tree `83568e8e…`, identical |
 | Route B: `git am` of the four patches onto `7103e09b0` in a clean repository | tree `83568e8e…`, identical |
-| upstream CI `.gitlab-ci.yml` unchanged since `f8b5e16`; local replay of its jobs in the project's CI images | `make-dist` job replay (style check, autogen, configure, `make dist`) exit 0; `fedora-39-clang` replay (clang 17.0.1, `-Werror`) build exit 0 with 0 errors and 0 warnings in the series' files, and `genesys_unit_tests` PASS, after which `make check` stops at `testsuite/backend/escl_test` (`escl.h: requires libcurl, libavahi and libxml2`) — the same stop, same errors, on unmodified upstream `7103e09b0` run through the same dist-tarball path, so it is upstream's, not this series' |
+| upstream CI `.gitlab-ci.yml` unchanged since `f8b5e16`; local replay of its jobs in the project's CI images | `make-dist` job replay (style check, autogen, configure, `make dist`) exit 0; `fedora-39-clang` replay (clang 17.0.1, `-Werror`) build exit 0 with 0 errors and 0 warnings in the series' files, and `genesys_unit_tests` PASS, after which `make check` stops at `testsuite/backend/escl_test` (`escl.h: requires libcurl, libavahi and libxml2`) — the same stop, same errors, on unmodified upstream `7103e09b0` run through the same dist-tarball path, so it is upstream's, not this series'. The real GitLab pipeline on v6 passed all seven jobs, so this stop did not occur there |
 | symlinks in the recreated tree | 0 (`git ls-files -s`, mode 120000) |
 
 Not run: `tstbackend` (any level), `scanimage`, and anything that touches
@@ -143,7 +146,6 @@ v3 and v4 builds.
 This package is built and exported locally and committed to
 `cgillinger/opticfilm135i-linux`. The owner pushed the v5 branch to his
 own fork himself, from the v5 worktree, to open the merge request. v6
-has not been pushed anywhere; pushing it to the merge request is his
-step. Nothing is pushed to the SANE project's repository from the development
+was pushed by him to the same merge request on 2026-10-02. Nothing is pushed to the SANE project's repository from the development
 clone, which tracks the real upstream, and no automated session pushed
 anything to GitLab.

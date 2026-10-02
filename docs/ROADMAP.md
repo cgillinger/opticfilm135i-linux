@@ -344,8 +344,8 @@ progress.**
   on its own (WP-3, `docs/sane-wp3-submission.md`): revision v5
   (2026-09-29, five commits) is what was submitted; revision v6
   (2026-10-02, four commits, rebased onto current upstream after its
-  GL128 merge) is prepared locally and not yet pushed to the merge
-  request. The
+  GL128 merge) was pushed to the merge request on 2026-10-02 (no conflicts;
+  its pipeline passed all seven jobs). The
   owner submitted it himself:
   <https://gitlab.com/sane-project/backends/-/merge_requests/1032>, from
   his fork into `sane-project/backends` `master`; its pipeline is green
@@ -671,10 +671,10 @@ upstream 2026-09-28 (v3), comments cleaned of every internal citation
 the same evening (v4), and 42 lines of dead code removed 2026-09-29 after
 the upstream clang CI job rejected them (v5), and v5 rebased onto
 upstream `7103e09b0` on 2026-10-02 after upstream merged a GL128 series
-that touched the same lines (v6, prepared locally, NOT yet pushed to the
-merge request) — see `docs/sane-wp3-submission.md`. The submitted series
+that touched the same lines (v6, pushed to the
+merge request on 2026-10-02: no conflicts, all seven pipeline jobs passed) — see `docs/sane-wp3-submission.md`. The submitted series
 (v5) is five commits on branch `wp3-gl126-submission-v5`, based on
-sane-backends `f8b5e16`; v6 is four commits on `wp3-gl126-submission-v6`
+sane-backends `f8b5e16`; v6 is four commits on the local branch `wp3-gl126-submission-v6` (in the fork the merge request's source branch keeps the name `wp3-gl126-submission-v5` but holds the v6 commits)
 (the `ImagePipelineNodeExtract` fix dropped, upstream now carries an
 equivalent one), based on `7103e09b0`. The series has the
 GL126 files as REAL files rather than the development symlinks: it is
@@ -738,7 +738,7 @@ The mission was executed on 2026-09-29 and ended in the submission.
 | 3 | Lock and magazine-mark file handling (`/tmp`, mode 0666, no `O_NOFOLLOW`, truncating write) | **Done 2026-09-15:** both sides open `O_NOFOLLOW` + regular-file check, the mark is written via temp+`rename`, path/format unchanged; new probes in `test_sane_lock`/`test_safety` (see `gl126_lock.h`). |
 | 4 | Shared genesys code changed without a per-hunk rationale | **Done 2026-09-15:** every shared hunk classified in submission §8; each best-effort poll site carries its reason in the generated table; the `ImagePipelineNodeExtract` fix is now the series' own first commit. |
 | 5 | The offline checks are not fixed as a list | **Done 2026-09-15:** `docs/offline-checks.md` documents them with commands and expected results; `release_check.py` now reports PASS/FAIL/SKIP and refuses to call a run full when a mandatory suite skipped. Substantiated by a local run: **FULL VERIFICATION, 325 tests**. A GitHub Actions workflow file is provided but not activated (publishing it needs a `workflow`-scoped push); no CI run is claimed. |
-| 6 | The series is based on `1d47d7c`; upstream has moved | **Done for this revision 2026-09-28 (v3, then v4 with cleaned comments):** rebased onto `f8b5e16` (one upstream line in an affected file, in a helper the series does not use — clean), built standalone (0 warnings, 111 symbols), backend suites pass, re-exported to `sane/wp3-package/` (tip tree `16671d82…`). Re-checked 2026-09-29 at submission time: upstream `master` at `ccabaad` (two commits, touching only `frontend/jpegtopdf.c`), so no rebase was done; the series applies clean on top of it; package re-exported as v5 (tip tree `b166a3da…`). | **2026-10-02:** upstream merged a GL128 series touching the same lines; v5 rebased onto `7103e09b0` as v6 (four commits, prepared locally, not yet pushed to the merge request; see `docs/sane-wp3-submission.md` §1).
+| 6 | The series is based on `1d47d7c`; upstream has moved | **Done for this revision 2026-09-28 (v3, then v4 with cleaned comments):** rebased onto `f8b5e16` (one upstream line in an affected file, in a helper the series does not use — clean), built standalone (0 warnings, 111 symbols), backend suites pass, re-exported to `sane/wp3-package/` (tip tree `16671d82…`). Re-checked 2026-09-29 at submission time: upstream `master` at `ccabaad` (two commits, touching only `frontend/jpegtopdf.c`), so no rebase was done; the series applies clean on top of it; package re-exported as v5 (tip tree `b166a3da…`). | **2026-10-02:** upstream merged a GL128 series touching the same lines; v5 rebased onto `7103e09b0` as v6 (four commits; pushed to the merge request the same day, no conflicts, pipeline passed; see `docs/sane-wp3-submission.md` §1).
 | 7 | `scanimage -T` and `tstbackend` neither run nor analysed | **Done 2026-09-28 (Tests 93, 94):** `tstbackend -l 1` against the v3 build and again against v4 — 22 965 checks, 0 warnings, 0 errors, zero device writes, both times. `scanimage -T` and `tstbackend -l 2+` documented as not run (they cancel a scan mid-pass; one unit). Version-bound to tip tree `16671d82…` (v4); v5 (2026-09-29) removes only dead code and shares v4's machine code (identical `gl126.o` disassembly), so the run was not repeated. For v6 (2026-10-02) it was not repeated either; the run is for earlier builds of the same GL126 sources and v6 has not been run on hardware. |
 | 8 | Decision | "Send this to SANE" or "not yet, for these reasons". Christian's. **Decision taken: "Send this to SANE"; performed by him 2026-09-29 as merge request !1032.** |
 

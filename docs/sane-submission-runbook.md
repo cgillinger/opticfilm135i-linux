@@ -22,8 +22,8 @@ he submitted the series himself as merge request !1032
 his own fork, branch `wp3-gl126-submission-v5`. The rest of this document
 is kept as the record of how it was prepared. (Afterwards, on 2026-10-02,
 v5 was rebased onto upstream `7103e09b0` after upstream merged a GL128
-series that touched the same lines: revision v6, four commits, prepared
-locally and not yet pushed to the merge request; see
+series that touched the same lines: revision v6, four commits, pushed
+to the merge request the same day; see
 `docs/sane-wp3-submission.md` §1. The steps below describe the
 pre-submission mission and are not updated.) The merge request is open
 and under review, not merged. The package became v5 that day: the

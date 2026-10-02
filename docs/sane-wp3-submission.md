@@ -14,16 +14,22 @@ list. Submitted is not accepted: whether and when anything is merged is
 the maintainers' decision. The completion of B2 is recorded in
 `docs/ROADMAP.md`.
 
-**Revision v6 (2026-10-02) is prepared and NOT yet pushed to the merge
-request.** Upstream has since merged a GL128 series (Plustek OpticFilm
-8200i SE) that touches the same lines, so the merge request as
-submitted (v5) no longer merges cleanly. v6 is v5 rebased onto upstream
+**Revision v6 (2026-10-02) was pushed by the author to the merge
+request's source branch on 2026-10-02.** Upstream had merged a GL128
+series (Plustek OpticFilm 8200i SE) that touches the same lines, so the
+merge request as submitted (v5) no longer merged cleanly. v6 is v5
+rebased onto upstream
 `7103e09b0`: four commits, the `ImagePipelineNodeExtract` fix dropped
 because upstream now carries an equivalent one (`2bf54be64`), the nine
-GL126 source files byte-identical to v5's. The branch and the package in
-`sane/wp3-package/` describe v6; the text of the merge request itself
-still describes v5 until the owner pushes v6 to his fork. §1 has the
-details.
+GL126 source files byte-identical to v5's. The merge request now shows
+the four v6 commits on base `7103e09b0` and no conflicts, and its
+GitLab pipeline passed all seven jobs (`make-dist`, `make-distcheck`,
+debian-11-mini, debian-12-full, fedora-39-clang, ubuntu-23.10,
+alpine-3.18-musl). The branch in the fork keeps the name
+`wp3-gl126-submission-v5` (GitLab cannot change a merge request's source
+branch) but holds the v6 commits; the local branch and worktree are
+named `wp3-gl126-submission-v6`. v6 has not been run on hardware, review
+has not started and nothing is merged. §1 has the details.
 
 > **Safety note, read before touching the branch.** The package lives on a
 > branch inside a clone of *sane-backends*, whose `origin` is
@@ -39,7 +45,7 @@ details.
 
 | | |
 |---|---|
-| Branch | `wp3-gl126-submission-v6` (prepared locally, not pushed; the branch in the merge request is `wp3-gl126-submission-v5`) |
+| Branch | `wp3-gl126-submission-v6` (local name; pushed 2026-10-02 to the merge request, whose source branch in the fork is still named `wp3-gl126-submission-v5` but holds these v6 commits) |
 | Worktree | `~/Dokument/Github/sane-wp3-v6` (a `git worktree` of the sane-backends clone) |
 | Base | `7103e09b03aa8c7041c75e12f4d51fdf511be151`, "Merge branch 'genesys-gl128-opticfilm-8200i-se' into 'master'", fetched 2026-10-02 |
 | Commits | 4 |
@@ -220,8 +226,10 @@ libcurl, libavahi and libxml2"`. The identical stop and error occur on
 unmodified upstream `7103e09b0` replayed through the same dist-tarball
 path, so it is not caused by this series; the same unmodified upstream
 tree built and checked directly (not through the tarball) passes. The
-other compile jobs and `make-distcheck` were not replayed; no pipeline has
-run on v6.
+other compile jobs and `make-distcheck` were not replayed locally. The
+real GitLab pipeline on v6 passed all seven jobs, so this `escl_test` stop
+did not occur there; the paragraph above remains the record of the local
+run.
 
 **Offline tests against the package build.** The three suites that need a
 built backend were re-run against v6 (2026-10-02; v5 gave the same counts on 2026-09-29) with `SANE_BACKENDS_DIR` pointed at the
@@ -650,8 +658,8 @@ merged. Nothing is merged yet.
    top of `ccabaad`. Re-checked 2026-10-02: upstream had
    merged a GL128 series that adds lines at the same spots in four of the
    files this series changes, so v5 no longer merged cleanly; v5 was
-   rebased as v6 (§1), which is prepared locally and not yet pushed to the
-   merge request.
+   rebased as v6 (§1), which the author pushed to the merge request the same
+   day (no conflicts; pipeline passed).
 2. **Run the SANE test tools, or state they were not run — done for
    this revision.** `tstbackend -l 1` ran 2026-09-28 against the v3
    build (Test 93) and again against v4 (Test 94): 22 965 checks, 0

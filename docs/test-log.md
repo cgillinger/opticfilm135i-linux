@@ -6788,8 +6788,17 @@ hardware tests (Tests 62 to 92) and `tstbackend -l 1` (Tests 93, 94) were
 made on earlier builds of the same GL126 sources. Upstream's shared-code
 changes in between are conditional on GL128, except that
 `ImagePipelineNodeMergeColorToGray` now takes a colour filter, which is
-`NONE` for GL126 host-side gray (unchanged luminance weights). No
-pipeline has run on v6 and nothing was pushed: merge request !1032 is
-open at v5, and v6 is prepared locally.
+`NONE` for GL126 host-side gray (unchanged luminance weights). At the time of this offline run
+nothing had been pushed: merge request !1032 was open at v5.
 
-**Verdict: v6 prepared and verified offline.**
+**Verdict (offline run): v6 prepared and verified offline.**
+
+**Afterwards, 2026-10-02.** The author pushed v6 (tip `ec21b712…`) to the
+merge request's source branch. The branch in the fork keeps the name
+`wp3-gl126-submission-v5` but holds the v6 commits. Merge request !1032
+now shows the four v6 commits on base `7103e09b0` and no conflicts, and
+its GitLab pipeline passed all seven jobs (`make-dist`, `make-distcheck`,
+debian-11-mini, debian-12-full, fedora-39-clang, ubuntu-23.10,
+alpine-3.18-musl), so the local replay's `escl_test` stop did not occur
+there. v6 has still not been run on hardware, review has not started and
+nothing is merged.

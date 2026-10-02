@@ -43,8 +43,9 @@ The project has two parts, at different stages:
   **[docs/sane-wp5-load-button.md](docs/sane-wp5-load-button.md)**.
   Upstream: the backend was submitted to the SANE project on 2026-09-29
   as [merge request !1032](https://gitlab.com/sane-project/backends/-/merge_requests/1032)
-  (submitted as revision v5; revision v6, rebased onto current
-  upstream, is prepared locally and not yet pushed to it — see
+  (submitted as revision v5; on 2026-10-02 revision v6, rebased onto
+  current upstream, was pushed to it, and the merge request shows no
+  conflicts and a passing pipeline — see
   [docs/sane-wp3-submission.md](docs/sane-wp3-submission.md)). It is
   under review and **not merged**, so it is still installed from this
   repository's build, not from a distribution package. Its
