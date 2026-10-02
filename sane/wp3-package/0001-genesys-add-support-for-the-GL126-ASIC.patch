@@ -1,7 +1,7 @@
-From 2520d125fbe48970d403f801f793480252b5fca5 Mon Sep 17 00:00:00 2001
+From 7c2f94b915e335d0d5882077dc279e795f48dfa8 Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
 Date: Mon, 28 Sep 2026 19:07:54 +0200
-Subject: [PATCH 2/5] genesys: add support for the GL126 ASIC
+Subject: [PATCH 1/4] genesys: add support for the GL126 ASIC
 
 The Genesys GL126 as its own command set. It is close enough to the
 GL124 for the framework to fit, but its scan flow is the vendor's, so it
@@ -30,14 +30,14 @@ read-only wait put nothing on the wire.
  backend/genesys/gl126_registers.h          |    65 +
  backend/genesys/gl126_tables.cpp           | 24987 +++++++++++++++++++
  backend/genesys/gl126_tables.h             |   309 +
- backend/genesys/low.cpp                    |    12 +-
- backend/genesys/scanner_interface_usb.cpp  |    19 +-
+ backend/genesys/low.cpp                    |    10 +
+ backend/genesys/scanner_interface_usb.cpp  |    15 +-
  backend/genesys/settings.h                 |     9 +
  backend/genesys/test_scanner_interface.cpp |    28 +
  backend/genesys/test_scanner_interface.h   |    21 +
  backend/genesys/test_usb_device.cpp        |     3 +
  backend/genesys/test_usb_device.h          |    15 +
- 19 files changed, 31142 insertions(+), 4 deletions(-)
+ 19 files changed, 31139 insertions(+), 1 deletion(-)
  create mode 100644 backend/genesys/gl126.cpp
  create mode 100644 backend/genesys/gl126.h
  create mode 100644 backend/genesys/gl126_lock.cpp
@@ -49,7 +49,7 @@ read-only wait put nothing on the wire.
  create mode 100644 backend/genesys/gl126_tables.h
 
 diff --git a/backend/Makefile.am b/backend/Makefile.am
-index 64c6cb1c3..40ecbbcc0 100644
+index 2233517bd..7f8cb0614 100644
 --- a/backend/Makefile.am
 +++ b/backend/Makefile.am
 @@ -765,6 +765,10 @@ libgenesys_la_SOURCES = genesys/genesys.cpp genesys/genesys.h \
@@ -60,11 +60,11 @@ index 64c6cb1c3..40ecbbcc0 100644
 +    genesys/gl126_tables.cpp genesys/gl126_tables.h \
 +    genesys/gl126_ops.cpp genesys/gl126_ops.h \
 +    genesys/gl126_lock.cpp genesys/gl126_lock.h \
+     genesys/gl128.cpp genesys/gl128.h genesys/gl128_registers.h \
      genesys/gl841.cpp genesys/gl841.h genesys/gl841_registers.h \
      genesys/gl842.cpp genesys/gl842.h genesys/gl842_registers.h \
-     genesys/gl843.cpp genesys/gl843.h genesys/gl843_registers.h \
 diff --git a/backend/genesys/enums.cpp b/backend/genesys/enums.cpp
-index 343a22084..34f64c6d4 100644
+index f4d5669bb..2054a5515 100644
 --- a/backend/genesys/enums.cpp
 +++ b/backend/genesys/enums.cpp
 @@ -118,6 +118,7 @@ std::ostream& operator<<(std::ostream& out, ModelId id)
@@ -75,7 +75,7 @@ index 343a22084..34f64c6d4 100644
          case ModelId::PLUSTEK_OPTICFILM_7200: out << "PLUSTEK_OPTICFILM_7200"; break;
          case ModelId::PLUSTEK_OPTICFILM_7200I: out << "PLUSTEK_OPTICFILM_7200I"; break;
          case ModelId::PLUSTEK_OPTICFILM_7300: out << "PLUSTEK_OPTICFILM_7300"; break;
-@@ -170,6 +171,7 @@ std::ostream& operator<<(std::ostream& out, SensorId id)
+@@ -171,6 +172,7 @@ std::ostream& operator<<(std::ostream& out, SensorId id)
          case SensorId::CCD_PLUSTEK_OPTICBOOK_3800: out << "CCD_PLUSTEK_OPTICBOOK_3800"; break;
          case SensorId::CCD_PLUSTEK_OPTICFILM_7200: out << "CCD_PLUSTEK_OPTICFILM_7200"; break;
          case SensorId::CCD_PLUSTEK_OPTICFILM_7200I: out << "CCD_PLUSTEK_OPTICFILM_7200I"; break;
@@ -84,7 +84,7 @@ index 343a22084..34f64c6d4 100644
          case SensorId::CCD_PLUSTEK_OPTICFILM_7400_V1: out << "CCD_PLUSTEK_OPTICFILM_7400_V1"; break;
          case SensorId::CCD_PLUSTEK_OPTICFILM_7400_V2: out << "CCD_PLUSTEK_OPTICFILM_7400_V2"; break;
 diff --git a/backend/genesys/enums.h b/backend/genesys/enums.h
-index 02cfc43e1..881365182 100644
+index a9a83d42c..284627d49 100644
 --- a/backend/genesys/enums.h
 +++ b/backend/genesys/enums.h
 @@ -179,6 +179,7 @@ enum class ModelId : unsigned
@@ -95,7 +95,7 @@ index 02cfc43e1..881365182 100644
      PLUSTEK_OPTICFILM_7200,
      PLUSTEK_OPTICFILM_7200I,
      PLUSTEK_OPTICFILM_7300,
-@@ -241,6 +242,7 @@ enum class SensorId : unsigned
+@@ -242,6 +243,7 @@ enum class SensorId : unsigned
      CCD_PLUSTEK_OPTICBOOK_3800,
      CCD_PLUSTEK_OPTICFILM_7200,
      CCD_PLUSTEK_OPTICFILM_7200I,
@@ -103,13 +103,13 @@ index 02cfc43e1..881365182 100644
      CCD_PLUSTEK_OPTICFILM_7300,
      CCD_PLUSTEK_OPTICFILM_7400_V1,
      CCD_PLUSTEK_OPTICFILM_7400_V2,
-@@ -458,6 +460,7 @@ enum class AsicType : unsigned
+@@ -463,6 +465,7 @@ enum class AsicType : unsigned
      GL846,
      GL847,
      GL124,
 +    GL126,   // Plustek OpticFilm 135i
+     GL128,
  };
- 
  
 diff --git a/backend/genesys/gl126.cpp b/backend/genesys/gl126.cpp
 new file mode 100644
@@ -31196,7 +31196,7 @@ index 000000000..321890e28
 +
 +#endif // BACKEND_GENESYS_GL126_TABLES_H
 diff --git a/backend/genesys/low.cpp b/backend/genesys/low.cpp
-index 3ffc24a1d..2b236e498 100644
+index 38468421e..39f5816ff 100644
 --- a/backend/genesys/low.cpp
 +++ b/backend/genesys/low.cpp
 @@ -35,6 +35,7 @@
@@ -31204,28 +31204,26 @@ index 3ffc24a1d..2b236e498 100644
  
  #include "gl124.h"
 +#include "gl126.h"
+ #include "gl128_registers.h"
+ #include "gl128.h"
  #include "gl646.h"
- #include "gl841.h"
- #include "gl842.h"
-@@ -65,6 +66,7 @@ std::unique_ptr<CommandSet> create_cmd_set(AsicType asic_type)
+@@ -67,6 +68,7 @@ std::unique_ptr<CommandSet> create_cmd_set(AsicType asic_type)
          case AsicType::GL846: return std::unique_ptr<CommandSet>(new gl846::CommandSetGl846{});
          case AsicType::GL847: return std::unique_ptr<CommandSet>(new gl847::CommandSetGl847{});
          case AsicType::GL124: return std::unique_ptr<CommandSet>(new gl124::CommandSetGl124{});
 +        case AsicType::GL126: return std::unique_ptr<CommandSet>(new gl126::CommandSetGl126{});
+         case AsicType::GL128: return std::unique_ptr<CommandSet>(new gl128::CommandSetGl128{});
          default: throw SaneException(SANE_STATUS_INVAL, "unknown ASIC type");
      }
- }
-@@ -139,7 +141,8 @@ Status scanner_read_status(Genesys_Device& dev)
-     std::uint16_t address = 0;
+@@ -143,6 +145,7 @@ Status scanner_read_status(Genesys_Device& dev)
  
      switch (dev.model->asic_type) {
--        case AsicType::GL124: address = 0x101; break;
-+        case AsicType::GL124:
+         case AsicType::GL124: address = 0x101; break;
 +        case AsicType::GL126: address = 0x101; break;
+         case AsicType::GL128: address = 0x101; break;
          case AsicType::GL646:
          case AsicType::GL841:
-         case AsicType::GL842:
-@@ -1165,6 +1168,13 @@ ImagePipelineStack build_image_pipeline(const Genesys_Device& dev, const ScanSes
+@@ -1170,6 +1173,13 @@ ImagePipelineStack build_image_pipeline(const Genesys_Device& dev, const ScanSes
      if (log_image_data) {
          pipeline.push_node<ImagePipelineNodeDebug>(debug_prefix + "_0_from_usb.tiff");
      }
@@ -31240,7 +31238,7 @@ index 3ffc24a1d..2b236e498 100644
      if (session.segment_count > 1) {
          auto output_width = session.output_segment_pixel_group_count * session.segment_count;
 diff --git a/backend/genesys/scanner_interface_usb.cpp b/backend/genesys/scanner_interface_usb.cpp
-index 542d4ff62..01cfcfad0 100644
+index e1fcbf749..b80c7a664 100644
 --- a/backend/genesys/scanner_interface_usb.cpp
 +++ b/backend/genesys/scanner_interface_usb.cpp
 @@ -22,6 +22,7 @@
@@ -31251,27 +31249,23 @@ index 542d4ff62..01cfcfad0 100644
  
  namespace genesys {
  
-@@ -43,7 +44,8 @@ std::uint8_t ScannerInterfaceUsb::read_register(std::uint16_t address)
-     if (dev_->model->asic_type == AsicType::GL847 ||
+@@ -44,6 +45,7 @@ std::uint8_t ScannerInterfaceUsb::read_register(std::uint16_t address)
          dev_->model->asic_type == AsicType::GL845 ||
          dev_->model->asic_type == AsicType::GL846 ||
--        dev_->model->asic_type == AsicType::GL124)
-+        dev_->model->asic_type == AsicType::GL124 ||
-+        dev_->model->asic_type == AsicType::GL126)
+         dev_->model->asic_type == AsicType::GL124 ||
++        dev_->model->asic_type == AsicType::GL126 ||
+         dev_->model->asic_type == AsicType::GL128)
      {
          std::uint8_t value2x8[2];
-         std::uint16_t address16 = 0x22 + (address << 8);
-@@ -88,7 +90,8 @@ void ScannerInterfaceUsb::write_register(std::uint16_t address, std::uint8_t val
-     if (dev_->model->asic_type == AsicType::GL847 ||
+@@ -90,6 +92,7 @@ void ScannerInterfaceUsb::write_register(std::uint16_t address, std::uint8_t val
          dev_->model->asic_type == AsicType::GL845 ||
          dev_->model->asic_type == AsicType::GL846 ||
--        dev_->model->asic_type == AsicType::GL124)
-+        dev_->model->asic_type == AsicType::GL124 ||
-+        dev_->model->asic_type == AsicType::GL126)
+         dev_->model->asic_type == AsicType::GL124 ||
++        dev_->model->asic_type == AsicType::GL126 ||
+         dev_->model->asic_type == AsicType::GL128)
      {
          std::uint8_t buffer[2];
- 
-@@ -226,6 +229,14 @@ void ScannerInterfaceUsb::bulk_read_data(std::uint8_t addr, std::uint8_t* data,
+@@ -229,6 +232,14 @@ void ScannerInterfaceUsb::bulk_read_data(std::uint8_t addr, std::uint8_t* data,
      // currently supported: GL646, GL841, GL843, GL845, GL846, GL847, GL124
      DBG_HELPER(dbg);
  
@@ -31286,14 +31280,14 @@ index 542d4ff62..01cfcfad0 100644
      unsigned is_addr_used = 1;
      unsigned has_header_before_each_chunk = 0;
      if (dev_->model->asic_type == AsicType::GL124 ||
-@@ -438,7 +449,9 @@ void ScannerInterfaceUsb::write_fe_register(std::uint8_t address, std::uint16_t
+@@ -443,7 +454,9 @@ void ScannerInterfaceUsb::write_fe_register(std::uint8_t address, std::uint16_t
      Genesys_Register_Set reg(Genesys_Register_Set::SEQUENTIAL);
  
      reg.init_reg(0x51, address);
--    if (dev_->model->asic_type == AsicType::GL124) {
+-    if (dev_->model->asic_type == AsicType::GL124 || dev_->model->asic_type == AsicType::GL128) {
 +    if (dev_->model->asic_type == AsicType::GL124 ||
-+        dev_->model->asic_type == AsicType::GL126)
-+    {
++        dev_->model->asic_type == AsicType::GL126 ||
++        dev_->model->asic_type == AsicType::GL128) {
          reg.init_reg(0x5d, (value / 256) & 0xff);
          reg.init_reg(0x5e, value & 0xff);
      } else {
