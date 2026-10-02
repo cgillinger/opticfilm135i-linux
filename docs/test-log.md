@@ -6750,3 +6750,55 @@ rebase was done; the five patches apply clean on top of `ccabaad`.
 **Verdict: PASS for v5.** The submitted package passes all seven of the
 SANE project's CI jobs. Passing CI is not review: the merge request
 (!1032) is open and not merged.
+
+### Test 96: WP-3 rebased onto current upstream (v6) — offline (2026-10-02)
+
+**What.** Offline; no scanner was involved and no hardware was touched.
+Upstream `master` moved to `7103e09b0` after merging a GL128 series
+(Plustek OpticFilm 8200i SE), which adds lines at the same places as the
+GL126 series. v5 (merge request !1032, base `f8b5e16`) no longer merges
+cleanly. v5 was rebased onto `7103e09b0` as v6 in a new worktree and
+branch (`wp3-gl126-submission-v6`).
+
+**Conflicts.** All of the kind "both sides added a line at the same
+spot", resolved by keeping both, GL126 before GL128: `backend/Makefile.am`
+(source list), `genesys/enums.h` (enumerator), `genesys/low.cpp`
+(include, `create_cmd_set` case, status-register address case),
+`genesys/scanner_interface_usb.cpp` (three conditions). The first v5 commit
+(`ImagePipelineNodeExtract` fix) conflicted in `image_pipeline.cpp`
+because upstream now carries an equivalent fix (`2bf54be64`); upstream's
+version was taken, the commit became empty and was dropped. The series is
+four commits. Tip `ec21b712f1c120c6cc6d041f98385dcdb1876dde`, tip tree
+`83568e8e8eaf8d77add24174b2b473e819198c0a`. The nine GL126 source files
+are byte-identical to v5's.
+
+**Results (v6 build).** Standalone GCC build: exit 0, 0 compiler warnings,
+111 gl126 symbols. `test_sane_open_params` 7 passed,
+`test_sane_calibration_cache` 6 passed, `test_sane_magazine` 42 passed
+(`SANE_BACKENDS_DIR` at the v6 worktree). Upstream's `genesys_unit_tests`
+PASS. Recreation from the bundle and by `git am` of the four patches onto
+`7103e09b0`, each in a clean repository: tree `83568e8e…` both times.
+CI replay: see `docs/sane-wp3-submission.md` §3 (`make-dist` exit 0;
+`fedora-39-clang` 0 errors / 0 warnings in the build and
+`genesys_unit_tests` PASS; `make check` then stops at upstream's own
+`escl_test`, identically on unmodified upstream `7103e09b0`).
+
+**Not run.** Hardware: none of v6 has been run on the scanner; the
+hardware tests (Tests 62 to 92) and `tstbackend -l 1` (Tests 93, 94) were
+made on earlier builds of the same GL126 sources. Upstream's shared-code
+changes in between are conditional on GL128, except that
+`ImagePipelineNodeMergeColorToGray` now takes a colour filter, which is
+`NONE` for GL126 host-side gray (unchanged luminance weights). At the time of this offline run
+nothing had been pushed: merge request !1032 was open at v5.
+
+**Verdict (offline run): v6 prepared and verified offline.**
+
+**Afterwards, 2026-10-02.** The author pushed v6 (tip `ec21b712…`) to the
+merge request's source branch. The branch in the fork keeps the name
+`wp3-gl126-submission-v5` but holds the v6 commits. Merge request !1032
+now shows the four v6 commits on base `7103e09b0` and no conflicts, and
+its GitLab pipeline passed all seven jobs (`make-dist`, `make-distcheck`,
+debian-11-mini, debian-12-full, fedora-39-clang, ubuntu-23.10,
+alpine-3.18-musl), so the local replay's `escl_test` stop did not occur
+there. v6 has still not been run on hardware, review has not started and
+nothing is merged.

@@ -1,7 +1,7 @@
-From 7d93d623ba46bab5ac817041f3ad5ba2729f8d84 Mon Sep 17 00:00:00 2001
+From 89352b4ac6f8085b18f40adb7b44ea7d26422062 Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
 Date: Mon, 28 Sep 2026 19:07:54 +0200
-Subject: [PATCH 4/5] genesys: frame selection and magazine handling for the
+Subject: [PATCH 3/4] genesys: frame selection and magazine handling for the
  OpticFilm 135i
 
 Five options, inactive on every other ASIC: 'frame' (which frame of the
@@ -24,7 +24,7 @@ a frontend shows only what the scanner does.
  2 files changed, 462 insertions(+), 23 deletions(-)
 
 diff --git a/backend/genesys/genesys.cpp b/backend/genesys/genesys.cpp
-index c18b076be..e3d13fe48 100644
+index c08acc991..e3f38eb18 100644
 --- a/backend/genesys/genesys.cpp
 +++ b/backend/genesys/genesys.cpp
 @@ -38,6 +38,14 @@
@@ -40,9 +40,9 @@ index c18b076be..e3d13fe48 100644
 +#include "gl126_lock.h"
 +#include "gl126.h"
  #include "gl124_registers.h"
+ #include "gl128_registers.h"
  #include "gl841_registers.h"
- #include "gl842_registers.h"
-@@ -149,6 +157,24 @@ static const SANE_Range enhance_range = {
+@@ -150,6 +158,24 @@ static const SANE_Range enhance_range = {
  /**
   * range for expiration time
   */
@@ -67,7 +67,7 @@ index c18b076be..e3d13fe48 100644
  static const SANE_Range expiration_range = {
    -1,	        /* minimum */
    30000,	/* maximum */
-@@ -3657,11 +3683,19 @@ static void genesys_flatbed_calibration(Genesys_Device* dev, Genesys_Sensor& sen
+@@ -3675,11 +3701,19 @@ static void genesys_flatbed_calibration(Genesys_Device* dev, Genesys_Sensor& sen
      }
  
      // send default shading data
@@ -92,7 +92,7 @@ index c18b076be..e3d13fe48 100644
      {
          scanner_move_to_ta(*dev);
      }
-@@ -3969,7 +4003,12 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -3987,7 +4021,12 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
    /* since not all scanners are set to wait for head to park
     * we check we are not still parking before starting a new scan */
      if (dev->parking) {
@@ -106,7 +106,7 @@ index c18b076be..e3d13fe48 100644
      }
  
      // disable power saving
-@@ -3990,21 +4029,30 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -4008,21 +4047,30 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
      }
  
    /* set top left x and y values by scanning the internals if flatbed scanners */
@@ -142,7 +142,7 @@ index c18b076be..e3d13fe48 100644
          dev->cmd_set->load_document(dev);
      }
  
-@@ -4017,7 +4065,17 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -4035,7 +4083,17 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
      dev->cmd_set->send_gamma_table(dev, sensor);
  
    /* try to use cached calibration first */
@@ -161,7 +161,7 @@ index c18b076be..e3d13fe48 100644
      {
          // calibration : sheetfed scanners can't calibrate before each scan.
          // also don't run calibration for those scanners where all passes are disabled
-@@ -4039,8 +4097,11 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -4057,8 +4115,11 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
          dev->cmd_set->move_back_home(dev, true);
      }
  
@@ -175,7 +175,7 @@ index c18b076be..e3d13fe48 100644
      {
          scanner_move_to_ta(*dev);
      }
-@@ -4059,9 +4120,12 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -4077,9 +4138,12 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
      {
          genesys_send_shading_coefficient(dev, sensor);
      }
@@ -190,7 +190,7 @@ index c18b076be..e3d13fe48 100644
  
      // start effective scan
      dev->cmd_set->begin_scan(dev, sensor, &dev->reg, true);
-@@ -4070,6 +4134,13 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
+@@ -4088,6 +4152,13 @@ static void genesys_start_scan(Genesys_Device* dev, bool lamp_off)
          dev->interface->test_checkpoint("start_scan");
          return;
      }
@@ -204,7 +204,7 @@ index c18b076be..e3d13fe48 100644
  
    /*do we really need this? the valid data check should be sufficient -- pierre*/
    /* waits for head to reach scanning position */
-@@ -4283,6 +4354,7 @@ static Genesys_Settings calculate_scan_settings(Genesys_Scanner* s)
+@@ -4301,6 +4372,7 @@ static Genesys_Settings calculate_scan_settings(Genesys_Scanner* s)
      }
  
      settings.expiration_time = s->expiration_time;
@@ -212,7 +212,7 @@ index c18b076be..e3d13fe48 100644
  
      settings.exposure_lperiod = s->exposure_time;
  
-@@ -4476,6 +4548,26 @@ static void set_resolution_option_values(Genesys_Scanner& s, bool reset_resoluti
+@@ -4494,6 +4566,26 @@ static void set_resolution_option_values(Genesys_Scanner& s, bool reset_resoluti
  {
      auto resolutions = s.dev->model->get_resolutions(s.scan_method);
  
@@ -239,7 +239,7 @@ index c18b076be..e3d13fe48 100644
      s.opt_resolution_values.resize(resolutions.size() + 1, 0);
      s.opt_resolution_values[0] = resolutions.size();
      std::copy(resolutions.begin(), resolutions.end(), s.opt_resolution_values.begin() + 1);
-@@ -4550,6 +4642,15 @@ static void init_options(Genesys_Scanner* s)
+@@ -4568,6 +4660,15 @@ static void init_options(Genesys_Scanner* s)
    s->opt[OPT_MODE].size = max_string_size (mode_list);
    s->opt[OPT_MODE].constraint.string_list = mode_list;
    s->mode = SANE_VALUE_SCAN_MODE_GRAY;
@@ -255,7 +255,7 @@ index c18b076be..e3d13fe48 100644
  
    /* scan source */
      s->opt_source_values.clear();
-@@ -4737,6 +4838,126 @@ static void init_options(Genesys_Scanner* s)
+@@ -4755,6 +4856,126 @@ static void init_options(Genesys_Scanner* s)
    s->opt[OPT_CONTRAST].cap = SANE_CAP_SOFT_SELECT | SANE_CAP_SOFT_DETECT;
    s->contrast = 0;  // disable by default
  
@@ -382,7 +382,7 @@ index c18b076be..e3d13fe48 100644
    /* "Extras" group: */
    s->opt[OPT_EXTRAS_GROUP].name = "extras-group";
    s->opt[OPT_EXTRAS_GROUP].title = SANE_I18N ("Extras");
-@@ -4755,7 +4976,27 @@ static void init_options(Genesys_Scanner* s)
+@@ -4773,7 +4994,27 @@ static void init_options(Genesys_Scanner* s)
    s->opt[OPT_COLOR_FILTER].type = SANE_TYPE_STRING;
    s->opt[OPT_COLOR_FILTER].constraint_type = SANE_CONSTRAINT_STRING_LIST;
    /* true gray not yet supported for GL847 and GL124 scanners */
@@ -411,7 +411,7 @@ index c18b076be..e3d13fe48 100644
        s->opt[OPT_COLOR_FILTER].size = max_string_size (color_filter_list);
        s->opt[OPT_COLOR_FILTER].constraint.string_list = color_filter_list;
        s->color_filter = s->opt[OPT_COLOR_FILTER].constraint.string_list[1];
-@@ -5053,6 +5294,38 @@ static void init_options(Genesys_Scanner* s)
+@@ -5071,6 +5312,38 @@ static void init_options(Genesys_Scanner* s)
      s->opt[OPT_IGNORE_OFFSETS].cap = SANE_CAP_SOFT_DETECT | SANE_CAP_SOFT_SELECT |
                                       SANE_CAP_ADVANCED;
  
@@ -450,7 +450,7 @@ index c18b076be..e3d13fe48 100644
      calc_parameters(s);
  }
  
-@@ -5457,6 +5730,30 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5475,6 +5748,30 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
          throw SaneException("could not find the device to open: %s", devicename);
      }
  
@@ -481,7 +481,7 @@ index c18b076be..e3d13fe48 100644
      if (is_testing_mode()) {
          // during testing we need to initialize dev->model before test scanner interface is created
          // as that it needs to know what type of chip it needs to mimic.
-@@ -5473,6 +5770,21 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5491,6 +5788,21 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
          dev->interface->get_usb_device().open(dev->file_name.c_str());
      } else {
@@ -503,7 +503,7 @@ index c18b076be..e3d13fe48 100644
          dev->interface = std::unique_ptr<ScannerInterfaceUsb>{new ScannerInterfaceUsb{dev}};
  
          dbg.vstatus("open device '%s'", dev->file_name.c_str());
-@@ -5523,6 +5835,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
+@@ -5541,6 +5853,12 @@ static void sane_open_impl(SANE_String_Const devicename, SANE_Handle * handle)
  
      // some hardware capabilities are detected through sensors
      dev->cmd_set->update_hardware_sensors (s);
@@ -516,7 +516,7 @@ index c18b076be..e3d13fe48 100644
  }
  
  SANE_GENESYS_API_LINKAGE
-@@ -5556,6 +5874,20 @@ sane_close_impl(SANE_Handle handle)
+@@ -5574,6 +5892,20 @@ sane_close_impl(SANE_Handle handle)
  
      auto* dev = it->dev;
  
@@ -537,7 +537,7 @@ index c18b076be..e3d13fe48 100644
      // eject document for sheetfed scanners
      if (dev->model->is_sheetfed) {
          catch_all_exceptions(__func__, [&](){ dev->cmd_set->eject_document(dev); });
-@@ -5579,12 +5911,26 @@ sane_close_impl(SANE_Handle handle)
+@@ -5597,12 +5929,26 @@ sane_close_impl(SANE_Handle handle)
      dev->clear();
  
      // LAMP OFF : same register across all the ASICs */
@@ -568,7 +568,7 @@ index c18b076be..e3d13fe48 100644
  
      // not freeing dev because it's in the dev list
      catch_all_exceptions(__func__, [&](){ dev->interface->get_usb_device().close(); });
-@@ -5715,6 +6061,17 @@ static void get_option_value(Genesys_Scanner* s, int option, void* val)
+@@ -5733,6 +6079,17 @@ static void get_option_value(Genesys_Scanner* s, int option, void* val)
      case OPT_EXPIRATION_TIME:
          *reinterpret_cast<SANE_Word*>(val) = s->expiration_time;
          break;
@@ -586,7 +586,7 @@ index c18b076be..e3d13fe48 100644
      case OPT_CUSTOM_GAMMA:
          *reinterpret_cast<SANE_Word*>(val) = s->custom_gamma;
          break;
-@@ -5937,7 +6294,13 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
+@@ -5955,7 +6312,13 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
          {
            DISABLE(OPT_CONTRAST);
            DISABLE(OPT_BRIGHTNESS);
@@ -601,7 +601,7 @@ index c18b076be..e3d13fe48 100644
            ENABLE(OPT_CONTRAST);
            ENABLE(OPT_BRIGHTNESS);
          }
-@@ -5960,7 +6323,17 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
+@@ -5978,7 +6341,17 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
              s->mode = reinterpret_cast<const char*>(val);
  
              if (s->mode == SANE_VALUE_SCAN_MODE_GRAY) {
@@ -620,7 +620,7 @@ index c18b076be..e3d13fe48 100644
                      ENABLE(OPT_COLOR_FILTER);
                  }
                  create_bpp_list(s, dev->model->bpp_gray_values);
-@@ -6012,6 +6385,12 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
+@@ -6030,6 +6403,12 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
              }
              break;
          }
@@ -633,7 +633,7 @@ index c18b076be..e3d13fe48 100644
          case OPT_EXPIRATION_TIME: {
              if (*reinterpret_cast<SANE_Word*>(val) != s->expiration_time) {
                  s->expiration_time = *reinterpret_cast<SANE_Word*>(val);
-@@ -6092,6 +6471,49 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
+@@ -6110,6 +6489,49 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
              }
              break;
          }

@@ -4,6 +4,21 @@ Notable changes to the Plustek OpticFilm 135i Linux driver and its SANE
 backend port. Entries name the hardware evidence (docs/test-log.md) where
 one exists; "offline" means implemented and tested without the scanner.
 
+## Unreleased
+
+- SANE submission package revision v6 (2026-10-02, offline): v5 rebased
+  onto upstream `7103e09b0`, after upstream merged a GL128 series
+  (Plustek OpticFilm 8200i SE) that touched the same lines. Four commits;
+  the `ImagePipelineNodeExtract` fix is dropped because upstream now
+  carries an equivalent one. The GL126 source files are unchanged. Built
+  standalone with 0 warnings and 111 gl126 symbols; the backend suites
+  (7 / 6 / 42) and upstream's `genesys_unit_tests` pass; both recreation
+  routes give tip tree `83568e8e…` (Test 96). Pushed by the author to
+  merge request !1032 on 2026-10-02 (the fork's source branch keeps the
+  name `wp3-gl126-submission-v5` but now holds the v6 commits); the
+  merge request shows no conflicts and its pipeline passed all seven
+  jobs. Not run on hardware.
+
 ## v0.2.1 — 2026-09-29
 The state submitted to the SANE project; no functional change. See [docs/release-notes-v0.2.1.md](docs/release-notes-v0.2.1.md).
 

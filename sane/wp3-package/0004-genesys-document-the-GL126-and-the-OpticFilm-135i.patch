@@ -1,7 +1,7 @@
-From c026a333a6ff8b85a789e919f07047ac7140f3f9 Mon Sep 17 00:00:00 2001
+From ec21b712f1c120c6cc6d041f98385dcdb1876dde Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
 Date: Mon, 28 Sep 2026 19:07:54 +0200
-Subject: [PATCH 5/5] genesys: document the GL126 and the OpticFilm 135i
+Subject: [PATCH 4/4] genesys: document the GL126 and the OpticFilm 135i
 
 The man page's chip list, an AUTHORS entry, and the .desc status from
 :untested to :good with a comment describing the scanner.
@@ -26,7 +26,7 @@ index 71d95ce58..127e83919 100644
   gt68xx:        Sergey Vlasov, Andreas Nowack, David Stevenson, and
                  Henning Geinitz
 diff --git a/doc/descriptions/genesys.desc b/doc/descriptions/genesys.desc
-index 83414f8d7..23146efe9 100644
+index 2e8e33196..b05910e92 100644
 --- a/doc/descriptions/genesys.desc
 +++ b/doc/descriptions/genesys.desc
 @@ -20,8 +20,8 @@

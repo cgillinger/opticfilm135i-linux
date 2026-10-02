@@ -20,7 +20,12 @@ Step 3 (the decision): Christian decided to send it, and on 2026-09-29
 he submitted the series himself as merge request !1032
 (<https://gitlab.com/sane-project/backends/-/merge_requests/1032>), from
 his own fork, branch `wp3-gl126-submission-v5`. The rest of this document
-is kept as the record of how it was prepared. The merge request is open
+is kept as the record of how it was prepared. (Afterwards, on 2026-10-02,
+v5 was rebased onto upstream `7103e09b0` after upstream merged a GL128
+series that touched the same lines: revision v6, four commits, pushed
+to the merge request the same day; see
+`docs/sane-wp3-submission.md` §1. The steps below describe the
+pre-submission mission and are not updated.) The merge request is open
 and under review, not merged. The package became v5 that day: the
 SANE project's CI pipeline, run on the v4 branch in the fork, failed on
 clang-only findings (Test 95).

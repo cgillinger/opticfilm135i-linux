@@ -14,6 +14,23 @@ list. Submitted is not accepted: whether and when anything is merged is
 the maintainers' decision. The completion of B2 is recorded in
 `docs/ROADMAP.md`.
 
+**Revision v6 (2026-10-02) was pushed by the author to the merge
+request's source branch on 2026-10-02.** Upstream had merged a GL128
+series (Plustek OpticFilm 8200i SE) that touches the same lines, so the
+merge request as submitted (v5) no longer merged cleanly. v6 is v5
+rebased onto upstream
+`7103e09b0`: four commits, the `ImagePipelineNodeExtract` fix dropped
+because upstream now carries an equivalent one (`2bf54be64`), the nine
+GL126 source files byte-identical to v5's. The merge request now shows
+the four v6 commits on base `7103e09b0` and no conflicts, and its
+GitLab pipeline passed all seven jobs (`make-dist`, `make-distcheck`,
+debian-11-mini, debian-12-full, fedora-39-clang, ubuntu-23.10,
+alpine-3.18-musl). The branch in the fork keeps the name
+`wp3-gl126-submission-v5` (GitLab cannot change a merge request's source
+branch) but holds the v6 commits; the local branch and worktree are
+named `wp3-gl126-submission-v6`. v6 has not been run on hardware, review
+has not started and nothing is merged. §1 has the details.
+
 > **Safety note, read before touching the branch.** The package lives on a
 > branch inside a clone of *sane-backends*, whose `origin` is
 > `https://gitlab.com/sane-project/backends.git` — the real upstream. The
@@ -28,13 +45,40 @@ the maintainers' decision. The completion of B2 is recorded in
 
 | | |
 |---|---|
-| Branch | `wp3-gl126-submission-v5` |
-| Worktree | `~/Dokument/Github/sane-wp3-v5` (a `git worktree` of the sane-backends clone) |
-| Base | `f8b5e16`, "Merge branch 'saned_unit_tests' into 'master'", fetched 2026-09-28, unchanged in v5 |
-| Commits | 5 |
-| Tip tree | `b166a3daf8fd4da719cf52657e3c4e78e73ab002` |
+| Branch | `wp3-gl126-submission-v6` (local name; pushed 2026-10-02 to the merge request, whose source branch in the fork is still named `wp3-gl126-submission-v5` but holds these v6 commits) |
+| Worktree | `~/Dokument/Github/sane-wp3-v6` (a `git worktree` of the sane-backends clone) |
+| Base | `7103e09b03aa8c7041c75e12f4d51fdf511be151`, "Merge branch 'genesys-gl128-opticfilm-8200i-se' into 'master'", fetched 2026-10-02 |
+| Commits | 4 |
+| Tip | `ec21b712f1c120c6cc6d041f98385dcdb1876dde` |
+| Tip tree | `83568e8e8eaf8d77add24174b2b473e819198c0a` |
 
-Fifth revision, 2026-09-29: 42 lines of dead code removed from
+Sixth revision, 2026-10-02: v5 rebased onto current upstream, because
+upstream merged a GL128 series (Plustek OpticFilm 8200i SE) that added
+lines at the same places in `backend/Makefile.am`, `genesys/enums.h`,
+`genesys/low.cpp` and `genesys/scanner_interface_usb.cpp`. Every conflict
+was "both sides added a line at the same spot"; both lines were kept,
+GL126 before GL128, in the style upstream used for GL128, and no GL126
+code changed. The first v5 commit, the `ImagePipelineNodeExtract` fix, was
+dropped: upstream now carries an equivalent fix (`2bf54be64`), the
+rebase took upstream's version and the commit became empty, so the
+series is four commits. The nine GL126 source files are byte-identical
+to v5's; the patches of the other commits are identical apart from
+context lines. Commit 1's message and the later ones are unchanged
+(none of them refers to the dropped commit). Verified offline on the v6
+build: 0 compiler warnings, 111 gl126 symbols, the three backend suites
+7 / 6 / 42 passed, upstream's `genesys_unit_tests` pass, the CI replay of
+§3, and both recreation routes (bundle, `git am` of the four patches)
+give tip tree `83568e8e…`. **Not run on hardware:** the hardware tests
+and the `tstbackend` run were made on earlier builds of the same GL126
+sources. Upstream's shared-code changes in between are conditional on
+GL128, except that `ImagePipelineNodeExtract`'s sibling
+`ImagePipelineNodeMergeColorToGray` now takes a colour filter, which is
+`NONE` for GL126's host-side gray (the luminance weights are unchanged).
+Commits: `7c2f94b9…` (GL126 ASIC), `38b59041…` (model), `89352b4a…`
+(options), `ec21b712…` (documentation).
+
+Fifth revision, 2026-09-29 (base `f8b5e16`, five commits, the revision
+submitted as merge request !1032): 42 lines of dead code removed from
 `gl126.cpp`, all in commit 2; the difference between v4 and v5 is that
 one file, deletions only, and the commit messages are unchanged. Removed:
 `write_phase()`, a helper nothing called, marked `[[maybe_unused]]`
@@ -72,11 +116,12 @@ top of it and nothing in this series interacts with it. Should upstream
 move again before a submission, only the then-relevant difference needs
 assessing; the package is not invalidated wholesale (§7).
 
-Previous revisions: v4 (2026-09-28, same base, tip tree `16671d82…`),
+Previous revisions: v5 (2026-09-29, base `f8b5e16`, tip `c026a333…`, tip
+tree `b166a3da…`), v4 (2026-09-28, same base, tip tree `16671d82…`),
 v3 (2026-09-28, same base, tip tree `d891db5d…`),
 v2 (2026-09-15, base `7fb102b`, tip tree `65a7b8bd…`), v1 (2026-09-13,
 base `1d47d7c`, four commits). All branches still exist in the
-sane-backends clone; the exported package is v5.
+sane-backends clone; the exported package is v6.
 
 The worktree is separate from `~/Dokument/Github/sane-backends`, which
 keeps the development arrangement (symlinks into this repo's `sane/`)
@@ -85,65 +130,69 @@ zero mode-120000 entries, and the nine GL126 files are real files
 committed to the branch. That was the point of building it this way —
 a reviewer clones, builds, and needs nothing from this repository.
 
-**Exported to `sane/wp3-package/`** (v5 on 2026-09-29; earlier revisions on 2026-09-15 and 2026-09-28) — a bundle and the five
+**Exported to `sane/wp3-package/`** (v6 on 2026-10-02; earlier revisions on 2026-09-15, 2026-09-28 and 2026-09-29) — a bundle and the four
 patches, with the base and every commit and tree id, recreation and build
 instructions, and the verification (standalone build, symbols, backend
 suites, both recreation routes). That is the reviewable form; the worktree
-is the working copy. The five commit and tree ids are in
+is the working copy. The four commit and tree ids are in
 `sane/wp3-package/README.md`.
 
 To recreate it from scratch by hand instead:
 
 ```
 cd ~/Dokument/Github/sane-backends
-git worktree add -b wp3-gl126-submission-v5 ~/Dokument/Github/sane-wp3-v5 f8b5e16
-cd ~/Dokument/Github/sane-wp3-v5
+git worktree add -b wp3-gl126-submission-v6 ~/Dokument/Github/sane-wp3-v6 7103e09b0
+cd ~/Dokument/Github/sane-wp3-v6
 cp -L ~/Dokument/Github/opticfilm135i-linux/sane/gl126*.{h,cpp} backend/genesys/
 git apply ~/Dokument/Github/opticfilm135i-linux/sane/gl126-integration.patch
 # the man page, AUTHORS and .desc-status hunks of commit 5 are not in the
 # integration patch (the development clone carries no doc changes):
 git apply --include=AUTHORS --include=doc/sane-genesys.man \
-    ~/Dokument/Github/opticfilm135i-linux/sane/wp3-package/0005-*.patch
-# then commit in the five groups described below (the Extract fix first);
-# the .desc status flip is applied from the same 0005 patch before commit 5
+    ~/Dokument/Github/opticfilm135i-linux/sane/wp3-package/0004-*.patch
+# (v6 itself is the rebase of v5 onto 7103e09b0 and is not rebuilt this way;
+# the bundle and the patches in the package are the exact series)
+# then commit in the four groups described below;
+# the .desc status flip is applied from the same 0004 patch before commit 4
 ```
 
 ## 2. The commit series
 
-1. **`genesys: fix ImagePipelineNodeExtract bytes-per-pixel for
-   multi-channel rows`** — the one shared-code bug fix, on its own:
-   `get_next_row_data()` used the per-channel depth as the pixel stride,
-   copying a third of each multi-channel row. No in-tree model reached
-   that node with a multi-channel format before GL126's infrared crop, so
-   no existing model's output changes.
-2. **`genesys: add support for the GL126 ASIC`** — the command set and
+*(v5 had a first commit, `genesys: fix ImagePipelineNodeExtract
+bytes-per-pixel for multi-channel rows`: `get_next_row_data()` used the
+per-channel depth as the pixel stride, copying a third of each
+multi-channel row. Upstream now carries an equivalent fix, `2bf54be64`,
+so v6 does not repeat it. The GL126 infrared crop was the first user of
+that code path.)*
+
+1. **`genesys: add support for the GL126 ASIC`** — the command set and
    everything it needs: the nine `gl126_*` files (including
    `gl126_lock.{h,cpp}`), the `AsicType` entry and its string mapping,
    two `ScanSession` fields for the dual-light profiles, the pipeline
    hook in `low.cpp`, the GL126 branch in the USB interface's bulk read,
    the test-interface addition and `Makefile.am`.
-3. **`genesys: add the Plustek OpticFilm 135i (07b3:1436)`** — the model
+2. **`genesys: add the Plustek OpticFilm 135i (07b3:1436)`** — the model
    and sensor entries, the USB id in `genesys.conf.in`, the `.desc`
    entry.
-4. **`genesys: frame selection and magazine handling for the OpticFilm
+3. **`genesys: frame selection and magazine handling for the OpticFilm
    135i`** — the five options (`frame`, `load-film`, `eject-film`,
    `check-status`, `magazine`) in `genesys.{h,cpp}`, the options the
    GL126 hooks do not implement made inactive for it, and the process
    lock in `sane_open`/`sane_close`; all inactive on every other ASIC.
-5. **`genesys: document the GL126 and the OpticFilm 135i`** — the man
+4. **`genesys: document the GL126 and the OpticFilm 135i`** — the man
    page's chip list, an `AUTHORS` entry, and the `.desc` status moving
    from `:untested` to `:good`.
 
 ## 3. What was verified, and how
 
-**Build.** Configured and built from the branch alone (v5, 2026-09-29,
+**Build.** Configured and built from the branch alone (v6, 2026-10-02, on `7103e09b0`;
+v5, 2026-09-29, gave the same result on `f8b5e16`,
 `./autogen.sh && ./configure --sysconfdir=/etc`, then `lib`, `sanei` and
 `backend/libsane-genesys.la`). Exit 0, **zero compiler errors or
 warnings** (GCC). This is the check that matters most: it proves the package
 stands without this repository.
 
 **Exported symbols.** `nm -D` on the resulting library: **111 mentioning
-gl126 — identical to the development build**,
+gl126 — identical to the development build and to v5**,
 and both the plain `sane_*` and the prefixed `sane_genesys_*` entry
 points present as genesys expects.
 
@@ -167,8 +216,23 @@ including `genesys_unit_tests`; the pipeline on the v5 branch in the
 fork passed all seven jobs (`make-dist`, the five compile jobs and
 `make-distcheck`).
 
+**CI replay on v6 (2026-10-02, local, offline).** `.gitlab-ci.yml` is
+unchanged between `f8b5e16` and `7103e09b0`. Replaying `make-dist` and
+`fedora-39-clang` in the project's images against v6: `make-dist` exit 0;
+`fedora-39-clang` builds with 0 errors and 0 warnings (clang 17.0.1,
+`-Werror`) and `genesys_unit_tests` PASS, but `make check` then stops at
+`testsuite/backend/escl_test` with `escl.h: "The escl backend requires
+libcurl, libavahi and libxml2"`. The identical stop and error occur on
+unmodified upstream `7103e09b0` replayed through the same dist-tarball
+path, so it is not caused by this series; the same unmodified upstream
+tree built and checked directly (not through the tarball) passes. The
+other compile jobs and `make-distcheck` were not replayed locally. The
+real GitLab pipeline on v6 passed all seven jobs, so this `escl_test` stop
+did not occur there; the paragraph above remains the record of the local
+run.
+
 **Offline tests against the package build.** The three suites that need a
-built backend were re-run against v5 (2026-09-29) with `SANE_BACKENDS_DIR` pointed at the
+built backend were re-run against v6 (2026-10-02; v5 gave the same counts on 2026-09-29) with `SANE_BACKENDS_DIR` pointed at the
 worktree rather than the development tree:
 
 | suite | result |
@@ -177,11 +241,14 @@ worktree rather than the development tree:
 | `test_sane_calibration_cache` | 6 passed |
 | `test_sane_magazine` | 42 passed |
 
+Upstream's own `genesys_unit_tests` (`make -C testsuite/backend/genesys check`)
+also pass on the v6 build.
+
 The full offline suite passes in this repository against the development
 build: `tools/release_check.py` FULL VERIFICATION, 389 tests, 0 skipped,
 at the commit that records this revision. `tools/gen_sane_tables.py
 --check` reports the tables up to date, and both recreation routes
-(bundle and `git am` of the five patches) give tip tree `b166a3da…` in
+(bundle and `git am` of the four patches) give tip tree `83568e8e…` (v6) in
 clean repositories.
 
 **Checklist items from `doc/backend-writing.txt`.** That checklist is
@@ -198,7 +265,7 @@ the man page chip list, and the `.desc` status and comment.
 new code follows the surrounding style.
 
 **`tstbackend -l 1` — run 2026-09-28 against the v3 build (Test 93) and
-again against the v4 build (Test 94): `warnings: 0  error: 0  checks: 22965`, exit 0, both times. It was not repeated for v5.** v5 removes only
+again against the v4 build (Test 94) (not repeated for v5 or v6, and v6 has not been run on hardware): `warnings: 0  error: 0  checks: 22965`, exit 0, both times. It was not repeated for v5.** v5 removes only
 code nothing called or read, and the disassembly of `gl126.o` is
 identical between the v4 and v5 builds, so the evidence is for v4 and
 v5 shares its machine code. The tool was built
@@ -588,7 +655,11 @@ merged. Nothing is merged yet.
    offsets and image stream length in PDF output", and its merge). They
    touch only `frontend/jpegtopdf.c`, none of the files this series
    changes, so no rebase was done; the five patches also apply clean on
-   top of `ccabaad`.
+   top of `ccabaad`. Re-checked 2026-10-02: upstream had
+   merged a GL128 series that adds lines at the same spots in four of the
+   files this series changes, so v5 no longer merged cleanly; v5 was
+   rebased as v6 (§1), which the author pushed to the merge request the same
+   day (no conflicts; pipeline passed).
 2. **Run the SANE test tools, or state they were not run — done for
    this revision.** `tstbackend -l 1` ran 2026-09-28 against the v3
    build (Test 93) and again against v4 (Test 94): 22 965 checks, 0
@@ -627,7 +698,8 @@ merged. Nothing is merged yet.
    identical. v5 (2026-09-29) is v4 with 42 lines of dead code removed
    from `gl126.cpp` after the upstream clang CI job rejected them (§1,
    §3); compiled code identical. The package is exactly the repository's
-   `sane/` at the commit that records v5.
+   `sane/` at the commit that records v5. v6 (2026-10-02) is v5 rebased
+   onto upstream `7103e09b0` (§1); the nine GL126 files are unchanged.
 5. **Decide how much of the magazine machinery to offer.** Items 6 and 7
    of §6 are the two most likely to be challenged; the file handling
    behind them is hardened and documented in `gl126_lock.h`.
