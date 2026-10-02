@@ -879,6 +879,8 @@ it looks:
   means six calibrations, roughly 4 s each. Calibrating once per batch
   is possible to investigate but touches exactly the mechanism that was
   switched off on purpose.
+- **Design written 2026-09-28** (`docs/sane-batch-scanning-design.md`):
+  design only, not implemented, no owner's go.
 
 **~~Shorten the cold start's opening wait.~~ DONE and PROVEN ON HARDWARE
 2026-09-13** (Test 78: eighteen of nineteen polls byte-for-byte
