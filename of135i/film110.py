@@ -443,6 +443,15 @@ RAIL_TRANSITION_MM = 0.5        # the rail's blurred edge, excluded from the edg
 HOLE_ZONE_FROM_MM = 0.3         # hole zone starts this far inside the per-line film edge ...
 HOLE_ZONE_TO_MM = 3.0           # ... and ends this far inside it
 HOLE_STUB_MIN_MM = 0.3          # a hole cut by the aperture boundary may be this short
+# A hole is AIR ACROSS the zone, not one bright pixel in it: Test 107's strip
+# has an unexposed edge rim reading 0.85-0.95 x air (earlier strips: ~0.1),
+# so the zone's brightest pixel reached air level in rim noise (false
+# "holes" 1.5 mm long, carrying no air across) and around the real hole
+# (one 4.7-5.0 mm air run, too long, rejected). Measured as the fraction of
+# the zone's columns at air level: real holes 0.55 (earlier strips, flat over
+# the hole) and up to ~1 (Test 107), false rim runs 0.01-0.05.
+HOLE_LATERAL_MIN = 0.25         # a run whose best line has less of the zone at air is not a hole
+HOLE_CORE_FRAC = 0.5            # the holes are the stretches at >= this fraction of the run's best line
 
 
 def _track_edge(green: np.ndarray, band_edge: int, air: float,
@@ -527,9 +536,23 @@ def _hole_runs(green: np.ndarray, lo: int, hi: int, width: int, air: float,
     else:
         cols = ref_i[:, None] - offs[None, :]
     cols = np.clip(cols, 0, width - 1)
-    zone_max = np.max(green[np.arange(n_lines)[:, None], cols], axis=1)
-    hole_bool = (zone_max >= HOLE_FRAC * air) & film_present & valid
-    runs = _true_runs(hole_bool)
+    zone = green[np.arange(n_lines)[:, None], cols]
+    at_air = (zone >= HOLE_FRAC * air).mean(axis=1)
+    hole_bool = (at_air > 0) & film_present & valid
+    runs = []
+    for (s, e) in _true_runs(hole_bool):
+        if against_plastic:
+            # The band edge stands in for the film edge and part of each
+            # hole lies under the rail: the fraction reads 0.13-0.16 on
+            # real holes (Test 103, edge flush against the rail). Taken
+            # as it is, as before.
+            runs.append((s, e))
+            continue
+        frac = at_air[s:e + 1]
+        best = float(frac.max())
+        if best < HOLE_LATERAL_MIN:
+            continue
+        runs.extend((s + cs, s + ce) for (cs, ce) in _true_runs(frac >= HOLE_CORE_FRAC * best))
     min_len = HOLE_MIN_MM * px_per_mm
     max_len = HOLE_MAX_MM * px_per_mm
     stub_len = HOLE_STUB_MIN_MM * px_per_mm
@@ -624,6 +647,9 @@ FRAME_WEAK_LEVEL = (0.03, 0.16)
 FRAME_MEDIAN_MM = 0.3              # flatness is judged on the profile median-filtered over this (scratches, dust)
 FRAME_EXTEND_MAX_MM = 2.0          # an accepted gap is extended outward to the level step, at most this far per side
 FRAME_EXTEND_MIN_RUN_MM = 3.0      # only a flat run at least this long is extended (a short flat blob in texture stays short)
+                                   # (an extension that makes the gap longer than FRAME_GAP_MAX_MM is undone:
+                                   # Test 107, a dense white fence at the picture's edge read 0.145-0.16 against
+                                   # the border's 0.122, inside the tolerance, and the 8 mm gap grew to 10 mm)
 BLANK_END_ZONE_MM = 2.5            # gap lines this close to a window's ends are left out of its clear-film test
 BLANK_EDGE_TOL_MM = 1.0            # a blank window may reach this far past the aperture's lines (clipped)
 
@@ -691,7 +717,8 @@ def _frame_gaps(rel: np.ndarray, film_present: np.ndarray, px_per_mm: float,
             while (e0 < e + ext_max and e0 + 1 < n_lines and bool(film_present[e0 + 1])
                    and abs(x[e0 + 1] - lvl) <= FRAME_LEVEL_TOL * lvl):
                 e0 += 1
-        s, e = s0, e0
+        if (e0 - s0 + 1) / px_per_mm <= FRAME_GAP_MAX_MM or (e - s + 1) / px_per_mm > FRAME_GAP_MAX_MM:
+            s, e = s0, e0
         g0, g1 = float(s), float(e + 1)
         touch0 = s == 0 or not bool(film_present[s - 1])
         touch1 = e + 1 >= n_lines or not bool(film_present[e + 1])

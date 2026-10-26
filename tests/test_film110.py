@@ -1214,6 +1214,58 @@ def test_blank_frame_is_not_an_image_when_a_prediction_runs_into_the_gap():
 
 
 
+def test_clear_edge_rim_speckle_is_not_a_hole():
+    """Test 107: a strip whose unexposed edge rim reads close to air level
+    puts air-level pixels into the hole zone on almost every line. A hole
+    is air ACROSS the zone (the fixture's holes: 1.5 of the zone's 2.7 mm,
+    like the real 0.55), so speckle never makes a hole and the real holes
+    are still found, not lost in one long run."""
+    lead = FILM_110.perforation_lead_mm
+    for dpi in DPIS:
+        arr, ppm, lo, hi, imgs = _frame_fixture(
+            dpi, holes=[(1.0 + k * FILM_110.pitch_mm - lead - 1.5,
+                         1.0 + k * FILM_110.pitch_mm - lead) for k in (1,)],
+            n_images=2)
+        clean = film110.detect(arr, dpi=dpi)
+        rng = np.random.default_rng(7)
+        a = arr.copy()
+        z0, z1 = lo + int(round(0.3 * ppm)), lo + int(round(3.0 * ppm))
+        speck = rng.random((a.shape[0], z1 - z0)) < 0.03
+        zone = a[:, z0:z1, :]
+        zone[speck] = 65535
+        find = film110.detect(a, dpi=dpi)
+        assert find.reason == "", (dpi, find.reason)
+        got = [(round(f.line0 / ppm, 1), f.whole, f.split) for f in find.frames]
+        want = [(round(f.line0 / ppm, 1), f.whole, f.split) for f in clean.frames]
+        assert len(got) == len(want) and all(
+            abs(g[0] - w[0]) <= 0.3 and g[1:] == w[1:] for g, w in zip(got, want)), (dpi, got, want)
+        assert all("holes" in f.located_by for f in find.frames), [f.located_by for f in find.frames]
+        print(f"test_clear_edge_rim_speckle_is_not_a_hole OK ({dpi} dpi)")
+
+
+def test_gap_is_not_extended_past_its_maximum_into_a_dense_picture_edge():
+    """Test 107: a dense, textured picture region right after the printed
+    border (a white fence, 0.145-0.16 against the border's 0.122 x air)
+    lies inside the extension tolerance; the extension made the 8.3 mm gap
+    too long and the gap was dropped, so the image after it was not
+    located. An extension past FRAME_GAP_MAX_MM is undone."""
+    for dpi in DPIS:
+        arr, ppm, lo, hi, imgs = _frame_fixture(dpi, n_images=2)
+        a = arr.astype(np.float64)
+        rim = int(round(0.6 * ppm))
+        f0, f1 = int(round(imgs[1][0] * ppm)), int(round((imgs[1][0] + 2.5) * ppm))
+        u = np.arange(f1 - f0) / ppm
+        tex = 0.50 * (1.0 + 0.06 * np.sin(2 * np.pi * u))
+        for ci, key in enumerate(CHANNELS):
+            a[f0:f1, lo + rim:hi, ci] = (tex * CLEAR[key])[:, None]
+        arr2 = np.clip(a, 0, 65535).astype(np.uint16)
+        find = film110.detect(arr2, dpi=dpi)
+        assert len(find.frames) == 2, (dpi, [(f.line0 / ppm, f.line1 / ppm) for f in find.frames])
+        fr = find.frames[1]
+        assert fr.located_by == "frame" and abs(fr.line0 / ppm - imgs[1][0]) <= 0.3, (dpi, fr.line0 / ppm)
+        print(f"test_gap_is_not_extended_past_its_maximum_into_a_dense_picture_edge OK ({dpi} dpi)")
+
+
 def test_orientation_is_decided_by_evidence_over_near_duplicate_shots():
     """Test 106 pass 3: the true slide (22.4 mm) has four distinct new
     sightings agreeing (0.91-0.96); a competing slide (-3.0 mm, one pitch
@@ -1295,6 +1347,8 @@ def main() -> int:
         test_gap_survives_a_thin_scratch_and_dust,
         test_blank_frame_is_not_an_image_when_a_prediction_runs_into_the_gap,
         test_orientation_is_decided_by_evidence_over_near_duplicate_shots,
+        test_clear_edge_rim_speckle_is_not_a_hole,
+        test_gap_is_not_extended_past_its_maximum_into_a_dense_picture_edge,
     ]
     passed = 0
     for t in tests:
