@@ -447,27 +447,25 @@ def plan_next_pass(known: dict, needed: dict, ends: list,
     _key, s, rescued, targets = best
     remaining = sorted(n for n in needed if n not in rescued)
     direction = "towards aperture 6" if s > 0 else "towards aperture 1"
+    # The operator moves the PHOTOGRAPH, not the strip by a distance
+    # (Christian, 2026-10-26): the text names which image to move and why,
+    # never how far. The measured placement stays in the fields.
     bits = []
     for t in targets:
         n = t["number"]
-        a0, a1 = aperture_span(t["aperture"])
-        centred = abs((windows[n] + s + L / 2) - (a0 + a1) / 2) <= 2.0
-        bit = (f"image {n} ({now.get(n, 'not yet delivered')}) lies "
-               f"{'in the middle of' if centred else 'inside'} aperture {t['aperture']}")
+        bit = f"image {n} ({now.get(n, 'not yet delivered')}) whole into an aperture"
         if t.get("end_on"):
             plastic_name = ("the " + t["end_on"]) if t["end_on"].startswith("end wall") else t["end_on"]
-            bit += (f", about {t['border_mm']:g} mm of the dark border beside it "
-                    f"{t['border_side']} in view, "
-                    f"and the strip's end just under {plastic_name} "
-                    f"(do not push the strip against it)")
+            bit += (f", with the strip's end just under {plastic_name} (do not push "
+                    f"the strip against it)")
         bits.append(bit)
     if s == 0:
-        text = ("Next pass: keep the strip where it is; " + " and ".join(bits) + ".")
+        text = "Next pass: keep the strip where it is and run the roll again."
     else:
-        text = (f"Next pass: slide the strip {amount_text(s)} {direction}, so that "
-                + " and ".join(bits) + ".")
+        text = ("Next pass: move " + "; and ".join(bits) + ". Keep at least one image "
+                "already scanned in an aperture, so that the pass can recognise the strip.")
     if remaining:
-        text += " Another pass will then still be needed for " + \
+        text += " Then, in another pass: " + \
                 ", ".join(f"image {n}" for n in remaining) + "."
     return {"shift_mm": round(float(s), 1), "direction": direction,
             "images": quarter_images(s), "rescues": rescued, "targets": targets,

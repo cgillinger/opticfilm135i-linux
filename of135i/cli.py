@@ -831,6 +831,48 @@ def _film110_number_blank(args: argparse.Namespace, state: Film110State,
                  f"borders): consumes a number, no file")
 
 
+def _film110_write_off_grid(args: argparse.Namespace, state: Film110State,
+                            aperture: int, it: dict, emit, why: str) -> str:
+    """A WHOLE (or near-whole) image that the pass's numbering cannot place
+    (off the placement's phase, between the two phases, off slot 2's grid)
+    is still a scanned, complete photograph: it is written UNNUMBERED as
+    p<k>-a<aperture>-<i>.tiff (+ -ir), recorded in `state.unidentified`
+    (number null, identified false -- never a reference, never changes
+    done/missing/free_end) and the run ends with exit 5 (Test 107: a whole
+    photograph lying free in aperture 3 was dropped without a file).
+    Returns the text for the aperture line; a split image gets `why` and
+    "nothing written" (a later pass delivers it)."""
+    from . import film110
+    fr = it["fr"]
+    if not (fr.whole or fr.cut_mm is not None):
+        return f"{why}; split, nothing written"
+    idx = 1 + sum(1 for e in state.unidentified if e["aperture"] == aperture)
+    g = film110.global_position_mm(aperture, fr.line0, args.dpi)
+    entry = {"number": None, "identified": False, "aperture": aperture,
+             "index": idx, "whole": bool(fr.whole), "split": fr.split,
+             "free_end_near": bool(fr.free_end_near),
+             "located_by": getattr(fr, "located_by", "holes"),
+             "position_mm": round(float(g), 2), "crop": it["vis_bounds"],
+             "extent_mm": [round(float(it["extent"][0]), 2),
+                           round(float(it["extent"][1]), 2)],
+             "main": None, "ir": None, "kept": False, "uncertain": False,
+             "size_mm": [round(float(fr.size_mm[0]), 2),
+                         round(float(fr.size_mm[1]), 2)],
+             "replaced_free_end_copy": False, "unnumbered_reason": why}
+    if fr.cut_mm is not None:
+        entry["cut_mm"] = round(float(fr.cut_mm), 2)
+    if fr.end_gap_mm is not None:
+        entry["end_gap_mm"] = round(float(fr.end_gap_mm), 2)
+    writer = getattr(emit, "unnumbered", None)
+    if writer is None:                  # `scan --film 110` has no roll directory
+        return f"{why}; whole image NOT numbered, no 110 product written"
+    res = writer(state.pass_index, aperture, idx, it["crops"])
+    entry["main"], entry["ir"] = res.get("main"), res.get("ir")
+    state.unidentified.append(entry)
+    return (f"{why}; whole image written UNNUMBERED as "
+            f"p{state.pass_index}-a{aperture}-{idx}.tiff")
+
+
 def _film110_number_aperture(args: argparse.Namespace, state: Film110State,
                              aperture: int, parts: list, items: list,
                              emit) -> None:
@@ -913,10 +955,11 @@ def _film110_number_aperture(args: argparse.Namespace, state: Film110State,
             n, residual = film110.image_number_anchored(g, state.anchor_mm)
             if (abs(residual) > film110.PLACEMENT_PHASE_TOLERANCE_MM
                     or n < 1):
-                msg = (f"image at {pos_mm:.1f} mm does not fit the slot's "
-                       f"film grid (off by {residual:+.1f} mm from the "
-                       f"first image, number {n}) -> check the strip; no "
-                       f"110 product written")
+                msg = _film110_write_off_grid(
+                    args, state, aperture, it, emit,
+                    f"image at {pos_mm:.1f} mm does not fit the slot's "
+                    f"film grid (off by {residual:+.1f} mm from the "
+                    f"first image, number {n}) -> check the strip")
                 parts.append(note + msg)
                 state.problems.append(msg)
                 continue
@@ -926,10 +969,11 @@ def _film110_number_aperture(args: argparse.Namespace, state: Film110State,
                 if inferred is None:
                     _na, res_a = film110.image_number(aperture, fr.line0, args.dpi, "A")
                     _nb, res_b = film110.image_number(aperture, fr.line0, args.dpi, "B")
-                    msg = (f"image at {pos_mm:.1f} mm lies between the two "
-                           f"placements' phases (A off by {res_a:+.1f} mm, B off "
-                           f"by {res_b:+.1f} mm) -> give --placement A or B; no "
-                           f"110 product written")
+                    msg = _film110_write_off_grid(
+                        args, state, aperture, it, emit,
+                        f"image at {pos_mm:.1f} mm lies between the two "
+                        f"placements' phases (A off by {res_a:+.1f} mm, B off "
+                        f"by {res_b:+.1f} mm) -> give --placement A or B")
                     parts.append(msg)
                     state.problems.append(msg)
                     continue
@@ -944,9 +988,10 @@ def _film110_number_aperture(args: argparse.Namespace, state: Film110State,
                                                state.placement)
             if (abs(residual) > film110.PLACEMENT_PHASE_TOLERANCE_MM
                     or n < 1):
-                msg = (f"image at {pos_mm:.1f} mm is not at placement "
-                       f"{state.placement}'s phase (off by {residual:+.1f} mm) "
-                       f"-> check the placement; no 110 product written")
+                msg = _film110_write_off_grid(
+                    args, state, aperture, it, emit,
+                    f"image at {pos_mm:.1f} mm is not at placement "
+                    f"{state.placement}'s phase (off by {residual:+.1f} mm) -> check the placement")
                 parts.append(note + msg)
                 state.problems.append(msg)
                 continue
@@ -2145,11 +2190,12 @@ def _film110_fill_record(record: dict, state: Film110State, rdir: Path,
                 e = got[n]
                 under = e.get("under") or "plastic"
                 under = ("the " + under) if under.startswith("end wall") else under
-                body = nxt["text"].replace("Next pass: ", "", 1).rstrip(".")
                 nxt["optional"] = True
-                nxt["text"] = (f"Optional: {body}; this would replace image {n}'s near-whole "
-                               f"copy ({e.get('cut_mm', 0):.2f} mm under {under}) with a "
-                               f"whole, supported one.")
+                nxt["text"] = (f"Optional: move image {n} whole into an aperture; this would "
+                               f"replace its near-whole copy ({e.get('cut_mm', 0):.2f} mm under "
+                               f"{under}) with a whole, supported one. Keep at least one image "
+                               f"already scanned in an aperture, so that the pass can recognise "
+                               f"the strip.")
             else:
                 nxt = None
         why_none: list = []
@@ -2560,9 +2606,9 @@ def _digitize_from_frames(args: argparse.Namespace) -> int:
     _film110_print_roll_summary(roll, state, per_frame, rdir, record["advice"],
                                 record=record)
     if unident:
-        print(f"roll {roll}: numbering could NOT be established for pass(es) "
-              f"{', '.join(map(str, unident))}; their whole photographs were written "
-              f"UNNUMBERED (p<pass>-a<aperture>-<i>.tiff), the other passes are "
+        print(f"roll {roll}: pass(es) {', '.join(map(str, unident))} have whole "
+              f"photographs that could not be numbered; they were written "
+              f"UNNUMBERED (p<pass>-a<aperture>-<i>.tiff), everything else is "
               f"numbered and rebuilt.", file=sys.stderr)
         return 5
     return 0
@@ -2644,8 +2690,11 @@ def _rebuild_attempt(args, roll, rdir, plan, default_rec, dpi, ir, shift, may_re
         _film110_fill_record(record, state, stage, prior)
         if state.aborted:
             unidentified.append(k)             # written unnumbered; the rebuild goes on
-        elif may_restart and record.get("anchor_shift"):
-            return 0, last, int(record["anchor_shift"]), prior, None, unidentified
+        else:
+            if state.unidentified:
+                unidentified.append(k)         # whole images off the numbering, unnumbered
+            if may_restart and record.get("anchor_shift"):
+                return 0, last, int(record["anchor_shift"]), prior, None, unidentified
         record.update(per_frame=per_frame, finished_utc=now, status="ok", stage=None,
                       source="frames", from_pass=k, rebuilt_utc=now)
         prior.append(record)
@@ -2971,6 +3020,8 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
                   f"and .overscan file(s); no main negative was written for "
                   f"them", file=sys.stderr)
             return 4
+        if film110 and any(c.state.unidentified for c in ctxs):
+            return 5                    # whole images written unnumbered
         return 0
 
     # Even if the scan/write flow raises (e.g. an OSError writing an image),
@@ -2985,7 +3036,8 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
     finished = datetime.now(timezone.utc).isoformat()
     for c in ctxs:
         ok = (rc == 0 or (rc == 4 and not c.incomplete)
-              or (rc == 5 and film110 and c.state.numbering_basis == "unidentified"))
+              or (rc == 5 and film110 and (c.state.numbering_basis == "unidentified"
+                                           or c.state.unidentified)))
         c.record.update(finished_utc=finished, per_frame=c.per_frame,
                         status="ok" if ok else "failed",
                         stage=None if ok else "scan")
@@ -3006,8 +3058,8 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
                   file=sys.stderr)
 
     c0 = ctxs[0]
-    if (film110 and strips == 1 and rc == 0 and c0.record.get("status") == "ok"
-            and c0.record.get("anchor_shift")):
+    if (film110 and strips == 1 and rc in (0, 5) and not c0.state.aborted
+            and c0.record.get("status") == "ok" and c0.record.get("anchor_shift")):
         # The strip's front end was seen for the first time in this pass, so
         # the numbers of the passes before it were provisional. The scanner
         # is ejected and idle: replay the roll from its stored frames (no
@@ -3020,7 +3072,7 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
         rargs.from_frames, rargs.roll = True, roll
         rargs._anchor_shift = int(c0.record["anchor_shift"])
         rrc = _digitize_from_frames(rargs)
-        if rrc != 0:
+        if rrc not in (0, 5):
             print(f"warning: the automatic renumbering of roll {roll} stopped "
                   f"(exit {rrc}); the pass itself is recorded. Run 'of135i "
                   f"digitize --film 110 --roll {roll} --from-frames' again once "
@@ -3040,6 +3092,19 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
             print(f"roll {roll} done: {len(c0.per_frame)} frames -> {c0.rdir}{note}. "
                   f"Next: insert the next strip and run 'of135i digitize' again "
                   f"(roll {roll + 1}).")
+    elif rc == 5 and film110 and not any(c.state.aborted for c in ctxs):
+        # Numbering held, but whole image(s) did not fit it: the numbered
+        # ones are written as usual, the others unnumbered.
+        if strips == 2:
+            _film110_print_pair_summary(args, ctxs, "")
+        else:
+            _film110_print_roll_summary(roll, c0.state, c0.per_frame, c0.rdir,
+                                        c0.record["advice"], "", c0.record)
+        n_un = sum(len(c.state.unidentified) for c in ctxs)
+        print(f"roll {roll}: {n_un} whole photograph(s) did not fit the roll's "
+              f"numbering and were written UNNUMBERED (p<pass>-a<aperture>-<i>.tiff); "
+              f"see 'problems'. The frame files are kept (re-run with --from-frames "
+              f"once the cause is clear).", file=sys.stderr)
     elif rc == 5 and film110:
         from . import film110_report as rep
         why = next(c.state.aborted for c in ctxs if c.state.aborted)

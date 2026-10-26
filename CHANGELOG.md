@@ -6,6 +6,24 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- Test 107 (2026-10-26, first live 110 pass after b4e073b, offline fix): a
+  whole photograph lying free in aperture 3 was dropped without a file. Three
+  fixes (docs/film-110.md §4, §15.3, §15.7, §15.9): (1) **a hole is air across
+  the zone**, not one bright pixel in it — the strip's unexposed edge rim read
+  0.85–0.95 × air, rim noise made false 1.5 mm "holes" and the real hole was
+  lost in one 4.7 mm air run, so the image window landed 8 mm off (on the
+  printed border); (2) a printed-border gap extended past 9.5 mm (into a dense
+  white fence) is no longer dropped; (3) a whole image the pass's numbering
+  cannot place (off phase, between phases, off slot 2's grid) is written
+  **unnumbered** with exit 5 instead of nothing. Old vs new detector over 123
+  distinct stored real 110 frames: 119 identical or within 0.2 mm with the
+  same classification, three corrected (Test 107 apertures 2 and 3, Testigen
+  roll 3 pass 4 aperture 2 — the same failure on the same film, eye-checked),
+  one split image's start moved 0.4 mm. The next-pass text now names **which
+  photograph to move and why**, never a distance ("move image 3 (now split by
+  bar 2) whole into an aperture"); the measured placement stays in
+  `advice.next`.
+
 - **Scanned and complete images are never discarded** (owner's founding
   requirement, docs/film-110.md §15.9): when numbering cannot be established
   for a pass, its whole and near-whole images are written unnumbered

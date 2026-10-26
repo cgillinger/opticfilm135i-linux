@@ -111,8 +111,9 @@ def test_planner_slides_a_split_image_into_an_aperture():
     assert nxt["direction"] == "towards aperture 6" and nxt["shift_mm"] > 0
     assert nxt["images"] in (0.25, 0.5, 0.75)
     assert nxt["targets"][0]["number"] == 2
-    assert nxt["text"].startswith("Next pass: slide the strip ")
-    assert "image 2 (now split by bar 1) lies" in nxt["text"] and "aperture" in nxt["text"]
+    assert nxt["text"].startswith("Next pass: move image 2 (now split by bar 1) ")
+    assert "whole into an aperture" in nxt["text"] and " mm" not in nxt["text"], nxt["text"]
+    assert "slide" not in nxt["text"] and "towards" not in nxt["text"], nxt["text"]
     # every known window and seen end stays inside the holder
     lo, hi = rep.holder_limits()
     for p in known.values():
@@ -174,8 +175,8 @@ def test_planner_shift_is_exact_and_the_text_names_the_target():
     known = {1: 3.5, 2: 29.0, 3: 54.5, 4: 80.0}
     nxt = rep.plan_next_pass(known, {2: "split"}, [], {}, {2: "now split by bar 1"})
     assert abs(nxt["shift_mm"] * 2 - round(nxt["shift_mm"] * 2)) < 1e-6, nxt      # the 0.5 mm grid, not quarters
-    assert "(about " in nxt["text"] and "image 2 (now split by bar 1) lies" in nxt["text"], nxt["text"]
-    assert "aperture 2" in nxt["text"] and "end_on" not in nxt["targets"][0]
+    assert "image 2 (now split by bar 1) whole into an aperture" in nxt["text"], nxt["text"]
+    assert nxt["targets"][0]["aperture"] == 2 and "end_on" not in nxt["targets"][0]
     print("test_planner_shift_is_exact_and_the_text_names_the_target OK")
 
 

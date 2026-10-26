@@ -7429,3 +7429,33 @@ driver correction must never cost the operator a new pass; (3) *the edge
 numbers printed on the film are the photograph's identity* — read them.
 The application's full report: negativ-digitalisering
 docs/prov/110-serie-2026-10-21-rapport.md.
+
+**Test 107 — first live 110 pass after b4e073b (2026-10-26, through the
+application; fix offline the same evening).** One strip, pass 1 at
+placement B (inferred): photograph 2 whole in aperture 2 (delivered),
+photograph 3 under bar 2 (correctly not delivered), photograph 4 whole and
+free in aperture 3 — **not delivered, no file**: "image at 9.1 mm is not at
+placement B's phase (off by -7.7 mm) … no 110 product written". Two faults.
+(a) The detector put the window 8 mm off, on the printed border plus half
+of photograph 4 (the phase rule was right: photograph 4 starts at ~17 mm).
+This strip's unexposed edge rim reads 0.85–0.95 × air (earlier strips
+~0.1): rim noise reached air level in the hole zone on most lines (false
+1.5 mm "holes", 0.01–0.05 of the zone at air) and the real hole sat inside
+one 4.7–5.0 mm air run, too long, rejected. Measured as the fraction of
+the zone at air, the real holes are 2.3 mm long, as on every earlier
+strip. In aperture 3 the printed-border gap (8.0 mm) was also extended
+into a dense white fence at the picture's edge (0.145–0.16 against
+0.122) to 10 mm and dropped. (b) Three numbering paths dropped a whole
+image without a file and without exit 5. Fixed: hole = air across the
+zone; an over-long gap extension is undone; a whole image the numbering
+cannot place is written unnumbered (exit 5). Old vs new detector on 123
+distinct stored real 110 frames: 119 identical or within 0.2 mm, three
+corrected (the two Test 107 apertures and Testigen roll 3 pass 4 aperture
+2 — the same film, the same misplacement, eye-checked), one split image's
+start moved 0.4 mm. Rebuilding the roll from its stored frames (a copy,
+not the staging tree) numbers pass 1 as photographs 2 and 4 whole, and
+recognises pass 2 by content. Data: the application's staging tree
+(_inkorg/2026-10-26/roll-001), analysis copy in the private area
+(harness-tmp/t107-20261026). Also reported by the application, not
+analysed here: in pass 1 the IR channel was clipped (84–100 % at 65535)
+and visible R clipped in the clear base; pass 2 and roll 2 normal.

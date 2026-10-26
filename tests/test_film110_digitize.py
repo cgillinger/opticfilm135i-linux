@@ -179,7 +179,8 @@ def test_run_a_infers_placement_numbers_and_advises():
         assert adv["missing"] == [2] and adv["free_end"] == [4], adv
         assert adv["images"] == [2, 4] and adv["other_placement"] == "B", adv
         assert "image 2" in adv["suggest"] and "image 4" in adv["suggest"], adv["suggest"]
-        assert "towards aperture" in adv["suggest"] and adv["suggest"].startswith("Next pass:"), adv["suggest"]
+        assert adv["suggest"].startswith("Next pass: move "), adv["suggest"]
+        assert adv["next"]["direction"].startswith("towards aperture"), adv["next"]
         nxt = adv["next"]
         assert nxt and set(nxt) >= {"shift_mm", "direction", "images", "rescues", "targets",
                                     "remaining", "another_pass_after"}, nxt
@@ -1672,8 +1673,8 @@ def test_report_fields_text_and_the_joint_suggestion():
         assert nxt["direction"] in ("towards aperture 6", "towards aperture 1")
         assert nxt["rescues"] and 2 in nxt["rescues"]
         assert all(set(t) in ({"number", "aperture"}, {"number", "aperture", "end_on", "border_mm", "border_side"}) for t in nxt["targets"])
-        assert rec["advice"]["suggest"].startswith("Next pass: slide the strip ")
-        assert "(about " in rec["advice"]["suggest"] and "mm)" in rec["advice"]["suggest"]
+        assert rec["advice"]["suggest"].startswith("Next pass: move image 2 ")
+        assert " mm" not in rec["advice"]["suggest"] and "slide" not in rec["advice"]["suggest"]
         assert rec["advice"]["not_done"], rec["advice"]
     print("test_report_fields_text_and_the_joint_suggestion OK")
 
@@ -1818,6 +1819,36 @@ def test_free_end_images_record_the_measured_gap_to_the_strip_end():
     print("test_free_end_images_record_the_measured_gap_to_the_strip_end OK")
 
 
+def test_whole_image_off_the_placement_phase_is_written_unnumbered():
+    """Test 107: a whole image that pass 1's protocol cannot number (off
+    the inferred placement's phase by more than the tolerance) is still a
+    scanned, complete photograph -- written UNNUMBERED as p1-a3-1.tiff,
+    shown in the pass report and the problems, exit 5, the record ok; the
+    numbered images of the pass are written as usual."""
+    lead, ilen = FILM_110.perforation_lead_mm, FILM_110.image_mm[0]
+    col0 = 2.0 + FILM_110.image_lateral_offset_mm
+    col1 = col0 + FILM_110.image_mm[1]
+    strip = _strip_apertures("B")
+    local = 9.0                      # B's phase in aperture 3 lies near 17 mm
+    holes = [(local - lead - 1.5, local - lead)]
+    strip[3], _p, _lo, _hi = _build_fixture(
+        DPI, holes_mm=holes, images_mm=[(local, local + ilen, col0, col1)], seed=33)
+    with tempfile.TemporaryDirectory() as d:
+        rc, rec, scans, out, err = _run(d, strip)
+        assert rc == 5, (rc, err[-400:])
+        assert rec["status"] == "ok", rec["status"]
+        assert "p1-a3-1.tiff" in _names(d) and "p1-a3-1-ir.tiff" in _names(d), _names(d)
+        un = [e for e in rec["images"] if e["number"] is None]
+        assert len(un) == 1 and un[0]["aperture"] == 3 and un[0]["identified"] is False, un
+        assert un[0]["main"].endswith("p1-a3-1.tiff"), un[0]
+        assert any("UNNUMBERED" in p for p in rec["problems"]), rec["problems"]
+        rows = [r for r in rec["pass_report"] if r.get("number") is None]
+        assert rows and rows[0]["outcome"] == "delivered_unnumbered", rec["pass_report"]
+        assert any(e["number"] and e["main"] for e in rec["images"]), rec["images"]
+        assert "written UNNUMBERED" in err, err[-400:]
+    print("test_whole_image_off_the_placement_phase_is_written_unnumbered OK")
+
+
 def main() -> int:
     tests = [
         test_slot_constants_and_anchored_numbering,
@@ -1863,6 +1894,7 @@ def main() -> int:
         test_report_fields_text_and_the_joint_suggestion,
         test_blank_frame_position_consumes_a_number_and_makes_no_file,
         test_front_end_first_seen_in_a_later_pass_renumbers_the_roll,
+        test_whole_image_off_the_placement_phase_is_written_unnumbered,
         test_impossible_free_end_rescue_says_why_in_geometry,
         test_near_whole_copy_is_delivered_and_a_deeper_cut_is_split,
         test_free_end_images_record_the_measured_gap_to_the_strip_end,
