@@ -71,8 +71,8 @@ hardware pass with the strip in that position is still to confirm it.**
   production application; the fixes found by Tests 105–107 are verified
   offline on those passes' stored frames (old against new detector on 123
   distinct real 110 frames: 119 identical, three corrected, one 0.4 mm).
-- The offline suite: `tools/release_check.py`, FULL VERIFICATION (count in
-  the release PR).
+- The offline suite: 511 passed, 0 skipped (`tools/release_check.py`, FULL
+  VERIFICATION; v0.2.5 had 424).
 
 ## Changes since v0.2.5
 
