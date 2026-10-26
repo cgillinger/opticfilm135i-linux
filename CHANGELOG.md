@@ -6,6 +6,21 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- Test 107 (2026-10-26, offline): **film in the white reference's light path
+  no longer clips a pass.** A 110 strip whose front end lies a little into
+  the holder's end at aperture 1 blocked the calibration's white measurement
+  over the film band (2–3 % of the clear level over ~2240 columns); the gain
+  table over-corrected those columns and visible R and IR clipped inside the
+  photographs of every frame of the pass. `calibrate.guard_white_blockage`
+  finds a wide region bounded by steep steps (20 of 389 stored calibrations,
+  all from strips in that position, none of the clean ones: their steepest
+  step is 0.87 against 0.03) and fills it from the newest clean profile of
+  the same kind (`of135i/white_reference.py`, kept current by every clean
+  calibration; `tools/white_reference_seed.py` seeds it), scaled on the clear
+  columns either side; filled real measurements are flat to ±1 % across the
+  former band. Sidecar field `white_blocked`. Owner's rule: where the strip
+  lies is never the operator's problem. Needs one hardware pass to confirm.
+
 - Test 107 (2026-10-26, first live 110 pass after b4e073b, offline fix): a
   whole photograph lying free in aperture 3 was dropped without a file. Three
   fixes (docs/film-110.md §4, §15.3, §15.7, §15.9): (1) **a hole is air across

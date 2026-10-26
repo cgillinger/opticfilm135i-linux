@@ -93,7 +93,11 @@ single USB operation the driver would otherwise perform:
   hit or with `--no-cal-data`); `white_dips` lists the dips
   `calibrate.guard_white_dips` replaced in the white measurement before
   the gain table was computed (a list on the plain path, `{"a", "b"}` on
-  the dual path, `null` on a cache hit). `digitize`'s manifest entries add
+  the dual path, `null` on a cache hit); `white_blocked` lists, in the same
+  shape, the column ranges `calibrate.guard_white_blockage` filled because
+  film blocked the white measurement (`start`, `stop`, `depth`, `source` =
+  `"reference"` from the clean profile `of135i/white_reference.py` keeps,
+  or `"interpolation"`). `digitize`'s manifest entries add
   `coverage_source`, `film_present`, `saturated_share`, and
   `coverage_warning` when a margin exceeds
   `aperture_crop.MAX_PLAUSIBLE_MARGIN_MM`; the roll record

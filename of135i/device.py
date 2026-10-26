@@ -437,8 +437,12 @@ class _CalCapture:
 class Scanner:
     """Drives the of135i scan sequence over a UsbIo transport."""
 
-    def __init__(self, io: UsbIo):
+    def __init__(self, io: UsbIo, white_reference=None):
         self.io = io
+        # Clean white-reference profiles kept between runs (white_reference.py):
+        # fills the columns a strip in front of aperture 1 blocks in the white
+        # measurement. Only the real scanner (open()) has one.
+        self._white_reference = white_reference
         self._base_initialized = False
         # Set by initialize(), cleared by scan(): the vendor re-runs its
         # PREP/AFE_BASE equivalent before every frame, and a scan
@@ -567,7 +571,8 @@ class Scanner:
 
     @classmethod
     def open(cls) -> "Scanner":
-        return cls(UsbIo.open())
+        from .white_reference import WhiteReferenceStore
+        return cls(UsbIo.open(), white_reference=WhiteReferenceStore())
 
     def close(self) -> None:
         self.io.close()
@@ -2080,6 +2085,7 @@ class Scanner:
             shading_stats = cache["shading_stats"]
             shading2_stats = cache["shading2_stats"]
             white_dips_diag = None       # tables reused, no white measured
+            white_blocked_diag = None
             log.info("calibration: reusing cached codes (gain R=%#04x G=%#04x B=%#04x, "
                      "offset R=%#06x G=%#06x B=%#06x)", gain_r, gain_g, gain_b,
                      off_r, off_g, off_b)
@@ -2138,7 +2144,11 @@ class Scanner:
             _t0 = time.monotonic()
             verify_raw = self._exec_ops(verify_phase.ops[:verify_phase.split_at])[0]
             verify_meas = np.frombuffer(verify_raw, dtype="<u2").reshape(128, 3762, 3)
-            white_guarded, white_dips = calibrate.guard_white_dips(verify_meas)
+            from . import white_reference
+            white_unblocked, white_blocks = white_reference.guard(
+                self._white_reference, white_reference.kind_key("plain", 3600, verify_meas.shape[1]),
+                verify_meas)
+            white_guarded, white_dips = calibrate.guard_white_dips(white_unblocked)
             if white_dips:
                 log.info("white measurement: %d narrow dip(s) guarded before the gain table: %s",
                          len(white_dips), [d.as_dict() for d in white_dips])
@@ -2168,6 +2178,7 @@ class Scanner:
             shading_stats = _shading_stats(shading)
             shading2_stats = _shading_stats(shading2)
             white_dips_diag = [d.as_dict() for d in white_dips]
+            white_blocked_diag = [b.as_dict() for b in white_blocks]
 
             # Cache immediately on success -- see __init__'s _cal_cache
             # comment and (d) in the design: a LATER failure (position/
@@ -2279,6 +2290,7 @@ class Scanner:
             "shading": shading_stats,
             "shading2": shading2_stats,
             "white_dips": white_dips_diag,
+            "white_blocked": white_blocked_diag,
             "feedl": feedl,
             "phase_seconds": dict(self._diag_phase_seconds),
             "total_seconds": time.monotonic() - t_start,
@@ -2433,8 +2445,13 @@ class Scanner:
         # table B (IR lines) uses TARGET_B — matching the vendor's
         # per-address targets, with the line subsets swapped to the
         # empirically correct assignment.
-        white_a, dips_a = calibrate.guard_white_dips(verify_meas[1::2])
-        white_b, dips_b = calibrate.guard_white_dips(verify_meas[0::2])
+        from . import white_reference
+        vis_unblocked, blocks_a = white_reference.guard(
+            self._white_reference, white_reference.kind_key("dual-vis", dpi, W), verify_meas[1::2])
+        ir_unblocked, blocks_b = white_reference.guard(
+            self._white_reference, white_reference.kind_key("dual-ir", dpi, W), verify_meas[0::2])
+        white_a, dips_a = calibrate.guard_white_dips(vis_unblocked)
+        white_b, dips_b = calibrate.guard_white_dips(ir_unblocked)
         if dips_a or dips_b:
             log.info("white measurement: narrow dip(s) guarded before the gain tables: A %s B %s",
                      [d.as_dict() for d in dips_a], [d.as_dict() for d in dips_b])
@@ -2563,6 +2580,7 @@ class Scanner:
             "shading": {"a": _shading_stats(shading_a), "b": _shading_stats(shading_b)},
             "shading2": {"a": _shading_stats(shading2_a), "b": _shading_stats(shading2_b)},
             "white_dips": {"a": [d.as_dict() for d in dips_a], "b": [d.as_dict() for d in dips_b]},
+            "white_blocked": {"a": [b.as_dict() for b in blocks_a], "b": [b.as_dict() for b in blocks_b]},
             "feedl": feedl,
             "phase_seconds": dict(self._diag_phase_seconds),
             "total_seconds": time.monotonic() - t_start,
