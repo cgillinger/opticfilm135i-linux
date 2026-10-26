@@ -7430,6 +7430,53 @@ numbers printed on the film are the photograph's identity* — read them.
 The application's full report: negativ-digitalisering
 docs/prov/110-serie-2026-10-21-rapport.md.
 
+**Test 105 — a strip with no photographs (2026-10-23, terminal, master
+fd50ab9 + phase 1).** One strip, `digitize --film 110 --frames 1-6`, laid
+against aperture 1. Mechanically normal; the scan stopped at the first empty
+aperture (aperture 5). What the strip holds (seen by eye on the frames): the
+frame positions with edge numbers 22, 23 and 24 unexposed (clear orange base
+only), then the cassette's backing-paper window with the printed "925" and
+the black paper tape with its punched hole. Film in apertures 1–4 and
+aperture 5 empty agrees with the strip lying against aperture 1 and with the
+convention "aperture 1 = the end that enters first" (not yet confirmed
+otherwise). Fault: an unexposed frame position was delivered as
+`image4.tiff` — a scratch and some dust in the printed-border gap made the
+gap read short, the image window reached into the dark border, and the
+clear film then looked "varying" like a picture; aperture 1 came close to
+the same. Fixed offline (phase 2, PR #30): gap detection robust to
+scratches and dust, and clear film between two gaps is a **blank** frame
+position, never an image (docs/film-110.md §15.5, §15.7). Re-run from the
+stored frames: blanks, no product. A/B on 98 stored apertures (143 hole
+frames): identical except two other unexposed frames now blank. Data:
+private area, t105-20261023.
+
+**Test 106 — the roll-6 strip, three passes (2026-10-23, terminal, master
+fd50ab9 + phase 1; rebuilt offline on phase 2).** One strip (edge numbers
+9–12), three passes, re-seated by hand between passes.
+
+- *Pass 1* (placement A, numbering by the protocol): images 1, 2 and 4 left
+  missing; the strip lay against the end wall at aperture 1 and image 1
+  began 0.1 mm under it — rejected as not whole.
+- *Pass 2* (placement B, recognised by content): image 1 whole but with the
+  strip end free (film start 13.7 mm, image 1 at 16.99 mm, gap 3.3 mm).
+- *Pass 3*: the recognition could not decide — the strip holds near-duplicate
+  consecutive shots, the true slide (+22.4 mm, four sightings at 0.91–0.96)
+  beat the one-pitch-off rival (0.84) by 0.12 against the 0.15 margin — and
+  the pass ended **failed with nothing written**, although image 1 lay whole
+  and supported in the frames. Christian's objection: the bookkeeping
+  stopped a photograph.
+
+Fixes (phase 2, PR #30, docs/film-110.md §15.6, §15.8, §15.9): a
+**near-whole** copy (one edge at most 0.5 mm under the plastic, the other
+confirmed) is delivered and ranked above a whole copy with a free end; the
+recognition also accepts a cluster on evidence (sum of the distinct
+sightings' best correlations, 3.75 against 1.65); and a pass whose
+numbering cannot be established writes its whole images **unnumbered**
+(exit 5) instead of nothing. Rebuilt from the three stored passes
+(`--from-frames`, on a copy): all four photographs whole and supported,
+`done`. Data: private area, t106-20261023 (the products there predate the
+rebuild).
+
 **Test 107 — first live 110 pass after b4e073b (2026-10-26, through the
 application; fix offline the same evening).** One strip, pass 1 at
 placement B (inferred): photograph 2 whole in aperture 2 (delivered),

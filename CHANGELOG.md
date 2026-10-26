@@ -6,6 +6,8 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+## v0.2.6 — 2026-10-26
+
 - Test 107 (2026-10-26, offline): **film in the white reference's light path
   no longer clips a pass.** A 110 strip whose front end lies a little into
   the holder's end at aperture 1 blocked the calibration's white measurement
