@@ -485,6 +485,177 @@ def guard_white_dips(
     return out[None, :, :], dips
 
 
+# ---- white-measurement blockage guard -------------------------------
+# The white reference is measured in front of aperture 1. A 110 strip can
+# reach in there (its front end lies a little into the holder's end), and
+# then the film band blocks the white measurement over its columns (Test
+# 107, 2026-10-26: 2-3 % of the clean level over ~2240 columns, the 16 mm
+# band); the gain table over-corrects those columns by 30-50x and the
+# frame's visible R and IR clip inside the photographs. The owner's rule:
+# where the strip lies is never the operator's problem -- the calibration
+# copes. A blockage is a WIDE region bounded by steep steps: over 389
+# stored calibrations the steepest step of a clean measurement (smoothed
+# over 31 columns, compared 2 x 48 columns apart) is 0.87 (a dust speck,
+# 30 columns, guarded by guard_white_dips), every blocked one 0.03 or less.
+# The blocked columns are filled from a clean reference profile of the same
+# kind (white_reference), scaled by the measurement's own ratio to it on the
+# clear columns either side (interpolated across), or -- without a
+# reference -- interpolated linearly between those sides.
+WHITE_BLOCK_STEP = 0.70         # a step: the level falls below this fraction of the level 2*half_span earlier
+WHITE_BLOCK_HALF_SPAN = 48      # columns either side of a step test
+WHITE_BLOCK_SMOOTH = 31         # running-median window before the step test (dust, sensor pixels)
+WHITE_BLOCK_MIN_WIDTH = 100     # columns; narrower is a speck (guard_white_dips' business)
+WHITE_BLOCK_EDGE_MARGIN = 64    # columns kept clear of the lit window's ends
+WHITE_BLOCK_PAD = 24            # columns added on each side of a blocked region (the film edge's blur, ~16)
+WHITE_BLOCK_SIDE = 200          # columns either side used to scale the reference
+WHITE_BLOCK_CLEAR = 0.97        # a region grows while its edge columns read below this x the clear level
+WHITE_BLOCK_CLEAR_FAR = (250, 400)   # ... measured this many columns beyond the step
+WHITE_BLOCK_GROW_MAX = 240      # columns a region may grow on each side
+
+
+class WhiteBlock(NamedTuple):
+    """One filled blockage: columns `start`..`stop` inclusive, `depth` =
+    the blocked level as a fraction of the clear level beside it (median
+    over channels), `source` = "reference" or "interpolation"."""
+    start: int
+    stop: int
+    depth: float
+    source: str
+
+    def as_dict(self) -> dict:
+        return {"start": self.start, "stop": self.stop,
+                "depth": round(self.depth, 4), "source": self.source}
+
+
+def find_white_blockage(profile: np.ndarray) -> list[tuple[int, int]]:
+    """Blocked column ranges (start, stop inclusive) of a white profile
+    (width, 3): per channel, a region that opens with a steep fall and
+    closes with a steep rise (or runs to the lit window's end), at least
+    WHITE_BLOCK_MIN_WIDTH wide, grown over the film edge's partial
+    transmission; the channels' regions are merged. A band that reaches the
+    lit window's end cannot be told from the unlit end and is not found
+    (the 16 mm band lies inside the 36 mm window)."""
+    w = np.asarray(profile, dtype=np.float64)
+    width = w.shape[0]
+    h = WHITE_BLOCK_HALF_SPAN
+    marks = np.zeros(width, dtype=bool)
+    for c in range(3):
+        sm = _running_median(w[:, c], WHITE_BLOCK_SMOOTH)
+        top = float(np.max(sm)) if sm.size else 0.0
+        if top <= 0.0:
+            continue
+        lit = np.flatnonzero(sm > 0.2 * top)
+        if lit.size == 0:
+            continue
+        a, b = int(lit[0]) + WHITE_BLOCK_EDGE_MARGIN, int(lit[-1]) - WHITE_BLOCK_EDGE_MARGIN
+        if b - a <= 2 * h:
+            continue
+        cols = np.arange(a + h, b - h)
+        before, after = sm[cols - h], sm[cols + h]
+        down = cols[after < WHITE_BLOCK_STEP * before]
+        up = cols[before < WHITE_BLOCK_STEP * after]
+        # A step's test fires over about 2 x half_span columns centred on
+        # the edge: the edge is the middle of the run.
+        downs = [((s + e) // 2, (s + e) // 2) for s, e in _runs(down)]
+        ups = [((s + e) // 2, (s + e) // 2) for s, e in _runs(up)]
+        events = sorted([(s, e, "down") for s, e in downs] + [(s, e, "up") for s, e in ups])
+        open_at = None
+        regions = []
+        for s, e, kind in events:
+            if kind == "down":
+                if open_at is None:
+                    open_at = s
+            elif open_at is not None:
+                regions.append((open_at, e))
+                open_at = None
+            elif regions:                       # a step split in two: the same rise
+                regions[-1] = (regions[-1][0], e)
+            else:                               # blocked from the lit window's start
+                regions.append((a, e))
+        if open_at is not None:
+            regions.append((open_at, b))
+        for s, e in regions:
+            if e - s + 1 < WHITE_BLOCK_MIN_WIDTH:
+                continue
+            # The film's own edge passes part of the light (IR: ~0.9 over
+            # ~150 columns, Test 107): grow the region while the level stays
+            # below WHITE_BLOCK_CLEAR of the clear level just beyond.
+            far = WHITE_BLOCK_CLEAR_FAR
+            if s - a > far[1]:
+                clear = float(np.median(sm[s - far[1]:s - far[0]]))
+                for _ in range(WHITE_BLOCK_GROW_MAX):
+                    if s <= a or sm[s - 1] >= WHITE_BLOCK_CLEAR * clear:
+                        break
+                    s -= 1
+            if b - e > far[1]:
+                clear = float(np.median(sm[e + far[0]:e + far[1]]))
+                for _ in range(WHITE_BLOCK_GROW_MAX):
+                    if e >= b or sm[e + 1] >= WHITE_BLOCK_CLEAR * clear:
+                        break
+                    e += 1
+            marks[max(0, s - WHITE_BLOCK_PAD):min(width, e + WHITE_BLOCK_PAD + 1)] = True
+    return _runs(np.flatnonzero(marks))
+
+
+def guard_white_blockage(white_meas: np.ndarray, reference: "np.ndarray | None" = None
+                         ) -> tuple[np.ndarray, list[WhiteBlock]]:
+    """Fill the blocked columns of a white measurement (lines, width, 3).
+    Returns ``(guarded, blocks)``: `guarded` is the input itself when
+    nothing is blocked (bit for bit), else a copy with every line of the
+    blocked columns replaced by the filled level. `reference` is a clean
+    (width, 3) profile of the same kind, or None."""
+    arr = np.asarray(white_meas)
+    if arr.ndim != 3 or arr.shape[2] != 3:
+        raise ValueError(f"expected (lines, width, 3) array, got shape {arr.shape}")
+    prof = arr.astype(np.float64).mean(axis=0)
+    regions = find_white_blockage(prof)
+    if not regions:
+        return white_meas, []
+    width = prof.shape[0]
+    ref = None
+    if reference is not None:
+        ref = np.asarray(reference, dtype=np.float64)
+        if ref.shape != prof.shape or not np.all(np.isfinite(ref)):
+            ref = None
+    blocked = np.zeros(width, dtype=bool)
+    for s, e in regions:
+        blocked[s:e + 1] = True
+    out = arr.astype(np.float64).copy()
+    blocks = []
+    for s, e in regions:
+        left = np.arange(max(0, s - WHITE_BLOCK_SIDE), s)
+        right = np.arange(e + 1, min(width, e + 1 + WHITE_BLOCK_SIDE))
+        left, right = left[~blocked[left]], right[~blocked[right]]
+        cols = np.arange(s, e + 1)
+        depths = []
+        source = "reference" if ref is not None else "interpolation"
+        for c in range(3):
+            x = prof[:, c]
+            if ref is not None:
+                rr = x / np.maximum(ref[:, c], 1.0)
+                kl = float(np.median(rr[left])) if left.size else None
+                kr = float(np.median(rr[right])) if right.size else None
+                base = ref[cols, c]
+            else:
+                kl = float(np.median(x[left])) if left.size else None
+                kr = float(np.median(x[right])) if right.size else None
+                base = np.ones(cols.size)
+            if kl is None and kr is None:
+                continue
+            kl = kr if kl is None else kl
+            kr = kl if kr is None else kr
+            t = (cols - s + 0.5) / (e - s + 1)
+            fill = base * (kl + (kr - kl) * t)
+            clear = float(np.median(fill)) if fill.size else 0.0
+            if clear > 0:
+                depths.append(float(np.median(x[cols])) / clear)
+            out[:, cols, c] = fill[None, :]
+        blocks.append(WhiteBlock(int(s), int(e), float(np.median(depths)) if depths else 0.0, source))
+    if np.issubdtype(arr.dtype, np.integer):
+        out = np.clip(np.rint(out), 0, np.iinfo(arr.dtype).max).astype(arr.dtype)
+    return out, blocks
+
+
 def _pack_shading(offsets: np.ndarray, gains: np.ndarray, width: int = 3762) -> bytes:
     """Pack (offset, gain) u16 pairs into the wire block format:
     126 payload pairs + 2 zero trailer pairs per 512-byte block,

@@ -534,8 +534,22 @@ pixels are single-channel and are left to the gain table. The guarded
 dips are listed in the sidecar's `white_dips`; `tools/cal_dips.py
 <stem>.cal.npz` lists them for exported data together with the
 per-column factor that corrects a frame scanned before the guard
-existed. (Python driver only; the SANE backend computes its tables in
-C++ without this guard.) Console output is also protected: a closed
+existed. A **blocked** white measurement is filled before that
+(`calibrate.guard_white_blockage`): the white reference is measured in
+front of aperture 1, and a 110 strip whose front end lies a little into
+the holder's end blocks it over the film band's columns (Test 107: 2–3 %
+of the clear level over ~16 mm), so visible R and IR clipped in every
+frame of the pass. A wide region bounded by steep steps is filled from the
+newest clean profile of the same kind, scaled by the measurement itself on
+the clear columns either side (within 1 % of the true level on real data;
+without a reference, linear interpolation, within ~4–8 %). Every
+calibration without a blockage keeps that profile current in the state
+directory (`$OF135I_STATE_DIR`, else `$XDG_STATE_HOME/of135i`, else
+`~/.local/state/of135i`); `tools/white_reference_seed.py <stem>.cal.npz`
+seeds it from exported data. The filled ranges are listed in the sidecar's
+`white_blocked`. Where the strip lies is never the operator's problem.
+(Python driver only; the SANE backend computes its tables in C++ without
+these guards.) Console output is also protected: a closed
 stdout/stderr pipe can no longer abort a scan.
 
 ### What the driver knows about the magazine
