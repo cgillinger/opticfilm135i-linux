@@ -2,7 +2,7 @@
 
 ![License: GPL-2.0-or-later or MIT (driver), CC BY 4.0 (docs)](https://img.shields.io/badge/License-GPL--2.0--or--later%20%7C%20MIT%20%7C%20CC--BY--4.0-blue.svg)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
-![Release: v0.2.6](https://img.shields.io/badge/Release-v0.2.6-blue.svg)
+![Release: v0.2.7](https://img.shields.io/badge/Release-v0.2.7-blue.svg)
 ![Status: CLI driver complete, SANE backend working locally](https://img.shields.io/badge/Status-CLI%20driver%20complete%2C%20SANE%20backend%20working%20locally-green.svg)
 
 **Unofficial, community-built Linux driver for the Plustek OpticFilm 135i**
@@ -22,7 +22,7 @@ other units are not yet known.
 
 The project has two parts, at different stages:
 
-- **Python / pyusb command-line driver — released (v0.2.6), working on the
+- **Python / pyusb command-line driver — released (v0.2.7), working on the
   test unit.** Scans to raw 16-bit TIFF/PNM at all five resolutions
   (600 / 1200 / 2400 / 3600 / 7200 dpi), with an infrared dust/scratch channel,
   whole-strip batch scanning, and a resumable bulk-digitisation workflow.
@@ -173,8 +173,8 @@ installed from this repository's build.
 
 ## Development status
 
-**Status: v0.2.6 released (2026-10-26, the CLI driver; the SANE backend is
-unchanged since v0.2.3; [release notes](docs/release-notes-v0.2.6.md)).** The standalone Python/pyusb
+**Status: v0.2.7 released (2026-10-28, the CLI driver; the SANE backend is
+unchanged since v0.2.3; [release notes](docs/release-notes-v0.2.7.md)).** The standalone Python/pyusb
 command-line driver reached its defined milestone — magazine loading,
 single-frame and whole-strip batch scanning, all five resolutions, IR and dust
 removal, and eject — with scan, calibration, IR and dust removal
@@ -200,7 +200,11 @@ production strips (Test 100); v0.2.6 (2026-10-26) completes the 110
 workflow — free passes until the roll is done, recognition by picture
 content, a pass report in the holder's language with one next placement,
 rebuilding a roll from its stored frames, and whole photographs never
-discarded — and fills a calibration white measurement blocked by film.
+discarded — and fills a calibration white measurement blocked by film;
+v0.2.7 (2026-10-28) scans 110 over all six apertures by default and adds
+black-and-white 110 (dense pictures, no IR), proven on five black-and-white
+strips the same evening, with three numbering gaps closed that had left
+photographs unnumbered or undelivered.
 "Complete" here means that functional milestone is met **within
 its frozen scope on the one test unit** — it is **not** broad field testing or
 proof of compatibility with other scanners or Linux systems. The **SANE
@@ -255,8 +259,11 @@ should know about:
   and writes one cropped product per whole image, numbered by position
   on the strip so the same photograph has the same number in both
   placements; `--placement` is optional, since the data says which
-  placement the strip is in (it is inferred from the first image, and an
-  image midway between the two is refused until you give it).
+  placement the strip is in (it is inferred from the first image; a strip
+  seated midway between the two is numbered from its first whole image,
+  provisionally until its front end is seen). Black-and-white 110 is
+  scanned without IR (`--no-ir`) and was proven on five strips
+  (Tests 109–110); `digitize --film 110` scans apertures 1–6 by default.
   `digitize --film 110` runs the two placements as two runs into one roll
   directory and writes one `image<N>.tiff` per photograph (implemented
   offline, hardware check pending); the 600 dpi survey prints which images are whole and which
@@ -437,8 +444,9 @@ docs/replay-analysis.md); it is off by default and not hardware-verified.
 `of135i digitize` runs one strip end to end — load, scan the strip's
 frames, eject — into a resumable staging tree, and records each strip in
 an append-only manifest. `--frames` says how long the strip is; it
-defaults to `1-4`, so a four-frame strip is never scanned as six. Use
-`--frames 1-6` for a full-length strip. Run it once per strip; the roll number advances
+defaults to `1-4` for 135 (so a four-frame strip is never scanned as six;
+use `--frames 1-6` for a full-length strip) and to `1-6` for `--film 110`,
+where the stop-at-empty rule ends a short strip early. Run it once per strip; the roll number advances
 from the manifest **and** the roll directories already on disk (per
 `--prefix`), so you can stop and pick up where you left off.
 

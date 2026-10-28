@@ -6,6 +6,46 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+## v0.2.7 — 2026-10-28
+
+- Test 110 (2026-10-28, black-and-white 110, offline on the stored frames):
+  **no more lost or unnumbered photographs from three gaps.** A hole's
+  prediction past an aperture's end is carried to the next aperture (a
+  strip's last picture, followed by fogged film); a pass-1 strip seated
+  between the placement phases is numbered from its first whole image
+  (placement "free", provisional) instead of refused; passes without IR are
+  recognised in log intensity.
+
+- Test 109 (2026-10-28, first black-and-white 110 strip, fixed offline on
+  the stored frames): **dense black-and-white 110 is detected.** A dark run
+  between other columns must be dark at the 95th percentile too to count as
+  rail (dense pictures are as dark as the rail in the median); the hole
+  search retries with an edge threshold of 0.9 x air when 0.6 finds nothing
+  (a black-and-white clear base reads 0.78); side-band coverage decides on
+  the bands that see the longest opening (a strip tip only shortens the
+  bands it covers). Rebuild of the two stored passes: 4 of 4 delivered.
+
+- Test 108 (2026-10-28, offline on production frames): **a thin, low-contrast
+  110 photograph is no longer taken for a blank frame position.** A window
+  that reads as clear film along transport must now also be flat across
+  (`film110.BLANK_TEXTURE_MAX`); 138 of 142 stored apertures unchanged, the
+  4 changes all corrections.
+- **`digitize --film 110` scans all six apertures by default** (`--frames`
+  default `1-6`; 135 stays `1-4`). A long 110 strip (up to ~8 images, 227 mm
+  holder) reaches apertures 5-6; a short one costs nothing, the
+  stop-at-empty rule ends the run after the first empty aperture that
+  follows film. Offline test: an 8-image strip in both placements numbers
+  all eight and leaves nothing missing.
+- **110 on the plain path (`--no-ir`): coverage no longer depends on film
+  density** (offline). When the central-band verdict fails (for 110 also when
+  its opening is not the holder's length -- dense film at a bar), coverage is
+  measured on the bare air beside the strip
+  (`aperture_crop.measure_coverage_side_band`): column bands that verify
+  and show the holder's own opening length (35.92 mm ± 1.0), agreeing
+  within 0.3 mm. Manifest `coverage_source: "visible-side"`; otherwise the
+  usual refusal, reason naming both failures. 135 and dual paths unchanged
+  (docs/film-110.md §10).
+
 ## v0.2.6 — 2026-10-26
 
 - Test 107 (2026-10-26, offline): **film in the white reference's light path

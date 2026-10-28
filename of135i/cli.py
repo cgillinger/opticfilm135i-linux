@@ -484,6 +484,13 @@ class Film110State:
         self.slot = slot
         self.strips = strips
         self.anchor_mm: "float | None" = None
+        # A strip seated between the two placements' phases (pass 1, front end
+        # not seen): numbered from its first image on the A grid's numbers,
+        # with this phase instead of A's (`_film110_protocol_number`).
+        self.phase_mm: "float | None" = None
+        # (aperture, [(g0, g1) mm]): images a hole of `aperture` predicts
+        # past its end, tried in the next aperture (film110.detect carried).
+        self.carry: "tuple | None" = None
         from . import film110
         self.first_aperture = (slot - 1) * film110.SLOT_APERTURES + 1
         self.last_aperture = self.first_aperture + film110.SLOT_APERTURES - 1
@@ -673,7 +680,15 @@ def _film110_process_aperture(args: argparse.Namespace, state: Film110State,
         state.placement_given = True
         state.placement_source = "given"
 
-    find = film110.detect(vis_crop, dpi=args.dpi, film=_holder.FILM_110)
+    ppm = args.dpi / film110.MM_PER_INCH
+    carried = []
+    if state.carry is not None and state.carry[0] == aperture - 1:
+        base = film110.global_position_mm(aperture, 0.0, args.dpi)
+        carried = [((g0 - base) * ppm, (g1 - base) * ppm) for (g0, g1) in state.carry[1]]
+    find = film110.detect(vis_crop, dpi=args.dpi, film=_holder.FILM_110, carried=carried)
+    state.carry = (aperture, [(film110.global_position_mm(aperture, l0, args.dpi),
+                               film110.global_position_mm(aperture, l1, args.dpi))
+                              for (l0, l1) in find.beyond])
     if find.empty:
         print(f"110: aperture {aperture} — empty")
         return
@@ -772,6 +787,19 @@ def _film110_process_aperture(args: argparse.Namespace, state: Film110State,
               f"image from the previous aperture")
 
 
+def _film110_protocol_number(state: "Film110State", aperture: int, line0: float,
+                             dpi: float) -> tuple:
+    """`film110.image_number` for the state's placement; a strip numbered
+    from its own first image (`state.phase_mm`, placement "free") uses that
+    phase on the same grid."""
+    from . import film110
+    if state.phase_mm is None:
+        return film110.image_number(aperture, line0, dpi, state.placement)
+    g = film110.global_position_mm(aperture, line0, dpi)
+    k = (g - state.phase_mm) / film110.FILM_110.pitch_mm
+    return round(k) + 1, (k - round(k)) * film110.FILM_110.pitch_mm
+
+
 def _film110_apply_front_shift(state: Film110State, n: int, g: float) -> int:
     """Protocol number -> frame-position number counted from the strip's
     front end (docs/film-110.md §15). Only a pass that numbers by the
@@ -819,7 +847,7 @@ def _film110_number_blank(args: argparse.Namespace, state: Film110State,
             if inferred is None:
                 return
             state.placement, state.placement_source = inferred, "inferred"
-        n, residual = film110.image_number(aperture, window[0], args.dpi, state.placement)
+        n, residual = _film110_protocol_number(state, aperture, window[0], args.dpi)
         if abs(residual) > film110.PLACEMENT_PHASE_TOLERANCE_MM or n < 1:
             return
         n = _film110_apply_front_shift(state, n, g)
@@ -966,26 +994,46 @@ def _film110_number_aperture(args: argparse.Namespace, state: Film110State,
         else:
             if state.placement is None:
                 inferred, _res = film110.infer_placement(aperture, fr.line0, args.dpi)
-                if inferred is None:
+                if inferred is None and not deliver:
+                    # A split (or a hole's ghost before the strip) between
+                    # the phases anchors nothing: as before, a later whole
+                    # image decides.
                     _na, res_a = film110.image_number(aperture, fr.line0, args.dpi, "A")
                     _nb, res_b = film110.image_number(aperture, fr.line0, args.dpi, "B")
                     msg = _film110_write_off_grid(
                         args, state, aperture, it, emit,
                         f"image at {pos_mm:.1f} mm lies between the two "
                         f"placements' phases (A off by {res_a:+.1f} mm, B off "
-                        f"by {res_b:+.1f} mm) -> give --placement A or B")
+                        f"by {res_b:+.1f} mm)")
                     parts.append(msg)
                     state.problems.append(msg)
                     continue
-                state.placement = inferred
-                state.placement_source = "inferred"
+                if inferred is None:
+                    # Midway between the two phases (Test 108/110: three strips
+                    # in one evening, all seated ~4.5 mm before A, front end
+                    # out of view): number from this image on A's grid of
+                    # numbers instead of refusing -- the numbers are
+                    # provisional until the front end is seen, which then
+                    # renumbers the roll (number_basis), and a later pass
+                    # recognises the strip by content against them.
+                    n_a, res_a = film110.image_number(aperture, fr.line0, args.dpi, "A")
+                    _nb, res_b = film110.image_number(aperture, fr.line0, args.dpi, "B")
+                    state.placement = "free"
+                    state.placement_source = "between phases"
+                    state.phase_mm = g - (n_a - 1) * film110.FILM_110.pitch_mm
+                    note = (f"placement free (between the phases: A off by "
+                            f"{res_a:+.1f} mm, B off by {res_b:+.1f} mm; numbered "
+                            f"from this image); ")
+                    state.announced = True
+                else:
+                    state.placement = inferred
+                    state.placement_source = "inferred"
             if not state.announced:
                 how = "given" if state.placement_given else "inferred"
                 note = f"placement {state.placement} ({how}); "
                 state.announced = True
 
-            n, residual = film110.image_number(aperture, fr.line0, args.dpi,
-                                               state.placement)
+            n, residual = _film110_protocol_number(state, aperture, fr.line0, args.dpi)
             if (abs(residual) > film110.PLACEMENT_PHASE_TOLERANCE_MM
                     or n < 1):
                 msg = _film110_write_off_grid(
@@ -1199,9 +1247,12 @@ def _film110_finalize(args: argparse.Namespace, state: Film110State, roll: int,
                 end_shift = None            # the two ends disagree: no evidence
                 break
             end_shift = e
+    # Black-and-white (both passes without IR -- colour always has it) is
+    # compared in density: its pictures sit near black (Test 110).
+    log = not getattr(args, "ir", True) and ref.get("ir") is False
     dec = film110.decide_orientation(
         new, old, pos_range=film110.slot_position_range(state.slot, state.strips),
-        end_shift=end_shift)
+        end_shift=end_shift, log=log)
     if dec is None:
         state.aborted = (
             f"could not tell whether the strip slid or was turned since "
@@ -1552,6 +1603,16 @@ def _cmd_load(args: argparse.Namespace) -> int:
                         next_strip=args.next_strip)
 
 
+def _opening_is_holders(coverage, dpi) -> bool:
+    """A verified coverage's opening has the holder's aperture length
+    (aperture_crop.SIDE_BAND_LENGTH_TOL_MM): the 110 plain-path check that
+    a film edge did not pose as the plastic's."""
+    from . import aperture_crop, holder
+    length = ((coverage.trailing_line - coverage.leading_line)
+              * aperture_crop.MM_PER_INCH / dpi)
+    return abs(length - holder.STRIP.aperture_mm) <= aperture_crop.SIDE_BAND_LENGTH_TOL_MM
+
+
 def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
                            out: str, dual: bool, progress: dict | None = None,
                            film110=None):
@@ -1673,6 +1734,32 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
     else:
         full = image.align_channels(image.assemble(raw, width), dpi=args.dpi)
         coverage = aperture_crop.measure_coverage(full, dpi=args.dpi)
+        if film110 is not None and coverage.verified and not _opening_is_holders(coverage, args.dpi):
+            # Dense film against a crossbar can leave a lit run of 25 mm or
+            # more: the central verdict then "verifies" on the film's edge,
+            # not the plastic's, and the crop would cut the film off. For
+            # 110 the opening must be the holder's own length, as for the
+            # side bands below.
+            length = ((coverage.trailing_line - coverage.leading_line)
+                      * aperture_crop.MM_PER_INCH / args.dpi)
+            from dataclasses import replace as _replace
+            coverage = _replace(coverage, verified=False,
+                                reason=f"opening {length:.1f} mm is not the holder's aperture")
+        if film110 is not None and not coverage.verified:
+            # 110 on the plain path (e.g. --no-ir for black-and-white,
+            # whose silver image blocks IR): a 16 mm strip fills most of
+            # the central band the normal verdict reads, and dense film
+            # against a crossbar hides the edge. Measure again on the bare
+            # air beside the strip (aperture_crop.measure_coverage_side_band;
+            # accepts only the holder's own opening length). 135 and the
+            # dual paths never come here.
+            side = aperture_crop.measure_coverage_side_band(full, dpi=args.dpi)
+            if side.verified:
+                coverage = side
+            else:
+                from dataclasses import replace as _replace
+                coverage = _replace(
+                    coverage, reason=f"visible: {coverage.reason}; {side.reason}")
         # Preserve the full overscan frame regardless of the verdict
         # (raw-data principle) -- rotated like the main negative, never
         # mirrored.
@@ -1690,7 +1777,9 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
                   f"Kept the full overscan at {raw_out}; no main negative "
                   f"written for this frame.", file=sys.stderr)
             return None, None, None, False, coverage
-        print(f"aperture coverage: VERIFIED — margins lead "
+        print(f"aperture coverage: VERIFIED"
+              f"{' (' + coverage.reason + ')' if coverage.source != 'visible' else ''}"
+              f" — margins lead "
               f"{coverage.leading_margin_mm:.3f} mm, trail "
               f"{coverage.trailing_margin_mm:.3f} mm")
         _note_margin(coverage)
@@ -2727,13 +2816,17 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
         return _digitize_from_frames(args)
 
     strips = int(getattr(args, "strips", 1) or 1)
-    # --frames decides the strip length. The default stays 1-4: most
-    # strips in hand are four frames, and a longer default would scan
-    # empty apertures for everyone with a shorter strip (two strips: 1-6).
-    # Validated here, before the load prompt and before any hardware.
+    # --frames decides the strip length. 135 defaults to 1-4 (a longer
+    # default would scan empty apertures for everyone with a shorter
+    # strip). 110 defaults to 1-6: a long 110 strip (up to ~8 images)
+    # reaches apertures 5-6, and a short one costs nothing because the
+    # stop-at-empty rule ends the run after the first empty aperture that
+    # follows film. Validated here, before the load prompt and any hardware.
     try:
-        dig_frames = _parse_frames(getattr(args, "frames", None)
-                                   or ("1-6" if strips == 2 else "1-4"))
+        dig_frames = _parse_frames(
+            getattr(args, "frames", None)
+            or ("1-6" if (strips == 2 or getattr(args, "film", "135") == "110")
+                else "1-4"))
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -3402,11 +3495,12 @@ def build_parser() -> argparse.ArgumentParser:
              "first so the dir is not a mix of two runs (--film 110: "
              "both placements' files and the image<N> photographs)")
     p_dig.add_argument("--frames", default=None, metavar="SPEC",
-        help=f"which frames of the strip to scan, e.g. 1-4 (default; 1-6 "
-             f"with --film 110 --strips 2), "
-             f"1-6 for a full-length strip, or 1,3-4. The holder holds "
-             f"{holder.DEFAULT.frames}; the default stays 1-4 so a "
-             f"shorter strip does not scan empty apertures.")
+        help=f"which frames of the strip to scan, e.g. 1-4 (default for "
+             f"135; 1-6 with --film 110, where the stop-at-empty rule ends "
+             f"a short strip early), 1-6 for a full-length strip, or "
+             f"1,3-4. The holder holds {holder.DEFAULT.frames}; the 135 "
+             f"default stays 1-4 so a shorter strip does not scan empty "
+             f"apertures.")
     p_dig.add_argument("--from-frames", action="store_true",
         help="--film 110 --roll N only: rebuild the roll offline from its "
              "stored frame files (p<k>-f<N>.tiff): every pass is replayed in "

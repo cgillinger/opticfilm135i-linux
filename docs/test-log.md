@@ -7506,3 +7506,101 @@ recognises pass 2 by content. Data: the application's staging tree
 (harness-tmp/t107-20261026). Also reported by the application, not
 analysed here: in pass 1 the IR channel was clipped (84–100 % at 65535)
 and visible R clipped in the clear base; pass 2 and roll 2 normal.
+
+**Test 108 — production 110 series, a thin photograph read as a blank
+(2026-10-28, through the application, analysed offline).** Rolls of colour
+110 scanned through the application on master (v0.2.6). The application
+reported a whole photograph in a pass-3 aperture that no record delivered;
+the record listed that frame position as a **blank**. The picture is an
+underexposed, low-contrast photograph: its interior reads 0.85+ of the clear
+base, and along transport (the per-line median over the band) it varies by
+only 4.8 % (std/mean) -- under `IMAGE_VARIATION_FRAC` 0.10, so it passed as
+clear film; ACROSS the picture its pixels vary 19 %. The same photograph was
+a "blank" in all three passes of the roll. Fix (offline): a window that is
+flat along transport is a blank only if it is also flat across
+(`film110.BLANK_TEXTURE_MAX` 0.06: robust spread of 0.25 mm block means about
+a fitted plane, over the picture's own columns, blocks touching air dropped).
+Measured on the stored frames: 10 real blank windows 0.014–0.031 (including a
+leader with its punched hole and edge print, and a graded fog), 84 real whole
+images 0.126 and up, the photograph 0.150–0.163. Old vs new detector over
+142 stored 110 apertures: 138 identical; 4 changed, all corrections -- the
+photograph found in its three passes (rows 244–2634 in the pass-3 aperture,
+where the application had cut it out by hand at 253–2624) and the tail of a
+real photograph at the top of another roll's aperture, previously read as
+clear film. No real blank was lost. Also reported, not changed: in a pass
+whose strip front end lay out of view and whose seating fell between the two
+placement phases (A −4.3 mm, B +8.5 mm), numbering refused as designed and
+the two whole images were written unnumbered (exit 5).
+
+**Test 109 — first black-and-white 110 strip (2026-10-28, through the
+application, branch film110-six-bw 88eea19, `--no-ir`, plain 3600).** A
+four-image black-and-white strip, two passes. Pass 1 delivered image 1
+only; pass 2 delivered nothing and was recorded failed on aperture 4. Three
+causes, all fixed offline on the stored frames:
+(1) **dense pictures read as the rail.** The film band is the run of
+columns that are neither air nor plastic, and plastic was any column whose
+MEDIAN is under 0.05 x air. These dense negatives read 0.03–0.08 x air in
+the column median against a rail of 0.01–0.02 → "no 110 film band (4.5 mm)".
+A dark run with something else on both sides (not reaching the frame's
+side, as a rail does) is now plastic only if at least 40 % of its columns
+also stay under 0.05 at their 95th percentile (`PLASTIC_UPPER_*`): measured
+0.63–0.94 on colour rails, 0.0–0.13 on this dense film, which is lifted by
+its printed gaps (0.09) and rim. (2) **the clear base read as air to the
+edge tracker.** The black-and-white base and the clear zone round each
+hole read 0.77–0.79 x air in green; `EDGE_TRANSITION_FRAC` 0.6 took them as
+air, so on the hole lines the tracked edge jumped 2 mm inward past the
+hole → "no perforation found". When no hole is found at 0.6 the search is
+repeated at 0.9 (`EDGE_TRANSITION_LIGHT_FRAC`); colour (base ~0.17) never
+reaches the retry. Old vs new detector over all 135 stored 110 apertures:
+131 identical (every colour aperture), the 4 changes this strip's.
+(3) **a strip tip vetoed the side bands.** Aperture 4 held only the fogged
+strip end over part of its leading edge; the side-band coverage (new on
+this branch) found the opening in all 17 bands but the leading edges spread
+0.59 mm (bare bands 0.71–0.84 mm, bands under the tip 1.07–1.30) → refused.
+Film can only hide light: only the bands seeing the LONGEST opening (within
+0.3 mm) must agree; a whole opening seen shifted keeps its length and is
+still refused. Offline `--from-frames` rebuild of the two stored passes
+with the fixes: 4 of 4 frame positions delivered (pass 1 images 1 and 3,
+pass 2 images 2 and 4), roll done; the four products are four distinct
+whole photographs (working check, not the operator's acceptance). One
+aperture stays unlocatable in a single pass: the strip's last picture whose
+hole lies at the end of the previous aperture and which is followed by
+fogged film instead of a printed gap (pass 1 aperture 3) -- the advice does
+not call the roll done, and the next pass delivers it.
+
+**Test 110 — the rest of the evening's black-and-white 110 (2026-10-28,
+through the application on 8213158, three strips, analysed offline on the
+stored frames).** Detection held (side-band coverage on most apertures);
+three numbering/locating gaps lost or unnumbered photographs, all fixed:
+(1) **a strip's last picture** whose hole lies at the end of the previous
+aperture and which is followed by fogged film (no hole, no dark printed gap
+in view) was never located (one strip: a whole photograph in the frame, not
+delivered). `detect` now reports the image a hole predicts past the
+aperture's end (`ApertureFind.beyond`); the caller carries it to the next
+aperture, where it is tried like a frame-locator candidate (same
+plausibility and edge refinement, `located_by` "previous aperture's
+hole"). Rebuild of that strip: 4 of 4. (2) **pass 1 seated between the
+two placements' phases** (three strips today, A off by −4.3 to −4.9 mm,
+front end out of view) refused to number: every whole image unnumbered,
+and the next pass had no reference to recognise against. Now the strip is
+numbered from its first WHOLE image on A's grid of numbers (placement
+"free", numbers provisional until the front end is seen; a split or a
+hole's ghost anchors nothing). Rebuild of one such strip: both photographs
+numbered, the pass-2 recognition agrees. (3) **recognition between passes**
+failed on dense black-and-white: the true slide (22 mm) paired the same
+photographs at correlation 0.24–0.49 against the 0.5 needed (linear
+thumbnails; the pictures sit near black), and two near-duplicate shots
+correlated 0.86 at a wrong shift. Passes that both ran without IR are now
+compared in log intensity (colour always has IR and keeps the linear
+check); the strip is recognised at 22.25 mm and its missing photograph
+delivered numbered.
+
+**Test 110, hardware confirmation (2026-10-28, same evening, the
+application on 6fef9a8).** The strip whose last picture had been lost
+(roll 5) was rebuilt offline from its stored passes: 4 of 4 delivered, the
+last picture located by the previous aperture's hole. The last strip of the
+evening (roll 6, bent, with a crease through picture 2) was scanned live on
+the fixed code: three passes, pass 1 located the last picture by the
+previous aperture's hole, passes 2 and 3 were recognised by content
+without IR (log intensity), roll done with 4 of 4 delivered. All the
+operator's 110 strips are now digitised.

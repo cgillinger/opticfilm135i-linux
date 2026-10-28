@@ -120,7 +120,8 @@ def along_strip_profile(image, *, channel="red", band=0.5) -> np.ndarray:
     return chan.mean(axis=1)
 
 
-def measure_coverage(image, *, dpi, min_margin_mm=0.15, channel="red") -> ApertureCoverage:
+def measure_coverage(image, *, dpi, min_margin_mm=0.15, channel="red",
+                     band=0.5) -> ApertureCoverage:
     """Locate the aperture's two edges in a delivered frame and decide
     whether the whole opening was captured with at least `min_margin_mm`
     of overscan beyond each edge. Rule (section 5):
@@ -136,7 +137,7 @@ def measure_coverage(image, *, dpi, min_margin_mm=0.15, channel="red") -> Apertu
     arr = np.asarray(image)
     n_lines = arr.shape[0] if arr.ndim >= 1 else 0
 
-    profile = along_strip_profile(arr, channel=channel)
+    profile = along_strip_profile(arr, channel=channel, band=band)
     lines_per_mm = dpi / MM_PER_INCH
 
     # The edge detector (of135i.aperture) is tuned on the 600 dpi holder
@@ -270,6 +271,119 @@ def measure_coverage_dual(visible, ir, *, dpi, min_margin_mm=0.15) -> ApertureCo
         return replace(cov_vis, source="visible")
     return replace(cov_vis, source="visible",
                    reason=f"IR: {cov_ir.reason}; visible: {cov_vis.reason}")
+
+
+#: Side-band coverage (110 film on the plain path, see
+#: measure_coverage_side_band). Width of one column band beside the strip.
+SIDE_BAND_MM = 1.5
+#: A band's opening must equal the holder's aperture length to within
+#: this. The holder's six measured apertures span 35.80-36.12 mm
+#: (holder.STRIP_APERTURE_MM, mean 35.92), i.e. +-0.16 mm about the mean,
+#: and the edge finder is good to ~0.1 mm per edge; 1.0 mm covers both
+#: with room, yet is far below any film end or gap that could pose as the
+#: opening (a lit run bounded by film is at most a pitch-fraction short,
+#: 2 mm crossbars and picture edges are tens of mm off).
+SIDE_BAND_LENGTH_TOL_MM = 1.0
+#: Verifying bands must put each edge within this of one another. Two
+#: independent measurements of the same plastic edge differ by edge-finder
+#: noise (~0.1 mm); 0.3 mm tolerates that and a hair of holder skew, and
+#: anything wider means the bands are not seeing the same opening.
+SIDE_BAND_AGREE_MM = 0.3
+
+
+def measure_coverage_side_band(image, *, dpi, min_margin_mm=0.15,
+                               band_mm=SIDE_BAND_MM,
+                               aperture_mm=None,
+                               length_tol_mm=SIDE_BAND_LENGTH_TOL_MM,
+                               agree_mm=SIDE_BAND_AGREE_MM) -> ApertureCoverage:
+    """Coverage measured on the bare air beside a narrow strip.
+
+    A 110 strip is 16 mm wide in the 35 mm channel; the normal verdict
+    averages the central half of the width, which is mostly film, so dense
+    film touching a crossbar hides the edge and dense pictures can split
+    the lit run. The holder's opening is wider than the strip, so on at
+    least one side a few millimetres are bare air. This splits the width
+    into consecutive column bands of `band_mm` and runs
+    :func:`measure_coverage` on each band's along-strip profile.
+
+    A band counts only if (a) its own verdict verifies and (b) the opening
+    it found is the holder's: `aperture_mm` (default holder.STRIP) within
+    `length_tol_mm`. A shorter lit run (a film end, a gap) is never
+    accepted however clean its edges. The accepted bands must agree on
+    both edges to within `agree_mm`; if they do not the result is not
+    verified -- no band is preferred. Both edges are always measured in
+    the image, never inferred from the expected length.
+
+    Returns a verdict with source "visible-side"; `reason` names the
+    column range (and number of bands) used. Never raises on content.
+    """
+    from . import holder
+    if aperture_mm is None:
+        aperture_mm = holder.STRIP.aperture_mm
+    arr = np.asarray(image)
+    if arr.ndim != 3 or arr.shape[2] < 3:
+        raise ValueError(f"expected a (lines, width, channels>=3) image, got shape {arr.shape}")
+    lines_per_mm = dpi / MM_PER_INCH
+    width = arr.shape[1]
+    bw = max(1, int(round(band_mm * lines_per_mm)))  # square pixels: columns per mm == lines per mm
+
+    def _fail(reason):
+        return ApertureCoverage(False, None, None, None, None, reason, 0.0,
+                                source="visible-side")
+
+    accepted = []      # (col_lo, col_hi, verdict)
+    rejected = []
+    n_bands = 0
+    for lo in range(0, width - bw + 1, bw):
+        n_bands += 1
+        sub = arr[:, lo:lo + bw]
+        cov = measure_coverage(sub, dpi=dpi, min_margin_mm=min_margin_mm, band=1.0)
+        if not cov.verified:
+            continue
+        length = (cov.trailing_line - cov.leading_line) / lines_per_mm
+        if abs(length - aperture_mm) > length_tol_mm:
+            rejected.append((lo, length))
+            continue
+        accepted.append((lo, lo + bw, cov))
+
+    if not accepted:
+        extra = ""
+        if rejected:
+            extra = ("; bands with a wrong-length opening ignored: " +
+                     ", ".join(f"cols {a}-{a + bw} ({l:.1f} mm)" for a, l in rejected[:4]))
+        return _fail(f"side bands: none of {n_bands} column bands of {band_mm} mm "
+                     f"verified a {aperture_mm:.1f} mm opening{extra}")
+
+    # Film can only HIDE light, never add it: a band crossing a strip's
+    # tip sees a SHORTER opening (Test 109: a fogged strip end over the
+    # middle of an aperture's leading edge, 1.07-1.30 mm against the bare
+    # bands' 0.71-0.84). The holder is what the longest-opening bands see;
+    # only they must agree. A whole opening seen shifted in some bands
+    # keeps its length and still disagrees -- refused as before.
+    lengths = np.array([c.trailing_line - c.leading_line for _, _, c in accepted])
+    longest = lengths >= lengths.max() - agree_mm * lines_per_mm
+    shorter = int((~longest).sum())
+    accepted = [a for a, keep in zip(accepted, longest) if keep]
+    lead = np.array([c.leading_line for _, _, c in accepted])
+    trail = np.array([c.trailing_line for _, _, c in accepted])
+    tol = agree_mm * lines_per_mm
+    if lead.max() - lead.min() > tol or trail.max() - trail.min() > tol:
+        return _fail(
+            f"side bands disagree: {len(accepted)} bands verified but their edges "
+            f"differ by {(lead.max() - lead.min()) / lines_per_mm:.2f} mm (leading) / "
+            f"{(trail.max() - trail.min()) / lines_per_mm:.2f} mm (trailing), "
+            f"more than {agree_mm} mm")
+
+    start, end = float(np.median(lead)), float(np.median(trail))
+    n_lines = arr.shape[0]
+    cols = f"{accepted[0][0]}-{accepted[-1][1]}"
+    return ApertureCoverage(
+        verified=True, leading_line=start, trailing_line=end,
+        leading_margin_mm=start / lines_per_mm,
+        trailing_margin_mm=(n_lines - 1 - end) / lines_per_mm,
+        reason=(f"ok (side bands: {len(accepted)} of {n_bands} agree, columns {cols}"
+                + (f"; {shorter} shorter, film over them" if shorter else "") + ")"),
+        threshold=float(accepted[0][2].threshold), source="visible-side")
 
 
 @dataclass(frozen=True)
