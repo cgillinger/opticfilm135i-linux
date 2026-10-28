@@ -1849,6 +1849,47 @@ def test_whole_image_off_the_placement_phase_is_written_unnumbered():
     print("test_whole_image_off_the_placement_phase_is_written_unnumbered OK")
 
 
+def test_110_default_frames_is_all_six_apertures_and_stops_at_empty():
+    # A short strip (4 images, apertures 1-3 hold film) with NO --frames:
+    # the 110 default is 1-6 but the stop-at-empty rule ends the run after
+    # the first empty aperture that follows film; 5 and 6 are never scanned.
+    with tempfile.TemporaryDirectory() as d:
+        ap = _holder_apertures(_strip1("A", n=4))
+        rc, rec, scans, out, err = _run(d, ap, frames=None, placement="A")
+        assert rc in (0, 5), (rc, err)
+        assert scans[-1] == "eject" and 5 not in scans and 6 not in scans, scans
+        assert scans[:3] == [1, 2, 3], scans
+        assert rec["stop_reason"], rec
+
+
+def _long_strip_run(d, placement, n=8, roll=1):
+    ap = _holder_apertures(_strip1(placement, n=n))
+    return _run(d, ap, frames=None, placement=placement, roll=roll)
+
+
+def test_long_110_strip_reaches_apertures_5_and_6_in_both_placements():
+    # An 8-image strip lies over apertures 1-6 (the free strip end falls in
+    # the aperture after the last image). Default --frames must scan all
+    # six; both placements together number all eight images and leave
+    # nothing missing.
+    for first in ("A", "B"):
+        second = "B" if first == "A" else "A"
+        with tempfile.TemporaryDirectory() as d:
+            rc, rec, scans, out, err = _long_strip_run(d, first)
+            assert scans == [1, 2, 3, 4, 5, 6, "eject"], (first, scans, err)
+            nums = set(_by_number(rec))
+            assert nums <= set(range(1, 9)) and len(nums) >= 4, (first, nums)
+            rc2, rec2, scans2, out2, err2 = _long_strip_run(d, second, roll=1)
+            assert scans2 == [1, 2, 3, 4, 5, 6, "eject"], (second, scans2, err2)
+            nums2 = set(_by_number(rec2))
+            assert nums2 == set(range(1, 9)), (first, second, nums2, rec2["advice"])
+            assert rec2["advice"]["missing"] == [], rec2["advice"]
+            assert rc2 == 0, (rc2, err2)
+            names = _names(d)
+            for n in range(1, 9):
+                assert f"image{n}.tiff" in names, (n, names)
+
+
 def main() -> int:
     tests = [
         test_slot_constants_and_anchored_numbering,
@@ -1898,6 +1939,8 @@ def main() -> int:
         test_impossible_free_end_rescue_says_why_in_geometry,
         test_near_whole_copy_is_delivered_and_a_deeper_cut_is_split,
         test_free_end_images_record_the_measured_gap_to_the_strip_end,
+        test_110_default_frames_is_all_six_apertures_and_stops_at_empty,
+        test_long_110_strip_reaches_apertures_5_and_6_in_both_placements,
     ]
     for t in tests:
         t()

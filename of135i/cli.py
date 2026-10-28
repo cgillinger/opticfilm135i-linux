@@ -1673,6 +1673,21 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
     else:
         full = image.align_channels(image.assemble(raw, width), dpi=args.dpi)
         coverage = aperture_crop.measure_coverage(full, dpi=args.dpi)
+        if film110 is not None and not coverage.verified:
+            # 110 on the plain path (e.g. --no-ir for black-and-white,
+            # whose silver image blocks IR): a 16 mm strip fills most of
+            # the central band the normal verdict reads, and dense film
+            # against a crossbar hides the edge. Measure again on the bare
+            # air beside the strip (aperture_crop.measure_coverage_side_band;
+            # accepts only the holder's own opening length). 135 and the
+            # dual paths never come here.
+            side = aperture_crop.measure_coverage_side_band(full, dpi=args.dpi)
+            if side.verified:
+                coverage = side
+            else:
+                from dataclasses import replace as _replace
+                coverage = _replace(
+                    coverage, reason=f"visible: {coverage.reason}; {side.reason}")
         # Preserve the full overscan frame regardless of the verdict
         # (raw-data principle) -- rotated like the main negative, never
         # mirrored.
@@ -1690,7 +1705,9 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
                   f"Kept the full overscan at {raw_out}; no main negative "
                   f"written for this frame.", file=sys.stderr)
             return None, None, None, False, coverage
-        print(f"aperture coverage: VERIFIED — margins lead "
+        print(f"aperture coverage: VERIFIED"
+              f"{' (' + coverage.reason + ')' if coverage.source != 'visible' else ''}"
+              f" — margins lead "
               f"{coverage.leading_margin_mm:.3f} mm, trail "
               f"{coverage.trailing_margin_mm:.3f} mm")
         _note_margin(coverage)
@@ -2727,13 +2744,17 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
         return _digitize_from_frames(args)
 
     strips = int(getattr(args, "strips", 1) or 1)
-    # --frames decides the strip length. The default stays 1-4: most
-    # strips in hand are four frames, and a longer default would scan
-    # empty apertures for everyone with a shorter strip (two strips: 1-6).
-    # Validated here, before the load prompt and before any hardware.
+    # --frames decides the strip length. 135 defaults to 1-4 (a longer
+    # default would scan empty apertures for everyone with a shorter
+    # strip). 110 defaults to 1-6: a long 110 strip (up to ~8 images)
+    # reaches apertures 5-6, and a short one costs nothing because the
+    # stop-at-empty rule ends the run after the first empty aperture that
+    # follows film. Validated here, before the load prompt and any hardware.
     try:
-        dig_frames = _parse_frames(getattr(args, "frames", None)
-                                   or ("1-6" if strips == 2 else "1-4"))
+        dig_frames = _parse_frames(
+            getattr(args, "frames", None)
+            or ("1-6" if (strips == 2 or getattr(args, "film", "135") == "110")
+                else "1-4"))
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -3402,11 +3423,12 @@ def build_parser() -> argparse.ArgumentParser:
              "first so the dir is not a mix of two runs (--film 110: "
              "both placements' files and the image<N> photographs)")
     p_dig.add_argument("--frames", default=None, metavar="SPEC",
-        help=f"which frames of the strip to scan, e.g. 1-4 (default; 1-6 "
-             f"with --film 110 --strips 2), "
-             f"1-6 for a full-length strip, or 1,3-4. The holder holds "
-             f"{holder.DEFAULT.frames}; the default stays 1-4 so a "
-             f"shorter strip does not scan empty apertures.")
+        help=f"which frames of the strip to scan, e.g. 1-4 (default for "
+             f"135; 1-6 with --film 110, where the stop-at-empty rule ends "
+             f"a short strip early), 1-6 for a full-length strip, or "
+             f"1,3-4. The holder holds {holder.DEFAULT.frames}; the 135 "
+             f"default stays 1-4 so a shorter strip does not scan empty "
+             f"apertures.")
     p_dig.add_argument("--from-frames", action="store_true",
         help="--film 110 --roll N only: rebuild the roll offline from its "
              "stored frame files (p<k>-f<N>.tiff): every pass is replayed in "
