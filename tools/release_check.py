@@ -50,7 +50,7 @@ SUITES = (
     ("test_dpi", "core"), ("test_ir", "core"), ("test_image_probe", "core"),
     ("test_aperture_crop", "core"), ("test_overscan", "core"),
     ("test_dual_overscan", "core"), ("test_calibration_cache", "core"),
-    ("test_film110", "core"), ("test_film110_digitize", "core"), ("test_film110_report", "core"), ("test_vendor_isolation", "core"), ("test_watch_events", "core"), ("test_buttons", "core"),
+    ("test_film110", "core"), ("test_film110_digitize", "core"), ("test_film110_report", "core"), ("test_film110_sideband", "core"), ("test_vendor_isolation", "core"), ("test_watch_events", "core"), ("test_buttons", "core"),
     ("test_release_check", "core"), ("test_poll", "core"), ("test_white_blockage", "core"),
     ("test_sane_mark", "compiler"), ("test_sane_ops", "compiler"),
     ("test_sane_geometry", "compiler"), ("test_sane_install", "compiler"),

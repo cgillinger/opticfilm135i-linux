@@ -467,6 +467,25 @@ are kept beside them as evidence.
   an image by the gap before it is removed by the CLI's leader rule only
   when its end edge is not confirmed. Film with no printed border (not
   seen on any 110 strip yet) has no gaps; the holes carry it as before.
+- **Plain path (`--no-ir`, black-and-white): coverage may come from the
+  air beside the strip.** Without IR the aperture edges are measured on
+  the central half of the frame width, which a 16 mm strip mostly fills:
+  dense film touching a crossbar hides the edge, and dense pictures can
+  split the lit run below the minimum aperture length ("no aperture found
+  in profile", exit 4, no product; colour 110 never hit this because the
+  dual path measures on IR first). For `--film 110` only, and only after
+  that verdict failed, `aperture_crop.measure_coverage_side_band` measures
+  again on 1.5 mm column bands across the width (the opening is wider than
+  the strip, so there is bare air on at least one side). A band counts
+  only if it verifies *and* its opening is the holder's: 35.92 mm ± 1.0 mm
+  (a film end or a gap is never accepted however clean its edges); all
+  accepted bands must agree on both edges within 0.3 mm, otherwise the
+  frame is refused (no band is preferred); both edges are always measured,
+  never inferred from the length. The frame's manifest entry then has
+  `coverage_source: "visible-side"` (and the reason names the column
+  range); nothing else in the manifest changes. When neither measurement
+  verifies the result is today's refusal with both reasons
+  (`visible: …; side bands: …`). 135 and every dual path are unchanged.
 - **Edge safety is 0.25 mm of border, n = 1 strip.** After the
   2026-09-20 fix the refined edge lies within 0.06 mm of the measured
   foot on all 16 production edges; the pad is a margin, not a
@@ -519,7 +538,9 @@ now `p<k>-f<N>.tiff` per pass instead of `a-`/`b-`.*
 A 110 strip takes two placements (§3), so a roll takes two `digitize`
 runs. Both write into the **same** roll directory; the first run picks the
 roll number as usual, the second names it with `--roll N`. Each run is
-what `digitize` always is — one load, `--frames` (default 1-4), eject —
+what `digitize` always is — one load, `--frames` (default 1-6 for 110, so a strip of up to ~8
+images reaches apertures 5–6; the stop-at-empty rule ends a short strip
+after the first empty aperture that follows film), eject —
 and uses the same pipeline, coverage, film-presence check, overscan files,
 diag and `cal.npz`; the 110 detector then runs on each verified,
 aperture-registered crop (one detector call per aperture, the same
