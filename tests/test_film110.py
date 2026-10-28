@@ -787,10 +787,10 @@ def test_cli_hook_infers_a_and_b():
     print("test_cli_hook_infers_a_and_b OK")
 
 
-def test_cli_hook_refuses_the_ambiguous_position_then_decides_later():
-    """An image midway between the phases cannot be inferred: problem
-    recorded, nothing written, placement still undecided -- a later image
-    on a clear phase then decides."""
+def test_cli_hook_numbers_the_ambiguous_position_from_the_image():
+    """A whole image midway between the phases (Test 110: was refused, the
+    photograph written unnumbered): the strip is numbered from it --
+    placement "free", the A grid's number, written, no problem."""
     dpi = 600
     mid = _one_image_aperture(9.9, dpi)
     with tempfile.TemporaryDirectory() as d:
@@ -798,16 +798,10 @@ def test_cli_hook_refuses_the_ambiguous_position_then_decides_later():
         args = _hook_args(dpi=dpi, placement=None)
         state = cli.Film110State()
         cli._film110_hook(args, state, 1, out, mid, None)
-        assert list(Path(d).iterdir()) == []
-        assert state.placement is None
-        assert len(state.problems) == 1, state.problems
-        assert "between the two placements" in state.problems[0], state.problems
-        assert "--placement A or B" in state.problems[0], state.problems
-        clear = _one_image_aperture(film110.placement_phase_mm("B"), dpi)
-        cli._film110_hook(args, state, 1, out, clear, None)
-        assert state.placement == "B", state.placement
-        assert Path(cli._film110_image_path(out, 1)).exists()
-    print("test_cli_hook_refuses_the_ambiguous_position_then_decides_later OK")
+        assert state.placement == "free", state.placement
+        assert state.problems == [], state.problems
+        assert Path(cli._film110_image_path(out, 1)).exists(), list(Path(d).iterdir())
+    print("test_cli_hook_numbers_the_ambiguous_position_from_the_image OK")
 
 
 def test_explicit_placement_overrides_inference():
@@ -1402,7 +1396,7 @@ def test_orientation_is_decided_by_evidence_over_near_duplicate_shots():
     other = {(0, 1): 0.84, (1, 2): 0.71, (2, 3): 0.10}
     table = {**true, **other}
 
-    def stub(item, oitem, kind, film=FILM_110):
+    def stub(item, oitem, kind, film=FILM_110, log=False):
         if kind != "same":
             return None
         return table.get((item[3], oitem[4]))
@@ -1451,7 +1445,7 @@ def main() -> int:
         test_cli_hook_same_photo_same_number_across_placements,
         test_infer_placement_on_the_documented_phases,
         test_cli_hook_infers_a_and_b,
-        test_cli_hook_refuses_the_ambiguous_position_then_decides_later,
+        test_cli_hook_numbers_the_ambiguous_position_from_the_image,
         test_explicit_placement_overrides_inference,
         test_cli_hook_is_noop_for_film_135,
         test_number_by_shift,
