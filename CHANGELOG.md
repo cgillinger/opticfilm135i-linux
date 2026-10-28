@@ -18,7 +18,8 @@ one exists; "offline" means implemented and tested without the scanner.
   follows film. Offline test: an 8-image strip in both placements numbers
   all eight and leaves nothing missing.
 - **110 on the plain path (`--no-ir`): coverage no longer depends on film
-  density** (offline). When the central-band verdict fails, coverage is
+  density** (offline). When the central-band verdict fails (for 110 also when
+  its opening is not the holder's length -- dense film at a bar), coverage is
   measured on the bare air beside the strip
   (`aperture_crop.measure_coverage_side_band`): column bands that verify
   and show the holder's own opening length (35.92 mm ± 1.0), agreeing

@@ -473,8 +473,11 @@ are kept beside them as evidence.
   dense film touching a crossbar hides the edge, and dense pictures can
   split the lit run below the minimum aperture length ("no aperture found
   in profile", exit 4, no product; colour 110 never hit this because the
-  dual path measures on IR first). For `--film 110` only, and only after
-  that verdict failed, `aperture_crop.measure_coverage_side_band` measures
+  dual path measures on IR first). For `--film 110` the central verdict
+  must also show the holder's opening length (35.92 mm ± 1.0): dense film
+  over the first millimetres of an aperture leaves a lit run of 25 mm or
+  more that passes as an aperture and would crop the film off, so a
+  shorter opening counts as not verified. Only then, `aperture_crop.measure_coverage_side_band` measures
   again on 1.5 mm column bands across the width (the opening is wider than
   the strip, so there is bare air on at least one side). A band counts
   only if it verifies *and* its opening is the holder's: 35.92 mm ± 1.0 mm

@@ -242,6 +242,23 @@ def test_end_to_end_a_frame_that_verifies_today_is_identical():
         assert fe["coverage_reason"] == "ok", fe
 
 
+def test_end_to_end_a_short_central_opening_is_not_taken_for_the_aperture():
+    """Dense film over the first 8 mm leaves a 28 mm lit run in the
+    central band -- long enough to pass as an aperture. For 110 the
+    opening must be the holder's own length, so the side bands decide and
+    the crop starts at the plastic, not at the film (which it would cut)."""
+    with _disk_tmp() as d:
+        img = _frame(E2E_DPI, E2E_W, dense=[(0.0, 8.0)])
+        normal = aperture_crop.measure_coverage(img, dpi=E2E_DPI)
+        assert normal.verified, normal              # the trap: it verifies today
+        rc, rec, out, err = _digitize_plain(d, img)
+        fe = _frame_entry(rec)
+        assert fe["coverage_verified"] is True, (rc, fe, err)
+        assert fe["coverage_source"] == "visible-side", fe
+        lead, _trail = _true_edges(E2E_DPI)
+        assert abs(normal.leading_line - lead) > 8 * E2E_DPI / 25.4 * 0.9, normal
+
+
 def main() -> int:
     tests = [
         test_dense_film_over_an_edge_in_the_centre_band,
@@ -254,6 +271,7 @@ def main() -> int:
         test_end_to_end_plain_110_uses_the_side_band_and_writes_the_frame,
         test_end_to_end_neither_verifies_is_the_usual_refusal_with_both_reasons,
         test_end_to_end_a_frame_that_verifies_today_is_identical,
+        test_end_to_end_a_short_central_opening_is_not_taken_for_the_aperture,
     ]
     for t in tests:
         t()

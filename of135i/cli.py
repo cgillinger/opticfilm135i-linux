@@ -1552,6 +1552,16 @@ def _cmd_load(args: argparse.Namespace) -> int:
                         next_strip=args.next_strip)
 
 
+def _opening_is_holders(coverage, dpi) -> bool:
+    """A verified coverage's opening has the holder's aperture length
+    (aperture_crop.SIDE_BAND_LENGTH_TOL_MM): the 110 plain-path check that
+    a film edge did not pose as the plastic's."""
+    from . import aperture_crop, holder
+    length = ((coverage.trailing_line - coverage.leading_line)
+              * aperture_crop.MM_PER_INCH / dpi)
+    return abs(length - holder.STRIP.aperture_mm) <= aperture_crop.SIDE_BAND_LENGTH_TOL_MM
+
+
 def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
                            out: str, dual: bool, progress: dict | None = None,
                            film110=None):
@@ -1673,6 +1683,17 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
     else:
         full = image.align_channels(image.assemble(raw, width), dpi=args.dpi)
         coverage = aperture_crop.measure_coverage(full, dpi=args.dpi)
+        if film110 is not None and coverage.verified and not _opening_is_holders(coverage, args.dpi):
+            # Dense film against a crossbar can leave a lit run of 25 mm or
+            # more: the central verdict then "verifies" on the film's edge,
+            # not the plastic's, and the crop would cut the film off. For
+            # 110 the opening must be the holder's own length, as for the
+            # side bands below.
+            length = ((coverage.trailing_line - coverage.leading_line)
+                      * aperture_crop.MM_PER_INCH / args.dpi)
+            from dataclasses import replace as _replace
+            coverage = _replace(coverage, verified=False,
+                                reason=f"opening {length:.1f} mm is not the holder's aperture")
         if film110 is not None and not coverage.verified:
             # 110 on the plain path (e.g. --no-ir for black-and-white,
             # whose silver image blocks IR): a 16 mm strip fills most of
