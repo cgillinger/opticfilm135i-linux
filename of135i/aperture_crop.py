@@ -354,6 +354,16 @@ def measure_coverage_side_band(image, *, dpi, min_margin_mm=0.15,
         return _fail(f"side bands: none of {n_bands} column bands of {band_mm} mm "
                      f"verified a {aperture_mm:.1f} mm opening{extra}")
 
+    # Film can only HIDE light, never add it: a band crossing a strip's
+    # tip sees a SHORTER opening (Test 109: a fogged strip end over the
+    # middle of an aperture's leading edge, 1.07-1.30 mm against the bare
+    # bands' 0.71-0.84). The holder is what the longest-opening bands see;
+    # only they must agree. A whole opening seen shifted in some bands
+    # keeps its length and still disagrees -- refused as before.
+    lengths = np.array([c.trailing_line - c.leading_line for _, _, c in accepted])
+    longest = lengths >= lengths.max() - agree_mm * lines_per_mm
+    shorter = int((~longest).sum())
+    accepted = [a for a, keep in zip(accepted, longest) if keep]
     lead = np.array([c.leading_line for _, _, c in accepted])
     trail = np.array([c.trailing_line for _, _, c in accepted])
     tol = agree_mm * lines_per_mm
@@ -371,7 +381,8 @@ def measure_coverage_side_band(image, *, dpi, min_margin_mm=0.15,
         verified=True, leading_line=start, trailing_line=end,
         leading_margin_mm=start / lines_per_mm,
         trailing_margin_mm=(n_lines - 1 - end) / lines_per_mm,
-        reason=f"ok (side bands: {len(accepted)} of {n_bands} agree, columns {cols})",
+        reason=(f"ok (side bands: {len(accepted)} of {n_bands} agree, columns {cols}"
+                + (f"; {shorter} shorter, film over them" if shorter else "") + ")"),
         threshold=float(accepted[0][2].threshold), source="visible-side")
 
 

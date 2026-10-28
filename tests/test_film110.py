@@ -1178,6 +1178,59 @@ def test_fogged_blank_with_a_gradient_stays_a_blank():
         print(f"test_fogged_blank_with_a_gradient_stays_a_blank OK ({dpi} dpi)")
 
 
+def _bw_dense_fixture(dpi, *, film_end_mm=None, seed=3):
+    """Black-and-white 110 as Test 109 measured it (fractions of air): a
+    DENSE picture (0.03, textured) as dark as the rail (0.02 here: 0.015),
+    a LIGHT printed gap (0.09), a clear rim and clear zone round each hole
+    (0.78) -- above the old 0.6 edge threshold. Air either side of the
+    16 mm band, the rail at the far side, perforated edge on the high
+    side. Returns (arr, ppm, image starts mm)."""
+    rng = np.random.default_rng(seed)
+    ppm = _px_per_mm(dpi)
+    n = int(round(36.0 * ppm)); w = int(round(26.0 * ppm))
+    c = lambda mm: int(round(mm * ppm))
+    g = np.full((n, w), 1.0)
+    g[:, c(24.0):] = 0.015                       # rail
+    f0, f1 = c(2.0), c(18.0)                     # film band
+    g[:, f0:f1] = 0.09                           # printed gap level everywhere ...
+    rim = c(0.6)
+    g[:, f1 - rim:f1] = 0.78                     # clear rim at the perforated edge
+    L, P = FILM_110.image_mm[0], FILM_110.pitch_mm
+    lead = FILM_110.perforation_lead_mm
+    starts = [3.0 - P, 3.0, 3.0 + P]
+    col0 = 18.0 - FILM_110.image_lateral_offset_mm - FILM_110.image_mm[1]
+    col1 = 18.0 - FILM_110.image_lateral_offset_mm
+    for st in starts:
+        a, b = max(0, c(st)), min(n, c(st + L))
+        if b > a:
+            pic = 0.03 * (1.0 + 0.4 * rng.standard_normal((b - a, c(col1) - c(col0))))
+            g[a:b, c(col0):c(col1)] = np.clip(pic, 0.005, 0.2)
+        h1 = st - lead; h0 = h1 - 1.6               # the hole before the picture
+        if 0 < c(h1) and c(h0) < n:
+            hz0, hz1 = max(0, c(h0 - 0.5)), min(n, c(h1 + 0.5))
+            g[hz0:hz1, f1 - rim - c(2.6):f1 - rim] = 0.77   # clear zone round the hole
+            g[max(0, c(h0)):min(n, c(h1)), f1 - rim - c(2.0):f1 - rim - c(0.4)] = 1.0
+    if film_end_mm is not None:
+        g[c(film_end_mm):, f0:f1] = 1.0
+    g = g + rng.normal(0, 0.002, g.shape)
+    arr = np.clip(g * 65535, 0, 65535).astype(np.uint16)
+    return np.repeat(arr[:, :, None], 3, axis=2), ppm, starts
+
+
+def test_dense_black_and_white_film_is_a_band_and_its_holes_are_found():
+    """Test 109: dense B&W pictures read as dark as the rail in the column
+    median ("no 110 film band"), and the clear zone round a hole read as
+    air to the edge tracker ("no perforation found")."""
+    for dpi in DPIS:
+        arr, ppm, starts = _bw_dense_fixture(dpi)
+        find = film110.detect(arr, dpi=dpi)
+        assert find.reason == "", (dpi, find.reason)
+        whole = [f for f in find.frames if f.whole]
+        assert len(whole) == 1 and abs(whole[0].line0 / ppm - starts[1]) <= 0.5, (
+            dpi, [(f.line0 / ppm, f.whole) for f in find.frames])
+        print(f"test_dense_black_and_white_film_is_a_band_and_its_holes_are_found OK ({dpi} dpi)")
+
+
 def test_blank_is_not_reported_where_the_film_ends_inside_the_window():
     for dpi in DPIS:
         arr, ppm, lo, hi, imgs, window = _blank_fixture(dpi)
@@ -1385,6 +1438,7 @@ def main() -> int:
         test_blank_is_not_reported_where_the_film_ends_inside_the_window,
         test_thin_low_contrast_picture_is_an_image_not_a_blank,
         test_fogged_blank_with_a_gradient_stays_a_blank,
+        test_dense_black_and_white_film_is_a_band_and_its_holes_are_found,
         test_leader_beyond_the_free_start_is_not_a_blank_and_pictures_have_none,
         test_gap_survives_a_thin_scratch_and_dust,
         test_blank_frame_is_not_an_image_when_a_prediction_runs_into_the_gap,

@@ -107,6 +107,23 @@ def test_a_shorter_lit_run_beside_the_strip_is_never_accepted():
     assert aperture_crop.measure_coverage_side_band(img2, dpi=dpi).verified
 
 
+def test_a_strip_tip_over_some_bands_does_not_veto_the_bare_ones():
+    """Test 109: a fogged strip end over part of an aperture's leading edge
+    shortens the opening in the bands it covers (film only hides light).
+    The longest-opening bands are the holder and decide; the shorter ones
+    are left out, not counted as disagreement."""
+    dpi = 600
+    ppm = dpi / 25.4
+    img = _frame(dpi, film_dark=True, air=((0.0, 4.5), (19.0, 22.0))).copy()
+    pad = int(round(PAD * ppm))
+    img[pad:pad + int(round(0.5 * ppm)), int(round(19.0 * ppm)):int(round(22.0 * ppm))] = PLASTIC
+    side = aperture_crop.measure_coverage_side_band(img, dpi=dpi)
+    assert side.verified, side
+    lead, trail = _true_edges(dpi)
+    assert abs(side.leading_line - lead) < 3, (side, lead)
+    assert "shorter" in side.reason, side.reason
+
+
 def test_bands_that_disagree_are_refused_not_chosen():
     dpi = 600
     img = _frame(dpi, film_dark=True,
@@ -265,6 +282,7 @@ def main() -> int:
         test_dense_images_splitting_the_centre_run,
         test_a_shorter_lit_run_beside_the_strip_is_never_accepted,
         test_bands_that_disagree_are_refused_not_chosen,
+        test_a_strip_tip_over_some_bands_does_not_veto_the_bare_ones,
         test_full_width_dense_film_without_air_is_refused,
         test_no_edge_is_inferred_from_the_expected_length,
         test_normal_verdict_is_untouched_and_default_is_the_central_band,

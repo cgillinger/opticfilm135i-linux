@@ -7531,3 +7531,39 @@ clear film. No real blank was lost. Also reported, not changed: in a pass
 whose strip front end lay out of view and whose seating fell between the two
 placement phases (A −4.3 mm, B +8.5 mm), numbering refused as designed and
 the two whole images were written unnumbered (exit 5).
+
+**Test 109 — first black-and-white 110 strip (2026-10-28, through the
+application, branch film110-six-bw 88eea19, `--no-ir`, plain 3600).** A
+four-image black-and-white strip, two passes. Pass 1 delivered image 1
+only; pass 2 delivered nothing and was recorded failed on aperture 4. Three
+causes, all fixed offline on the stored frames:
+(1) **dense pictures read as the rail.** The film band is the run of
+columns that are neither air nor plastic, and plastic was any column whose
+MEDIAN is under 0.05 x air. These dense negatives read 0.03–0.08 x air in
+the column median against a rail of 0.01–0.02 → "no 110 film band (4.5 mm)".
+A dark run with something else on both sides (not reaching the frame's
+side, as a rail does) is now plastic only if at least 40 % of its columns
+also stay under 0.05 at their 95th percentile (`PLASTIC_UPPER_*`): measured
+0.63–0.94 on colour rails, 0.0–0.13 on this dense film, which is lifted by
+its printed gaps (0.09) and rim. (2) **the clear base read as air to the
+edge tracker.** The black-and-white base and the clear zone round each
+hole read 0.77–0.79 x air in green; `EDGE_TRANSITION_FRAC` 0.6 took them as
+air, so on the hole lines the tracked edge jumped 2 mm inward past the
+hole → "no perforation found". When no hole is found at 0.6 the search is
+repeated at 0.9 (`EDGE_TRANSITION_LIGHT_FRAC`); colour (base ~0.17) never
+reaches the retry. Old vs new detector over all 135 stored 110 apertures:
+131 identical (every colour aperture), the 4 changes this strip's.
+(3) **a strip tip vetoed the side bands.** Aperture 4 held only the fogged
+strip end over part of its leading edge; the side-band coverage (new on
+this branch) found the opening in all 17 bands but the leading edges spread
+0.59 mm (bare bands 0.71–0.84 mm, bands under the tip 1.07–1.30) → refused.
+Film can only hide light: only the bands seeing the LONGEST opening (within
+0.3 mm) must agree; a whole opening seen shifted keeps its length and is
+still refused. Offline `--from-frames` rebuild of the two stored passes
+with the fixes: 4 of 4 frame positions delivered (pass 1 images 1 and 3,
+pass 2 images 2 and 4), roll done; the four products are four distinct
+whole photographs (working check, not the operator's acceptance). One
+aperture stays unlocatable in a single pass: the strip's last picture whose
+hole lies at the end of the previous aperture and which is followed by
+fogged film instead of a printed gap (pass 1 aperture 3) -- the advice does
+not call the roll done, and the next pass delivers it.

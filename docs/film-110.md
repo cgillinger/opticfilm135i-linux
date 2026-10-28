@@ -505,9 +505,17 @@ are kept beside them as evidence.
   placement A's aperture 1 (image 1 at 3.5 mm) reads as continuing.
   The line is informational only — numbering and products never use it
   (a real continuation is the `leading` split predicted from the hole).
-- **Positive (slide) 110 film and B&W 110** are untested; the detector
-  works on light levels, the IR clean path assumes a dye-image negative
-  as for 135.
+- **Black-and-white 110: n = 1 strip (Test 109).** Run with `--no-ir` (the
+  silver image blocks IR): plain 3600, side-band coverage. Dense pictures
+  read as dark as the rail in a column median, so a dark run between other
+  columns must also be dark at the 95th percentile to count as rail; the
+  clear base reads 0.78 x air, so the hole search retries with an edge
+  threshold of 0.9 x air when 0.6 finds no hole. The printed gaps on this film
+  are LIGHTER than the pictures (0.09 against 0.03), so the frame locator
+  (built for dark printed borders) does not help: pictures are located by
+  their holes. A strip's last picture whose hole lies in the previous
+  aperture and which is followed by fogged film is not located in that
+  pass. **Positive (slide) 110** is untested.
 - **Placement inference is one operator's phases, n = 2 strips.** A strip
   seated 4–9 mm off both phases (visibly "between" A and B) is refused, not
   guessed; give `--placement`. A strip seated so far off that it lands near

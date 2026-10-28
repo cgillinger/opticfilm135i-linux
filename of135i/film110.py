@@ -51,6 +51,10 @@ MM_PER_INCH = 25.4
 AIR_PERCENTILE = 99.5          # column-median percentile defining "air"
 AIR_FRAC = 0.95                 # >= this fraction of air -> "air" column
 PLASTIC_FRAC = 0.05              # <= this fraction of air -> "plastic" column (real rail: 0.033)
+PLASTIC_UPPER_PERCENTILE = 95.0   # a dark run not at the frame's side must stay under PLASTIC_FRAC here too
+PLASTIC_UPPER_STEP = 4            # (every 4th line: the percentile, not the detail, matters)
+PLASTIC_UPPER_SHARE = 0.4         # ... over at least this share of an inner dark run's columns
+                                  # (Test 109: colour rails 0.63-0.94, dense black-and-white film 0.0-0.13)
 PLASTIC_MIN_RUN_MM = 2.0         # shorter dark runs are film (the 110 printed border reads 0.066)
 FILM_WIDTH_TOLERANCE_MM = 1.0
 # A 16 mm strip lies loose across the 24 mm opening; its far edge can slide
@@ -437,6 +441,10 @@ def _refine_lateral(profile: np.ndarray, predicted: float, px_per_mm: float,
 # air-level region INSIDE the band next to the edge, not a jump of the
 # edge.
 EDGE_TRANSITION_FRAC = 0.6      # green < this x air = film, scanning in from the air side
+EDGE_TRANSITION_LIGHT_FRAC = 0.9  # ... retried with this when no hole is found: a black-and-white
+                                  # clear base reads 0.78 x air, so the rim and the clear zone round a
+                                  # hole passed as air and the edge jumped 2 mm inward past the hole
+                                  # (Test 109); colour (base ~0.17) never needs it
 EDGE_SEARCH_MM = 4.0            # per-line search zone either side of the median band edge
 EDGE_TRACK_WINDOW_MM = 10.0     # rolling-median window for the local edge (> 2 x HOLE_MAX_MM)
 RAIL_TRANSITION_MM = 0.5        # the rail's blurred edge, excluded from the edge tracker's zone
@@ -456,7 +464,8 @@ HOLE_CORE_FRAC = 0.5            # the holes are the stretches at >= this fractio
 
 def _track_edge(green: np.ndarray, band_edge: int, air: float,
                 px_per_mm: float, edge_is_low: bool,
-                outer_limit: "int | None" = None) -> np.ndarray:
+                outer_limit: "int | None" = None,
+                transition: float = EDGE_TRANSITION_FRAC) -> np.ndarray:
     """Per-line column of the film's air-facing edge (float, NaN where no
     film is seen in the search zone -- e.g. beyond a free strip end).
     `outer_limit` clips the search zone on the air side, short of the
@@ -477,7 +486,7 @@ def _track_edge(green: np.ndarray, band_edge: int, air: float,
     zone = green[:, z_lo:z_hi]
     if not edge_is_low:
         zone = zone[:, ::-1]
-    film_mask = zone < EDGE_TRANSITION_FRAC * air
+    film_mask = zone < transition * air
     has = film_mask.any(axis=1)
     first = np.argmax(film_mask, axis=1).astype(np.float64)
     if edge_is_low:
@@ -505,7 +514,8 @@ def _rolling_nanmedian(x: np.ndarray, window: int) -> np.ndarray:
 
 def _hole_runs(green: np.ndarray, lo: int, hi: int, width: int, air: float,
                film_present: np.ndarray, px_per_mm: float, edge_is_low: bool,
-               outer_limit: "int | None" = None, against_plastic: bool = False):
+               outer_limit: "int | None" = None, against_plastic: bool = False,
+               transition: float = EDGE_TRANSITION_FRAC):
     """Candidate perforation runs on one lateral edge of the film band,
     as (start, end_inclusive) line runs, plus the per-line LOCAL film
     edge (rolling median of the tracked edge) used for lateral
@@ -523,7 +533,8 @@ def _hole_runs(green: np.ndarray, lo: int, hi: int, width: int, air: float,
         # visible, "no perforation found").
         edge = np.full(n_lines, float(band_edge))
     else:
-        edge = _track_edge(green, band_edge, air, px_per_mm, edge_is_low, outer_limit)
+        edge = _track_edge(green, band_edge, air, px_per_mm, edge_is_low, outer_limit,
+                           transition)
     local = _rolling_nanmedian(edge, max(3, round(EDGE_TRACK_WINDOW_MM * px_per_mm)))
     ref = np.where(np.isnan(edge), local, edge)
     valid = ~np.isnan(ref)
@@ -830,9 +841,22 @@ def detect(image, *, dpi: float, film: Film = FILM_110) -> ApertureFind:
     plastic_raw = col_medians <= PLASTIC_FRAC * air
     is_plastic = np.zeros_like(plastic_raw)
     min_plastic = PLASTIC_MIN_RUN_MM * px_per_mm
+    col_upper = None
     for (ps, pe) in _true_runs(plastic_raw):
-        if (pe - ps + 1) >= min_plastic:
-            is_plastic[ps:pe + 1] = True
+        if (pe - ps + 1) < min_plastic:
+            continue
+        # A rail reaches the frame's side. A dark run with something else
+        # on BOTH sides may be dense black-and-white film (Test 109: dense
+        # pictures 0.03 x air in the column median, between air on both
+        # sides): it is plastic only if it is dark on (nearly) every line
+        # too -- film is lifted by its printed gaps and rim.
+        if ps > 0 and pe < width - 1:
+            if col_upper is None:
+                col_upper = np.percentile(green[::PLASTIC_UPPER_STEP],
+                                          PLASTIC_UPPER_PERCENTILE, axis=0)
+            if float(np.mean(col_upper[ps:pe + 1] <= PLASTIC_FRAC * air)) < PLASTIC_UPPER_SHARE:
+                continue
+        is_plastic[ps:pe + 1] = True
     is_film = ~is_air & ~is_plastic
     if not is_film.any():
         return ApertureFind(True, None, None, None, False, [], "empty aperture")
@@ -1100,27 +1124,34 @@ def detect(image, *, dpi: float, film: Film = FILM_110) -> ApertureFind:
     if not (touches_air_lo or touches_air_hi):
         reason = "film band not adjacent to air; perforations hidden"
     else:
-        # Holes are looked for on BOTH edges; an edge resting against the rail
-        # (no air outside) is taken as it is, the holes reading as air inside.
-        if touches_air_lo and not touches_air_hi and not touches_plastic_hi:
-            edge_is_low = True
-            runs, local_edge = _hole_runs(green, lo, hi, width, air, film_present, px_per_mm, True, limit_lo)
-        elif touches_air_hi and not touches_air_lo and not touches_plastic_lo:
-            edge_is_low = False
-            runs, local_edge = _hole_runs(green, lo, hi, width, air, film_present, px_per_mm, False, limit_hi)
-        else:
-            runs_lo, local_lo = _hole_runs(green, lo, hi, width, air, film_present, px_per_mm, True,
-                                           limit_lo, against_plastic=touches_plastic_lo)
-            runs_hi, local_hi = _hole_runs(green, lo, hi, width, air, film_present, px_per_mm, False,
-                                           limit_hi, against_plastic=touches_plastic_hi)
-            if runs_lo and not runs_hi:
-                edge_is_low, runs, local_edge = True, runs_lo, local_lo
-            elif runs_hi and not runs_lo:
-                edge_is_low, runs, local_edge = False, runs_hi, local_hi
-            elif runs_lo and runs_hi:
-                edge_is_low, runs, local_edge = True, runs_lo, local_lo  # tie-break: documented above
+        for tr in (EDGE_TRANSITION_FRAC, EDGE_TRANSITION_LIGHT_FRAC):
+            # Holes are looked for on BOTH edges; an edge resting against the rail
+            # (no air outside) is taken as it is, the holes reading as air inside.
+            if touches_air_lo and not touches_air_hi and not touches_plastic_hi:
+                edge_is_low = True
+                runs, local_edge = _hole_runs(green, lo, hi, width, air, film_present, px_per_mm, True, limit_lo,
+                                              transition=tr)
+            elif touches_air_hi and not touches_air_lo and not touches_plastic_lo:
+                edge_is_low = False
+                runs, local_edge = _hole_runs(green, lo, hi, width, air, film_present, px_per_mm, False, limit_hi,
+                                              transition=tr)
             else:
-                edge_is_low, runs, local_edge = None, [], None
+                runs_lo, local_lo = _hole_runs(green, lo, hi, width, air, film_present, px_per_mm, True,
+                                               limit_lo, against_plastic=touches_plastic_lo,
+                                               transition=tr)
+                runs_hi, local_hi = _hole_runs(green, lo, hi, width, air, film_present, px_per_mm, False,
+                                               limit_hi, against_plastic=touches_plastic_hi,
+                                               transition=tr)
+                if runs_lo and not runs_hi:
+                    edge_is_low, runs, local_edge = True, runs_lo, local_lo
+                elif runs_hi and not runs_lo:
+                    edge_is_low, runs, local_edge = False, runs_hi, local_hi
+                elif runs_lo and runs_hi:
+                    edge_is_low, runs, local_edge = True, runs_lo, local_lo  # tie-break: documented above
+                else:
+                    edge_is_low, runs, local_edge = None, [], None
+            if runs:
+                break
         if not runs:
             reason = ("no perforation found near either film edge" if edge_is_low is None
                       else "no perforation found in the film band")
