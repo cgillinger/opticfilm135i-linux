@@ -11,6 +11,20 @@ one exists; "offline" means implemented and tested without the scanner.
   that reads as clear film along transport must now also be flat across
   (`film110.BLANK_TEXTURE_MAX`); 138 of 142 stored apertures unchanged, the
   4 changes all corrections.
+- **`digitize --film 110` scans all six apertures by default** (`--frames`
+  default `1-6`; 135 stays `1-4`). A long 110 strip (up to ~8 images, 227 mm
+  holder) reaches apertures 5-6; a short one costs nothing, the
+  stop-at-empty rule ends the run after the first empty aperture that
+  follows film. Offline test: an 8-image strip in both placements numbers
+  all eight and leaves nothing missing.
+- **110 on the plain path (`--no-ir`): coverage no longer depends on film
+  density** (offline). When the central-band verdict fails, coverage is
+  measured on the bare air beside the strip
+  (`aperture_crop.measure_coverage_side_band`): column bands that verify
+  and show the holder's own opening length (35.92 mm ± 1.0), agreeing
+  within 0.3 mm. Manifest `coverage_source: "visible-side"`; otherwise the
+  usual refusal, reason naming both failures. 135 and dual paths unchanged
+  (docs/film-110.md §10).
 
 ## v0.2.6 — 2026-10-26
 

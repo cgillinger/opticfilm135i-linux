@@ -437,8 +437,9 @@ docs/replay-analysis.md); it is off by default and not hardware-verified.
 `of135i digitize` runs one strip end to end — load, scan the strip's
 frames, eject — into a resumable staging tree, and records each strip in
 an append-only manifest. `--frames` says how long the strip is; it
-defaults to `1-4`, so a four-frame strip is never scanned as six. Use
-`--frames 1-6` for a full-length strip. Run it once per strip; the roll number advances
+defaults to `1-4` for 135 (so a four-frame strip is never scanned as six;
+use `--frames 1-6` for a full-length strip) and to `1-6` for `--film 110`,
+where the stop-at-empty rule ends a short strip early. Run it once per strip; the roll number advances
 from the manifest **and** the roll directories already on disk (per
 `--prefix`), so you can stop and pick up where you left off.
 
