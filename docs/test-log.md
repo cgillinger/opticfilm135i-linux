@@ -7506,3 +7506,28 @@ recognises pass 2 by content. Data: the application's staging tree
 (harness-tmp/t107-20261026). Also reported by the application, not
 analysed here: in pass 1 the IR channel was clipped (84–100 % at 65535)
 and visible R clipped in the clear base; pass 2 and roll 2 normal.
+
+**Test 108 — production 110 series, a thin photograph read as a blank
+(2026-10-28, through the application, analysed offline).** Rolls of colour
+110 scanned through the application on master (v0.2.6). The application
+reported a whole photograph in a pass-3 aperture that no record delivered;
+the record listed that frame position as a **blank**. The picture is an
+underexposed, low-contrast photograph: its interior reads 0.85+ of the clear
+base, and along transport (the per-line median over the band) it varies by
+only 4.8 % (std/mean) -- under `IMAGE_VARIATION_FRAC` 0.10, so it passed as
+clear film; ACROSS the picture its pixels vary 19 %. The same photograph was
+a "blank" in all three passes of the roll. Fix (offline): a window that is
+flat along transport is a blank only if it is also flat across
+(`film110.BLANK_TEXTURE_MAX` 0.06: robust spread of 0.25 mm block means about
+a fitted plane, over the picture's own columns, blocks touching air dropped).
+Measured on the stored frames: 10 real blank windows 0.014–0.031 (including a
+leader with its punched hole and edge print, and a graded fog), 84 real whole
+images 0.126 and up, the photograph 0.150–0.163. Old vs new detector over
+142 stored 110 apertures: 138 identical; 4 changed, all corrections -- the
+photograph found in its three passes (rows 244–2634 in the pass-3 aperture,
+where the application had cut it out by hand at 253–2624) and the tail of a
+real photograph at the top of another roll's aperture, previously read as
+clear film. No real blank was lost. Also reported, not changed: in a pass
+whose strip front end lay out of view and whose seating fell between the two
+placement phases (A −4.3 mm, B +8.5 mm), numbering refused as designed and
+the two whole images were written unnumbered (exit 5).

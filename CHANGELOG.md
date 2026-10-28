@@ -6,6 +6,12 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- Test 108 (2026-10-28, offline on production frames): **a thin, low-contrast
+  110 photograph is no longer taken for a blank frame position.** A window
+  that reads as clear film along transport must now also be flat across
+  (`film110.BLANK_TEXTURE_MAX`); 138 of 142 stored apertures unchanged, the
+  4 changes all corrections.
+
 ## v0.2.6 — 2026-10-26
 
 - Test 107 (2026-10-26, offline): **film in the white reference's light path

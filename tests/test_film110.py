@@ -1138,6 +1138,46 @@ def test_blank_window_between_gaps_is_reported_and_is_no_image():
         print(f"test_blank_window_between_gaps_is_reported_and_is_no_image OK ({dpi} dpi)")
 
 
+def _thin_window(arr, ppm, lo, hi, window, amp, ramp=0.0):
+    """Paint the blank fixture's window as a thin picture: clear base x
+    (0.93 + amp x sin x sin) over 3 x 4 mm, plus a lengthwise `ramp`
+    (fog). The per-line median over the band stays ~flat -- the along-
+    transport profile cannot tell it from clear film (Test 108)."""
+    a = arr.astype(np.float64)
+    l0, l1 = int(round(window[0] * ppm)), int(round(window[1] * ppm))
+    c0 = lo + int(round(0.6 * ppm))
+    rr, cc = np.mgrid[l0:l1, c0:hi]
+    pat = 0.93 + amp * np.sin(2 * np.pi * cc / (3.0 * ppm)) * np.sin(2 * np.pi * rr / (4.0 * ppm))
+    pat = pat + ramp * (rr - l0) / max(1, l1 - l0)
+    for ci, key in enumerate(CHANNELS):
+        a[l0:l1, c0:hi, ci] = CLEAR[key] * pat
+    return np.clip(a, 0, 65535).astype(np.uint16)
+
+
+def test_thin_low_contrast_picture_is_an_image_not_a_blank():
+    """Test 108: an underexposed photograph reads as clear film along
+    transport; texture across the window makes it an image."""
+    for dpi in DPIS:
+        arr, ppm, lo, hi, imgs, window = _blank_fixture(dpi)
+        a = _thin_window(arr, ppm, lo, hi, window, amp=0.12)
+        find = film110.detect(a, dpi=dpi)
+        assert find.blanks == [], (dpi, find.blanks)
+        assert len(find.frames) == 3, (dpi, [(f.line0 / ppm, f.line1 / ppm) for f in find.frames])
+        mid = sorted(find.frames, key=lambda f: f.line0)[1]
+        assert abs(mid.line0 / ppm - window[0]) <= 0.4, (dpi, mid.line0 / ppm, window)
+        print(f"test_thin_low_contrast_picture_is_an_image_not_a_blank OK ({dpi} dpi)")
+
+
+def test_fogged_blank_with_a_gradient_stays_a_blank():
+    """A plane (fog gradient) is not texture: the window stays a blank."""
+    for dpi in DPIS:
+        arr, ppm, lo, hi, imgs, window = _blank_fixture(dpi)
+        a = _thin_window(arr, ppm, lo, hi, window, amp=0.0, ramp=0.05)
+        find = film110.detect(a, dpi=dpi)
+        assert len(find.blanks) == 1 and len(find.frames) == 2, (dpi, find.blanks, len(find.frames))
+        print(f"test_fogged_blank_with_a_gradient_stays_a_blank OK ({dpi} dpi)")
+
+
 def test_blank_is_not_reported_where_the_film_ends_inside_the_window():
     for dpi in DPIS:
         arr, ppm, lo, hi, imgs, window = _blank_fixture(dpi)
@@ -1343,6 +1383,8 @@ def main() -> int:
         test_frame_locator_with_the_band_hidden_under_rails,
         test_blank_window_between_gaps_is_reported_and_is_no_image,
         test_blank_is_not_reported_where_the_film_ends_inside_the_window,
+        test_thin_low_contrast_picture_is_an_image_not_a_blank,
+        test_fogged_blank_with_a_gradient_stays_a_blank,
         test_leader_beyond_the_free_start_is_not_a_blank_and_pictures_have_none,
         test_gap_survives_a_thin_scratch_and_dust,
         test_blank_frame_is_not_an_image_when_a_prediction_runs_into_the_gap,

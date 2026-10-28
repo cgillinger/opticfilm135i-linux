@@ -1122,6 +1122,13 @@ Real-data A/B (98 stored apertures, 143 hole frames): identical except two
 apertures whose "image" was an unexposed frame (Nastatestigen roll 1 p1-f1,
 Testigen roll 2 p1-f1), now blank.
 
+A window that is clear along transport is a blank only if it is also flat
+**across** (Test 108): the per-line median averages a thin, low-contrast
+picture away, so the robust spread of 0.25 mm block means about a fitted
+plane, over the picture's own columns (air blocks -- a leader's punched hole --
+dropped), must stay under `BLANK_TEXTURE_MAX` 0.06. Real blanks measured
+0.014–0.031, real images 0.126 and up.
+
 ### 15.8 Recognising a pass on a strip of near-duplicate shots (Test 106 pass 3)
 
 `decide_orientation` still decides slide against turn by what the pictures

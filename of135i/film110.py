@@ -583,6 +583,22 @@ IMAGE_VARIATION_FRAC = 0.10       # std/mean of the profile inside a window that
 PLAUSIBILITY_TRIM_MM = 1.0        # ... measured on the window's interior: its ends may hold the
                                   # aperture edge or the next frame's border (Test 104: a clear
                                   # leader passed as "varying" on its first dark lines alone)
+# A window that passes as clear film along transport is a blank only if it
+# is also flat ACROSS: the along-transport profile is a per-line median
+# over the band, which averages a thin, low-contrast picture away (Test
+# 108: an underexposed photograph of leaves read as a blank in three
+# passes and was never delivered). The texture is the robust spread
+# (1.4826 x MAD) of block means about a fitted plane -- the plane takes a
+# fog gradient, blocks touching air are dropped (a leader's punched hole)
+# -- over the picture's own columns, relative to their median. Measured
+# on 10 real blank windows 0.014-0.031 (incl. a leader with its hole and
+# edge print, and a graded fog), on 84 real whole images 0.126 and up,
+# the leaves 0.150-0.163.
+BLANK_TEXTURE_MAX = 0.06
+BLANK_TEXTURE_BLOCK_MM = 0.25
+BLANK_TEXTURE_COL_FRAC = 0.6       # picture columns: at least this fraction of the window's film level
+BLANK_TEXTURE_TRIM_MM = 1.0        # ... trimmed by this on each side (the printed border's edge)
+BLANK_TEXTURE_MIN_MM = 3.0         # fewer picture columns than this: no texture verdict
 RAIL_GUARD_MM = 0.4             # lateral refinement stays this far from the rail-side band edge
 RIM_GUARD_MM = 1.0              # ... and this far inside the perforated film edge (rim 0.6 mm, hole 0.6-2.1 mm)
 PRODUCT_PAD_MM = 0.25           # the CLI grows a whole image's crop by this on every side
@@ -652,6 +668,41 @@ FRAME_EXTEND_MIN_RUN_MM = 3.0      # only a flat run at least this long is exten
                                    # the border's 0.122, inside the tolerance, and the 8 mm gap grew to 10 mm)
 BLANK_END_ZONE_MM = 2.5            # gap lines this close to a window's ends are left out of its clear-film test
 BLANK_EDGE_TOL_MM = 1.0            # a blank window may reach this far past the aperture's lines (clipped)
+
+
+def _window_texture(win: np.ndarray, air: float, px_per_mm: float) -> "float | None":
+    """BLANK_TEXTURE_* measure of `win` (lines, columns of the film band,
+    green): None when too few picture columns or blocks to judge. Pure."""
+    if win.size == 0:
+        return None
+    cm = np.median(win, axis=0)
+    film = cm[cm < AIR_FRAC * air]
+    if film.size == 0:
+        return None
+    level = float(np.median(film))
+    s, e = _longest_true_run((cm >= BLANK_TEXTURE_COL_FRAC * level) & (cm < AIR_FRAC * air))
+    trim = int(round(BLANK_TEXTURE_TRIM_MM * px_per_mm))
+    c0, c1 = s + trim, e - trim
+    if (c1 - c0) < BLANK_TEXTURE_MIN_MM * px_per_mm:
+        return None
+    x = win[:, c0:c1]
+    b = max(1, int(round(BLANK_TEXTURE_BLOCK_MM * px_per_mm)))
+    h, w = (x.shape[0] // b) * b, (x.shape[1] // b) * b
+    if h == 0 or w == 0:
+        return None
+    blocks = x[:h, :w].reshape(h // b, b, w // b, b)
+    means = blocks.mean(axis=(1, 3))
+    keep = blocks.max(axis=(1, 3)) < AIR_FRAC * air
+    if keep.sum() < 20:
+        return None
+    yy, xx = np.mgrid[0:means.shape[0], 0:means.shape[1]]
+    a = np.c_[np.ones(int(keep.sum())), yy[keep], xx[keep]]
+    coef, *_ = np.linalg.lstsq(a, means[keep], rcond=None)
+    res = means[keep] - a @ coef
+    med = float(np.median(means[keep]))
+    if med <= 0:
+        return None
+    return 1.4826 * float(np.median(np.abs(res))) / med
 
 
 def _frame_gaps(rel: np.ndarray, film_present: np.ndarray, px_per_mm: float,
@@ -910,7 +961,12 @@ def detect(image, *, dpi: float, film: Film = FILM_110) -> ApertureFind:
         seg_std = float(np.std(seg))
         if (seg_mean >= IMAGE_DENSITY_FRAC * clear_base
                 and seg_std < IMAGE_VARIATION_FRAC * max(seg_mean, 1.0)):
-            return None, -1        # reads as clear film (a blank, for the frame locator)
+            # flat along transport; a blank only if flat across too
+            r0, r1 = clo + zone, chi - zone
+            tex = (_window_texture(green[r0:r1, lo:hi], air, px_per_mm)
+                   if r1 > r0 else None)
+            if tex is None or tex < BLANK_TEXTURE_MAX:
+                return None, -1    # reads as clear film (a blank, for the frame locator)
 
         r_line0, ok_l0 = _refine_edge(interior_profile, line0, px_per_mm, outward=-1)
         r_line1, ok_l1 = _refine_edge(interior_profile, line1, px_per_mm, outward=+1)
