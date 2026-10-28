@@ -7594,3 +7594,13 @@ correlated 0.86 at a wrong shift. Passes that both ran without IR are now
 compared in log intensity (colour always has IR and keeps the linear
 check); the strip is recognised at 22.25 mm and its missing photograph
 delivered numbered.
+
+**Test 110, hardware confirmation (2026-10-28, same evening, the
+application on 6fef9a8).** The strip whose last picture had been lost
+(roll 5) was rebuilt offline from its stored passes: 4 of 4 delivered, the
+last picture located by the previous aperture's hole. The last strip of the
+evening (roll 6, bent, with a crease through picture 2) was scanned live on
+the fixed code: three passes, pass 1 located the last picture by the
+previous aperture's hole, passes 2 and 3 were recognised by content
+without IR (log intensity), roll done with 4 of 4 delivered. All the
+operator's 110 strips are now digitised.

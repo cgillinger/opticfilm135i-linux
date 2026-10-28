@@ -6,6 +6,8 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+## v0.2.7 — 2026-10-28
+
 - Test 110 (2026-10-28, black-and-white 110, offline on the stored frames):
   **no more lost or unnumbered photographs from three gaps.** A hole's
   prediction past an aperture's end is carried to the next aperture (a
