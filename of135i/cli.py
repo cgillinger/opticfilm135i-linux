@@ -484,6 +484,13 @@ class Film110State:
         self.slot = slot
         self.strips = strips
         self.anchor_mm: "float | None" = None
+        # A strip seated between the two placements' phases (pass 1, front end
+        # not seen): numbered from its first image on the A grid's numbers,
+        # with this phase instead of A's (`_film110_protocol_number`).
+        self.phase_mm: "float | None" = None
+        # (aperture, [(g0, g1) mm]): images a hole of `aperture` predicts
+        # past its end, tried in the next aperture (film110.detect carried).
+        self.carry: "tuple | None" = None
         from . import film110
         self.first_aperture = (slot - 1) * film110.SLOT_APERTURES + 1
         self.last_aperture = self.first_aperture + film110.SLOT_APERTURES - 1
@@ -673,7 +680,15 @@ def _film110_process_aperture(args: argparse.Namespace, state: Film110State,
         state.placement_given = True
         state.placement_source = "given"
 
-    find = film110.detect(vis_crop, dpi=args.dpi, film=_holder.FILM_110)
+    ppm = args.dpi / film110.MM_PER_INCH
+    carried = []
+    if state.carry is not None and state.carry[0] == aperture - 1:
+        base = film110.global_position_mm(aperture, 0.0, args.dpi)
+        carried = [((g0 - base) * ppm, (g1 - base) * ppm) for (g0, g1) in state.carry[1]]
+    find = film110.detect(vis_crop, dpi=args.dpi, film=_holder.FILM_110, carried=carried)
+    state.carry = (aperture, [(film110.global_position_mm(aperture, l0, args.dpi),
+                               film110.global_position_mm(aperture, l1, args.dpi))
+                              for (l0, l1) in find.beyond])
     if find.empty:
         print(f"110: aperture {aperture} — empty")
         return
@@ -772,6 +787,19 @@ def _film110_process_aperture(args: argparse.Namespace, state: Film110State,
               f"image from the previous aperture")
 
 
+def _film110_protocol_number(state: "Film110State", aperture: int, line0: float,
+                             dpi: float) -> tuple:
+    """`film110.image_number` for the state's placement; a strip numbered
+    from its own first image (`state.phase_mm`, placement "free") uses that
+    phase on the same grid."""
+    from . import film110
+    if state.phase_mm is None:
+        return film110.image_number(aperture, line0, dpi, state.placement)
+    g = film110.global_position_mm(aperture, line0, dpi)
+    k = (g - state.phase_mm) / film110.FILM_110.pitch_mm
+    return round(k) + 1, (k - round(k)) * film110.FILM_110.pitch_mm
+
+
 def _film110_apply_front_shift(state: Film110State, n: int, g: float) -> int:
     """Protocol number -> frame-position number counted from the strip's
     front end (docs/film-110.md §15). Only a pass that numbers by the
@@ -819,7 +847,7 @@ def _film110_number_blank(args: argparse.Namespace, state: Film110State,
             if inferred is None:
                 return
             state.placement, state.placement_source = inferred, "inferred"
-        n, residual = film110.image_number(aperture, window[0], args.dpi, state.placement)
+        n, residual = _film110_protocol_number(state, aperture, window[0], args.dpi)
         if abs(residual) > film110.PLACEMENT_PHASE_TOLERANCE_MM or n < 1:
             return
         n = _film110_apply_front_shift(state, n, g)
@@ -966,26 +994,46 @@ def _film110_number_aperture(args: argparse.Namespace, state: Film110State,
         else:
             if state.placement is None:
                 inferred, _res = film110.infer_placement(aperture, fr.line0, args.dpi)
-                if inferred is None:
+                if inferred is None and not deliver:
+                    # A split (or a hole's ghost before the strip) between
+                    # the phases anchors nothing: as before, a later whole
+                    # image decides.
                     _na, res_a = film110.image_number(aperture, fr.line0, args.dpi, "A")
                     _nb, res_b = film110.image_number(aperture, fr.line0, args.dpi, "B")
                     msg = _film110_write_off_grid(
                         args, state, aperture, it, emit,
                         f"image at {pos_mm:.1f} mm lies between the two "
                         f"placements' phases (A off by {res_a:+.1f} mm, B off "
-                        f"by {res_b:+.1f} mm) -> give --placement A or B")
+                        f"by {res_b:+.1f} mm)")
                     parts.append(msg)
                     state.problems.append(msg)
                     continue
-                state.placement = inferred
-                state.placement_source = "inferred"
+                if inferred is None:
+                    # Midway between the two phases (Test 108/110: three strips
+                    # in one evening, all seated ~4.5 mm before A, front end
+                    # out of view): number from this image on A's grid of
+                    # numbers instead of refusing -- the numbers are
+                    # provisional until the front end is seen, which then
+                    # renumbers the roll (number_basis), and a later pass
+                    # recognises the strip by content against them.
+                    n_a, res_a = film110.image_number(aperture, fr.line0, args.dpi, "A")
+                    _nb, res_b = film110.image_number(aperture, fr.line0, args.dpi, "B")
+                    state.placement = "free"
+                    state.placement_source = "between phases"
+                    state.phase_mm = g - (n_a - 1) * film110.FILM_110.pitch_mm
+                    note = (f"placement free (between the phases: A off by "
+                            f"{res_a:+.1f} mm, B off by {res_b:+.1f} mm; numbered "
+                            f"from this image); ")
+                    state.announced = True
+                else:
+                    state.placement = inferred
+                    state.placement_source = "inferred"
             if not state.announced:
                 how = "given" if state.placement_given else "inferred"
                 note = f"placement {state.placement} ({how}); "
                 state.announced = True
 
-            n, residual = film110.image_number(aperture, fr.line0, args.dpi,
-                                               state.placement)
+            n, residual = _film110_protocol_number(state, aperture, fr.line0, args.dpi)
             if (abs(residual) > film110.PLACEMENT_PHASE_TOLERANCE_MM
                     or n < 1):
                 msg = _film110_write_off_grid(
@@ -1199,9 +1247,12 @@ def _film110_finalize(args: argparse.Namespace, state: Film110State, roll: int,
                 end_shift = None            # the two ends disagree: no evidence
                 break
             end_shift = e
+    # Black-and-white (both passes without IR -- colour always has it) is
+    # compared in density: its pictures sit near black (Test 110).
+    log = not getattr(args, "ir", True) and ref.get("ir") is False
     dec = film110.decide_orientation(
         new, old, pos_range=film110.slot_position_range(state.slot, state.strips),
-        end_shift=end_shift)
+        end_shift=end_shift, log=log)
     if dec is None:
         state.aborted = (
             f"could not tell whether the strip slid or was turned since "

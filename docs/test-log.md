@@ -7567,3 +7567,30 @@ aperture stays unlocatable in a single pass: the strip's last picture whose
 hole lies at the end of the previous aperture and which is followed by
 fogged film instead of a printed gap (pass 1 aperture 3) -- the advice does
 not call the roll done, and the next pass delivers it.
+
+**Test 110 — the rest of the evening's black-and-white 110 (2026-10-28,
+through the application on 8213158, three strips, analysed offline on the
+stored frames).** Detection held (side-band coverage on most apertures);
+three numbering/locating gaps lost or unnumbered photographs, all fixed:
+(1) **a strip's last picture** whose hole lies at the end of the previous
+aperture and which is followed by fogged film (no hole, no dark printed gap
+in view) was never located (one strip: a whole photograph in the frame, not
+delivered). `detect` now reports the image a hole predicts past the
+aperture's end (`ApertureFind.beyond`); the caller carries it to the next
+aperture, where it is tried like a frame-locator candidate (same
+plausibility and edge refinement, `located_by` "previous aperture's
+hole"). Rebuild of that strip: 4 of 4. (2) **pass 1 seated between the
+two placements' phases** (three strips today, A off by −4.3 to −4.9 mm,
+front end out of view) refused to number: every whole image unnumbered,
+and the next pass had no reference to recognise against. Now the strip is
+numbered from its first WHOLE image on A's grid of numbers (placement
+"free", numbers provisional until the front end is seen; a split or a
+hole's ghost anchors nothing). Rebuild of one such strip: both photographs
+numbered, the pass-2 recognition agrees. (3) **recognition between passes**
+failed on dense black-and-white: the true slide (22 mm) paired the same
+photographs at correlation 0.24–0.49 against the 0.5 needed (linear
+thumbnails; the pictures sit near black), and two near-duplicate shots
+correlated 0.86 at a wrong shift. Passes that both ran without IR are now
+compared in log intensity (colour always has IR and keeps the linear
+check); the strip is recognised at 22.25 mm and its missing photograph
+delivered numbered.

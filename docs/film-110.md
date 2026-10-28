@@ -513,12 +513,20 @@ are kept beside them as evidence.
   threshold of 0.9 x air when 0.6 finds no hole. The printed gaps on this film
   are LIGHTER than the pictures (0.09 against 0.03), so the frame locator
   (built for dark printed borders) does not help: pictures are located by
-  their holes. A strip's last picture whose hole lies in the previous
-  aperture and which is followed by fogged film is not located in that
-  pass. **Positive (slide) 110** is untested.
+  their holes; a strip's last picture whose hole lies in the previous
+  aperture (followed by fogged film) is located by that hole's prediction
+  carried over (`ApertureFind.beyond`, `located_by` "previous aperture's
+  hole", Test 110). Passes without IR are recognised in log intensity
+  (the pictures sit near black). **Positive (slide) 110** is untested.
+- **A pass-1 strip between the placement phases** (front end out of view)
+  is numbered from its first whole image: placement "free", the A grid's
+  numbers, provisional until the front end is seen (Test 110: three strips
+  in one evening sat ~4.5 mm before A). Before, every whole image of such a
+  pass was written unnumbered and the next pass had nothing to recognise.
 - **Placement inference is one operator's phases, n = 2 strips.** A strip
-  seated 4–9 mm off both phases (visibly "between" A and B) is refused, not
-  guessed; give `--placement`. A strip seated so far off that it lands near
+  seated 4–9 mm off both phases (visibly "between" A and B) is numbered from
+  its first whole image (placement "free", see below; until Test 110 it was
+  refused and its images written unnumbered). A strip seated so far off that it lands near
   the *other* phase is inferred as that placement — the numbering is then
   consistent with where the strip actually is, which is what matters, but
   the advice "take it in the other placement" refers to the inferred one.

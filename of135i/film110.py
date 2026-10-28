@@ -171,6 +171,12 @@ class ApertureFind:
     # window between printed-border gaps that reads as clear film (plausibility
     # test failed), lying wholly on film. They consume a number, never a product.
     blanks: list = field(default_factory=list)
+    # Images a hole of this aperture predicts past its last line (the image
+    # after the strip's last hole here, lying in the NEXT aperture):
+    # [(line0, line1)] in this aperture's lines. The caller carries them on
+    # (`detect(carried=...)`): on black-and-white film the last picture of a
+    # strip has no hole and no dark printed gap of its own in view (Test 110).
+    beyond: list = field(default_factory=list)
 
 
 # ------------------------------------------------------------- small helpers
@@ -812,7 +818,7 @@ def _frame_gaps(rel: np.ndarray, film_present: np.ndarray, px_per_mm: float,
     return out
 
 
-def detect(image, *, dpi: float, film: Film = FILM_110) -> ApertureFind:
+def detect(image, *, dpi: float, film: Film = FILM_110, carried=()) -> ApertureFind:
     """Find every 110 image predicted inside one aperture-registered
     image. Never raises on image content -- an aperture the detector
     cannot resolve comes back with `reason` set and `frames` empty; the
@@ -1159,6 +1165,7 @@ def detect(image, *, dpi: float, film: Film = FILM_110) -> ApertureFind:
     frames_out: list = []
     hole_clear: list = []
     blanks_out: list = []
+    beyond_out: list = []
     lateral_known = None
     if runs:
         perforated_edge_col = lo if edge_is_low else hi
@@ -1195,6 +1202,12 @@ def detect(image, *, dpi: float, film: Film = FILM_110) -> ApertureFind:
             frames_out, hole_clear = frames_rev, clear_rev
         else:
             frames_out, hole_clear = frames_normal, clear_normal
+        # The image a hole predicts past the aperture's end, carried to the
+        # next aperture by the caller -- only while the film runs to the end.
+        if film_line_end is None:
+            for (l0, l1, _p) in _candidates(runs, film, px_per_mm, score_rev > score_normal):
+                if l0 > n_lines - min_overlap_px:
+                    beyond_out.append((float(l0), float(l1)))
 
     # e. The frame locator (independent of the holes): the printed border
     # between two pictures reads as a flat, dark gap along transport.
@@ -1220,15 +1233,17 @@ def detect(image, *, dpi: float, film: Film = FILM_110) -> ApertureFind:
         overlap_px = FRAME_MAX_OVERLAP_MM * px_per_mm
         found = []
         blank_windows = list(hole_clear)
-        for (line0, line1) in merged:
+        cands = [(l0, l1, "frame") for (l0, l1) in merged]
+        cands += [(float(l0), float(l1), "previous aperture's hole") for (l0, l1) in carried]
+        for (line0, line1, tag) in cands:
             fr, sc = _refine_candidate(line0, line1, None, "unknown", lateral_known)
             if fr is not None:
-                found.append((sc, fr))
+                found.append((sc, fr, tag))
             elif sc < 0:
                 blank_windows.append((line0, line1))
         found.sort(key=lambda t: (-t[0], t[1].line0))   # the better-confirmed first
         added = []
-        for _sc, fr in found:
+        for _sc, fr, tag in found:
             match = next((h for h in hole_frames if abs(h.line0 - fr.line0) < match_px), None)
             if match is not None:
                 match.located_by = "holes+frame"
@@ -1240,7 +1255,7 @@ def detect(image, *, dpi: float, film: Film = FILM_110) -> ApertureFind:
             if any(min(fr.line1, o.line1) - max(fr.line0, o.line0) > overlap_px
                    for o in hole_frames + added):
                 continue
-            fr.located_by = "frame"
+            fr.located_by = tag
             added.append(fr)
         if added:
             frames_out = sorted(frames_out + added, key=lambda f: f.line0)
@@ -1276,7 +1291,8 @@ def detect(image, *, dpi: float, film: Film = FILM_110) -> ApertureFind:
         reason = ""
     return ApertureFind(False, (lo, hi), film_line_start, film_line_end,
                          leading_continuation, frames_out, reason, rail_hidden_mm,
-                         film_runs=film_runs_out, blanks=blanks_out)
+                         film_runs=film_runs_out, blanks=blanks_out,
+                         beyond=beyond_out)
 
 
 def product_bounds(find: FrameFind, *, dpi: float | None = None, pad_mm: float = 0.0,
@@ -1600,7 +1616,8 @@ def patch(arr, px_per_mm: float):
     return a.astype(np.float32)
 
 
-def pair_correlation(new_item, old_item, kind: str, film: Film = FILM_110):
+def pair_correlation(new_item, old_item, kind: str, film: Film = FILM_110,
+                     log: bool = False):
     """How much two sightings look like the same photograph. `new_item` =
     (position_mm, u0, u1, patch), `old_item` = (number, position_mm, u0,
     u1, patch): u0..u1 is the part of the image the sighting shows, in mm
@@ -1631,11 +1648,21 @@ def pair_correlation(new_item, old_item, kind: str, film: Film = FILM_110):
             sub = rows(npatch, nu0, nu1, a, b)[::-1, ::-1]
         else:
             sub = rows(npatch, nu0, nu1, a, b)
-        tn = thumbnail(sub, size)
-        to = thumbnail(rows(opatch, ou0, ou1, a, b), size)
+        tn = thumbnail(_log_patch(sub) if log else sub, size)
+        to = thumbnail(_log_patch(rows(opatch, ou0, ou1, a, b)) if log else
+                       rows(opatch, ou0, ou1, a, b), size)
     except ValueError:
         return None
     return thumb_correlation(tn, to)
+
+
+def _log_patch(a):
+    """A patch in density (log intensity) for `pair_correlation(log=True)`:
+    a dense black-and-white negative holds its picture in a narrow band
+    near black, where a few bright areas dominate a linear thumbnail
+    (Test 110: the same photograph in two passes correlated 0.24-0.49
+    linear; the true slide won in log). Pure."""
+    return np.log(np.maximum(np.asarray(a, dtype=np.float64), 1.0))
 
 
 def thumb_correlation(a, b) -> float:
@@ -1663,7 +1690,7 @@ def _best_cluster(pairs):
 
 
 def decide_orientation(new, old, film: Film = FILM_110, *,
-                       pos_range=None, end_shift=None):
+                       pos_range=None, end_shift=None, log: bool = False):
     """Did the strip SLIDE or was it TURNED since an earlier record, and by
     how much? `new`: [(position_mm, u0, u1, patch)] -- every sighting of
     this run, whole or split; `old`: [(number, position_mm, u0, u1,
@@ -1695,10 +1722,10 @@ def decide_orientation(new, old, film: Film = FILM_110, *,
         p = item[0]
         for oitem in old:
             r = oitem[1]
-            c = pair_correlation(item, oitem, "same", film)
+            c = pair_correlation(item, oitem, "same", film, log)
             if c is not None:
                 slide.append((p - r, c, ni))
-            c = pair_correlation(item, oitem, "turned", film)
+            c = pair_correlation(item, oitem, "turned", film, log)
             if c is not None:
                 turned.append((p + r, c, ni))
     if not slide and not turned:

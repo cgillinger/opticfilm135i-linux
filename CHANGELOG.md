@@ -6,6 +6,14 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- Test 110 (2026-10-28, black-and-white 110, offline on the stored frames):
+  **no more lost or unnumbered photographs from three gaps.** A hole's
+  prediction past an aperture's end is carried to the next aperture (a
+  strip's last picture, followed by fogged film); a pass-1 strip seated
+  between the placement phases is numbered from its first whole image
+  (placement "free", provisional) instead of refused; passes without IR are
+  recognised in log intensity.
+
 - Test 109 (2026-10-28, first black-and-white 110 strip, fixed offline on
   the stored frames): **dense black-and-white 110 is detected.** A dark run
   between other columns must be dark at the 95th percentile too to count as

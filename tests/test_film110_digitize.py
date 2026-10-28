@@ -1890,8 +1890,67 @@ def test_long_110_strip_reaches_apertures_5_and_6_in_both_placements():
                 assert f"image{n}.tiff" in names, (n, names)
 
 
+def test_pass_one_between_the_phases_is_numbered_from_its_first_whole_image():
+    """Test 110: three strips in one evening were seated ~4.5 mm before
+    placement A with the front end out of view; pass 1 refused to number
+    and every whole image went out unnumbered, leaving the next pass no
+    reference. Now the strip is numbered from its first whole image
+    (placement "free", provisional numbers), and a pass 2 slid by a film
+    pitch recognises it and agrees."""
+    with _content():
+        first = film110.placement_phase_mm("A") + 6.4       # midway between A and B
+        with tempfile.TemporaryDirectory() as d:
+            rc, rec, scans, out, err = _run(d, _holder_apertures(_starts_for(first), None))
+            assert rc == 0, (rc, err[-400:])
+            assert rec["placement"] == "free", rec["placement"]
+            assert not any("between the two placements" in p for p in rec["problems"]
+                           if "whole" in p), rec["problems"]
+            nums = sorted(e["number"] for e in rec["images"] if e["whole"])
+            assert nums and None not in nums, rec["images"]
+            assert all(e["main"] for e in rec["images"] if e["whole"]), rec["images"]
+            by1 = {e["number"]: e["position_mm"] for e in rec["images"]}
+            rc, rec2, *_ = _run(d, _holder_apertures(_starts_for(first + 10.6), None))
+            assert rc == 0 and rec2["numbering"] == "content", (rc, rec2["numbering"])
+            for e in rec2["images"]:
+                if e["number"] in by1 and by1[e["number"]] is not None:
+                    assert abs(e["position_mm"] - by1[e["number"]] - 10.6) < 1.0, (e, by1)
+    print("test_pass_one_between_the_phases_is_numbered_from_its_first_whole_image OK")
+
+
+def test_black_and_white_passes_are_compared_in_density():
+    """Test 110: the content check compares two passes in log intensity
+    exactly when neither was scanned with IR (black-and-white); colour
+    (always IR) keeps the linear comparison."""
+    seen = []
+    orig_dec = film110.decide_orientation
+    orig_cmd = cli._cmd_digitize
+
+    def dec(*a, **k):
+        seen.append(k.get("log"))
+        return orig_dec(*a, **k)
+    try:
+        film110.decide_orientation = dec
+        for ir in (False, True):
+            def cmd(args, ir=ir):
+                args.ir = ir
+                return orig_cmd(args)
+            cli._cmd_digitize = cmd
+            seen.clear()
+            with _content(), tempfile.TemporaryDirectory() as d:
+                _run(d, _holder_apertures(_starts_for(3.5), None))
+                rc, rec, *_ = _run(d, _holder_apertures(_starts_for(3.5 + 10.6), None))
+                assert rc == 0 and rec["numbering"] == "content", (ir, rc)
+            assert seen == [not ir], (ir, seen)
+    finally:
+        film110.decide_orientation = orig_dec
+        cli._cmd_digitize = orig_cmd
+    print("test_black_and_white_passes_are_compared_in_density OK")
+
+
 def main() -> int:
     tests = [
+        test_pass_one_between_the_phases_is_numbered_from_its_first_whole_image,
+        test_black_and_white_passes_are_compared_in_density,
         test_slot_constants_and_anchored_numbering,
         test_two_strips_run_a_makes_two_rolls,
         test_second_run_fills_both_rolls,

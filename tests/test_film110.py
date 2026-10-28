@@ -1178,7 +1178,8 @@ def test_fogged_blank_with_a_gradient_stays_a_blank():
         print(f"test_fogged_blank_with_a_gradient_stays_a_blank OK ({dpi} dpi)")
 
 
-def _bw_dense_fixture(dpi, *, film_end_mm=None, seed=3):
+def _bw_dense_fixture(dpi, *, film_end_mm=None, seed=3, starts=None, holes=True,
+                      fog_from_mm=None):
     """Black-and-white 110 as Test 109 measured it (fractions of air): a
     DENSE picture (0.03, textured) as dark as the rail (0.02 here: 0.015),
     a LIGHT printed gap (0.09), a clear rim and clear zone round each hole
@@ -1197,7 +1198,8 @@ def _bw_dense_fixture(dpi, *, film_end_mm=None, seed=3):
     g[:, f1 - rim:f1] = 0.78                     # clear rim at the perforated edge
     L, P = FILM_110.image_mm[0], FILM_110.pitch_mm
     lead = FILM_110.perforation_lead_mm
-    starts = [3.0 - P, 3.0, 3.0 + P]
+    if starts is None:
+        starts = [3.0 - P, 3.0, 3.0 + P]
     col0 = 18.0 - FILM_110.image_lateral_offset_mm - FILM_110.image_mm[1]
     col1 = 18.0 - FILM_110.image_lateral_offset_mm
     for st in starts:
@@ -1206,10 +1208,12 @@ def _bw_dense_fixture(dpi, *, film_end_mm=None, seed=3):
             pic = 0.03 * (1.0 + 0.4 * rng.standard_normal((b - a, c(col1) - c(col0))))
             g[a:b, c(col0):c(col1)] = np.clip(pic, 0.005, 0.2)
         h1 = st - lead; h0 = h1 - 1.6               # the hole before the picture
-        if 0 < c(h1) and c(h0) < n:
+        if holes and 0 < c(h1) and c(h0) < n:
             hz0, hz1 = max(0, c(h0 - 0.5)), min(n, c(h1 + 0.5))
             g[hz0:hz1, f1 - rim - c(2.6):f1 - rim] = 0.77   # clear zone round the hole
             g[max(0, c(h0)):min(n, c(h1)), f1 - rim - c(2.0):f1 - rim - c(0.4)] = 1.0
+    if fog_from_mm is not None:                  # the fogged strip end: dense, no gap
+        g[c(fog_from_mm):, f0:f1 - rim] = 0.025
     if film_end_mm is not None:
         g[c(film_end_mm):, f0:f1] = 1.0
     g = g + rng.normal(0, 0.002, g.shape)
@@ -1229,6 +1233,33 @@ def test_dense_black_and_white_film_is_a_band_and_its_holes_are_found():
         assert len(whole) == 1 and abs(whole[0].line0 / ppm - starts[1]) <= 0.5, (
             dpi, [(f.line0 / ppm, f.whole) for f in find.frames])
         print(f"test_dense_black_and_white_film_is_a_band_and_its_holes_are_found OK ({dpi} dpi)")
+
+
+def test_last_picture_is_located_by_the_previous_apertures_hole():
+    """Test 110: a strip's last picture whose hole lies at the end of the
+    previous aperture, followed by fogged film (no gap, no hole in view),
+    is found only from the hole's prediction carried over; that aperture
+    reports the prediction as `beyond`."""
+    for dpi in DPIS:
+        ppm = _px_per_mm(dpi)
+        L, P, lead = FILM_110.image_mm[0], FILM_110.pitch_mm, FILM_110.perforation_lead_mm
+        # aperture k: a picture, and the next one's hole near the aperture's end
+        prev, _ppm, _st = _bw_dense_fixture(dpi, starts=[37.5 - P, 37.5])
+        pf = film110.detect(prev, dpi=dpi)
+        nxt = [b for b in pf.beyond if b[0] / ppm > 30.0]
+        assert nxt, (dpi, pf.beyond, pf.reason)
+        # aperture k+1: the last picture at 1.5 mm, fogged after it, no hole
+        last, _ppm, _st = _bw_dense_fixture(dpi, starts=[1.5], holes=False,
+                                            fog_from_mm=1.5 + L + 0.3, film_end_mm=24.0)
+        alone = film110.detect(last, dpi=dpi)
+        assert not [f for f in alone.frames if f.whole], (dpi, alone.frames)
+        win = (1.5 * ppm, (1.5 + L) * ppm)
+        found = film110.detect(last, dpi=dpi, carried=[win])
+        whole = [f for f in found.frames if f.whole]
+        assert len(whole) == 1 and whole[0].located_by == "previous aperture's hole", (
+            dpi, [(f.line0 / ppm, f.whole, f.located_by) for f in found.frames], found.reason)
+        assert abs(whole[0].line0 / ppm - 1.5) <= 0.5, whole[0].line0 / ppm
+        print(f"test_last_picture_is_located_by_the_previous_apertures_hole OK ({dpi} dpi)")
 
 
 def test_blank_is_not_reported_where_the_film_ends_inside_the_window():
@@ -1439,6 +1470,7 @@ def main() -> int:
         test_thin_low_contrast_picture_is_an_image_not_a_blank,
         test_fogged_blank_with_a_gradient_stays_a_blank,
         test_dense_black_and_white_film_is_a_band_and_its_holes_are_found,
+        test_last_picture_is_located_by_the_previous_apertures_hole,
         test_leader_beyond_the_free_start_is_not_a_blank_and_pictures_have_none,
         test_gap_survives_a_thin_scratch_and_dust,
         test_blank_frame_is_not_an_image_when_a_prediction_runs_into_the_gap,
