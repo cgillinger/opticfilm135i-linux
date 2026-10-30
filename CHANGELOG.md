@@ -6,6 +6,15 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+## v0.2.9 — 2026-10-30
+
+- Progress lines during the sweep: `scanning frame N @ <dpi> dpi (sweep pass,
+  aperture N of first–last, P%)` as the pass reaches each aperture's
+  predicted leading edge, `cutting frame N from the sweep (...)` per cut
+  (PR #37). Test 111 production confirmation, evening 1: seven colour-135
+  strips through the calling application, all exit 0, 4/4 apertures by edges,
+  device phases identical to the A/B run (`docs/test-log.md`). Every
+  production strip counts as test data from here on.
 - CLI exit code 3 when another of135i process holds the scanner lock
   (`ScannerBusyError`), distinct from 1 (a real failure), for every
   hardware command that goes through `_run_writing_session` or
