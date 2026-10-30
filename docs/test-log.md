@@ -7627,8 +7627,11 @@ of each aperture correlate 0.997–0.999 on 8x-downsampled luminance, best
 line shift 16–24 lines (0.11–0.17 mm, both crops register on their own
 edge finds). Side-by-side positives of the four apertures were made for
 the owner's eye check (outside the repo); my own look: whole pictures,
-same crop, same colour, no banding. **The owner's eye acceptance is
-pending** at the time of writing.
+same crop, same colour, no banding. **Owner's eye check the same evening:
+PASSED** — "in principle identical", differing only in dust and single
+artefacts (neither pass was dust-cleaned, and dust lands differently per
+pass). The sweep's products are accepted as production images for dual
+3600 with IR; the other profiles remain unrun.
 
 Three failures on the way, all read before continuing: (1) the first two
 sweep attempts and no per-frame control: the white line read ~0.2 % of

@@ -469,7 +469,7 @@ successful roll unless `--keep-sweep`, and is always kept (with a note on
 stderr) when anything fails or does not verify; `--sweep --from-sweep
 --roll N` rebuilds a roll offline from it. **Hardware-run once** (Test 111,
 2026-10-30: dual 3600 with IR, one four-frame strip, 4 of 4 apertures
-verified, about 31 % faster than the per-frame cycle); the other profiles
+verified, eye-accepted, about 31 % faster than the per-frame cycle); the other profiles
 are not yet run, and plain 3600 (`--no-ir`) keeps the per-frame cycle. See
 `docs/whole-strip-sweep-design.md`.
 
