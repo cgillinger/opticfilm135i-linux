@@ -7604,3 +7604,58 @@ the fixed code: three passes, pass 1 located the last picture by the
 previous aperture's hole, passes 2 and 3 were recognised by content
 without IR (log intensity), roll done with 4 of 4 delivered. All the
 operator's 110 strips are now digitised.
+
+**Test 111 — whole-strip sweep, first hardware run and A/B against the
+per-frame cycle (2026-10-30, `digitize --sweep`, dual 3600 with IR, a
+four-frame colour strip the owner had scanned per frame earlier the same
+day).** Outcome: the sweep ran end to end (one calibration, one POSITION,
+one 161 s pass over apertures 1–4, one PARK, eject), 1 334 734 848 bytes
+streamed to `sweep.raw` (2682 chunks, FEEDL 6538, end 44091 motor units,
+wire 42912 lines); white line 23189/31755/26364 at the first measurement,
+no poll timeout, park wait B 10.2 s (budget scale 6.5, never approached).
+Device phases: position 1.80 s, calibration 6.03 s, scan 161.44 s, park
+10.28 s, total 179.6 s. The same strip's per-frame run (four frames,
+`--frames 1-4 --dpi 3600 --no-clean`, load excluded) had taken 277 s in
+the workflow's manifest; the sweep's offline cut of the four frames took
+11.9 s (`--from-sweep`, no dust removal), so the strip costs about 192 s
+against 277 s, 85 s (31 %) less, with three carriage returns and three
+calibrations fewer. **Products:** all four apertures verified by their IR
+edges (margins 0.67–0.76 mm, strip offset +0.07 mm from the mean mapping,
+every window `located_by` edges); aperture lengths 35.93–36.05 mm against
+35.92–35.99 mm per frame (within 0.06 mm); the per-frame and sweep crops
+of each aperture correlate 0.997–0.999 on 8x-downsampled luminance, best
+line shift 16–24 lines (0.11–0.17 mm, both crops register on their own
+edge finds). Side-by-side positives of the four apertures were made for
+the owner's eye check (outside the repo); my own look: whole pictures,
+same crop, same colour, no banding. **Owner's eye check the same evening:
+PASSED** — "in principle identical", differing only in dust and single
+artefacts (neither pass was dust-cleaned, and dust lands differently per
+pass). The sweep's products are accepted as production images for dual
+3600 with IR; the other profiles remain unrun.
+
+Three failures on the way, all read before continuing: (1) the first two
+sweep attempts and no per-frame control: the white line read ~0.2 % of
+normal (peaks 18/67/50 with the lamp's spectrum, `LampWarmupError` after
+58 s, no motor command sent). The first attempt was preceded by a
+`load --next-strip` that the workflow's own process, holding the scanner
+lock for its whole run, had refused — the magazine was inserted but not
+loaded; the second followed a full load. A per-frame control (`digitize
+--frames 1-1` on the same code tree) then verified frame 1 with a healthy
+white line, and the sweep succeeded on the next load with the strip
+untouched; between the failing and the passing runs the owner had taken
+the magazine out to look at the holder. The offline mock harness shows the
+sweep's command stream identical to the frame path's up to POSITION. The
+two dark runs are therefore recorded as a seating/handling event, not
+understood in detail; the sweep code is not implicated. (2) One
+`load --next-strip` after the control's eject failed to engage (fc55):
+power cycle and full load, the documented recipe. (3) The first successful
+sweep's post-processing was **unresolved** (`no lit run of at least 25 mm`)
+while the per-frame coverage on a window of the same bytes verified: the
+window finder's IR profile averaged the three IR channels without the
+colour-line stagger, turning every aperture edge into a 24-line ramp the
+edge finder does not see. Fixed offline (`sweep.ir_profile` registers the
+channels as `image.split_ir` does; regression test with a staggered
+synthetic sweep, whose naive profile is asserted to fail), rebuilt with
+`--from-sweep`, 4 of 4 verified — nothing was lost, the raw was kept as
+designed. Also seen: a lock refusal prints the generic "Power-cycle before
+the next strip" line although nothing was sent (to fix).

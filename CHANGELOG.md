@@ -6,6 +6,24 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- `digitize --sweep` (135, dual-light profiles): scan the whole strip in ONE
+  pass — one calibration, one positioning move, one park — into
+  `<roll>/sweep.raw` (streamed to disk chunk by chunk), then cut the frames
+  from it in software through the unchanged per-frame writer, each judged by
+  the same aperture coverage check. Aperture numbers come from the measured
+  run edges plus the holder pitch relative to the sweep's commanded start; an
+  inconsistent sweep is *unresolved* (no products, exit 4, `sweep.raw` kept).
+  `--keep-sweep` keeps the raw file after a successful roll, `--from-sweep
+  --roll N` rebuilds a roll offline from `sweep.raw` + `sweep.json`. The
+  per-frame path's command stream is unchanged (the calibration block was
+  extracted verbatim). **First hardware run Test 111 (2026-10-30, dual
+  3600 with IR, one four-frame strip): 4 of 4 apertures verified, 192 s
+  against 277 s per frame, eye-accepted by the owner.** The
+  window finder's IR profile registers the colour-line stagger as
+  `image.split_ir` does (the first run was unresolved without it and was
+  rebuilt from the kept `sweep.raw`). Other profiles and plain 3600 remain
+  unverified (docs/whole-strip-sweep-design.md).
+
 ## v0.2.7 — 2026-10-28
 
 - Test 110 (2026-10-28, black-and-white 110, offline on the stored frames):

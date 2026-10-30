@@ -500,3 +500,105 @@ def dual_overscan_geometry(
         end_hwdpi=geom.end_hwdpi,
     )
     return geom, geom.chunks * lines_per_chunk
+
+
+@dataclass(frozen=True)
+class SweepGeometry:
+    """The scan window of a whole-strip sweep (docs/whole-strip-sweep-
+    design.md section 3): ``OverscanGeometry``'s fields for the whole
+    window, plus the apertures it covers.
+
+    ``frame`` is ``first``; ``delivered_lines`` is in VISIBLE lines after
+    the colour-line crop would be taken off (as for a single frame).
+    ``start_hwdpi`` is the motor position of raw line 0 (FEEDL minus the
+    dual anchoring constant K). ``predicted_edges[k]`` is aperture k's
+    (leading, trailing) edge in VISIBLE line coordinates of the raw sweep
+    buffer (wire line // 2), on the mean mapping and the commanded start.
+    """
+
+    first: int
+    last: int
+    feedl: int
+    wire_lines: int
+    chunks: int
+    delivered_lines: int
+    leading_margin_mm: float
+    trailing_margin_mm: float
+    end_hwdpi: float
+    start_hwdpi: float
+    lines_per_mm: float
+    predicted_edges: dict
+
+
+def dual_sweep_geometry(
+    first: int,
+    last: int,
+    *,
+    dpi: int,
+    lines_per_chunk: int,
+    colour_crop_lines: int,
+    default_wire_lines: int,
+    fiducial: FiducialModel | None = None,
+    overscan_mm: float = OVERSCAN_MM,
+    holder: Holder = DEFAULT,
+) -> tuple[SweepGeometry, int]:
+    """One scan window from ``overscan_mm`` before aperture ``first``'s
+    leading edge to ``overscan_mm`` after aperture ``last``'s trailing
+    edge, for a dual-light profile (design doc section 3).
+
+    Positioning is anchored exactly as ``dual_overscan_geometry`` anchors
+    frame ``first``: the FEEDL IS that function's FEEDL for ``first`` (same
+    overscan), so the sweep starts where frame ``first``'s pass starts
+    today. Only the line count grows: whole chunks, rounded up, carrying
+    the span plus the two colour-crop strips. The furthest position
+    reached is checked against FEEDL_CEILING before anything is returned.
+
+    Returns (geometry, wire_lines), wire_lines = chunks x lines_per_chunk.
+    """
+    check_frame(first, holder)
+    check_frame(last, holder)
+    if first > last:
+        raise ValueError(f"sweep first aperture {first} is after last {last}")
+    if lines_per_chunk % 2:
+        raise ValueError(
+            f"lines_per_chunk {lines_per_chunk} is odd: a dual chunk must "
+            f"hold whole IR/visible line pairs")
+    if 7200 % dpi:
+        raise ValueError(f"dpi {dpi} does not divide the 7200 dpi motor base")
+    fid = fiducial if fiducial is not None else STRIP_FIDUCIAL
+    units_per_vis = 7200 // dpi
+    over = overscan_mm / MM_PER_UNIT
+    want_start = fid.leading_hwdpi(first) - over
+    want_end = fid.trailing_hwdpi(last) + over
+
+    chunk_vis = lines_per_chunk // 2
+    delivered_needed = (want_end - want_start) / units_per_vis
+    chunks = math.ceil((delivered_needed + 2 * colour_crop_lines) / chunk_vis)
+    wire_lines = chunks * lines_per_chunk
+    delivered_lines = chunks * chunk_vis - 2 * colour_crop_lines
+    end_hwdpi = want_start + delivered_lines * units_per_vis
+    check_feedl(round(end_hwdpi), holder)
+
+    # Same FEEDL as the single-frame geometry of `first` (same anchoring).
+    ref, _ = dual_overscan_geometry(
+        first, dpi=dpi, lines_per_chunk=lines_per_chunk,
+        colour_crop_lines=colour_crop_lines,
+        default_wire_lines=default_wire_lines, fiducial=fid,
+        overscan_mm=overscan_mm, holder=holder)
+    feedl = ref.feedl
+    k_units = default_wire_lines * (units_per_vis / 2) / 2
+    start_hwdpi = feedl - k_units
+
+    edges = {}
+    for k in range(first, last + 1):
+        edges[k] = ((fid.leading_hwdpi(k) - start_hwdpi) / units_per_vis,
+                    (fid.trailing_hwdpi(k) - start_hwdpi) / units_per_vis)
+
+    geom = SweepGeometry(
+        first=first, last=last, feedl=feedl, wire_lines=wire_lines,
+        chunks=chunks, delivered_lines=delivered_lines,
+        leading_margin_mm=overscan_mm,
+        trailing_margin_mm=(end_hwdpi - fid.trailing_hwdpi(last)) * MM_PER_UNIT,
+        end_hwdpi=end_hwdpi, start_hwdpi=start_hwdpi,
+        lines_per_mm=dpi / 25.4, predicted_edges=edges)
+    return geom, wire_lines
