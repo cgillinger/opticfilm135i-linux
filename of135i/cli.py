@@ -2913,6 +2913,8 @@ def _sweep_cut(args: argparse.Namespace, rdir: Path, mm, res, meta: dict,
             continue
         w = res.windows[k]
         entry["located_by"] = w.located_by
+        print(f"cutting frame {k} from the sweep (wire lines {w.wire_start}-{w.wire_end}, "
+              f"located by {w.located_by})")
         raw = _sweep.window_bytes(mm, w)
         main, irf, prev, cleaned, cov = _finish_digitize_frame(
             args, raw, width, out, True, progress=entry)

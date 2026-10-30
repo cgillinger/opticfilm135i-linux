@@ -2777,6 +2777,13 @@ class Scanner:
         if n_lines > 0xFFFFFF:
             raise Of135iError(f"line count {n_lines} does not fit the 24-bit register")
         counted = {"chunks": 0, "bytes": 0, "extra": 0}
+        # Progress for a frontend during the long pass: one "scanning
+        # frame N" line when the pass reaches each aperture's predicted
+        # leading edge (the same wording the per-frame path logs before
+        # its pass, so a frontend's progress banner keyed on it keeps
+        # working; docs/whole-strip-sweep-design.md section 6).
+        vis_per_chunk = t.LINES_PER_CHUNK / 2
+        upcoming = sorted((edges[0], k) for k, edges in geom.predicted_edges.items())
 
         def counting_sink(buf: bytes) -> None:
             # tables_ir may issue a descriptor beyond the n_chunks image
@@ -2788,6 +2795,11 @@ class Scanner:
             sink(buf)
             counted["chunks"] += 1
             counted["bytes"] += len(buf)
+            vis_line = counted["chunks"] * vis_per_chunk
+            while upcoming and vis_line >= upcoming[0][0]:
+                _, k = upcoming.pop(0)
+                log.info("scanning frame %d @ %d dpi (sweep pass, aperture %d of %d-%d, %d%%)",
+                         k, dpi, k, first, last, round(100 * counted["chunks"] / n_chunks))
 
         self._run_phase(
             t.scan_phase(n_chunks),
