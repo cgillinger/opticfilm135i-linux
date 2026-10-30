@@ -7659,3 +7659,18 @@ synthetic sweep, whose naive profile is asserted to fail), rebuilt with
 `--from-sweep`, 4 of 4 verified — nothing was lost, the raw was kept as
 designed. Also seen: a lock refusal prints the generic "Power-cycle before
 the next strip" line although nothing was sent (to fix).
+
+**Test 111, production confirmation (2026-10-30, same evening, through the
+application on v0.2.8 and a8aec22).** The workflow switched its colour-135
+command to `digitize --sweep` (same flags otherwise: `--frames 1-4 --dpi
+3600 --no-clean --assume-loaded`, load as a separate step). First two
+strips: both exit 0, 4 of 4 apertures verified, every window located by
+its edges, `sweep.raw` removed after the roll, `fN.cal.npz` hard-linked
+four times, the workflow's own per-strip record written as before. Strip
+times (finished − started, load excluded): 201.5 s and 199.8 s, of which
+the device phases were identical to the tenth of a second on both strips
+and to the A/B run — calibration 6.0 s, position 1.8 s, scan 161.4 s, park
+10.3 s, 179.6 s on the device; the rest is the offline cut and the file
+writes. Strip offsets +0.12 mm and (A/B) +0.07 mm from the mean mapping.
+The progress lines of a8aec22 drove the workflow's banner on the second
+strip. More strips follow; nothing in these two asked for a change.
