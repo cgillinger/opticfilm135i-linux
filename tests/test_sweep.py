@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 
-from of135i import cli, digitize, holder, image, safety, sweep
+from of135i import cli, digitize, holder, image, safety, sweep, aperture_crop
 from of135i.device import Scanner, dual_tables, position_timeout_scale
 from of135i.tables import Op
 from tests.test_dual_overscan import _RecordingDualScanner
@@ -268,14 +268,62 @@ def test_finder_cases_a_to_g():
 
 
 def test_ir_profile_blockwise_equals_direct():
+    """Block-wise reduction equals the direct one, and the stagger roll
+    matches image.split_ir's: the profile of the IR array split_ir
+    returns (as aperture_crop.along_strip_profile takes it) and
+    ir_profile on the same bytes agree to the uint16 rounding, away from
+    the wrapped ``shift`` lines at each end."""
     rng = np.random.default_rng(1)
-    mm = rng.integers(0, 60000, size=(101, 12, 3)).astype("<u2")
-    got = sweep.ir_profile(mm, block_lines=7)
-    ir = mm[0:100:2]
-    lo, hi = 3, 9
-    want = ir[:, lo:hi, :].astype(np.float64).mean(axis=(1, 2))
-    assert got.shape == (50,) and np.allclose(got, want)
+    for dpi in (600, 3600):
+        shift = image.align_shift(dpi)
+        n_wire, W = 2 * (40 + 4 * shift), 12
+        mm = rng.integers(0, 60000, size=(n_wire, W, 3)).astype("<u2")
+        got = sweep.ir_profile(mm, dpi=dpi, block_lines=7)
+        _, ir = image.split_ir(mm.tobytes(), width=W, dpi=dpi)
+        want = aperture_crop.along_strip_profile(ir)
+        assert got.shape == want.shape == (n_wire // 2,), (got.shape, want.shape)
+        core = slice(shift, len(want) - shift) if shift else slice(None)
+        assert np.abs(got[core] - want[core]).max() <= 0.5, dpi
     print("test_ir_profile_blockwise_equals_direct OK")
+
+
+def test_finder_resolves_a_colour_staggered_ir_sweep():
+    """The three IR channels are staggered along the strip by the colour
+    line shift (R lags, B leads G by align_shift lines). On the first
+    hardware sweep (2026-10-30) the un-registered channel mean turned
+    every aperture edge into a ramp ~2 x shift lines wide and the edge
+    finder found NO run, while the per-frame coverage on the same bytes
+    verified every aperture. ir_profile must bring the channels into
+    register first; this builds a staggered 1-4 sweep at 3600 dpi and
+    requires (a) the registered profile to resolve all four apertures by
+    their edges, (b) the naive channel mean to fail -- so the test is
+    known to exercise the stagger."""
+    dpi = 3600
+    shift = image.align_shift(dpi)
+    g, wire = _sgeom(1, 4, dpi)
+    n_vis = wire // 2
+    W = 16
+    col = np.full(n_vis, 1300, dtype=np.float64)
+    for k, (a, b) in g.predicted_edges.items():
+        col[int(round(a)):int(round(b))] = 49000
+    # G is the reference; R lags (its edge appears `shift` lines LATER),
+    # B leads (`shift` lines earlier) -- the directions split_ir undoes.
+    r = np.roll(col, +shift)
+    bch = np.roll(col, -shift)
+    ir = np.stack([r, col, bch], axis=-1)              # (n_vis, 3)
+    mm = np.zeros((2 * n_vis, W, 3), dtype="<u2")
+    mm[0::2] = np.repeat(ir[:, None, :], W, axis=1).astype("<u2")
+    mm[1::2] = mm[0::2]
+    prof = sweep.ir_profile(mm, dpi=dpi)
+    res = sweep.find_windows(prof, g, dpi=dpi)
+    assert res.resolved, res.reason
+    assert [res.windows[k].located_by for k in range(1, 5)] == ["edges"] * 4, res.windows
+    assert abs(res.offset_mm) < 0.1, res.offset_mm
+    # (b) the un-registered mean does not resolve: the ramp hides the edges
+    naive = mm[0::2, :, :].astype(np.float64).mean(axis=(1, 2))
+    bad = sweep.find_windows(naive, g, dpi=dpi)
+    assert not bad.resolved, "the naive profile unexpectedly resolved; the test no longer exercises the stagger"
+    print("test_finder_resolves_a_colour_staggered_ir_sweep OK")
 
 
 # ------------------------------------------------ end to end through the CLI
@@ -560,6 +608,7 @@ def main():
         test_public_sweep_requires_initialize,
         test_finder_cases_a_to_g,
         test_ir_profile_blockwise_equals_direct,
+        test_finder_resolves_a_colour_staggered_ir_sweep,
         test_e2e_sweep_products_identical_to_per_frame_writer,
         test_clean_roll_removes_sweep_raw_and_says_nothing,
         test_unresolved_sweep_keeps_everything,

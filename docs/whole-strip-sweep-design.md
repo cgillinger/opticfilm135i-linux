@@ -1,8 +1,12 @@
 # Whole-strip sweep: one calibration, one position, one pass, one park
 
-Status: design and implementation spec, offline, 2026-10-30. **Nothing in
-this document is hardware-verified.** The sweep is implemented for the
-dual-light profiles and waits for its first hardware A/B (section 8).
+Status: design and implementation spec, 2026-10-30. **Hardware-run once**
+the same day (docs/test-log.md Test 111: dual 3600 with IR, one four-frame
+strip, 4 of 4 apertures verified, 192 s against 277 s per frame; the
+owner's eye acceptance pending at the time of writing). The other dual
+profiles and plain 3600 are not run. Section 5's IR profile registers the
+colour-line stagger — the first run's post-processing was unresolved
+without it.
 
 ## 1. Why
 

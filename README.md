@@ -467,8 +467,10 @@ aperture coverage check as the per-frame cycle. `--frames` must be a
 contiguous range. `sweep.raw` (1.3–2 GB) is deleted after a fully
 successful roll unless `--keep-sweep`, and is always kept (with a note on
 stderr) when anything fails or does not verify; `--sweep --from-sweep
---roll N` rebuilds a roll offline from it. **Implemented offline, not yet
-hardware-verified**; plain 3600 (`--no-ir`) keeps the per-frame cycle. See
+--roll N` rebuilds a roll offline from it. **Hardware-run once** (Test 111,
+2026-10-30: dual 3600 with IR, one four-frame strip, 4 of 4 apertures
+verified, about 31 % faster than the per-frame cycle); the other profiles
+are not yet run, and plain 3600 (`--no-ir`) keeps the per-frame cycle. See
 `docs/whole-strip-sweep-design.md`.
 
 The main `fN.tiff` is always the **raw negative** (calibrated,

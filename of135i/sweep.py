@@ -84,24 +84,41 @@ def open_raw(path: str | Path, width: int) -> np.memmap:
     return np.memmap(path, dtype="<u2", mode="r", shape=(lines, width, 3))
 
 
-def ir_profile(mm: np.ndarray, *, band: float = 0.5,
+def ir_profile(mm: np.ndarray, *, dpi: int = 3600, band: float = 0.5,
                block_lines: int = 1024) -> np.ndarray:
     """Along-strip profile of the IR lines (even wire lines): mean over
     the central ``band`` of the width and the three channels, block by
-    block. Index = visible line index (wire line // 2). The colour
-    stagger of the IR channels is irrelevant here (it matters only in the
-    per-window coverage step, which runs the exact per-frame pipeline)."""
+    block. Index = visible line index (wire line // 2).
+
+    The three IR channels are staggered along the strip by the colour
+    line shift exactly as the visible image is (image.split_ir: R lags
+    G and B leads G by image.align_shift(dpi) lines), so the per-channel
+    profiles are shifted into register before they are averaged -- the
+    same roll split_ir applies to the image, moved onto the 1-D profiles
+    (a column mean commutes with a line shift). Without it every
+    aperture edge is a three-step ramp ~2 x shift lines wide and the
+    edge finder, which wants most of the step within one or two binned
+    lines, sees nothing: the first hardware sweep (2026-10-30) was
+    unresolved for exactly this reason while the per-frame coverage on
+    the same bytes verified every aperture. The wrapped ``shift`` lines
+    at each end of the rolled profiles are the only difference from
+    split_ir's IR, and they lie in the overscan outside any aperture.
+    """
     n_wire, width = mm.shape[0], mm.shape[1]
     n_vis = n_wire // 2
     half = width * min(max(band, 0.0), 1.0) / 2.0
     lo = max(0, int(round(width / 2.0 - half)))
     hi = min(width, max(lo + 1, int(round(width / 2.0 + half))))
-    out = np.empty(n_vis, dtype=np.float64)
+    chan = np.empty((3, n_vis), dtype=np.float64)
     for v0 in range(0, n_vis, block_lines):
         v1 = min(n_vis, v0 + block_lines)
         blk = mm[2 * v0:2 * v1:2, lo:hi, :]
-        out[v0:v1] = blk.mean(axis=(1, 2), dtype=np.float64)
-    return out
+        chan[:, v0:v1] = blk.mean(axis=1, dtype=np.float64).T
+    shift = image.align_shift(dpi)
+    if shift:
+        chan[0] = np.roll(chan[0], -shift)
+        chan[2] = np.roll(chan[2], +shift)
+    return chan.mean(axis=0)
 
 
 def _even_floor(x: float) -> int:

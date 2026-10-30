@@ -16,8 +16,13 @@ one exists; "offline" means implemented and tested without the scanner.
   `--keep-sweep` keeps the raw file after a successful roll, `--from-sweep
   --roll N` rebuilds a roll offline from `sweep.raw` + `sweep.json`. The
   per-frame path's command stream is unchanged (the calibration block was
-  extracted verbatim). **Implemented offline only; hardware A/B pending**
-  (docs/whole-strip-sweep-design.md).
+  extracted verbatim). **First hardware run Test 111 (2026-10-30, dual
+  3600 with IR, one four-frame strip): 4 of 4 apertures verified, 192 s
+  against 277 s per frame; the owner's eye acceptance pending.** The
+  window finder's IR profile registers the colour-line stagger as
+  `image.split_ir` does (the first run was unresolved without it and was
+  rebuilt from the kept `sweep.raw`). Other profiles and plain 3600 remain
+  unverified (docs/whole-strip-sweep-design.md).
 
 ## v0.2.7 — 2026-10-28
 

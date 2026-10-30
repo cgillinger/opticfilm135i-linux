@@ -2878,7 +2878,7 @@ def _sweep_resolve(raw_path: Path, meta: dict):
     """Memory-map sweep.raw and run the window finder. Returns (mm, res)."""
     from . import sweep as _sweep
     mm = _sweep.open_raw(raw_path, int(meta["width"]))
-    prof = _sweep.ir_profile(mm)
+    prof = _sweep.ir_profile(mm, dpi=int(meta["dpi"]))
     res = _sweep.find_windows(prof, _sweep_geom_from_meta(meta), dpi=int(meta["dpi"]),
                               overscan_mm=float(meta["overscan_mm"]))
     return mm, res
