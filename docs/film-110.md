@@ -823,7 +823,8 @@ seating puts the strip end under plastic"), advice not a requirement; the
 old `advice.images` / `other_placement` keys stay one release for the
 application. Exit codes
 (0, 2 refused before hardware, 4 coverage, 5 numbering could not be
-established): **exit 5 means "the whole photographs were written UNNUMBERED,
+established; 3, scanner busy with nothing sent, applies to every hardware
+command): **exit 5 means "the whole photographs were written UNNUMBERED,
 numbering not established", not "nothing was written"** (§15.9).
 
 **Numbering from pass 2: recognise, never guess.** Pass 1 numbers as §5/§12.

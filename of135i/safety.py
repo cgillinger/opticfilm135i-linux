@@ -162,6 +162,15 @@ class ScannerBusyError(SafetyError):
     """Another process holds the scanner lock."""
 
 
+#: CLI exit code for a refusal because another of135i process holds the
+#: scanner lock. Distinct from 1 (a real failure): nothing was sent.
+EXIT_BUSY = 3
+
+BUSY_NO_RECOVERY_MSG = (
+    "No power cycle is needed: nothing was sent to the scanner. Wait for "
+    "the other process to finish, then run the command again.")
+
+
 class FrameOutOfRangeError(SafetyError):
     """A frame number outside the holder was requested. The holder has a
     fixed number of apertures; a number outside them has no position to
@@ -852,7 +861,7 @@ __all__ = [
     "REG01_IDLE", "REG01_COLD", "POWER_CYCLE_INSTRUCTION", "NO_COMMANDS_SENT",
     "NO_RECOVERY_ATTEMPTED", "StartState", "classify_reg01", "has_execute_pulse",
     "SafetyError", "UnsafeStartStateError", "SessionFailedError", "ReadOnlySessionError",
-    "OperationNotAllowedError", "ScannerBusyError", "SessionState", "HardwareSession",
+    "OperationNotAllowedError", "ScannerBusyError", "EXIT_BUSY", "BUSY_NO_RECOVERY_MSG", "SessionState", "HardwareSession",
     "GuardedDevice", "verify_start_state", "ProcessLock", "lock_path", "DEFAULT_LOCK_PATH",
     "LOCK_PATH_ENV",
 ]

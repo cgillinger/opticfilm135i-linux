@@ -43,6 +43,8 @@ from . import diag, holder, image, safety, tables
 from .device import SUPPORTED_DPIS, Scanner
 from .usbio import InterruptOverflowError, Of135iError, UsbIo
 
+EXIT_BUSY = safety.EXIT_BUSY   # another of135i process holds the scanner lock
+
 log = logging.getLogger("of135i")
 
 #: Sanity ceiling on --overscan (mm). The real per-frame bound is the
@@ -157,6 +159,10 @@ def _run_writing_session(body: Callable[[Scanner], int]) -> int:
         print("\ninterrupted.", file=sys.stderr)
         _print_session_failure(scanner)
         return 130
+    except safety.ScannerBusyError as e:
+        print(f"refused: {e}", file=sys.stderr)
+        print(safety.BUSY_NO_RECOVERY_MSG, file=sys.stderr)
+        return EXIT_BUSY
     except safety.SafetyError as e:
         print(f"refused: {e}", file=sys.stderr)
         return 1
@@ -168,6 +174,15 @@ def _run_writing_session(body: Callable[[Scanner], int]) -> int:
         print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
         _print_session_failure(scanner)
         raise
+
+
+def _busy_not_started(roll) -> int:
+    """The scanner lock was held by another process: nothing was sent, no
+    manifest record is written and the roll's number is not consumed."""
+    print(f"roll {roll} not started: the scanner is busy (another of135i "
+          f"process holds the lock). {safety.BUSY_NO_RECOVERY_MSG}",
+          file=sys.stderr)
+    return EXIT_BUSY
 
 
 def _print_session_failure(scanner: Scanner | None) -> None:
@@ -3028,6 +3043,8 @@ def _digitize_sweep(args: argparse.Namespace) -> int:
 
     if not args.assume_loaded:
         rc = loadflow.run(ask=input)
+        if rc == EXIT_BUSY:
+            return _busy_not_started(roll)
         if rc != 0:
             record_failed("load", load_rc=rc)
             print(f"load failed (rc {rc}); roll {roll} recorded as failed. "
@@ -3070,6 +3087,8 @@ def _digitize_sweep(args: argparse.Namespace) -> int:
         record_failed("sweep", error=repr(e))
         keep_note()
         raise
+    if rc == EXIT_BUSY:
+        return _busy_not_started(roll)
     if rc != 0:
         record_failed("sweep", rc=rc)
         keep_note()
@@ -3384,6 +3403,8 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
     #    scanner in an unknown state -- power cycle -- so we record and stop.
     if not args.assume_loaded:
         rc = loadflow.run(ask=input)
+        if rc == EXIT_BUSY:
+            return _busy_not_started(roll)
         if rc != 0:
             record_failed("load", load_rc=rc)
             print(f"load failed (rc {rc}); roll {roll} recorded as failed. "
@@ -3557,6 +3578,8 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
     except BaseException as e:
         record_failed("scan", error=repr(e))
         raise
+    if rc == EXIT_BUSY:
+        return _busy_not_started(roll)
     finished = datetime.now(timezone.utc).isoformat()
     for c in ctxs:
         ok = (rc == 0 or (rc == 4 and not c.incomplete)
