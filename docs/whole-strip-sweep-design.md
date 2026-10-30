@@ -165,6 +165,11 @@ alternating lines, even = IR, odd = visible, `wire_lines x W x 3` uint16.
      map to distinct, increasing apertures; the strip offset is their
      median. If they do not agree, or no run is plausible, the sweep is
      **unresolved**: no window is cut, the reason names what was seen.
+     The offset itself must stay within `SWEEP_MAX_OFFSET_MM` (12 mm):
+     beyond about half a pitch (19 mm) the nearest-aperture assignment
+     would be off by a whole aperture and no run could reveal it, so a
+     larger offset also leaves the sweep unresolved (the known DPI-change
+     shift is ~7.5 mm and passes).
   4. With the offset known, every aperture first..last gets a window:
      `located_by = "edges"` when a plausible run was assigned to it
      (window = that run's edges ± `overscan_mm`), else `"pitch"` (window =
@@ -211,14 +216,19 @@ apertures; photograph identity by content is the 110 problem and stays in
   (default `1-4`). All validated before any hardware step (exit 2).
 - Flow: load (as today) → `scanner.initialize(ir=True, dpi)` once →
   `scanner.sweep(first, last, dpi=..., sink=file writer)` into
-  `<rdir>/sweep.raw` → `sweep.ir_profile` → `find_windows` → per aperture
-  k in order: `out = frame_path(k)`, `entry` as today, `_finish_digitize_
-  frame(...)`, per-frame manifest entry filled EXACTLY as today
+  `<rdir>/sweep.raw` → `sweep.json` (geometry + device diag) → **eject**
+  (the carriage is parked and the raw file whole; the post-processing
+  below takes minutes and the scanner drops USB after ~5 min of standby,
+  so the eject comes first — the eject from the post-PARK state is the
+  verified one) → the writing session closes → `sweep.ir_profile` →
+  `find_windows` → per aperture k in order: `out = frame_path(k)`, `entry`
+  as today, `_finish_digitize_frame(...)`, per-frame manifest entry filled
+  EXACTLY as today
   (`coverage_verified`, `coverage_reason`, `coverage_source`,
   `film_present`, `saturated_share`, `coverage_warning`, `main`, `ir`,
   `preview`, `dust_cleaned`, `calibration`, `gain_codes`, `offset_codes`,
   `dark_b_substituted`) plus `located_by` → diag sidecar per frame →
-  eject → manifest record.
+  manifest record (the eject already happened, see above).
 - Diag sidecar per frame: `_write_diag_sidecar` gets an optional
   `extra: dict | None` merged into the sidecar; the sweep passes
   `{"sweep_window": {"aperture", "wire_start", "wire_end", "located_by"},
