@@ -1517,7 +1517,8 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
 
 
 def _write_diag_sidecar(args: argparse.Namespace, scanner: Scanner, out: str,
-                        frame: int, coverage=None, film=None) -> None:
+                        frame: int, coverage=None, film=None,
+                        extra: dict | None = None) -> None:
     """Write <out>'s .diag.json sidecar from scanner.last_diag (see
     diag.py/device.py) unless --no-diag was given, and log a one-line
     INFO summary of the per-frame calibration/health counters.
@@ -1572,6 +1573,10 @@ def _write_diag_sidecar(args: argparse.Namespace, scanner: Scanner, out: str,
             log.warning("could not write the calibration data file: %s", e)
             cal_path = None
     sidecar["cal_data"] = cal_path
+    if extra:
+        # whole-strip sweep (docs/whole-strip-sweep-design.md section 6):
+        # window, sweep diag, shared calibration file name.
+        sidecar.update(extra)
     path = diag.sidecar_path(out)
     diag.write_sidecar(path, sidecar)
     print(f"wrote {path}")
@@ -2791,6 +2796,424 @@ def _rebuild_attempt(args, roll, rdir, plan, default_rec, dpi, ir, shift, may_re
     return 0, last, None, prior, None, unidentified
 
 
+# ------------------------------------------------ whole-strip sweep (digitize)
+#
+# docs/whole-strip-sweep-design.md section 6. One calibration, one
+# positioning, one pass, one park into <roll>/sweep.raw; the frames are cut
+# in software and every cut goes through the EXISTING per-frame writer
+# (_finish_digitize_frame), so nothing about a product differs from the
+# per-frame cycle. Implemented offline; not yet hardware-verified.
+
+_SWEEP_PLAIN_3600_MSG = ("the sweep is implemented for the dual-light profiles; "
+                         "plain 3600 keeps the per-frame cycle")
+
+
+def _sweep_validate(args: argparse.Namespace) -> "tuple[list[int] | None, str | None]":
+    """Every --sweep argument check, BEFORE any hardware step (exit 2).
+    Returns (frames, None) or (None, message)."""
+    if not getattr(args, "sweep", False):
+        return None, "--keep-sweep and --from-sweep need --sweep"
+    if getattr(args, "film", "135") != "135":
+        return None, "--sweep is for 135 only; --film 110 keeps the per-frame cycle"
+    if getattr(args, "from_frames", False):
+        return None, "--from-frames (110) cannot be combined with --sweep"
+    if int(getattr(args, "strips", 1) or 1) != 1:
+        return None, "--sweep does not support --strips 2"
+    if getattr(args, "placement", None) is not None:
+        return None, "--placement only applies with --film 110"
+    if args.dpi == 3600 and not args.ir:
+        return None, _SWEEP_PLAIN_3600_MSG
+    try:
+        frames = _parse_frames(getattr(args, "frames", None) or "1-4")
+    except ValueError as e:
+        return None, str(e)
+    if frames != list(range(frames[0], frames[-1] + 1)):
+        return None, ("--sweep needs --frames to be one contiguous range a-b "
+                      f"(got {args.frames!r}): the pass covers every aperture "
+                      f"between its first and last")
+    if getattr(args, "from_sweep", False) and args.roll is None:
+        return None, "--from-sweep needs --roll N"
+    try:
+        from .device import dual_tables
+        t = dual_tables(args.dpi)
+        Scanner._sweep_geometry(t, frames[0], frames[-1],
+                                getattr(args, "overscan", None) or holder.OVERSCAN_MM)
+    except (safety.FrameOutOfRangeError, safety.FeedlOutOfRangeError, ValueError) as e:
+        return None, f"the sweep window is not valid: {e}"
+    return frames, None
+
+
+def _sweep_meta(geom, width: int, dpi: int, overscan_mm: float) -> dict:
+    """The sweep's geometry as sweep.json stores it (and the window finder
+    reads it back, see _sweep_geom_from_meta)."""
+    return {
+        "first": geom.first, "last": geom.last, "dpi": dpi, "feedl": geom.feedl,
+        "end_hwdpi": geom.end_hwdpi, "wire_lines": geom.wire_lines,
+        "chunk_count": geom.chunks, "overscan_mm": overscan_mm, "width": width,
+        "lines_per_mm": geom.lines_per_mm,
+        "predicted_edges": {str(k): list(v) for k, v in geom.predicted_edges.items()},
+    }
+
+
+def _sweep_geom_from_meta(meta: dict):
+    from types import SimpleNamespace
+    return SimpleNamespace(
+        first=int(meta["first"]), last=int(meta["last"]),
+        lines_per_mm=float(meta["lines_per_mm"]),
+        predicted_edges={int(k): tuple(v) for k, v in meta["predicted_edges"].items()})
+
+
+def _sweep_kept_note(raw_path: Path) -> None:
+    """Whenever sweep.raw stays on disk, say so in plain words with its
+    size and path (design doc section 6)."""
+    try:
+        gb = raw_path.stat().st_size / 1e9
+    except OSError:
+        return
+    print(f"sweep.raw kept ({gb:.1f} GB): {raw_path} — delete it when the "
+          f"strip is accepted, or keep it for --from-sweep", file=sys.stderr)
+
+
+def _sweep_resolve(raw_path: Path, meta: dict):
+    """Memory-map sweep.raw and run the window finder. Returns (mm, res)."""
+    from . import sweep as _sweep
+    mm = _sweep.open_raw(raw_path, int(meta["width"]))
+    prof = _sweep.ir_profile(mm)
+    res = _sweep.find_windows(prof, _sweep_geom_from_meta(meta), dpi=int(meta["dpi"]),
+                              overscan_mm=float(meta["overscan_mm"]))
+    return mm, res
+
+
+def _sweep_cut(args: argparse.Namespace, rdir: Path, mm, res, meta: dict,
+               scanlike, per_frame: list, *, rebuild: bool) -> list:
+    """Cut every aperture of a resolved sweep through _finish_digitize_frame
+    and fill ``per_frame`` (appended to as it goes, so a failure part-way
+    leaves a record). Returns the frames whose coverage did not verify.
+
+    Calibration data: ``f<first>.cal.npz`` is written once by the first
+    sidecar and HARD-LINKED (copy if linking fails) as ``fN.cal.npz`` for
+    every other frame, so each sidecar names its own file exactly as the
+    per-frame path does (design doc section 6). On a rebuild the existing
+    ``fN.cal.npz`` files are kept and referenced."""
+    from . import digitize, sweep as _sweep
+    width = int(meta["width"])
+    first = int(meta["first"])
+    incomplete: list[int] = []
+    first_cal = diag.cal_data_path(str(digitize.frame_path(args.out, args.prefix,
+                                                           args.roll_n, first)))
+    for k in range(first, int(meta["last"]) + 1):
+        out = str(digitize.frame_path(args.out, args.prefix, args.roll_n, k))
+        entry: dict = {"frame": k, "main": None, "ir": None, "preview": None,
+                       "dust_cleaned": None, "stage": "write"}
+        per_frame.append(entry)
+        if not res.resolved:
+            entry.update(stage=None, coverage_verified=False,
+                         coverage_reason=f"sweep unresolved: {res.reason}")
+            incomplete.append(k)
+            continue
+        w = res.windows[k]
+        entry["located_by"] = w.located_by
+        raw = _sweep.window_bytes(mm, w)
+        main, irf, prev, cleaned, cov = _finish_digitize_frame(
+            args, raw, width, out, True, progress=entry)
+        entry.update(main=main, ir=irf, preview=prev, dust_cleaned=cleaned)
+        film = None
+        if cov is not None:
+            entry["coverage_verified"] = bool(cov.verified)
+            entry["coverage_reason"] = cov.reason
+            entry["coverage_source"] = cov.source
+            if not cov.verified:
+                incomplete.append(k)
+            elif "film_present" in entry:
+                film = {"present": entry["film_present"],
+                        "saturated_share": entry["saturated_share"]}
+                if not film["present"]:
+                    entry["coverage_reason"] = "empty aperture"
+        del raw
+        entry["stage"] = "diag"
+        extra = {"sweep_window": {"aperture": k, "wire_start": w.wire_start,
+                                  "wire_end": w.wire_end, "located_by": w.located_by},
+                 "sweep": (scanlike.last_diag or {}).get("sweep") or meta,
+                 "cal_data_shared": True}
+        if k != first or rebuild:
+            own = diag.cal_data_path(out)
+            if not rebuild and not getattr(args, "no_diag", False) and os.path.exists(first_cal):
+                if os.path.exists(own):
+                    os.unlink(own)
+                try:
+                    os.link(first_cal, own)
+                except OSError:
+                    shutil.copy2(first_cal, own)
+            extra["cal_data"] = own if os.path.exists(own) else None
+        kw = {"film": film} if film is not None else {}
+        _write_diag_sidecar(args, scanlike, out, k, coverage=cov, extra=extra, **kw)
+        scanlike.last_cal_data = None       # written once, next to frame `first`
+        d = scanlike.last_diag or {}
+        entry.update(stage=None, calibration=d.get("calibration"),
+                     gain_codes=d.get("gain_codes"), offset_codes=d.get("offset_codes"),
+                     dark_b_substituted=d.get("dark_b_substituted"))
+    return incomplete
+
+
+def _sweep_record_fields(meta: dict, res, diag_d: dict, raw_kept: bool) -> dict:
+    ps = (diag_d or {}).get("phase_seconds") or {}
+    return {"sweep": {
+        "first": meta["first"], "last": meta["last"], "offset_mm": res.offset_mm,
+        "resolved": res.resolved, "reason": res.reason,
+        "located_by": {str(k): w.located_by for k, w in res.windows.items()},
+        "seconds": {
+            "position": ps.get("position"), "scan": ps.get("scan"),
+            "park": ps.get("park"),
+            "calibration": sum(v for n, v in ps.items() if n.startswith("cal_")),
+            "total": (diag_d or {}).get("total_seconds"),
+        },
+        "raw_kept": raw_kept,
+    }}
+
+
+def _digitize_sweep(args: argparse.Namespace) -> int:
+    """`digitize --sweep`: see the block comment above and
+    docs/whole-strip-sweep-design.md. Exit 0 ok, 2 refused before any
+    hardware, 4 coverage/resolution failure (products absent or partial,
+    sweep.raw kept), other codes as the per-frame flow."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from . import digitize, loadflow
+
+    frames, err = _sweep_validate(args)
+    if err is not None:
+        print(f"error: {err}", file=sys.stderr)
+        return 2
+    if getattr(args, "from_sweep", False):
+        return _digitize_from_sweep(args, frames)
+    first, last = frames[0], frames[-1]
+    roll = args.roll if args.roll is not None else digitize.next_roll(args.out, args.prefix)
+    args.roll_n = roll
+    rdir = digitize.roll_dir(args.out, args.prefix, roll)
+    raw_path = rdir / digitize.SWEEP_RAW_NAME
+    json_path = rdir / digitize.SWEEP_JSON_NAME
+    if not args.force and (digitize.roll_dir_has_output(args.out, args.prefix, roll)
+                           or digitize.roll_is_done(args.out, roll, args.prefix)):
+        print(f"error: roll {roll} already has output in {rdir} (or is recorded "
+              f"done); use --roll for a different one, or --force to redo it.",
+              file=sys.stderr)
+        return 2
+    print(f"=== digitize --sweep roll {roll} -> {rdir} (apertures {first}-{last}) ===")
+    if args.force:
+        removed = digitize.clear_roll_outputs(args.out, args.prefix, roll)
+        if removed:
+            print(f"--force: removed {len(removed)} existing file(s) in {rdir} "
+                  f"before re-scanning")
+    args.eject = True
+    started = datetime.now(timezone.utc).isoformat()
+    record = {"roll": roll, "prefix": args.prefix, "dir": str(rdir),
+              "started_utc": started, "dpi": args.dpi, "positive": args.positive,
+              "ir": args.ir, "frames": frames, "no_clean": args.no_clean,
+              "rotate": args.rotate}
+
+    def record_failed(stage: str, **extra) -> None:
+        try:
+            record.update(status="failed", stage=stage,
+                          finished_utc=datetime.now(timezone.utc).isoformat(), **extra)
+            digitize.append_manifest(args.out, record)
+        except Exception as me:
+            log.warning("manifest write failed while recording a failed roll "
+                        "(original error preserved): %s", me)
+
+    def keep_note() -> None:
+        if raw_path.exists():
+            _sweep_kept_note(raw_path)
+
+    if not args.assume_loaded:
+        rc = loadflow.run(ask=input)
+        if rc != 0:
+            record_failed("load", load_rc=rc)
+            print(f"load failed (rc {rc}); roll {roll} recorded as failed. "
+                  f"Power-cycle before retrying.", file=sys.stderr)
+            return rc
+    rdir.mkdir(parents=True, exist_ok=True)
+
+    state: dict = {}
+
+    def body(scanner: Scanner) -> int:
+        scanner.park_mode = args.park
+        scanner.recalibrate = bool(getattr(args, "recalibrate", False))
+        if getattr(args, "warmup_budget", None) is not None:
+            scanner.warmup_budget_s = float(args.warmup_budget)
+        scanner.check_start_state()
+        if not scanner.is_magazine_present():
+            print("error: no magazine detected after load", file=sys.stderr)
+            return 1
+        scanner.initialize(ir=True, dpi=args.dpi)
+        log.info("sweeping apertures %d-%d @ %d dpi (one pass)", first, last, args.dpi)
+        overscan = getattr(args, "overscan", None) or holder.OVERSCAN_MM
+        with open(raw_path, "wb") as fh:
+            width, smeta = scanner.sweep(first, last, dpi=args.dpi,
+                                         overscan_mm=overscan, sink=fh.write)
+        d = dict(scanner.last_diag or {})
+        meta = _sweep_meta(smeta["geometry"], width, args.dpi, overscan)
+        state.update(meta=meta, diag=d, cal=scanner.last_cal_data)
+        _sweep_write_json(json_path, meta, None, d)
+        print(f"sweep done: {raw_path.stat().st_size / 1e9:.2f} GB written")
+        # Eject now: the carriage is parked and the scanner idle; the
+        # post-processing below takes minutes and the scanner drops USB
+        # after ~5 min of standby.
+        scanner.eject()
+        print("ejected")
+        return 0
+
+    try:
+        rc = _run_writing_session(body)
+    except BaseException as e:
+        record_failed("sweep", error=repr(e))
+        keep_note()
+        raise
+    if rc != 0:
+        record_failed("sweep", rc=rc)
+        keep_note()
+        extra = (" The sweep itself completed and is on disk; rebuild with "
+                 "--from-sweep." if "meta" in state else "")
+        print(f"roll {roll} FAILED at the sweep (rc {rc}); recorded. "
+              f"Power-cycle before the next strip.{extra}", file=sys.stderr)
+        return rc
+
+    meta, d = state["meta"], state["diag"]
+    scanlike = SimpleNamespace(last_diag=d, last_cal_data=state["cal"])
+    per_frame: list = []
+    try:
+        mm, res = _sweep_resolve(raw_path, meta)
+        _sweep_write_json(json_path, meta, res, d)
+        incomplete = _sweep_cut(args, rdir, mm, res, meta, scanlike, per_frame,
+                                rebuild=False)
+        del mm
+    except BaseException as e:
+        record_failed("write", error=repr(e), per_frame=per_frame)
+        keep_note()
+        raise
+    return _sweep_finish(args, record, rdir, raw_path, meta, res, d, per_frame,
+                         incomplete, rc_extra={})
+
+
+def _sweep_write_json(path: Path, meta: dict, res, diag_d: dict) -> None:
+    """sweep.json: geometry, resolution (None until the finder has run),
+    timing and the device diag of the one calibration."""
+    ps = diag_d.get("phase_seconds") if diag_d else None
+    doc = {"geometry": meta,
+           "resolution": res.to_dict() if res is not None else None,
+           "timing": {"phase_seconds": ps,
+                      "total_seconds": (diag_d or {}).get("total_seconds"),
+                      "started_utc": (diag_d or {}).get("started_utc"),
+                      "finished_utc": (diag_d or {}).get("finished_utc")},
+           "diag": diag_d}
+    diag.write_sidecar(str(path), doc)
+
+
+def _sweep_finish(args, record: dict, rdir: Path, raw_path: Path, meta: dict, res,
+                  d: dict, per_frame: list, incomplete: list, *, rc_extra: dict) -> int:
+    """Close a sweep roll: status, raw retention, manifest, messages."""
+    from datetime import datetime, timezone
+    from . import digitize
+    rebuilt = bool(rc_extra.get("rebuilt"))
+    ok = not incomplete
+    keep = (not ok) or bool(getattr(args, "keep_sweep", False)) or rebuilt
+    if not keep:
+        try:
+            raw_path.unlink()
+        except OSError as e:
+            log.warning("could not remove %s: %s", raw_path, e)
+            keep = True
+    record.update(finished_utc=datetime.now(timezone.utc).isoformat(),
+                  per_frame=per_frame, status="ok" if ok else "failed",
+                  stage=None if ok else "scan",
+                  **_sweep_record_fields(meta, res, d, keep))
+    if rebuilt:
+        record["rebuilt_from_sweep"] = True
+    try:
+        digitize.append_manifest(args.out, record)
+    except Exception as me:
+        print(f"warning: roll {record['roll']} processed but the manifest write "
+              f"failed ({me!r}); the images are saved in {rdir}.", file=sys.stderr)
+    if keep and raw_path.exists():
+        _sweep_kept_note(raw_path)
+    if not ok:
+        why = (f"sweep unresolved: {res.reason}" if not res.resolved else
+               f"aperture coverage NOT verified for frame(s) "
+               f"{', '.join(map(str, incomplete))}")
+        print(f"error: {why} — no main negative was written for them; see the "
+              f".diag.json and .overscan file(s), and sweep.json", file=sys.stderr)
+        print(f"roll {record['roll']} recorded FAILED. Re-run with --force, or "
+              f"rebuild from the kept sweep with --from-sweep.", file=sys.stderr)
+        return 4
+    subs = [pf["frame"] for pf in per_frame if pf.get("dark_b_substituted")]
+    note = f" (dark_b substituted on frame(s) {subs})" if subs else ""
+    print(f"roll {record['roll']} done: {len(per_frame)} frames -> {rdir}{note}. "
+          f"Next: insert the next strip and run 'of135i digitize --sweep' again "
+          f"(roll {record['roll'] + 1}).")
+    return 0
+
+
+def _digitize_from_sweep(args: argparse.Namespace, frames: list) -> int:
+    """`digitize --sweep --from-sweep --roll N`: rebuild the roll offline
+    from its sweep.raw + sweep.json (no scanner, no load, no eject). Clears
+    the roll's frame products first, never the sweep files; appends a
+    manifest record with ``rebuilt_from_sweep: true``."""
+    import json
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from . import digitize
+
+    def refuse(msg: str) -> int:
+        print(f"error: {msg}", file=sys.stderr)
+        return 2
+
+    roll = args.roll
+    args.roll_n = roll
+    rdir = digitize.roll_dir(args.out, args.prefix, roll)
+    raw_path = rdir / digitize.SWEEP_RAW_NAME
+    json_path = rdir / digitize.SWEEP_JSON_NAME
+    if not raw_path.is_file() or not json_path.is_file():
+        return refuse(f"--from-sweep needs both {raw_path} and {json_path}")
+    try:
+        doc = json.loads(json_path.read_text())
+        meta = doc["geometry"]
+        meta["first"], meta["predicted_edges"], meta["width"]   # shape check
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        return refuse(f"{json_path} is unreadable ({e!r})")
+    if int(meta["dpi"]) != args.dpi:
+        print(f"note: using the sweep's own dpi {meta['dpi']} (not --dpi {args.dpi})")
+        args.dpi = int(meta["dpi"])
+    removed = digitize.clear_roll_outputs(args.out, args.prefix, roll, include_sweep=False)
+    if removed:
+        print(f"--from-sweep: removed {len(removed)} frame file(s) in {rdir} before the rebuild")
+    args.eject = True
+    record = {"roll": roll, "prefix": args.prefix, "dir": str(rdir),
+              "started_utc": datetime.now(timezone.utc).isoformat(),
+              "dpi": args.dpi, "positive": args.positive, "ir": args.ir,
+              "frames": list(range(int(meta["first"]), int(meta["last"]) + 1)),
+              "no_clean": args.no_clean, "rotate": args.rotate,
+              "rebuilt_from_sweep": True}
+    d = doc.get("diag") or {}
+    scanlike = SimpleNamespace(last_diag=d, last_cal_data=None)
+    per_frame: list = []
+    try:
+        mm, res = _sweep_resolve(raw_path, meta)
+        incomplete = _sweep_cut(args, rdir, mm, res, meta, scanlike, per_frame,
+                                rebuild=True)
+        del mm
+    except BaseException as e:
+        try:
+            record.update(status="failed", stage="write", error=repr(e),
+                          per_frame=per_frame,
+                          finished_utc=datetime.now(timezone.utc).isoformat())
+            digitize.append_manifest(args.out, record)
+        except Exception as me:
+            log.warning("manifest write failed: %s", me)
+        _sweep_kept_note(raw_path)
+        raise
+    return _sweep_finish(args, record, rdir, raw_path, meta, res, d, per_frame,
+                         incomplete, rc_extra={"rebuilt": True})
+
+
 def _cmd_digitize(args: argparse.Namespace) -> int:
     """Bulk-digitise one film strip into a resumable staging tree
     (of135i.digitize): pick the roll number, load the magazine, scan
@@ -2810,6 +3233,12 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
     from datetime import datetime, timezone
     from types import SimpleNamespace
     from . import digitize, film110 as _film110, loadflow
+
+    if (getattr(args, "sweep", False) or getattr(args, "from_sweep", False)
+            or getattr(args, "keep_sweep", False)):
+        # Whole-strip sweep (docs/whole-strip-sweep-design.md): its own
+        # flow, validated before any hardware step.
+        return _digitize_sweep(args)
 
     if getattr(args, "from_frames", False):
         # Offline: never reaches the load flow or a Scanner.
@@ -3509,6 +3938,20 @@ def build_parser() -> argparse.ArgumentParser:
              "to superseded-<UTC>/ (never deleted), new manifest records "
              "follow. No scanner is touched; dpi/ir/rotate come from the "
              "stored records (docs/film-110.md §14)")
+    p_dig.add_argument("--sweep", action="store_true",
+        help="135, dual-light profiles only: scan the whole strip in ONE pass "
+             "(one calibration, one positioning, one park) into <roll>/sweep.raw "
+             "and cut the frames from it in software, each judged by the same "
+             "aperture coverage check (docs/whole-strip-sweep-design.md). "
+             "Implemented offline, NOT yet hardware-verified. --frames must be "
+             "a contiguous range")
+    p_dig.add_argument("--keep-sweep", action="store_true",
+        help="--sweep: keep sweep.raw (1.3-2 GB) after a fully successful "
+             "roll (default: removed; always kept on any failure)")
+    p_dig.add_argument("--from-sweep", action="store_true",
+        help="--sweep --roll N: rebuild the roll offline from its sweep.raw + "
+             "sweep.json (no scanner, no load/eject); clears the roll's frame "
+             "products first, never the sweep files")
     p_dig.add_argument("--assume-loaded", action="store_true",
         help="skip the load flow (the magazine is already latched)")
     p_dig.add_argument("--dpi", type=int, default=3600, choices=SUPPORTED_DPIS,

@@ -40,6 +40,8 @@ import logging
 import os
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Callable
 from datetime import datetime, timezone
 
 import numpy as np
@@ -434,6 +436,27 @@ class _CalCapture:
                              "phase": phase, "raw": raw})
 
 
+@dataclass
+class _DualCal:
+    """What _calibrate_dual measured and uploaded (see there)."""
+
+    dark_a: np.ndarray
+    dark_b: np.ndarray
+    dark_b_substituted: bool
+    gain_codes: tuple
+    offset_codes: tuple
+    shading_meas: np.ndarray
+    verify_meas: np.ndarray
+    shading_a: bytes
+    shading_b: bytes
+    shading2_a: bytes
+    shading2_b: bytes
+    dips_a: list
+    dips_b: list
+    blocks_a: list
+    blocks_b: list
+
+
 class Scanner:
     """Drives the of135i scan sequence over a UsbIo transport."""
 
@@ -667,7 +690,8 @@ class Scanner:
 
     def _exec_ops(self, ops: list[Op], strict_polls: frozenset[int] = frozenset(),
                   strict_mask: int = LOAD_STATUS_MASK,
-                  poll_timeout_scale: float = 1.0) -> list[bytes]:
+                  poll_timeout_scale: float = 1.0, *,
+                  chunk_sink: Callable[[bytes], None] | None = None) -> list[bytes]:
         """Execute a verbatim op list with replay_trace.py semantics:
 
           - cw: ctrl_transfer verbatim; if it's a wv=0x82 buffer
@@ -691,6 +715,12 @@ class Scanner:
         0 or 1; "scan" produces one per image chunk plus the trailing
         drain).
 
+        ``chunk_sink`` (whole-strip sweep, docs/whole-strip-sweep-design.md
+        section 4): when set, each completed read buffer is handed to the
+        sink instead of being appended to the returned list, which is then
+        empty -- a multi-GB sweep never accumulates in memory. Nothing
+        else changes.
+
         Refuses to run outside a hardware operation (see _operation):
         this is the only way op streams reach the wire, and every
         caller must therefore be a guarded public method.
@@ -708,7 +738,10 @@ class Scanner:
         def flush() -> None:
             nonlocal cur
             if cur is not None:
-                collected.append(bytes(cur))
+                if chunk_sink is not None:
+                    chunk_sink(bytes(cur))
+                else:
+                    collected.append(bytes(cur))
                 cur = None
 
         for idx, op in enumerate(ops):
@@ -894,6 +927,7 @@ class Scanner:
 
     def _run_phase(self, phase: Phase, strict_polls: frozenset[int] = frozenset(),
                    strict_mask: int = LOAD_STATUS_MASK, poll_timeout_scale: float = 1.0,
+                   *, chunk_sink: Callable[[bytes], None] | None = None,
                    **inject) -> list[bytes]:
         """Execute a phase's full op stream (with injections applied),
         returning its collected read buffers.
@@ -906,8 +940,14 @@ class Scanner:
         self.session.phase = phase.name
         t0 = time.monotonic()
         try:
-            return self._exec_ops(ops, strict_polls=strict_polls, strict_mask=strict_mask,
-                                  poll_timeout_scale=poll_timeout_scale)
+            if chunk_sink is None:
+                return self._exec_ops(ops, strict_polls=strict_polls,
+                                      strict_mask=strict_mask,
+                                      poll_timeout_scale=poll_timeout_scale)
+            return self._exec_ops(ops, strict_polls=strict_polls,
+                                  strict_mask=strict_mask,
+                                  poll_timeout_scale=poll_timeout_scale,
+                                  chunk_sink=chunk_sink)
         finally:
             dt = time.monotonic() - t0
             self._diag_phase_seconds[phase.name] = self._diag_phase_seconds.get(phase.name, 0.0) + dt
@@ -2310,66 +2350,15 @@ class Scanner:
 
     # ----------------------------------------------------------- scan (IR)
 
-    def _scan_dual(self, t, frame: int = 1, lines: int | None = None,
-                   overscan_mm: float | None = None) -> tuple[bytes, int, dict]:
-        """Dual-light (alternating IR/visible line) counterpart of scan(),
-        driven by the phases of table module `t` -- tables_ir (3600 dpi,
-        trace 04) or a tables_dpi<N> module (the 2026-09-02 captures);
-        all compiled by tools/gen_tables.py's compile_dual() to one
-        interface.
-
-        Every calibration buffer in this mode is at the RAW sensor
-        readout width (t.IMAGE_WIDTH: 5184 at 3600 dpi, not the windowed
-        3762 the plain scan uses) and covers ALTERNATING lines -- even
-        index = IR pass, odd index = visible pass (see ../cal-data/ir/
-        ir-analysis.md and image.split_ir(), which applies the same
-        convention to the final image). Measurements that feed a per-
-        channel computation (gain, shading) are de-interleaved into
-        their halves BEFORE computing. The shading table is uploaded to
-        TWO scanner-RAM addresses with a CROSS-CONNECTION: address A
-        (0x10014000) is computed from the ODD (visible) measurement
-        lines but applied by the scanner hardware to ODD (visible)
-        scan lines; address B (0x10034000) from EVEN (IR) measurement
-        lines, applied to EVEN (IR) scan lines. The vendor uploads
-        were analysed as "A from even, B from odd" (pass 18), which
-        correctly identified the SOURCE data but incorrectly assumed
-        same-source application; empirical testing (2026-09-03) proved
-        the scanner applies A→odd and B→even, matching the pre-pass-18
-        code that produced working images. See calibrate.SHADING2_
-        TARGET_A/_B for the per-address white-uniformity targets.
-        AFE gain/offset (regs 2-7) and FEEDL/line-count injections
-        are the same single-register mechanism as the plain scan.
-
-        The line count is programmed as whole image chunks: `lines`
-        (alternating lines, default t.DEFAULT_LINES) rounded up to
-        t.LINES_PER_CHUNK, and that many chunks are read.
-        """
-        # No homing move -- see scan().
+    def _calibrate_dual(self, t) -> "_DualCal":
+        """The dual-light calibration block (dark pair, white/gain,
+        gain-check pair, shading measure, upload, verify), extracted
+        UNCHANGED from _scan_dual so the whole-strip sweep
+        (docs/whole-strip-sweep-design.md section 4) runs the identical
+        op stream. The per-scan diagnostics reset and the start timestamps
+        stay with the callers."""
         W = t.IMAGE_WIDTH
         dpi = t.DPI
-
-        # Dual is never cached (docs/protocol-notes.md pass 14 addendum 3:
-        # no vendor capture of a dual-light skip-calibration exists, and
-        # its own CAL_SHADING_VERIFY preamble differs from plain's --
-        # reported, not guessed; see tables.CAL_REWRITE's module comment).
-        # It ALWAYS runs a full calibration below, which uploads its own
-        # shading table to scanner RAM -- overwriting whatever the plain
-        # path's cache (if any) left there. Clear it unconditionally so a
-        # later plain scan in this session never trusts a shading table
-        # that is no longer the one it was cached against.
-        self._cal_cache = None
-
-        # ---- per-scan diagnostics: reset recording state (see diag.py) --
-        self._diag_phase_seconds = {}
-        self._diag_poll_timeouts = 0
-        self._diag_cr_mismatches = 0
-        self._diag_poll_timeout_details = []
-        self._diag_poll_settle = []
-        self._diag_poll_settle_max_s = 0.0
-        self._diag_warmup = None
-        self._diag_park_waits = None
-        started_utc = datetime.now(timezone.utc).isoformat()
-        t_start = time.monotonic()
 
         # ---- dark pair (offset bracket, gain=0) ------------------------
         # Both reads feed offset_codes() (per-channel means, same as the
@@ -2466,6 +2455,85 @@ class Scanner:
         self._diag_phase_seconds["cal_shading_verify"] = (
             self._diag_phase_seconds.get("cal_shading_verify", 0.0) + (time.monotonic() - _t0)
         )
+
+        return _DualCal(
+            dark_a=dark_a, dark_b=dark_b, dark_b_substituted=dark_b_substituted,
+            gain_codes=(gain_r, gain_g, gain_b), offset_codes=(off_r, off_g, off_b),
+            shading_meas=shading_meas, verify_meas=verify_meas,
+            shading_a=shading_a, shading_b=shading_b,
+            shading2_a=shading2_a, shading2_b=shading2_b,
+            dips_a=dips_a, dips_b=dips_b, blocks_a=blocks_a, blocks_b=blocks_b)
+
+    def _scan_dual(self, t, frame: int = 1, lines: int | None = None,
+                   overscan_mm: float | None = None) -> tuple[bytes, int, dict]:
+        """Dual-light (alternating IR/visible line) counterpart of scan(),
+        driven by the phases of table module `t` -- tables_ir (3600 dpi,
+        trace 04) or a tables_dpi<N> module (the 2026-09-02 captures);
+        all compiled by tools/gen_tables.py's compile_dual() to one
+        interface.
+
+        Every calibration buffer in this mode is at the RAW sensor
+        readout width (t.IMAGE_WIDTH: 5184 at 3600 dpi, not the windowed
+        3762 the plain scan uses) and covers ALTERNATING lines -- even
+        index = IR pass, odd index = visible pass (see ../cal-data/ir/
+        ir-analysis.md and image.split_ir(), which applies the same
+        convention to the final image). Measurements that feed a per-
+        channel computation (gain, shading) are de-interleaved into
+        their halves BEFORE computing. The shading table is uploaded to
+        TWO scanner-RAM addresses with a CROSS-CONNECTION: address A
+        (0x10014000) is computed from the ODD (visible) measurement
+        lines but applied by the scanner hardware to ODD (visible)
+        scan lines; address B (0x10034000) from EVEN (IR) measurement
+        lines, applied to EVEN (IR) scan lines. The vendor uploads
+        were analysed as "A from even, B from odd" (pass 18), which
+        correctly identified the SOURCE data but incorrectly assumed
+        same-source application; empirical testing (2026-09-03) proved
+        the scanner applies A→odd and B→even, matching the pre-pass-18
+        code that produced working images. See calibrate.SHADING2_
+        TARGET_A/_B for the per-address white-uniformity targets.
+        AFE gain/offset (regs 2-7) and FEEDL/line-count injections
+        are the same single-register mechanism as the plain scan.
+
+        The line count is programmed as whole image chunks: `lines`
+        (alternating lines, default t.DEFAULT_LINES) rounded up to
+        t.LINES_PER_CHUNK, and that many chunks are read.
+        """
+        # No homing move -- see scan().
+        W = t.IMAGE_WIDTH
+        dpi = t.DPI
+
+        # Dual is never cached (docs/protocol-notes.md pass 14 addendum 3:
+        # no vendor capture of a dual-light skip-calibration exists, and
+        # its own CAL_SHADING_VERIFY preamble differs from plain's --
+        # reported, not guessed; see tables.CAL_REWRITE's module comment).
+        # It ALWAYS runs a full calibration below, which uploads its own
+        # shading table to scanner RAM -- overwriting whatever the plain
+        # path's cache (if any) left there. Clear it unconditionally so a
+        # later plain scan in this session never trusts a shading table
+        # that is no longer the one it was cached against.
+        self._cal_cache = None
+
+        # ---- per-scan diagnostics: reset recording state (see diag.py) --
+        self._diag_phase_seconds = {}
+        self._diag_poll_timeouts = 0
+        self._diag_cr_mismatches = 0
+        self._diag_poll_timeout_details = []
+        self._diag_poll_settle = []
+        self._diag_poll_settle_max_s = 0.0
+        self._diag_warmup = None
+        self._diag_park_waits = None
+        started_utc = datetime.now(timezone.utc).isoformat()
+        t_start = time.monotonic()
+
+        cal = self._calibrate_dual(t)
+        dark_a, dark_b, dark_b_substituted = cal.dark_a, cal.dark_b, cal.dark_b_substituted
+        gain_r, gain_g, gain_b = cal.gain_codes
+        off_r, off_g, off_b = cal.offset_codes
+        shading_meas, verify_meas = cal.shading_meas, cal.verify_meas
+        shading_a, shading_b = cal.shading_a, cal.shading_b
+        shading2_a, shading2_b = cal.shading2_a, cal.shading2_b
+        dips_a, dips_b = cal.dips_a, cal.dips_b
+        blocks_a, blocks_b = cal.blocks_a, cal.blocks_b
 
         # ---- position: relative feed from current carriage position ------
         # POSITION uses mode 0x18 (feed) which advances FEEDL steps from
@@ -2597,3 +2665,203 @@ class Scanner:
         }
 
         return image, W, {"width": W, "alternating": True, "dpi": dpi}
+
+    # ------------------------------------------------- whole-strip sweep
+
+    def sweep(
+        self, first: int, last: int, *, dpi: int = 3600,
+        overscan_mm: float | None = None, sink: Callable[[bytes], None],
+    ) -> tuple[int, dict]:
+        """Whole-strip sweep over apertures ``first``..``last``: ONE
+        calibration, ONE positioning move to aperture ``first``'s leading
+        edge, ONE scan pass over every aperture, ONE park
+        (docs/whole-strip-sweep-design.md).
+
+        Dual-light profiles only: ``dpi`` always selects that
+        resolution's dual table (IR on), so plain 3600 -- which is not a
+        dual profile -- has no sweep (the CLI refuses it). Same
+        preconditions as scan(): initialize() first, loaded this session,
+        a valid park_mode. Image data goes ONLY to ``sink`` (called once
+        per image chunk, in order); nothing is returned but
+        (width, meta) -- the sweep never holds more than one chunk.
+
+        NOT hardware-verified: dual 3600's long pass is a new data point
+        (design doc section 2).
+        """
+        self.session.write_allowed_or_final()
+        t = dual_tables(dpi)
+        if self.park_mode not in ("verbatim", "semantic"):
+            raise ValueError(f"unknown park_mode {self.park_mode!r} (want 'verbatim' or 'semantic')")
+        if self.session.cold_init_done and not self._loaded_this_session:
+            raise OperationNotAllowedError(
+                "sweep() after a cold start requires the magazine load flow first "
+                f"(see scan()). {safety.NO_COMMANDS_SENT}", session=self.session.snapshot())
+        if not self._prepared_for_scan:
+            raise OperationNotAllowedError(
+                "sweep() requires initialize() first in this session. "
+                f"{safety.NO_COMMANDS_SENT}", session=self.session.snapshot())
+        # Validate the whole window BEFORE the operation: a bad range is a
+        # plain error, not a hardware-session failure.
+        self._sweep_geometry(t, first, last,
+                             overscan_mm if overscan_mm is not None else holder.OVERSCAN_MM)
+        with self._operation("sweep"):
+            self._prepared_for_scan = False
+            if self._cal_capture is not None:
+                self._cal_capture.set_frame(first)
+            return self._sweep_dual(
+                t, first=first, last=last,
+                overscan_mm=overscan_mm if overscan_mm is not None else holder.OVERSCAN_MM,
+                sink=sink)
+
+    @staticmethod
+    def _sweep_geometry(t, first: int, last: int, overscan_mm: float):
+        """holder.dual_sweep_geometry for table module ``t``."""
+        return holder.dual_sweep_geometry(
+            first, last,
+            dpi=t.DPI,
+            lines_per_chunk=t.LINES_PER_CHUNK,
+            colour_crop_lines=image_mod.align_shift(t.DPI),
+            default_wire_lines=t.DEFAULT_LINES,
+            overscan_mm=overscan_mm,
+        )
+
+    def _sweep_dual(self, t, *, first: int, last: int, overscan_mm: float,
+                    sink: Callable[[bytes], None]) -> tuple[int, dict]:
+        """Calibrate once, POSITION once, SCAN the whole strip into
+        ``sink``, PARK once (design doc section 4). The calibration and
+        the POSITION stream are those of _scan_dual; the only differences
+        are the geometry (holder.dual_sweep_geometry) and the park budget
+        (taken from the furthest position reached)."""
+        W = t.IMAGE_WIDTH
+        dpi = t.DPI
+        self._cal_cache = None      # dual never caches (see _scan_dual)
+
+        self._diag_phase_seconds = {}
+        self._diag_poll_timeouts = 0
+        self._diag_cr_mismatches = 0
+        self._diag_poll_timeout_details = []
+        self._diag_poll_settle = []
+        self._diag_poll_settle_max_s = 0.0
+        self._diag_warmup = None
+        self._diag_park_waits = None
+        started_utc = datetime.now(timezone.utc).isoformat()
+        t_start = time.monotonic()
+
+        cal = self._calibrate_dual(t)
+        gain_r, gain_g, gain_b = cal.gain_codes
+        off_r, off_g, off_b = cal.offset_codes
+
+        geom, wire_lines = self._sweep_geometry(t, first, last, overscan_mm)
+        feedl = holder.check_feedl(geom.feedl)
+        log.info("sweep apertures %d-%d (%d dpi dual): FEEDL=%d chunks=%d wire_lines=%d "
+                 "end=%d margins lead=%.3f trail=%.3f mm",
+                 first, last, dpi, feedl, geom.chunks, wire_lines,
+                 round(geom.end_hwdpi), geom.leading_margin_mm, geom.trailing_margin_mm)
+        # The semantic PARK's waits are stretched by _park_scale. After a
+        # sweep the carriage returns from aperture `last`'s far edge, not
+        # from the FEEDL (which is the START), so the budget comes from
+        # the furthest position the pass reaches (design doc section 4).
+        self._park_scale = position_timeout_scale(t, round(geom.end_hwdpi))
+        self._run_phase(
+            t.POSITION,
+            strict_polls=self._strict_status_polls(t.POSITION),
+            strict_mask=POSITION_STATUS_MASK,
+            poll_timeout_scale=position_timeout_scale(t, feedl),
+            feedl_hi=bytes([(feedl >> 16) & 0xFF]),
+            feedl_mid=bytes([(feedl >> 8) & 0xFF]),
+            feedl_lo=bytes([feedl & 0xFF]),
+        )
+
+        n_chunks = geom.chunks
+        n_lines = wire_lines
+        if n_lines > 0xFFFFFF:
+            raise Of135iError(f"line count {n_lines} does not fit the 24-bit register")
+        counted = {"chunks": 0, "bytes": 0, "extra": 0}
+
+        def counting_sink(buf: bytes) -> None:
+            # tables_ir may issue a descriptor beyond the n_chunks image
+            # chunks; only the image chunks reach the sink (as _scan_dual's
+            # buffers[:n_chunks] does).
+            if counted["chunks"] >= n_chunks:
+                counted["extra"] += 1
+                return
+            sink(buf)
+            counted["chunks"] += 1
+            counted["bytes"] += len(buf)
+
+        self._run_phase(
+            t.scan_phase(n_chunks),
+            lines_top=bytes([(n_lines >> 16) & 0xFF]),
+            lines_hi=bytes([(n_lines >> 8) & 0xFF]),
+            lines_lo=bytes([n_lines & 0xFF]),
+            chunk_sink=counting_sink,
+        )
+
+        self._park(t, ir=True)
+
+        warmup = self._diag_warmup or {}
+        self.last_cal_data = {
+            "white_line": self._cal_white_line(),
+            "dark_a": np.asarray(cal.dark_a, dtype=np.uint16),
+            "dark_b": np.asarray(cal.dark_b, dtype=np.uint16),
+            "shading_meas": np.asarray(cal.shading_meas, dtype=np.uint16),
+            "verify_meas": np.asarray(cal.verify_meas, dtype=np.uint16),
+            "shading_table_a": np.frombuffer(cal.shading_a, dtype=np.uint8),
+            "shading_table_b": np.frombuffer(cal.shading_b, dtype=np.uint8),
+            "shading_table2_a": np.frombuffer(cal.shading2_a, dtype=np.uint8),
+            "shading_table2_b": np.frombuffer(cal.shading2_b, dtype=np.uint8),
+            "gain_codes": np.array([gain_r, gain_g, gain_b], dtype=np.uint16),
+            "offset_codes": np.array([off_r, off_g, off_b], dtype=np.uint16),
+            "dpi": np.int64(dpi),
+            "dual": np.bool_(True),
+        }
+        self.last_diag = {
+            "dpi": dpi,
+            "frame": None,
+            "dual": True,
+            "lines": n_lines,
+            "width": W,
+            "raw_bytes": counted["bytes"],
+            "chunk_count": n_chunks,
+            "overscan_mm": overscan_mm,
+            "calibration": "fresh",
+            "dark_a_mean": [float(x) for x in cal.dark_a.astype(np.float64).mean(axis=0)],
+            "dark_b_mean": [float(x) for x in cal.dark_b.astype(np.float64).mean(axis=0)],
+            "dark_b_substituted": cal.dark_b_substituted,
+            "white_mean": warmup.get("white_mean"),
+            "white_max": warmup.get("white_max"),
+            "gain_codes": [gain_r, gain_g, gain_b],
+            "warmup_attempts": warmup.get("attempts"),
+            "warmup_gain_history": warmup.get("gain_history"),
+            "warmup_exhausted": warmup.get("exhausted"),
+            "warmup_peak_history": warmup.get("peak_history"),
+            "warmup_measurement_times_s": warmup.get("measurement_times_s"),
+            "offset_codes": [off_r, off_g, off_b],
+            "shading": {"a": _shading_stats(cal.shading_a), "b": _shading_stats(cal.shading_b)},
+            "shading2": {"a": _shading_stats(cal.shading2_a), "b": _shading_stats(cal.shading2_b)},
+            "white_dips": {"a": [d.as_dict() for d in cal.dips_a],
+                           "b": [d.as_dict() for d in cal.dips_b]},
+            "white_blocked": {"a": [b.as_dict() for b in cal.blocks_a],
+                              "b": [b.as_dict() for b in cal.blocks_b]},
+            "feedl": feedl,
+            "sweep": {
+                "first": first, "last": last, "feedl": feedl,
+                "end_hwdpi": geom.end_hwdpi, "wire_lines": n_lines,
+                "chunk_count": n_chunks, "raw_bytes": counted["bytes"],
+                "extra_buffers": counted["extra"], "overscan_mm": overscan_mm,
+            },
+            "phase_seconds": dict(self._diag_phase_seconds),
+            "total_seconds": time.monotonic() - t_start,
+            "poll_timeouts": self._diag_poll_timeouts,
+            "cr_mismatches": self._diag_cr_mismatches,
+            "poll_timeout_details": list(self._diag_poll_timeout_details),
+            "poll_settle": list(self._diag_poll_settle),
+            "poll_settle_max_s": round(self._diag_poll_settle_max_s, 4),
+            "park_mode": self.park_mode,
+            "park_waits": dict(self._diag_park_waits) if self._diag_park_waits is not None else None,
+            "started_utc": started_utc,
+            "finished_utc": datetime.now(timezone.utc).isoformat(),
+            "session": self.session.snapshot(),
+        }
+        return W, {"width": W, "alternating": True, "dpi": dpi,
+                   "geometry": geom, "wire_lines": n_lines}

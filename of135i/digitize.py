@@ -143,7 +143,13 @@ def roll_dir_has_output(out_dir: str, prefix: str, roll: int) -> bool:
     return d.is_dir() and any(d.iterdir())
 
 
-def clear_roll_outputs(out_dir: str, prefix: str, roll: int) -> list[str]:
+#: Whole-strip sweep files (docs/whole-strip-sweep-design.md section 6).
+SWEEP_RAW_NAME = "sweep.raw"
+SWEEP_JSON_NAME = "sweep.json"
+
+
+def clear_roll_outputs(out_dir: str, prefix: str, roll: int, *,
+                       include_sweep: bool = True) -> list[str]:
     """Delete this roll's per-frame output files -- for each frame exactly
     ``fN.tiff``, ``fN-ir.tiff``, ``fN-preview.tiff`` and ``fN.diag.json`` --
     so a --force re-scan cannot leave a previous run's sidecars mixed in
@@ -153,18 +159,27 @@ def clear_roll_outputs(out_dir: str, prefix: str, roll: int) -> list[str]:
     The names are built and matched EXACTLY, never globbed: an ``f*.tiff``
     pattern also takes an operator's own ``family.tiff`` out of the
     directory, and this function must only ever remove files the driver
-    itself wrote."""
+    itself wrote.
+
+    A whole-strip sweep's ``sweep.raw`` / ``sweep.json`` (exact names) are
+    removed too, unless ``include_sweep=False`` -- the ``--from-sweep``
+    rebuild clears the frame products but must never touch the sweep it
+    rebuilds from."""
     d = roll_dir(out_dir, prefix, roll)
     if not d.is_dir():
         return []
     removed: list[str] = []
+    names = []
     for frame in FRAMES:
-        for name in (f"f{frame}.tiff", f"f{frame}-ir.tiff",
-                     f"f{frame}-preview.tiff", f"f{frame}.diag.json"):
-            f = d / name
-            if f.is_file():
-                f.unlink()
-                removed.append(name)
+        names += [f"f{frame}.tiff", f"f{frame}-ir.tiff",
+                  f"f{frame}-preview.tiff", f"f{frame}.diag.json"]
+    if include_sweep:
+        names += [SWEEP_RAW_NAME, SWEEP_JSON_NAME]
+    for name in names:
+        f = d / name
+        if f.is_file():
+            f.unlink()
+            removed.append(name)
     return removed
 
 

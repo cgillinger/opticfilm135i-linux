@@ -458,6 +458,19 @@ from the manifest **and** the roll directories already on disk (per
 # Insert the next strip and run the same command again (roll-002, ...).
 ```
 
+**Whole-strip sweep (`--sweep`).** For the dual-light profiles (the
+default 3600 dpi with IR, and 600/1200/2400/7200) `digitize --sweep` scans
+the whole strip in a single pass — one calibration, one positioning move,
+one park — into `sweep.raw` in the roll directory, and cuts the frames from
+it in software; every frame goes through the same writer and the same
+aperture coverage check as the per-frame cycle. `--frames` must be a
+contiguous range. `sweep.raw` (1.3–2 GB) is deleted after a fully
+successful roll unless `--keep-sweep`, and is always kept (with a note on
+stderr) when anything fails or does not verify; `--sweep --from-sweep
+--roll N` rebuilds a roll offline from it. **Implemented offline, not yet
+hardware-verified**; plain 3600 (`--no-ir`) keeps the per-frame cycle. See
+`docs/whole-strip-sweep-design.md`.
+
 The main `fN.tiff` is always the **raw negative** (calibrated,
 channel-aligned, and — with IR, unless `--no-clean` — dust-cleaned; not an
 untouched sensor dump). Do colour (inversion, white balance, tone) later

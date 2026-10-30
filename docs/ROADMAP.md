@@ -853,7 +853,7 @@ is no profile for it. Adding it means a vendor capture at 1800 and a
 profile bring-up like the other four dual-light profiles (Tests 65–71).
 Not scheduled; nobody has asked for it.
 
-**Whole-strip batch scanning.** The vendor's QuickScan scans all six
+**Whole-strip batch scanning.** Implemented offline 2026-10-30 (`digitize --sweep`, docs/whole-strip-sweep-design.md); hardware A/B pending. The vendor's QuickScan scans all six
 frames in one operation ("Processing 4/6"); our backend scans one frame
 per `sane_start`, chosen by the `frame` option. The gap is smaller than
 it looks:
