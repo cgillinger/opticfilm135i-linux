@@ -6,6 +6,8 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+## v0.2.8 — 2026-10-30
+
 - `digitize --sweep` (135, dual-light profiles): scan the whole strip in ONE
   pass — one calibration, one positioning move, one park — into
   `<roll>/sweep.raw` (streamed to disk chunk by chunk), then cut the frames
