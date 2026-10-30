@@ -148,6 +148,36 @@ def test_device_wiring_sweep():
     print("test_device_wiring_sweep OK")
 
 
+def test_sweep_logs_scanning_frame_per_aperture():
+    """A frontend keys its progress on "scanning frame N": the sweep logs
+    one such line per aperture, in order, as the pass reaches it, and the
+    cut prints one "cutting frame N" line per aperture."""
+    import logging
+    t = dual_tables(3600)
+    rec = _SweepRec(t)
+    msgs = []
+
+    class _H(logging.Handler):
+        def emit(self, r):
+            msgs.append(r.getMessage())
+    h = _H()
+    lg = logging.getLogger("of135i")
+    lg.addHandler(h)
+    old = lg.level
+    lg.setLevel(logging.INFO)
+    try:
+        rec.s._sweep_dual(t, first=1, last=4, overscan_mm=holder.OVERSCAN_MM,
+                          sink=lambda b: None)
+    finally:
+        lg.removeHandler(h)
+        lg.setLevel(old)
+    import re
+    frames = [int(m.group(1)) for m in
+              (re.search(r"scanning frame (\d+)", x) for x in msgs) if m]
+    assert frames == [1, 2, 3, 4], frames
+    print("test_sweep_logs_scanning_frame_per_aperture OK")
+
+
 def test_exec_ops_chunk_sink_streams_and_returns_empty():
     s = Scanner(__import__("tests.test_calibrate", fromlist=["x"]).MockUsbIo({}))
 
@@ -604,6 +634,7 @@ def main():
     tests = [
         test_geometry_every_profile_and_range,
         test_device_wiring_sweep,
+        test_sweep_logs_scanning_frame_per_aperture,
         test_exec_ops_chunk_sink_streams_and_returns_empty,
         test_public_sweep_requires_initialize,
         test_finder_cases_a_to_g,

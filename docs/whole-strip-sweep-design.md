@@ -280,6 +280,13 @@ apertures; photograph identity by content is the 110 problem and stays in
   bool}`. `started_utc`/`finished_utc`/`per_frame` keep their meaning, so
   the workflow's per-strip time (finished − started) compares directly
   with the per-frame cycle.
+- Progress lines for a frontend: during the pass the device logs
+  `scanning frame N @ <dpi> dpi (sweep pass, aperture N of first-last, P%)`
+  when the pass reaches aperture N's predicted leading edge (the same
+  "scanning frame N" wording the per-frame path logs, so a banner keyed on
+  it keeps working); the cut prints `cutting frame N from the sweep (...)`
+  before each aperture's products, followed by the usual `wrote ...` and
+  `aperture coverage: ...` lines.
 - Stop-at-empty does not apply: every aperture in the range is in the
   sweep already; an empty aperture gets no product (as today) and no
   frames are "skipped".
