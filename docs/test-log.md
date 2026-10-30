@@ -7663,14 +7663,30 @@ the next strip" line although nothing was sent (to fix).
 **Test 111, production confirmation (2026-10-30, same evening, through the
 application on v0.2.8 and a8aec22).** The workflow switched its colour-135
 command to `digitize --sweep` (same flags otherwise: `--frames 1-4 --dpi
-3600 --no-clean --assume-loaded`, load as a separate step). First two
-strips: both exit 0, 4 of 4 apertures verified, every window located by
-its edges, `sweep.raw` removed after the roll, `fN.cal.npz` hard-linked
-four times, the workflow's own per-strip record written as before. Strip
-times (finished − started, load excluded): 201.5 s and 199.8 s, of which
-the device phases were identical to the tenth of a second on both strips
-and to the A/B run — calibration 6.0 s, position 1.8 s, scan 161.4 s, park
-10.3 s, 179.6 s on the device; the rest is the offline cut and the file
-writes. Strip offsets +0.12 mm and (A/B) +0.07 mm from the mean mapping.
-The progress lines of a8aec22 drove the workflow's banner on the second
-strip. More strips follow; nothing in these two asked for a change.
+3600 --no-clean --assume-loaded`, load as a separate step). Every
+production strip counts as test data from here on (owner's decision
+2026-10-30); the series is recorded per evening, transport data only.
+
+Evening 1: seven strips (colour 135, four frames each, two projects), all
+exit 0, 4 of 4 apertures verified on every strip, every window located by
+its edges, `sweep.raw` removed after each roll, `fN.cal.npz` hard-linked
+four times, the workflow's own per-strip record written as before. Device
+phases identical to the tenth of a second on all seven and to the A/B run:
+calibration 6.0–6.1 s, position 1.8 s, scan 161.4 s, park 10.3 s, 179.5–
+179.6 s on the device. Wall clock per strip (finished − started, load
+excluded) 200–203 s; the rest is the offline cut and the file writes.
+Strip offsets from the mean mapping +0.03 … +0.13 mm (A/B: +0.07 mm). The
+progress lines of a8aec22 drove the workflow's banner from the second
+strip on. The operator reports the machine audibly quieter: the
+frame-to-frame moves were the loudest part of the per-frame run, and a
+strip now has one positioning and one park.
+
+One incident, not the driver's: two instances of the workflow ran at the
+same time and the older one's button listener took the scanner lock
+between strips, so the newer one's `load --next-strip` was refused with
+exit 1 ("another of135i process holds the scanner lock … nothing was
+sent"). The refusal was correct and nothing reached the scanner, but the
+workflow read exit 1 as a hardware failure and the operator power-cycled
+unnecessarily. Noted for the driver: the lock refusal should say in
+plain words that no power cycle is needed, and the exit code should let
+a caller tell "busy" from "failed" (open item).
