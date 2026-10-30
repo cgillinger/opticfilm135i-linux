@@ -1167,6 +1167,29 @@ def test_load_release_only_jogs_and_stops():
     print("test_load_release_only_jogs_and_stops OK")
 
 
+def test_load_busy_lock_exits_3_without_report():
+    """loadflow.run: a lock refusal is exit 3, 'no power cycle needed', and
+    no session report (nothing was sent)."""
+    import contextlib, io
+    from of135i import loadflow
+    calls = []
+    orig_open, orig_report = loadflow.Scanner.open, loadflow._report
+    def busy_open(*a, **k):
+        raise safety.ScannerBusyError("held")
+    loadflow.Scanner.open = staticmethod(busy_open)
+    loadflow._report = lambda s: calls.append(s)
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            rc = loadflow.run(ask=lambda p: "")
+    finally:
+        loadflow.Scanner.open, loadflow._report = orig_open, orig_report
+    assert rc == 3, rc
+    assert "No power cycle is needed" in err.getvalue() and "Power-cycle" not in err.getvalue()
+    assert not calls, "_report must not run on a busy refusal"
+    print("test_load_busy_lock_exits_3_without_report OK")
+
+
 # ======================================================= short transfers
 
 
@@ -2649,6 +2672,7 @@ def main() -> int:
         test_short_transfer_leaving_engine_running_blocks_driver_restart,
         test_load_magazine_requires_initialize_and_matches_trace,
         test_load_release_only_jogs_and_stops,
+        test_load_busy_lock_exits_3_without_report,
         test_load_double_jog_runs_jog_twice_then_loads,
         test_jog_magazine_is_the_vendor_jog_and_fails_closed,
         test_initialize_prep_false_is_the_vendor_device_open_state,

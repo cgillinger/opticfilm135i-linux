@@ -6,6 +6,19 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- CLI exit code 3 when another of135i process holds the scanner lock
+  (`ScannerBusyError`), distinct from 1 (a real failure), for every
+  hardware command that goes through `_run_writing_session` or
+  `loadflow.run` (including `digitize`). The message now says "No power
+  cycle is needed: nothing was sent to the scanner", and `digitize` /
+  `digitize --sweep` print "roll N not started", write no manifest record and
+  do not consume the roll number (the old "Power-cycle before the next strip"
+  line is gone for this case). Production observation 2026-10-30: a lock
+  refusal during a next-strip load was read as a hardware failure by the
+  calling application and the operator power-cycled needlessly; nothing had
+  been sent. Offline only (no hardware evidence needed: no command stream
+  changed).
+
 ## v0.2.8 — 2026-10-30
 
 - `digitize --sweep` (135, dual-light profiles): scan the whole strip in ONE

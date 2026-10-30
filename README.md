@@ -624,7 +624,8 @@ Every error message ends with the next safe action. The rules behind them:
   ends and does not come back by itself; a power cycle wakes it.
 
 Exit codes: `0` success, `1` refused or failed (details on stderr),
-`2` usage error, `130` interrupted (Ctrl-C).
+`2` usage error, `3` scanner busy (another of135i process holds the lock;
+nothing was sent, no power cycle needed), `130` interrupted (Ctrl-C).
 
 ### Release check
 

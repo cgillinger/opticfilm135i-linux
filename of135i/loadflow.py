@@ -69,7 +69,8 @@ from __future__ import annotations
 import sys
 
 from .device import Scanner
-from .safety import POWER_CYCLE_INSTRUCTION, SafetyError, SessionState
+from .safety import (BUSY_NO_RECOVERY_MSG, EXIT_BUSY, POWER_CYCLE_INSTRUCTION,
+                     SafetyError, ScannerBusyError, SessionState)
 from .usbio import Of135iError
 
 REINSERT_PROMPT = (
@@ -216,6 +217,10 @@ def run(ask=input, release_only: bool = False, double_jog: bool = False,
         print(f"\ninterrupted. {POWER_CYCLE_INSTRUCTION}", file=sys.stderr)
         _report(scanner)
         return 130
+    except ScannerBusyError as e:
+        print(f"refused: {e}", file=sys.stderr)
+        print(BUSY_NO_RECOVERY_MSG, file=sys.stderr)
+        return EXIT_BUSY
     except SafetyError as e:
         print(f"FAILED: {e}", file=sys.stderr)
         _report(scanner)

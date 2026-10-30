@@ -448,6 +448,57 @@ def test_digitize_records_failed_on_write_error():
     print("test_digitize_records_failed_on_write_error OK")
 
 
+def _run_busy(fn):
+    """Call fn() with stderr captured; returns (result, stderr)."""
+    import contextlib, io
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+        res = fn()
+    return res, err.getvalue()
+
+
+def test_busy_lock_exits_3_without_power_cycle_advice():
+    """A lock refusal (ScannerBusyError) is exit 3 with 'no power cycle
+    needed', never the session-failure dump; `digitize` records nothing."""
+    import argparse
+    from of135i import cli, digitize, safety
+    assert cli.EXIT_BUSY == 3 == safety.EXIT_BUSY
+
+    orig_open = cli.Scanner.open
+    def busy_open(*a, **k):
+        raise safety.ScannerBusyError("x")
+    cli.Scanner.open = staticmethod(busy_open)
+    dumped = []
+    orig_psf = cli._print_session_failure
+    cli._print_session_failure = lambda s: dumped.append(s)
+    try:
+        rc, err = _run_busy(lambda: cli._run_writing_session(lambda s: 0))
+    finally:
+        cli.Scanner.open = orig_open
+        cli._print_session_failure = orig_psf
+    assert rc == 3, rc
+    assert "refused: x" in err and "No power cycle is needed" in err, err
+    assert "Power-cycle" not in err and not dumped, (err, dumped)
+
+    with tempfile.TemporaryDirectory() as d:
+        args = argparse.Namespace(
+            out=d, prefix="", roll=1, force=False, assume_loaded=True,
+            dpi=3600, positive=False, rotate=0, ir=True, no_clean=False,
+            no_diag=True, park="verbatim", warmup_budget=None,
+            frames="1-2", film="135", strips=1, placement=None)
+        orig = cli._run_writing_session
+        cli._run_writing_session = lambda body: 3
+        try:
+            rc, err = _run_busy(lambda: cli._cmd_digitize(args))
+        finally:
+            cli._run_writing_session = orig
+        assert rc == 3, rc
+        assert "not started" in err and "No power cycle is needed" in err, err
+        assert "Power-cycle" not in err, err
+        assert digitize.read_manifest(d) == [], "a busy refusal must record nothing"
+    print("test_busy_lock_exits_3_without_power_cycle_advice OK")
+
+
 def test_digitize_manifest_error_does_not_mask_original():
     """If the manifest write ITSELF fails while recording a failed roll, the
     original scan error must still propagate (the manifest failure is
@@ -1591,6 +1642,7 @@ def main() -> int:
         test_resilient_stream_swallows_broken_pipe,
         test_resilient_stream_redirects_fd_to_devnull,
         test_digitize_survives_broken_stdout,
+        test_busy_lock_exits_3_without_power_cycle_advice,
         test_sane_tables_generated_and_current,
         test_sane_tables_injections_land_on_value_bytes,
         test_holder_geometry_measures_a_synthetic_holder,

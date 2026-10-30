@@ -630,8 +630,29 @@ def test_cli_validation_exits_2_before_hardware():
     print("test_cli_validation_exits_2_before_hardware OK")
 
 
+def test_sweep_busy_lock_exits_3_records_nothing():
+    """The scanner lock held elsewhere: sweep digitize exits 3, no manifest
+    record, no kept-raw note, no power-cycle advice."""
+    with tempfile.TemporaryDirectory() as d:
+        orig = cli._run_writing_session
+        cli._run_writing_session = lambda body: 3
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                rc = cli._cmd_digitize(_args(d))
+        finally:
+            cli._run_writing_session = orig
+        e = err.getvalue()
+        assert rc == 3, (rc, e)
+        assert "not started" in e and "No power cycle is needed" in e, e
+        assert "Power-cycle" not in e and "sweep.raw" not in e, e
+        assert digitize.read_manifest(d) == []
+    print("test_sweep_busy_lock_exits_3_records_nothing OK")
+
+
 def main():
     tests = [
+        test_sweep_busy_lock_exits_3_records_nothing,
         test_geometry_every_profile_and_range,
         test_device_wiring_sweep,
         test_sweep_logs_scanning_frame_per_aperture,
