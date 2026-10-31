@@ -7690,3 +7690,75 @@ workflow read exit 1 as a hardware failure and the operator power-cycled
 unnecessarily. Noted for the driver: the lock refusal should say in
 plain words that no power cycle is needed, and the exit code should let
 a caller tell "busy" from "failed" (open item).
+
+**Test 111, production confirmation, session 2 (2026-10-31, Saturday
+morning, through the application on v0.2.9 = 8983fe6).** Ten strips, one
+project, 11:37–12:53 CET: three colour-135 strips through `digitize
+--sweep` and seven black-and-white 135 strips through the per-frame cycle
+(`--no-ir`, plain 3600 — the sweep refuses the plain path by design). All
+at 3600 dpi, `--no-clean --assume-loaded`. Two full loads (the first
+strip and the switch to black-and-white), every other strip through
+`load --next-strip`, which gripped every time. No power cycle, no
+double-jog, no abnormal sound reported. Source: the application's
+manifest and logs read by the application session, transport data only.
+
+Colour sweeps (device phases identical to the tenth of a second to
+evening 1 and the A/B run: calibration 6.0 s, position 1.8 s, scan
+161.4 s, park 10.3 s, 179.6 s on the device for apertures 1–4):
+
+- Strip 7, `--frames 1-4`: exit 0, 4/4, margins 0.67–0.76 mm, wall clock
+  199 s.
+- Strip 8, `--frames 1-2`: exit 0, 2/2, margins 0.75 mm, device 95.2 s
+  (scan 81.4 s, park 6.0 s), wall clock 109 s — the first production sweep
+  shorter than four apertures.
+- Strip 9, `--frames 1-4`: exit 4, 3/4 verified of which aperture 4
+  empty. The film ended inside aperture 3: "no aperture found in profile"
+  in both IR and visible, the window cut "located by pitch", no main
+  negative written for it, `sweep.raw` kept for `--from-sweep`. Correct
+  refusal; this is the first exit-4 case in the sweep series (wanted for
+  the SANE-sweep memo).
+
+Black-and-white, per frame, `--frames 1-6`, seven strips, phases
+identical within 0.1 s across all seven: frame 1 calibration fresh 3.7 s,
+park 3.8 s, position 1.8 s, scan 21.4 s, 30.9 s total; frames 2–6
+calibration cached (rewrite 0.3 s), scan ~20.2 s, park 6.0/8.1/10.3/
+12.4/14.6 s and position 3.8/5.9/8.1/10.2/12.4 s — +2.1 s per aperture
+in each direction because every frame parks and repositions from home —
+totals 30.3/34.6/38.8/43.1/47.5 s. Device time for a six-frame strip
+≈225 s, wall clock 252–253 s.
+
+- Strips 10–14: exit 0, 6/6 each (coverage source "visible").
+- Strip 15: exit 4. Aperture 1 = the roll's leader (fully blackened),
+  "no aperture found" — correct refusal; aperture 5 empty, then
+  "stopping: empty aperture at frame 5 after film; skipping frame(s) 6".
+  Three pictures verified. Wall clock 200 s.
+- Strip 16: exit 4, 5/6. Aperture 3 "no aperture found in profile"
+  (source visible) on a real picture: a dense sky against the holder's
+  leading edge, so the edge was lost in visible light — exactly the case
+  the IR side channel exists for on colour. The trailing edge measured
+  (margin 0.876 mm, in line with its siblings). The application rebuilt
+  the frame offline from the `.overscan` file: trailing edge + the
+  siblings' median length 35.92 mm gives a leading margin of 0.679 mm.
+  Driver untouched.
+
+Also seen, all sessions: 95 lines "WARNING poll wv=0x018e wi=0x0122 timed
+out after 0.3s -- continuing" (a few wv=0x008e wi=0x3222), two or three
+per frame or sweep, never a consequence; every `.diag.json` has
+`poll_timeouts=0` and `warmup_attempts=1`, `cr_mismatches` 22–32 per
+frame. These are the best-effort settle polls (device.py), not motor
+completions. Exit 3 ("busy") fired twice, both on the application's own
+status call right after "load done" while the load flow in the same
+process still held the lock (11:37:30, 11:59:09); nothing was sent to the
+scanner and `digitize` started 1 s and 33 s later with reg 0x01 = 0x22.
+The application did not show the power-cycle advice (appcommit 7a4d2dc
+behaves as designed); the collision is the application's to fix. The
+sweep's strip offset against the mean mapping was not printed by the
+driver this session; margins are recorded instead.
+
+Open items from this session: (1) a black-and-white sweep needs a
+visible-light window detector that survives dense content against an
+aperture edge — strip 16 is the first measured case and the per-frame
+products of strips 10–16 are the A side of its future A/B; (2) the
+per-frame plain path could recover a single lost edge from the measured
+opposite edge plus the siblings' length the way the application did,
+content-based, never positions alone — a design question, not started.
