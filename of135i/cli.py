@@ -2817,10 +2817,10 @@ def _rebuild_attempt(args, roll, rdir, plan, default_rec, dpi, ir, shift, may_re
 # positioning, one pass, one park into <roll>/sweep.raw; the frames are cut
 # in software and every cut goes through the EXISTING per-frame writer
 # (_finish_digitize_frame), so nothing about a product differs from the
-# per-frame cycle. Implemented offline; not yet hardware-verified.
-
-_SWEEP_PLAIN_3600_MSG = ("the sweep is implemented for the dual-light profiles; "
-                         "plain 3600 keeps the per-frame cycle")
+# per-frame cycle. Implemented offline; not yet hardware-verified. The
+# dual sweep (IR on, or any dpi other than 3600) has run on hardware; the
+# plain-3600 sweep (--no-ir, black-and-white film) is implemented offline
+# only and awaits its first hardware run (design doc, "Hardware plan").
 
 
 def _sweep_validate(args: argparse.Namespace) -> "tuple[list[int] | None, str | None]":
@@ -2836,8 +2836,6 @@ def _sweep_validate(args: argparse.Namespace) -> "tuple[list[int] | None, str | 
         return None, "--sweep does not support --strips 2"
     if getattr(args, "placement", None) is not None:
         return None, "--placement only applies with --film 110"
-    if args.dpi == 3600 and not args.ir:
-        return None, _SWEEP_PLAIN_3600_MSG
     try:
         frames = _parse_frames(getattr(args, "frames", None) or "1-4")
     except ValueError as e:
@@ -2850,7 +2848,8 @@ def _sweep_validate(args: argparse.Namespace) -> "tuple[list[int] | None, str | 
         return None, "--from-sweep needs --roll N"
     try:
         from .device import dual_tables
-        t = dual_tables(args.dpi)
+        dual = bool(args.ir or args.dpi != 3600)
+        t = dual_tables(args.dpi) if dual else tables
         Scanner._sweep_geometry(t, frames[0], frames[-1],
                                 getattr(args, "overscan", None) or holder.OVERSCAN_MM)
     except (safety.FrameOutOfRangeError, safety.FeedlOutOfRangeError, ValueError) as e:
@@ -2858,7 +2857,8 @@ def _sweep_validate(args: argparse.Namespace) -> "tuple[list[int] | None, str | 
     return frames, None
 
 
-def _sweep_meta(geom, width: int, dpi: int, overscan_mm: float) -> dict:
+def _sweep_meta(geom, width: int, dpi: int, overscan_mm: float,
+                dual: bool = True) -> dict:
     """The sweep's geometry as sweep.json stores it (and the window finder
     reads it back, see _sweep_geom_from_meta)."""
     return {
@@ -2866,6 +2866,7 @@ def _sweep_meta(geom, width: int, dpi: int, overscan_mm: float) -> dict:
         "end_hwdpi": geom.end_hwdpi, "wire_lines": geom.wire_lines,
         "chunk_count": geom.chunks, "overscan_mm": overscan_mm, "width": width,
         "lines_per_mm": geom.lines_per_mm,
+        "dual": bool(dual), "wire_per_vis": 2 if dual else 1,
         "predicted_edges": {str(k): list(v) for k, v in geom.predicted_edges.items()},
     }
 
@@ -2893,9 +2894,16 @@ def _sweep_resolve(raw_path: Path, meta: dict):
     """Memory-map sweep.raw and run the window finder. Returns (mm, res)."""
     from . import sweep as _sweep
     mm = _sweep.open_raw(raw_path, int(meta["width"]))
-    prof = _sweep.ir_profile(mm, dpi=int(meta["dpi"]))
+    # sweep.json files written before the plain sweep existed carry no
+    # "dual" key: they are dual sweeps.
+    dual = bool(meta.get("dual", True))
+    if dual:
+        prof = _sweep.ir_profile(mm, dpi=int(meta["dpi"]))
+    else:
+        prof = _sweep.visible_profile(mm, dpi=int(meta["dpi"]))
     res = _sweep.find_windows(prof, _sweep_geom_from_meta(meta), dpi=int(meta["dpi"]),
-                              overscan_mm=float(meta["overscan_mm"]))
+                              overscan_mm=float(meta["overscan_mm"]),
+                              wire_per_vis=int(meta.get("wire_per_vis", 2 if dual else 1)))
     return mm, res
 
 
@@ -2932,7 +2940,7 @@ def _sweep_cut(args: argparse.Namespace, rdir: Path, mm, res, meta: dict,
               f"located by {w.located_by})")
         raw = _sweep.window_bytes(mm, w)
         main, irf, prev, cleaned, cov = _finish_digitize_frame(
-            args, raw, width, out, True, progress=entry)
+            args, raw, width, out, bool(meta.get("dual", True)), progress=entry)
         entry.update(main=main, ir=irf, preview=prev, dust_cleaned=cleaned)
         film = None
         if cov is not None:
@@ -3063,14 +3071,16 @@ def _digitize_sweep(args: argparse.Namespace) -> int:
         if not scanner.is_magazine_present():
             print("error: no magazine detected after load", file=sys.stderr)
             return 1
-        scanner.initialize(ir=True, dpi=args.dpi)
-        log.info("sweeping apertures %d-%d @ %d dpi (one pass)", first, last, args.dpi)
+        dual = bool(args.ir or args.dpi != 3600)    # the per-frame rule
+        scanner.initialize(ir=dual, dpi=args.dpi)
+        log.info("sweeping apertures %d-%d @ %d dpi (one pass, %s)", first, last,
+                 args.dpi, "dual" if dual else "plain")
         overscan = getattr(args, "overscan", None) or holder.OVERSCAN_MM
         with open(raw_path, "wb") as fh:
             width, smeta = scanner.sweep(first, last, dpi=args.dpi,
-                                         overscan_mm=overscan, sink=fh.write)
+                                         overscan_mm=overscan, sink=fh.write, ir=dual)
         d = dict(scanner.last_diag or {})
-        meta = _sweep_meta(smeta["geometry"], width, args.dpi, overscan)
+        meta = _sweep_meta(smeta["geometry"], width, args.dpi, overscan, dual=dual)
         state.update(meta=meta, diag=d, cal=scanner.last_cal_data)
         _sweep_write_json(json_path, meta, None, d)
         print(f"sweep done: {raw_path.stat().st_size / 1e9:.2f} GB written")
@@ -3964,12 +3974,14 @@ def build_parser() -> argparse.ArgumentParser:
              "follow. No scanner is touched; dpi/ir/rotate come from the "
              "stored records (docs/film-110.md §14)")
     p_dig.add_argument("--sweep", action="store_true",
-        help="135, dual-light profiles only: scan the whole strip in ONE pass "
+        help="135: scan the whole strip in ONE pass "
              "(one calibration, one positioning, one park) into <roll>/sweep.raw "
              "and cut the frames from it in software, each judged by the same "
              "aperture coverage check (docs/whole-strip-sweep-design.md). "
-             "Implemented offline, NOT yet hardware-verified. --frames must be "
-             "a contiguous range")
+             "With --no-ir (plain 3600, black-and-white film) the pass is "
+             "limited to --frames 1-4 until its anchoring is hardware-verified "
+             "(implemented offline, awaiting its first hardware run). "
+             "--frames must be a contiguous range")
     p_dig.add_argument("--keep-sweep", action="store_true",
         help="--sweep: keep sweep.raw (1.3-2 GB) after a fully successful "
              "roll (default: removed; always kept on any failure)")

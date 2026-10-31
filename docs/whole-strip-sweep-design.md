@@ -4,7 +4,9 @@ Status: design and implementation spec, 2026-10-30. **Hardware-run once**
 the same day (docs/test-log.md Test 111: dual 3600 with IR, one four-frame
 strip, 4 of 4 apertures verified, 192 s against 277 s per frame,
 eye-accepted by the owner). The other dual
-profiles and plain 3600 are not run. Section 5's IR profile registers the
+profiles are not run. **Plain 3600 (`--no-ir`, black-and-white film) is
+implemented offline, not run** (sections 3, 4.1, 6, 7 and the Test 112
+plan in section 8). Section 5's IR profile registers the
 colour-line stagger — the first run's post-processing was unresolved
 without it.
 
@@ -42,8 +44,9 @@ own.
 `tables_ir.CAPTURED_LINES` is 10622 (one frame). The mechanism is
 identical (same registers, same 16-line chunks, the engine completes when
 every chunk has been read) but a long dual-3600 pass is a new data point,
-as plain 3600 is. It gets one hardware A/B before it is relied on. Plain
-3600 is out of scope here (the sweep refuses it; section 6).
+as plain 3600 is. It got one hardware A/B before it was relied on (Test
+111). Plain 3600 has its own geometry and anchoring gate (section 3) and
+awaits its first run (Test 112 plan, section 8).
 
 Sizes at 3600 dpi dual (W = 5184 px, 6 bytes/px, two wire lines per
 visible line):
@@ -86,6 +89,57 @@ aperture `first`'s leading edge and ends `overscan_mm` after aperture
 
 Returns `(SweepGeometry, wire_lines)`; `SweepGeometry` extends the
 `OverscanGeometry` fields with `first`, `last`, `predicted_edges`.
+
+### 3.1 Plain 3600: `holder.plain_sweep_geometry`
+
+*Implemented offline; NOT hardware-verified.* The plain program has one
+wire line per visible line and 2 motor units per line.
+`plain_sweep_geometry(first, last, *, chunk_lines, colour_crop_lines,
+default_lines, overscan_mm)` sizes the same window as above
+(`want_start`, `want_end`, chunks rounded up with the two colour-crop
+strips) but anchors it the PLAIN way, as `overscan_geometry` does: the
+commanded window is CENTRED on FEEDL, `FEEDL = want_start +
+delivered_lines/2 x 2`, and `start_hwdpi = want_start`. FEEDL is therefore
+the centre of the whole window and NOT frame `first`'s FEEDL.
+`predicted_edges[k] = ((lead_k - start)/2, (trail_k - start)/2)` in
+visible (= wire) lines. The device programs
+`tables.scan_lines_for_chunks(chunks)`; the plain scan phase injects a
+16-bit line count only, so a count above 0xFFFF raises `ValueError`
+(apertures 1-4 are ~21 500 lines).
+
+**The anchoring gate.** Two hypotheses cover what the plain engine does
+for a LONG pass:
+
+1. *Centre* (what Tests 57-60 showed for one-frame windows, whose growth
+   over the default window is a few hundred motor units): the window is
+   centred on FEEDL; the pass runs from `want_start` to `end_hwdpi`.
+2. *Fixed start* (what the dual engine does,
+   `dual_overscan_geometry`): the acquisition START sits at
+   `FEEDL - K`, K = the captured default window's half-length =
+   `default_lines x 2 / 2` = 5137 motor units for plain 3600. The pass
+   would then run to `(FEEDL - K) + delivered_lines x 2`.
+
+No hardware run has separated them for a long plain pass. Until one has,
+BOTH furthest positions must pass `check_feedl` (`FEEDL_CEILING` 71490):
+`holder.PLAIN_SWEEP_LONG_ANCHORING_VERIFIED = False`; a hardware test
+recorded in `docs/test-log.md` (Test 112, section 8) flips it, and then
+only the centre hypothesis is checked. A refusal raises
+`safety.FeedlOutOfRangeError` (exit 2 before any write): "plain sweep
+over apertures a-b is refused until the plain engine's anchoring of a
+long pass is hardware-verified: under the fixed-start hypothesis the pass
+would reach N motor units, past the proven travel of 71490; a range of
+four apertures (1-4, 2-5) is the longest allowed".
+
+| apertures | FEEDL | `end_hwdpi` (centre) | end, fixed start | program lines | gate |
+|---|---|---|---|---|---|
+| 1-4 | 22 662 | 44 097 | 60 395 | 21 467 | accepted |
+| 2-5 | 33 415 | 54 850 | 71 148 | 21 467 | accepted (342 units of slack) |
+| 1-5 | 28 044 | 54 861 | 76 541 | 26 849 | refused |
+| 1-6 | 33 403 | 65 579 | 92 618 | 32 208 | refused |
+
+If the fixed-start hypothesis holds, the 1-4 pass starts at 17 525, i.e.
+~57 mm after the commanded start: aperture 1 is not in the file and the
+runs sit ~57 mm early against the prediction (section 8).
 
 ## 4. The device side: `Scanner._sweep_dual`
 
@@ -130,11 +184,31 @@ sees the same phase order with the same injections.
    "geometry": geom, "wire_lines": wire_lines})` — no raw bytes.
 
 Public entry: `Scanner.sweep(first, last, *, dpi, overscan_mm=None,
-sink)`, with the same preconditions as `scan()` (`initialize()` first,
-loaded this session, `park_mode` valid), dual profiles only: `dpi == 3600`
-without IR is not a dual profile — the public method always runs the
-dual table of `dpi` (`ir=True` semantics), and the CLI refuses plain
-(section 6). Runs inside `self._operation("sweep")`.
+sink, ir=True)`, with the same preconditions as `scan()` (`initialize()`
+first, loaded this session, `park_mode` valid). `ir=True` runs the dual
+table of `dpi`; `ir=False` runs the plain 3600 sweep (section 4.1) and
+requires `dpi == 3600` (`Of135iError` otherwise, before any phase).
+Runs inside `self._operation("sweep")`.
+
+### 4.1 `Scanner._sweep_plain` (plain 3600, offline only)
+
+*Implemented offline; NOT hardware-verified.* Modelled on `_scan_plain`
+and `_sweep_dual`. `_scan_plain`'s calibration block is extracted
+unchanged into `_plain_calibration()` (fresh, or this session's cached
+codes under key `(3600, False)`, same `_calibration_rewrite` on a hit,
+cache cleared on any later exception); the phase sequence of
+`_scan_plain` is frozen by a golden-list test. `_sweep_plain` then:
+geometry from `holder.plain_sweep_geometry` and `check_feedl`; park
+budget from the END position (`position_timeout_scale(tables,
+round(end_hwdpi))`); POSITION exactly as `_scan_plain`; SCAN
+`tables.scan_phase(chunks)` with a counting sink that forwards exactly
+`chunks` image buffers and swallows the trailing drain; the same
+"scanning frame N" progress lines (`IMAGE_CHUNK_LINES` visible lines per
+chunk, no /2); PARK; `last_diag` with the `_scan_plain` keys plus
+`frame: None`, `dual: False` and the `sweep` block. A second plain
+sweep, or one after a plain scan, in the same session makes only
+`cal_rewrite` (cache hit). A long plain-3600 pass is a new data point
+for the engine.
 
 ## 5. Post-processing: `of135i/sweep.py` (pure, offline-testable)
 
@@ -213,13 +287,26 @@ apertures; photograph identity by content is the 110 problem and stays in
 
 ## 6. CLI: `digitize --sweep`
 
-- `--sweep` on `digitize`: 135 only (`--film 110` → error), dual profiles
-  only (`--no-ir` with `--dpi 3600` → error "the sweep is implemented for
-  the dual-light profiles; plain 3600 keeps the per-frame cycle"),
+- `--sweep` on `digitize`: 135 only (`--film 110` → error),
   `--strips 2` → error, `--frames` must be a contiguous range `a-b`
   (default `1-4`). All validated before any hardware step (exit 2).
-- Flow: load (as today) → `scanner.initialize(ir=True, dpi)` once →
-  `scanner.sweep(first, last, dpi=..., sink=file writer)` into
+- `--no-ir` with `--dpi 3600` (black-and-white film) runs the plain 3600
+  sweep (`dual = args.ir or args.dpi != 3600`, the per-frame rule), limited
+  by the anchoring gate of section 3.1 to four apertures (`--frames 1-4`
+  or `2-5`; 1-5 and 1-6 exit 2 with the gate's message). *Implemented
+  offline; not hardware-verified.* `sweep.json` stores `"dual"` and
+  `"wire_per_vis"` (2 dual, 1 plain); `--from-sweep` picks
+  `ir_profile` or `visible_profile` from them, and a `sweep.json` without
+  `"dual"` is a dual sweep. The windows are cut from the plain buffer
+  (`find_windows(wire_per_vis=1)`: integer bounds, no parity rounding),
+  and every window goes through the plain per-frame writer
+  (`image.assemble` + `align_channels` + `measure_coverage`): products
+  `fN.tiff`, `fN.overscan.tiff`, `fN-preview.tiff`, no IR files, `ir`
+  None in the manifest. A window located BY PITCH is never verified
+  coverage by itself; it goes through that writer's own check like every
+  window.
+- Flow: load (as today) → `scanner.initialize(ir=dual, dpi)` once →
+  `scanner.sweep(first, last, dpi=..., sink=file writer, ir=dual)` into
   `<rdir>/sweep.raw` → `sweep.json` (geometry + device diag) → **eject**
   (the carriage is parked and the raw file whole; the post-processing
   below takes minutes and the scanner drops USB after ~5 min of standby,
@@ -329,10 +416,36 @@ apertures; photograph identity by content is the 110 problem and stays in
    kept, record failed with the reason; a window that does not verify →
    `sweep.raw` kept, exit 4; `--from-sweep` rebuild reproduces the
    products byte for byte and appends a record with `rebuilt_from_sweep`.
-7. CLI validation: `--sweep` with `--film 110`, with `--no-ir --dpi 3600`,
-   with `--strips 2`, with `--frames 1,3` → exit 2 before any hardware.
+7. CLI validation: `--sweep` with `--film 110`, with `--no-ir --dpi 3600
+   --frames 1-6` (the anchoring gate), with `--strips 2`, with `--frames
+   1,3` → exit 2 before any hardware; `--no-ir --dpi 3600` over 1-4 is
+   accepted.
 8. `test_release_check` keeps passing (SUITES changed → whatever pins it
    is updated honestly).
+
+Plain 3600 (offline, same file): (a) `plain_sweep_geometry`: start =
+`overscan_geometry`'s `want_start`, FEEDL = centre of the whole window
+(differs from frame `first`'s), both anchoring hypotheses inside 71490 for
+1-4 and 2-5, 1-5 and 1-6 refused with the gate's words, accepted with
+`PLAIN_SWEEP_LONG_ANCHORING_VERIFIED` monkeypatched True, predicted
+aperture lengths equal the holder's, the 16-bit line guard; (b) the
+golden phase list of `_scan_plain` (fresh and cached) unchanged by the
+calibration extraction; (c) device wiring with a recording fake: phase
+order, FEEDL, `lines_hi/lo`, exactly `chunks` buffers and no drain,
+`_park_scale`, `last_diag`, cache hit on a second sweep and after a plain
+scan, `sweep(ir=False, dpi=2400)` refused before any phase; (d)
+`visible_profile` block-wise equals the direct computation,
+`find_windows(wire_per_vis=1)` gives integer windows covering predicted
+plus overscan plus crop; (e) end to end through `_cmd_digitize`
+(`ir=False` to the scanner, products byte-identical to the per-frame
+writer on the same window bytes, no `-ir` files, `geometry.dual` False,
+`--from-sweep` byte-identical); (f) the study case of
+`docs/bw-sweep-study.md` 3.3 (edge-adjacent content at 5 % of the strip
+range, 20 % of its own window's: pitch-located, then found by
+`aperture.apertures` on its own window) and the invariants "numbering
+from measured edges, never positions alone" (no plausible run stays
+unresolved; windows follow the measured offset) and "a pitch-located
+window is not verified coverage by itself" (a dark aperture: exit 4).
 
 ## 8. Hardware plan (Test 111) — needs the owner's go, in a scanning pause
 
@@ -362,9 +475,46 @@ known to the owner; it must NOT be named in this repo).
 A failure of any kind: power-cycle, read the log and `sweep.json`, no
 retry the same evening without a cause.
 
+### Hardware plan (Test 112): plain 3600 sweep
+
+*Needs the owner's go; nothing here has been run.* One black-and-white
+135 strip that was already digitized per frame on 2026-10-31 (its
+per-frame products are the A side; the strip is not named in this repo).
+Preconditions as for Test 111. After a normal load:
+
+    of135i digitize --sweep --no-ir --frames 1-4 --dpi 3600 --no-clean
+
+(`--keep-sweep` is implied by any failure; add it to keep the raw on
+success.) The long plain pass is a NEW MOTOR CADENCE for this unit
+(~21 500 lines continuously, against 5 100 per frame): the operator
+LISTENS from the start of the pass to the park and cuts the power on any
+scraping or unfamiliar sound. Abort criteria: any scraping, a stall, a
+position timeout in the log, USB loss. Do not retry the same evening
+without a cause.
+
+What to expect under each anchoring hypothesis (section 3.1):
+
+- *Centre* (the engine centres the long window on FEEDL): the sweep
+  resolves; the offset against the prediction is within +-1 mm; four
+  windows cut, each verified by the per-frame writer; compare the
+  products with the per-frame ones frame by frame, eye check per the
+  milestone rule, and the time against the per-frame record. This result
+  is what flips `PLAIN_SWEEP_LONG_ANCHORING_VERIFIED` to True (with a
+  `docs/test-log.md` entry), and only then may 2-5 or longer ranges
+  be considered with their own plan.
+- *Fixed start* (the START is at FEEDL - 5137): the sweep file begins
+  ~57 mm further along the strip (aperture 1 is not in it at all), the
+  runs sit ~57 mm early against the prediction (about 1.5 pitches, so the
+  nearest-aperture assignment cannot tell them apart: the offset or the
+  spread exceeds the finder's limits) and the sweep is left UNRESOLVED: `sweep.raw` kept, exit 4, no products. That result
+  flips nothing but tells us the convention; the pass stayed inside the
+  proven travel (end ~60 400) by construction of the gate.
+
 ## 9. Out of scope here
 
-Plain 3600 sweep; frame-to-frame dead reckoning (step 2 of the saving);
+Plain 3600 sweep beyond four apertures (until Test 112 has shown the
+anchoring; the sweep over 1-4 is implemented offline, section 3.1);
+the plain sweep with film 110; frame-to-frame dead reckoning (step 2 of the saving);
 the inter-aperture film base as a manifest field (candidate, owner's
 veto on new fields; the data is in `sweep.raw` when kept); the SANE
 backend (per-frame by design, `docs/sane-batch-scanning-design.md`).

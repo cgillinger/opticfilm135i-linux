@@ -6,6 +6,19 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- `digitize --sweep --no-ir` (plain 3600, black-and-white film): the
+  whole-strip sweep for the plain program, implemented **offline** (not
+  run on hardware). New `holder.plain_sweep_geometry` with a
+  hardware-safety gate: the plain engine's anchoring of a LONG pass is
+  unverified (centre on FEEDL, as for one-frame windows, or a fixed start
+  at FEEDL minus the default half-window, as the dual engine), so both
+  furthest positions must stay inside the proven travel and 1-4 is the
+  longest range allowed; `Scanner.sweep(..., ir=False)` /
+  `_sweep_plain` (the calibration block of `_scan_plain` is extracted
+  unchanged); `sweep.visible_profile` and `find_windows(wire_per_vis=1)`;
+  `sweep.json` records `dual`/`wire_per_vis`. Awaiting its first hardware
+  run (docs/whole-strip-sweep-design.md, Test 112 plan).
+
 ## v0.2.9 — 2026-10-30
 
 - Progress lines during the sweep: `scanning frame N @ <dpi> dpi (sweep pass,

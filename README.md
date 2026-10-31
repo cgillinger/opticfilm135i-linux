@@ -470,8 +470,10 @@ stderr) when anything fails or does not verify; `--sweep --from-sweep
 --roll N` rebuilds a roll offline from it. **Hardware-run once** (Test 111,
 2026-10-30: dual 3600 with IR, one four-frame strip, 4 of 4 apertures
 verified, eye-accepted, about 31 % faster than the per-frame cycle); the other profiles
-are not yet run, and plain 3600 (`--no-ir`) keeps the per-frame cycle. See
-`docs/whole-strip-sweep-design.md`.
+are not yet run. Plain 3600 (`--no-ir`, black-and-white film) is included
+too: implemented offline, awaiting its first hardware run, and limited to
+four apertures (`--frames 1-4`) until the plain engine's anchoring of a
+long pass has been verified. See `docs/whole-strip-sweep-design.md`.
 
 The main `fN.tiff` is always the **raw negative** (calibrated,
 channel-aligned, and — with IR, unless `--no-clean` — dust-cleaned; not an
