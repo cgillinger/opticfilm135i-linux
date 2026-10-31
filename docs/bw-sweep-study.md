@@ -265,7 +265,7 @@ have delivered both, flagged in the sidecar as what it is.
 ## 5. Proposed next steps
 
 1. Decide point 4.3 (owner's call; recommendation: (a), then (b)).
-2. Implement the plain-3600 sweep offline with fixture tests: the
+2. *Implemented offline (PR #<n>), not hardware-verified.* Implement the plain-3600 sweep offline with fixture tests: the
    synthetic sweep of 3.3 and the production windows of 3.4 become the
    fixtures; invariants "content-based numbering, never positions alone"
    and "a pitch-located window is never counted as verified coverage by
