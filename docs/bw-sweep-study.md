@@ -265,18 +265,21 @@ have delivered both, flagged in the sidecar as what it is.
 ## 5. Proposed next steps
 
 1. Decide point 4.3 (owner's call; recommendation: (a), then (b)).
-2. *Implemented offline (PR #42), not hardware-verified.* Implement the plain-3600 sweep offline with fixture tests: the
+2. *Implemented offline (PR #42), run on hardware once (Test 112, 2026-10-31) and WITHDRAWN: the pass started ≈ 19 mm from where the plain engine's long back-up should have left it, the magazine ended displaced and the park stalled. The finder result of this study stands; the blocker is the plain engine's long pass, not the window finder.* Implement the plain-3600 sweep offline with fixture tests: the
    synthetic sweep of 3.3 and the production windows of 3.4 become the
    fixtures; invariants "content-based numbering, never positions alone"
    and "a pitch-located window is never counted as verified coverage by
    itself" written as tests. Strip 16 (six frames, one refused) is the
    natural first fixture: five by edges, one by pitch, local re-check
    refusing it exactly as the per-frame cycle did.
-3. One hardware A/B on a black-and-white strip already scanned per frame
-   on 2026-10-31 (its per-frame products are the A side): the strip
-   through `digitize --sweep --no-ir`, products compared frame by frame,
-   eye check, and the operator listening — the plain-3600 sweep moves the
-   carriage at a cadence the unit has not run before.
+3. *Run 2026-10-31 as Test 112; see above.* One hardware A/B on a
+   black-and-white strip already scanned per frame on 2026-10-31: the
+   strip through `digitize --sweep --no-ir`, products compared frame by
+   frame, eye check, and the operator listening. Afterwards: a
+   black-and-white sweep through the dual engine would avoid the long
+   back-up but reads two wire lines per position and saves no time
+   against plain per frame, so the black-and-white sweep is not pursued
+   in either form for now.
 
 Analysis scripts and profiles stay in the private analysis area; this
 document carries every figure they produced.

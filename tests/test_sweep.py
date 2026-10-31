@@ -627,11 +627,11 @@ def test_cli_validation_exits_2_before_hardware():
             rc, err = _forbid_hardware(_args(d, **over))
             assert rc == 2, (over, rc, err)
             assert err.startswith("error:"), (over, err)
-        rc, err = _forbid_hardware(_args(d, dpi=3600, ir=False, frames="1-6"))
-        assert "hardware-verified" in err and "longest allowed" in err, err
-        # the plain 3600 sweep over 1-4 is now ACCEPTED by the validator
-        frames, msg = cli._sweep_validate(_args(d, dpi=3600, ir=False))
-        assert (frames, msg) == ([1, 2, 3, 4], None), (frames, msg)
+        # WITHDRAWN after Test 112: the plain 3600 sweep is refused for every
+        # range, with the test named, before the geometry is even looked at
+        for fr in ("1-4", "1-6"):
+            rc, err = _forbid_hardware(_args(d, dpi=3600, ir=False, frames=fr))
+            assert rc == 2 and "Test 112" in err and "per-frame" in err, (fr, rc, err)
         assert not list(Path(d).iterdir()), "nothing may be created before the checks"
     print("test_cli_validation_exits_2_before_hardware OK")
 
@@ -851,23 +851,26 @@ def test_public_plain_sweep_preconditions_and_dispatch():
     try:
         rec.s.sweep(1, 4, dpi=2400, ir=False, sink=lambda b: None)
     except Exception as e:
-        assert type(e).__name__ == "Of135iError" and "3600" in str(e), e
+        assert type(e).__name__ == "Of135iError" and "Test 112" in str(e), e
     else:
         raise AssertionError("plain sweep at 2400 dpi must be refused")
     assert not rec.runs and not rec.s.io.writes
-    # the plain gate also refuses a long range through the public call
+    # the geometry gate still refuses a long range at the geometry level
     try:
-        rec.s.sweep(1, 6, dpi=3600, ir=False, sink=lambda b: None)
+        _pgeom(1, 6)
     except safety.FeedlOutOfRangeError:
         pass
     else:
-        raise AssertionError("1-6 must be refused")
-    assert not rec.runs and not rec.s.io.writes
-    # the public call dispatches to the plain sweep and consumes the prepared flag
-    sink = []
-    W, meta = rec.s.sweep(1, 4, dpi=3600, ir=False, sink=sink.append)
-    assert meta["alternating"] is False and rec.s._prepared_for_scan is False
-    assert [ph.name for ph, _ in rec.runs][-2:] == ["position", "scan"]
+        raise AssertionError("1-6 must be refused by the gate")
+    # WITHDRAWN after Test 112: the public call refuses ir=False at 3600 too,
+    # before any phase or write, and leaves the prepared flag alone
+    try:
+        rec.s.sweep(1, 4, dpi=3600, ir=False, sink=lambda b: None)
+    except Exception as e:
+        assert type(e).__name__ == "Of135iError" and "Test 112" in str(e), e
+    else:
+        raise AssertionError("the plain sweep must be refused (withdrawn after Test 112)")
+    assert not rec.runs and not rec.s.io.writes and rec.s._prepared_for_scan is True
     print("test_public_plain_sweep_preconditions_and_dispatch OK")
 
 
@@ -1028,7 +1031,19 @@ def _plain_args(d, **over):
     return _args(d, dpi=3600, ir=False, **over)
 
 
-def test_e2e_plain_sweep_products_identical_to_per_frame_writer():
+def test_e2e_plain_sweep_is_refused_before_hardware():
+    """WITHDRAWN after Test 112: digitize --sweep --no-ir exits 2 before any
+    hardware step, names the test, and creates nothing."""
+    with tempfile.TemporaryDirectory() as d:
+        rc, err = _forbid_hardware(_plain_args(d, keep_sweep=True))
+        assert rc == 2 and "Test 112" in err and "per-frame" in err, (rc, err)
+        assert not list(Path(d).iterdir()), "nothing may be created"
+    print("test_e2e_plain_sweep_is_refused_before_hardware OK")
+
+
+def _e2e_plain_sweep_products_identical_to_per_frame_writer_RETIRED():
+    # Kept for the record of what the offline path produced before Test 112;
+    # not run: the CLI refuses the plain sweep.
     raw, g = _synthetic_plain_sweep()
     with tempfile.TemporaryDirectory() as d:
         events = []
@@ -1070,7 +1085,7 @@ def test_e2e_plain_sweep_products_identical_to_per_frame_writer():
     print("test_e2e_plain_sweep_products_identical_to_per_frame_writer OK")
 
 
-def test_e2e_plain_sweep_pitch_located_window_goes_through_coverage():
+def _e2e_plain_sweep_pitch_located_window_goes_through_coverage_RETIRED():
     """A window located BY PITCH is never verified coverage by itself: the
     per-frame writer's own check refuses an empty/dark aperture, no
     product is written, the sweep fails (exit 4) and the raw is kept."""
@@ -1106,8 +1121,7 @@ def main():
         test_visible_profile_blockwise_and_wire_per_vis_1,
         test_plain_finder_study_case_pitch_located_edge_adjacent_content,
         test_plain_numbering_follows_measured_edges_not_position,
-        test_e2e_plain_sweep_products_identical_to_per_frame_writer,
-        test_e2e_plain_sweep_pitch_located_window_goes_through_coverage,
+        test_e2e_plain_sweep_is_refused_before_hardware,
         test_old_sweep_json_without_dual_is_a_dual_sweep,
         test_sweep_busy_lock_exits_3_records_nothing,
         test_geometry_every_profile_and_range,

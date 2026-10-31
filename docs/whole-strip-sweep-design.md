@@ -4,9 +4,14 @@ Status: design and implementation spec, 2026-10-30. **Hardware-run once**
 the same day (docs/test-log.md Test 111: dual 3600 with IR, one four-frame
 strip, 4 of 4 apertures verified, 192 s against 277 s per frame,
 eye-accepted by the owner). The other dual
-profiles are not run. **Plain 3600 (`--no-ir`, black-and-white film) is
-implemented offline, not run** (sections 3, 4.1, 6, 7 and the Test 112
-plan in section 8). Section 5's IR profile registers the
+profiles are not run. **Plain 3600 (`--no-ir`, black-and-white film) was
+implemented offline and WITHDRAWN after its first hardware run, Test 112
+(2026-10-31, docs/test-log.md): the acquisition started ≈ 19 mm later
+along the film than the centre convention predicts, the magazine ended
+displaced against the slot's front edge and the park stalled. The CLI and
+`Scanner.sweep` refuse it; sections 3.1, 4.1 and the Test 112 plan in
+section 8 are kept as the record of what was built and what happened.**
+Section 5's IR profile registers the
 colour-line stagger — the first run's post-processing was unresolved
 without it.
 
@@ -475,9 +480,13 @@ known to the owner; it must NOT be named in this repo).
 A failure of any kind: power-cycle, read the log and `sweep.json`, no
 retry the same evening without a cause.
 
-### Hardware plan (Test 112): plain 3600 sweep
+### Hardware plan (Test 112): plain 3600 sweep — RUN 2026-10-31, INCIDENT, path withdrawn
 
-*Needs the owner's go; nothing here has been run.* One black-and-white
+*Kept as written before the run. Outcome in docs/test-log.md, Test 112:
+the scan pass completed, but the acquisition started ≈ 19 mm later than
+either hypothesis below predicts (start ≈ 6 590 instead of 1 227), the
+magazine ended displaced against the slot's front edge and the park
+stalled; the operator cut the power. The plain sweep is refused since.* One black-and-white
 135 strip that was already digitized per frame on 2026-10-31 (its
 per-frame products are the A side; the strip is not named in this repo).
 Preconditions as for Test 111. After a normal load:
@@ -512,9 +521,10 @@ What to expect under each anchoring hypothesis (section 3.1):
 
 ## 9. Out of scope here
 
-Plain 3600 sweep beyond four apertures (until Test 112 has shown the
-anchoring; the sweep over 1-4 is implemented offline, section 3.1);
-the plain sweep with film 110; frame-to-frame dead reckoning (step 2 of the saving);
+The plain 3600 sweep altogether (withdrawn after Test 112; the plain
+engine's behaviour on a back-up longer than the default window is unknown
+and any experiment needs its own plan with the magazine's seating as the
+stop criterion); the plain sweep with film 110; frame-to-frame dead reckoning (step 2 of the saving);
 the inter-aperture film base as a manifest field (candidate, owner's
 veto on new fields; the data is in `sweep.raw` when kept); the SANE
 backend (per-frame by design, `docs/sane-batch-scanning-design.md`).

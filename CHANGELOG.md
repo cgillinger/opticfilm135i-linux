@@ -6,18 +6,30 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
-- `digitize --sweep --no-ir` (plain 3600, black-and-white film): the
-  whole-strip sweep for the plain program, implemented **offline** (not
-  run on hardware). New `holder.plain_sweep_geometry` with a
-  hardware-safety gate: the plain engine's anchoring of a LONG pass is
-  unverified (centre on FEEDL, as for one-frame windows, or a fixed start
-  at FEEDL minus the default half-window, as the dual engine), so both
-  furthest positions must stay inside the proven travel and 1-4 is the
-  longest range allowed; `Scanner.sweep(..., ir=False)` /
-  `_sweep_plain` (the calibration block of `_scan_plain` is extracted
-  unchanged); `sweep.visible_profile` and `find_windows(wire_per_vis=1)`;
-  `sweep.json` records `dual`/`wire_per_vis`. Awaiting its first hardware
-  run (docs/whole-strip-sweep-design.md, Test 112 plan).
+- **Plain-3600 whole-strip sweep WITHDRAWN after Test 112** (2026-10-31,
+  `docs/test-log.md`). `digitize --sweep --no-ir` exits 2 before any
+  hardware step and `Scanner.sweep(ir=False)` raises, both naming the
+  test; black-and-white film keeps the per-frame cycle. The first (and
+  only) hardware run of the path completed its scan pass but the
+  acquisition had started ≈ 19 mm later along the film than the geometry
+  assumed, the magazine ended displaced against the slot's front edge and
+  the park stalled (power cut by the operator). The dual sweep is
+  unaffected. The code path (`holder.plain_sweep_geometry`,
+  `Scanner._sweep_plain`, `sweep.visible_profile`,
+  `find_windows(wire_per_vis=1)`, `sweep.json` `dual`/`wire_per_vis`) stays
+  in the tree for the record, unreachable from the CLI.
+- Recovery finding (vendor capture 2026-10-31, same entry): when the
+  status word shows the loader bit 0x08 clear at app start, the vendor
+  runs the LOAD traverse (mode 0x1c, 71 490 steps) BEFORE the app-start
+  jog, which re-seats the cassette; our `cold_init` jogs directly and
+  stopped fail-closed on the displaced magazine. Owner's decision: the
+  driver gets this recovery (offline from the capture, then its own
+  hardware test). Not implemented yet.
+- Earlier the same day (PR #42, merged, now superseded by the
+  withdrawal): the plain sweep had been implemented offline with an
+  anchoring gate limiting it to four apertures; `_scan_plain`'s
+  calibration block was extracted into `_plain_calibration` with the
+  phase sequence unchanged (kept).
 
 ## v0.2.9 — 2026-10-30
 
