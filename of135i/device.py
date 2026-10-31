@@ -2726,9 +2726,9 @@ class Scanner:
         (docs/whole-strip-sweep-design.md).
 
         ``ir=True`` (default): ``dpi`` selects that resolution's dual
-        table (IR on). ``ir=False``: the plain (visible-only) 3600 dpi
-        profile, for black-and-white film (``_sweep_plain``; ``dpi`` must
-        be 3600). Same preconditions as scan(): initialize() first, loaded this session,
+        table (IR on). ``ir=False`` (the plain 3600 profile, ``_sweep_plain``)
+        is REFUSED: withdrawn after Test 112, see below. Same preconditions
+        as scan(): initialize() first, loaded this session,
         a valid park_mode. Image data goes ONLY to ``sink`` (called once
         per image chunk, in order); nothing is returned but
         (width, meta) -- the sweep never holds more than one chunk.
@@ -2738,9 +2738,17 @@ class Scanner:
         only.
         """
         self.session.write_allowed_or_final()
-        if not ir and dpi != 3600:
+        if not ir:
+            # WITHDRAWN after Test 112 (2026-10-31, docs/test-log.md): the
+            # plain engine's long pass started ~19 mm from where the
+            # geometry assumed, the magazine ended displaced against the
+            # slot's front edge and the park stalled (power cut by the
+            # operator). _sweep_plain stays in the tree for the record;
+            # it is not reachable until the mechanism is understood and a
+            # new hardware plan exists.
             raise Of135iError(
-                f"the plain (--no-ir) sweep exists at 3600 dpi only, not {dpi}. "
+                "the plain (--no-ir) whole-strip sweep is withdrawn after Test 112 "
+                "(2026-10-31): black-and-white film keeps the per-frame cycle. "
                 f"{safety.NO_COMMANDS_SENT}")
         t = dual_tables(dpi) if ir else tables
         if self.park_mode not in ("verbatim", "semantic"):

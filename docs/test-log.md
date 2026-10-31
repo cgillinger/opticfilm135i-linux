@@ -7814,3 +7814,117 @@ the application's, harmless.
 
 Day total 2026-10-31: 19 strips (3 colour sweeps, 16 black-and-white per
 frame), one project, one power cycle (load rc 1), no abnormal sound.
+
+## 2026-10-31 — Test 112: the plain-3600 whole-strip sweep, first hardware run — INCIDENT: the pass started 19 mm late, the magazine ended displaced, the park stalled, power cut by the operator. The plain sweep is withdrawn.
+
+**Setup.** v0.2.9 + PR #42 (master 981fa50, the plain sweep implemented
+offline the same day, `docs/bw-sweep-study.md`). A black-and-white 135
+strip from the morning's production (six pictures, the first four clear,
+already digitized per frame, so its per-frame products are the A side).
+Preconditions met: application closed, scanner power-cycled, `status`
+0x00 → full load through `tools/load_magazine.py` (one earlier attempt
+had been started through a stdin-less shell and aborted at the Enter
+prompt after the jog; power cycle, then a clean load; reg 0x01 = 0x22,
+magazine present). Command, the application's black-and-white flags plus
+the sweep:
+
+    digitize --sweep --no-ir --frames 1-4 --dpi 3600 --no-clean --assume-loaded --keep-sweep
+
+Geometry commanded (`holder.plain_sweep_geometry`, centre convention):
+FEEDL 22662, 933 chunks, 21467 programmed lines, planned acquisition
+start 1227, planned end 44097; the anchoring gate had accepted the range
+(fixed-start hypothesis end 60395 < 71490).
+
+**What happened (operator + log + raw).** Calibration fresh (gain
+0x2d/0x1f/0x26), POSITION completed in 3.06 s, the four "scanning frame
+N" progress lines came at 1/26/51/76 %, the scan pass completed:
+`sweep.raw` is 484 372 548 bytes = exactly 21 459 lines × 3762 px, every
+chunk written. The PARK then began and the operator heard the transport
+jam ("a hell of a noise") and cut the power at once; the session failed
+in operation park with USB Errno 19, 95 s after start, no `sweep.json`
+written (the finder never ran). The operator's observation afterwards:
+the magazine had been pushed against the front edge of the slot and
+caught inside the front entry, so the return could not bring it home.
+Three poll-settle warnings before the pass (the usual best-effort
+polls), none during it.
+
+**The raw says where the pass really started.** Visible red profile,
+600-dpi bins, edge finder: edges at 18.0 (fall), 19.8 (rise), 55.8, 57.7,
+93.6, 95.4, 131.4, 133.3 mm from the first line; three complete lit runs
+of 36.01 / 35.89 / 35.97 mm (holder apertures), a partial run at the
+start (0–18.0 mm) and one at the end (133.3 mm to the end). Predicted
+leading edges were 0.8 / 38.7 / 76.6 / 114.7 mm. Every measured edge is
+18.9–19.3 mm EARLIER in the file than predicted, with the holder pitch
+intact (37.9 / 37.7 mm between leads), so the acquisition started
+≈ 18.9 mm (≈ 5 360 motor units) later along the film than the geometry
+assumed — at ≈ 6 590 instead of 1 227 — and ran its full 42 918 units
+from there (end ≈ 49 500). That matches neither hypothesis the gate was
+built on (centre: start 1 227; fixed start: start 17 525). The finder,
+run offline on the file, is unresolved: "two plausible runs claim
+aperture 3". The data is in `/mnt/NVME2/bw-svep-test112/roll-001/`
+(kept) and the profile in the private analysis area.
+
+**Reading, labelled as hypothesis.** The only motion in this pass the
+unit had never made is the back-up before acquisition: from FEEDL 22662
+to the planned start, 57 mm at the scan engine's reverse cadence, against
+18 mm in every per-frame plain scan. The film ended 19 mm from where the
+back-up should have left it and the magazine ended displaced forward
+against the slot; the operator's reading is that the magazine was driven
+past something at the front entry and caught on the way back. Whether
+the carriage stopped 19 mm short, or reached its target while shoving
+the magazine (and the film with it) 19 mm forward, cannot be told from
+one file; both put the fault in the long back-up. The per-frame plain
+path, which backs up 18 mm from a FEEDL 5 137 units past the window
+start, is unaffected and ran 16 black-and-white strips the same day.
+
+**Recovery (the vendor's, captured).** Our own recovery path failed:
+after the power cycle `tools/load_magazine.py` ran `cold_init`, whose
+homing round is the vendor's app-start jog (feed 6690, feed 6690, eject
+3090); move 2 did not complete within 30 s (status word 0xf055, loader
+bit 0x08 clear) and the driver stopped fail-closed, as designed. The
+magazine could not be pulled out by hand. With usbmon recording on the
+host (`captures/20261031-recovery-stuck-magazine.pcap`, 4 770 packets,
+0 dropped; compiled in the private analysis area), the scanner was given
+to the Windows VM and the vendor application started. Its app start read
+the status word **0xd055** (bit 0x08 clear: the loader sensor not seeing
+the cassette), and before the jog it ran the LOAD flow's traverse — mode
+0x1c, 71 490 steps — which took **6.42 s** (status d155 → d955 → d855)
+against 1.1 s in every captured load; then the ordinary jog (feed 6690
+1.60 s, feed 6690 1.62 s, eject 3090 0.88 s, all to 0xf855) and the idle
+heartbeat. The magazine came out by hand afterwards. For comparison the
+2026-09-07 capture of the vendor opening on a merely latched magazine
+(status 0xd855) shows the jog run directly, no traverse first. So the
+vendor's "fix" is conditional: when the loader bit is clear at start, the
+load traverse re-seats the cassette before the jog. Our `cold_init` has
+no such step. **Owner's decision 2026-10-31: the driver gets this
+recovery** (traverse before the jog when the status word's bit 0x08 is
+clear at cold start) — a motor-sequence change, so: implemented offline
+from the capture, then its own hardware test on his go.
+
+**State after.** Scanner power-cycled without the magazine: reg 0x01 =
+0x00, 0x31 = 0xfe, 0x32 = 0xc2, magazine not detected — identical to the
+day's first cold start. Holder and strip to be inspected by the owner.
+No scan since; a normal per-frame scan is the next thing the transport
+should do, and only on the owner's go.
+
+**Consequences.**
+1. The plain-3600 sweep is **withdrawn**: `digitize --sweep --no-ir`
+   exits 2 before any hardware step and `Scanner.sweep(ir=False)` raises,
+   both naming this test; the code path stays in the tree for the record.
+   `PLAIN_SWEEP_LONG_ANCHORING_VERIFIED` stays False. The dual sweep is
+   untouched (10 production strips + the A/B, unchanged motion).
+2. Black-and-white film keeps the per-frame cycle. A black-and-white sweep
+   through the dual engine would avoid the long back-up (the dual engine
+   anchors at FEEDL − K, 18 mm, by construction) but reads two wire lines
+   per position and so saves no time against plain per frame (dual 1–4
+   180 s on the device against plain per-frame 153 s wall clock); not
+   pursued.
+3. The study's finder result (`docs/bw-sweep-study.md`) stands: the
+   problem is the plain engine's long pass, not the window finder.
+4. Open: what the plain engine does on a back-up longer than the default
+   window (one data point: 16 077 units for a commanded 21 455). Any new
+   experiment needs its own plan with the magazine's seating as the
+   stop criterion, and is not scheduled.
+5. Lesson recorded: the gate reasoned about the furthest FORWARD position
+   only; the new motion was the backward one, and nothing in the plan
+   named the magazine's seating as a thing the back-up could disturb.

@@ -2817,10 +2817,19 @@ def _rebuild_attempt(args, roll, rdir, plan, default_rec, dpi, ir, shift, may_re
 # positioning, one pass, one park into <roll>/sweep.raw; the frames are cut
 # in software and every cut goes through the EXISTING per-frame writer
 # (_finish_digitize_frame), so nothing about a product differs from the
-# per-frame cycle. Implemented offline; not yet hardware-verified. The
-# dual sweep (IR on, or any dpi other than 3600) has run on hardware; the
-# plain-3600 sweep (--no-ir, black-and-white film) is implemented offline
-# only and awaits its first hardware run (design doc, "Hardware plan").
+# per-frame cycle. The dual sweep (IR on, or any dpi other than 3600) has
+# run on hardware (Test 111 and production). The plain-3600 sweep (--no-ir,
+# black-and-white film) is WITHDRAWN after its first hardware run, Test 112
+# (2026-10-31, docs/test-log.md): the plain engine's long pass did not start
+# where the geometry assumed, the magazine was displaced and the park
+# stalled. The code path stays in the tree for the record but is refused
+# here and in Scanner.sweep until the mechanism is understood.
+
+_SWEEP_PLAIN_WITHDRAWN_MSG = (
+    "the plain-3600 sweep (--sweep with --no-ir) is withdrawn after Test 112 "
+    "(2026-10-31): the long plain pass displaced the magazine and stalled the "
+    "park; black-and-white film keeps the per-frame cycle. Nothing was sent to "
+    "the scanner.")
 
 
 def _sweep_validate(args: argparse.Namespace) -> "tuple[list[int] | None, str | None]":
@@ -2846,9 +2855,11 @@ def _sweep_validate(args: argparse.Namespace) -> "tuple[list[int] | None, str | 
                       f"between its first and last")
     if getattr(args, "from_sweep", False) and args.roll is None:
         return None, "--from-sweep needs --roll N"
+    dual = bool(args.ir or args.dpi != 3600)
+    if not dual:
+        return None, _SWEEP_PLAIN_WITHDRAWN_MSG
     try:
         from .device import dual_tables
-        dual = bool(args.ir or args.dpi != 3600)
         t = dual_tables(args.dpi) if dual else tables
         Scanner._sweep_geometry(t, frames[0], frames[-1],
                                 getattr(args, "overscan", None) or holder.OVERSCAN_MM)
@@ -3978,9 +3989,9 @@ def build_parser() -> argparse.ArgumentParser:
              "(one calibration, one positioning, one park) into <roll>/sweep.raw "
              "and cut the frames from it in software, each judged by the same "
              "aperture coverage check (docs/whole-strip-sweep-design.md). "
-             "With --no-ir (plain 3600, black-and-white film) the pass is "
-             "limited to --frames 1-4 until its anchoring is hardware-verified "
-             "(implemented offline, awaiting its first hardware run). "
+             "Dual-light profiles only: with --no-ir at 3600 dpi (plain, "
+             "black-and-white film) the sweep is refused (withdrawn after "
+             "Test 112, 2026-10-31; the per-frame cycle stays). "
              "--frames must be a contiguous range")
     p_dig.add_argument("--keep-sweep", action="store_true",
         help="--sweep: keep sweep.raw (1.3-2 GB) after a fully successful "
