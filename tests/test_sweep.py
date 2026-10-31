@@ -33,7 +33,9 @@ import numpy as np
 from of135i import cli, digitize, holder, image, safety, sweep, aperture_crop
 from of135i.device import Scanner, dual_tables, position_timeout_scale
 from of135i.tables import Op
+from of135i import aperture, tables
 from tests.test_dual_overscan import _RecordingDualScanner
+from tests.test_overscan import _RecordingScanner
 
 DPIS = (600, 1200, 2400, 3600, 7200)
 RANGES = ((1, 4), (1, 6), (2, 3))
@@ -411,8 +413,9 @@ class _SweepFakeScanner:
     def initialize(self, ir, dpi):
         self.events.append(("initialize", ir, dpi))
 
-    def sweep(self, first, last, *, dpi, overscan_mm=None, sink):
+    def sweep(self, first, last, *, dpi, overscan_mm=None, sink, ir=True):
         self.events.append(("sweep", first, last, dpi))
+        self.sweep_ir = ir
         n = len(self.raw)
         step = self.t.LINES_PER_CHUNK * W_TEST * 6
         sent = 0
@@ -618,14 +621,17 @@ def test_clear_roll_outputs_sweep_files():
 
 def test_cli_validation_exits_2_before_hardware():
     with tempfile.TemporaryDirectory() as d:
-        for over in (dict(film="110"), dict(dpi=3600, ir=False), dict(strips=2),
+        for over in (dict(film="110"), dict(dpi=3600, ir=False, frames="1-6"), dict(strips=2),
                      dict(frames="1,3"), dict(frames="1-9"), dict(from_sweep=True, roll=None),
                      dict(sweep=False, keep_sweep=True), dict(from_frames=True)):
             rc, err = _forbid_hardware(_args(d, **over))
             assert rc == 2, (over, rc, err)
             assert err.startswith("error:"), (over, err)
-        rc, err = _forbid_hardware(_args(d, dpi=3600, ir=False))
-        assert "plain 3600 keeps the per-frame cycle" in err
+        rc, err = _forbid_hardware(_args(d, dpi=3600, ir=False, frames="1-6"))
+        assert "hardware-verified" in err and "1-4 is the longest range allowed" in err, err
+        # the plain 3600 sweep over 1-4 is now ACCEPTED by the validator
+        frames, msg = cli._sweep_validate(_args(d, dpi=3600, ir=False))
+        assert (frames, msg) == ([1, 2, 3, 4], None), (frames, msg)
         assert not list(Path(d).iterdir()), "nothing may be created before the checks"
     print("test_cli_validation_exits_2_before_hardware OK")
 
@@ -650,8 +656,459 @@ def test_sweep_busy_lock_exits_3_records_nothing():
     print("test_sweep_busy_lock_exits_3_records_nothing OK")
 
 
+# ------------------------------------------------------- plain-3600 sweep
+#
+# Implemented offline; NOT hardware-verified (docs/whole-strip-sweep-design.md,
+# "Plain-3600 sweep"). These tests pin the geometry, the gate, the device
+# wiring, the profile/finder for a non-interleaved sweep and the CLI flow.
+
+CHUNK = tables.IMAGE_CHUNK_LINES
+CROP = image.align_shift(3600)
+
+
+def _pgeom(first, last, overscan=holder.OVERSCAN_MM):
+    return holder.plain_sweep_geometry(
+        first, last, chunk_lines=CHUNK, colour_crop_lines=CROP,
+        default_lines=tables.DEFAULT_LINES, overscan_mm=overscan)
+
+
+def _k_end(g):
+    """The furthest position under the fixed-start hypothesis."""
+    return (g.feedl - tables.DEFAULT_LINES) + g.delivered_lines * 2
+
+
+def test_plain_geometry_and_anchoring_gate():
+    fid = holder.STRIP_FIDUCIAL
+    over = holder.OVERSCAN_MM / holder.MM_PER_UNIT
+    for first, last in ((1, 4), (2, 5)):
+        g, wire = _pgeom(first, last)
+        assert wire == g.chunks * CHUNK
+        assert g.start_hwdpi == fid.leading_hwdpi(first) - over
+        # FEEDL is the centre of the WHOLE window, not frame `first`'s
+        assert g.feedl == round(g.start_hwdpi + g.delivered_lines)
+        one = holder.overscan_geometry(
+            first, res_units_per_line=2, chunk_lines=CHUNK,
+            colour_crop_lines=CROP)
+        assert g.feedl != one.feedl and abs(g.start_hwdpi - (one.feedl - one.delivered_lines)) <= 1.0
+        assert g.end_hwdpi <= holder.FEEDL_CEILING and _k_end(g) <= holder.FEEDL_CEILING, \
+            (first, last, g.end_hwdpi, _k_end(g))
+        holder.check_feedl(g.feedl)
+        assert tables.scan_lines_for_chunks(g.chunks) <= 0xFFFF
+        # predicted apertures: lengths in lines, in visible (= wire) lines
+        for k in range(first, last + 1):
+            a, b = g.predicted_edges[k]
+            want = fid.aperture_mm[k - 1] * 3600 / 25.4
+            assert abs((b - a) - want) <= 1.0, (k, b - a, want)
+        assert g.predicted_edges[first][0] > 0
+        assert g.predicted_edges[last][1] < g.delivered_lines + 2 * CROP
+    # the K-hypothesis ends, as in the spec: 1-4 ~60 500, 2-5 ~71 200
+    assert abs(_k_end(_pgeom(1, 4)[0]) - 60500) < 300
+    assert abs(_k_end(_pgeom(2, 5)[0]) - 71200) < 300
+    for last in (5, 6):
+        try:
+            _pgeom(1, last)
+        except safety.FeedlOutOfRangeError as e:
+            m = str(e)
+            assert f"plain sweep over apertures 1-{last} is refused until the plain " \
+                   f"engine's anchoring of a long pass is hardware-verified" in m, m
+            assert "fixed-start hypothesis" in m and "71490" in m
+            assert "apertures 1-4 is the longest range allowed" in m, m
+        else:
+            raise AssertionError(f"1-{last} must be refused")
+    # flipping the constant leaves only the centre hypothesis
+    orig = holder.PLAIN_SWEEP_LONG_ANCHORING_VERIFIED
+    holder.PLAIN_SWEEP_LONG_ANCHORING_VERIFIED = True
+    try:
+        try:
+            _pgeom(1, 6)
+        except safety.FeedlOutOfRangeError:
+            raise AssertionError("1-6 must pass the gate once anchoring is verified "
+                                 "(its centre-hypothesis end is inside the travel)")
+        # ... but the centre end is still guarded
+        try:
+            _pgeom(1, 6, overscan=25.0)
+        except safety.FeedlOutOfRangeError:
+            pass
+        else:
+            raise AssertionError("the centre end must still be checked")
+    finally:
+        holder.PLAIN_SWEEP_LONG_ANCHORING_VERIFIED = orig
+    for bad in ((1, 7), (0, 4)):
+        try:
+            _pgeom(*bad)
+        except (safety.FrameOutOfRangeError, ValueError):
+            pass
+        else:
+            raise AssertionError(bad)
+    try:
+        _pgeom(4, 1)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("first after last")
+    # the 16-bit line guard: a (made-up) tiny chunk makes the count overflow
+    try:
+        holder.plain_sweep_geometry(
+            1, 4, chunk_lines=1, colour_crop_lines=CROP,
+            default_lines=tables.DEFAULT_LINES)
+    except ValueError as e:
+        assert "16-bit" in str(e), e
+    else:
+        raise AssertionError("line count above 0xFFFF must be refused")
+    print("test_plain_geometry_and_anchoring_gate OK")
+
+
+class _PlainSweepRec(_RecordingScanner):
+    """_RecordingScanner whose _run_phase honours chunk_sink as _exec_ops
+    does (buffers to the sink, empty list returned) and which records
+    the _exec_ops calls."""
+
+    def __init__(self):
+        super().__init__()
+        self.exec_calls = 0
+
+    def _run_phase(self, phase, chunk_sink=None, **inject):
+        self.runs.append((phase, inject))
+        bufs = self._buffers_for(phase)
+        if chunk_sink is not None:
+            for b in bufs:
+                chunk_sink(b)
+            return []
+        return bufs
+
+    def _exec_ops(self, ops):
+        self.exec_calls += 1
+        return super()._exec_ops(ops)
+
+
+def test_scan_plain_phase_sequence_is_frozen():
+    """The golden phase list of Scanner._scan_plain, taken from the code
+    BEFORE its calibration block was extracted into _plain_calibration."""
+    fresh = ["cal_dark_a", "cal_dark_b", "cal_gain_check_a", "cal_gain_check_b",
+             "cal_shading_measure", "cal_shading_upload", "position", "scan"]
+    cached = ["cal_rewrite", "position", "scan"]
+    rec = _PlainSweepRec()
+    rec.s._scan_plain(frame=1)
+    assert [ph.name for ph, _ in rec.runs] == fresh, [ph.name for ph, _ in rec.runs]
+    assert rec.exec_calls == 2                  # cal_shading_verify's two halves
+    assert rec.s.last_diag["calibration"] == "fresh"
+    n = len(rec.runs)
+    rec.s._scan_plain(frame=1)
+    assert [ph.name for ph, _ in rec.runs[n:]] == cached
+    assert rec.s.last_diag["calibration"] == "cached" and rec.s.last_cal_data is None
+    print("test_scan_plain_phase_sequence_is_frozen OK")
+
+
+def test_device_wiring_plain_sweep():
+    g, wire = _pgeom(1, 4)
+    rec = _PlainSweepRec()
+    rec.s._prepared_for_scan = True            # as initialize() leaves it
+    sink = []
+    W, meta = rec.s._sweep_plain(1, 4, overscan_mm=holder.OVERSCAN_MM, sink=sink.append)
+    names = [ph.name for ph, _ in rec.runs]
+    assert names == ["cal_dark_a", "cal_dark_b", "cal_gain_check_a", "cal_gain_check_b",
+                     "cal_shading_measure", "cal_shading_upload", "position", "scan"], names
+    pos = next(inj for ph, inj in rec.runs if ph.name == "position")
+    feedl = (pos["feedl_hi"][0] << 16) | (pos["feedl_mid"][0] << 8) | pos["feedl_lo"][0]
+    assert feedl == g.feedl
+    scan_inj = next(inj for ph, inj in rec.runs if ph.name == "scan")
+    assert "lines_top" not in scan_inj
+    n_lines = (scan_inj["lines_hi"][0] << 8) | scan_inj["lines_lo"][0]
+    assert n_lines == tables.scan_lines_for_chunks(g.chunks)
+    # exactly `chunks` image buffers, the drain NOT forwarded
+    assert len(sink) == g.chunks and all(len(b) == tables.IMAGE_CHUNK_LEN for b in sink)
+    d = rec.s.last_diag
+    assert d["dual"] is False and d["frame"] is None and d["calibration"] == "fresh"
+    assert d["sweep"]["chunk_count"] == g.chunks and d["sweep"]["extra_buffers"] == 1
+    assert d["sweep"]["raw_bytes"] == g.chunks * tables.IMAGE_CHUNK_LEN
+    assert d["lines"] == n_lines and d["feedl"] == g.feedl
+    assert rec.s._park_scale == position_timeout_scale(tables, round(g.end_hwdpi))
+    assert rec.s._park_scale > position_timeout_scale(tables, g.feedl)
+    assert W == tables.IMAGE_WIDTH
+    assert meta["geometry"] == g and meta["alternating"] is False and meta["dpi"] == 3600
+    assert rec.s.last_cal_data is not None
+    # a second sweep in the same session reuses the cache: cal_rewrite only
+    n = len(rec.runs)
+    sink2 = []
+    rec.s._sweep_plain(1, 4, overscan_mm=holder.OVERSCAN_MM, sink=sink2.append)
+    assert [ph.name for ph, _ in rec.runs[n:]] == ["cal_rewrite", "position", "scan"]
+    assert rec.s.last_diag["calibration"] == "cached" and rec.s.last_cal_data is None
+    assert len(sink2) == g.chunks
+    # ... and so does a sweep after a plain scan
+    rec2 = _PlainSweepRec()
+    rec2.s._scan_plain(frame=1)
+    n = len(rec2.runs)
+    rec2.s._sweep_plain(1, 4, overscan_mm=holder.OVERSCAN_MM, sink=lambda b: None)
+    assert [ph.name for ph, _ in rec2.runs[n:]] == ["cal_rewrite", "position", "scan"]
+    assert rec2.s.last_diag["calibration"] == "cached"
+    print("test_device_wiring_plain_sweep OK")
+
+
+def test_public_plain_sweep_preconditions_and_dispatch():
+    # ir=False only exists at 3600: refused before any phase or write
+    rec = _PlainSweepRec()
+    rec.s._prepared_for_scan = True
+    try:
+        rec.s.sweep(1, 4, dpi=2400, ir=False, sink=lambda b: None)
+    except Exception as e:
+        assert type(e).__name__ == "Of135iError" and "3600" in str(e), e
+    else:
+        raise AssertionError("plain sweep at 2400 dpi must be refused")
+    assert not rec.runs and not rec.s.io.writes
+    # the plain gate also refuses a long range through the public call
+    try:
+        rec.s.sweep(1, 6, dpi=3600, ir=False, sink=lambda b: None)
+    except safety.FeedlOutOfRangeError:
+        pass
+    else:
+        raise AssertionError("1-6 must be refused")
+    assert not rec.runs and not rec.s.io.writes
+    # the public call dispatches to the plain sweep and consumes the prepared flag
+    sink = []
+    W, meta = rec.s.sweep(1, 4, dpi=3600, ir=False, sink=sink.append)
+    assert meta["alternating"] is False and rec.s._prepared_for_scan is False
+    assert [ph.name for ph, _ in rec.runs][-2:] == ["position", "scan"]
+    print("test_public_plain_sweep_preconditions_and_dispatch OK")
+
+
+def test_visible_profile_blockwise_and_wire_per_vis_1():
+    rng = np.random.default_rng(2)
+    shift = image.align_shift(3600)
+    n, W = 80 + 4 * shift, 12
+    mm = rng.integers(0, 60000, size=(n, W, 3)).astype("<u2")
+    got = sweep.visible_profile(mm, dpi=3600, block_lines=7)
+    lo = max(0, int(round(W / 2.0 - W * 0.25)))
+    hi = min(W, max(lo + 1, int(round(W / 2.0 + W * 0.25))))
+    want = np.roll(mm[:, lo:hi, 0].astype(np.float64).mean(axis=1), -shift)
+    assert got.shape == (n,) and np.allclose(got, want, atol=1e-9)
+    # a plain window: integers, no parity rounding, covers predicted +- overscan +- crop
+    g, _ = _pgeom(1, 4)
+    prof = _plain_profile(g)
+    lpm = 3600 / 25.4
+    odd = False
+    for sh in (0.0, 1 / lpm, 3 / lpm, 0.51):
+        shifts = {k: (sh, sh) for k in range(1, 5)}
+        r = sweep.find_windows(_plain_profile(g, shifts=shifts), g, dpi=3600,
+                               wire_per_vis=1)
+        assert r.resolved, (sh, r.reason)
+        for k, w in r.windows.items():
+            assert isinstance(w.wire_start, int) and isinstance(w.wire_end, int)
+            a, b = g.predicted_edges[k]
+            a, b = a + r.offset_mm * lpm, b + r.offset_mm * lpm
+            need = holder.OVERSCAN_MM * lpm + CROP
+            assert w.wire_start <= max(0, a - need + 1) and w.wire_end >= min(len(prof), b + need - 1), (k, w, a, b)
+            assert 0 <= w.wire_start < w.wire_end <= len(prof)
+            odd = odd or (w.wire_start % 2 or w.wire_end % 2)
+    assert odd, "plain windows are not parity-rounded: some bound must be odd"
+    try:
+        sweep.find_windows(prof, g, dpi=3600, wire_per_vis=3)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("wire_per_vis=3 must be refused")
+    print("test_visible_profile_blockwise_and_wire_per_vis_1 OK")
+
+
+def _plain_profile(g, *, shifts=None, missing=(), dark_level=800, lit=40000, dim=None):
+    """Synthetic visible profile (one entry per line) of a plain sweep:
+    lit runs at the predicted edges. ``dim[k] = (level, edge_mm)`` makes
+    aperture k's first/last ``edge_mm`` a dim level and the rest ``lit``-ish
+    middle level ``level`` -- see the study case below."""
+    lpm = 3600 / 25.4
+    n = g.chunks * CHUNK
+    prof = np.full(n, dark_level, dtype=np.float64)
+    for k, (a, b) in g.predicted_edges.items():
+        if k in missing:
+            continue
+        s0, s1 = (shifts or {}).get(k, (0.0, 0.0))
+        a2, b2 = int(round(a + s0 * lpm)), int(round(b + s1 * lpm))
+        prof[a2:b2] = lit
+        if dim and k in dim:
+            mid, edge_mm, edge_level = dim[k]
+            e = int(round(edge_mm * lpm))
+            prof[a2:b2] = mid
+            prof[a2:a2 + e] = edge_level
+            prof[b2 - e:b2] = edge_level
+    return prof
+
+
+def test_plain_finder_study_case_pitch_located_edge_adjacent_content():
+    """docs/bw-sweep-study.md 3.3: an aperture whose edge-adjacent content
+    sits under the 8 % absolute step rule of the STRIP's range is lost to
+    the sweep's edge finder and cut BY PITCH from its siblings' offset --
+    and the window's own, smaller range then finds it."""
+    g, _ = _pgeom(1, 4)
+    rng_ = 40000.0 - 800.0
+    edge_level = 800.0 + 0.05 * rng_            # 0.05 of the STRIP range
+    mid_level = 800.0 + 0.25 * rng_             # edge = 0.20 of the window's own range
+    prof = _plain_profile(g, dim={3: (mid_level, 1.5, edge_level)})
+    r = sweep.find_windows(prof, g, dpi=3600, wire_per_vis=1)
+    assert r.resolved, r.reason
+    assert r.windows[3].located_by == "pitch", r.windows
+    assert [r.windows[k].located_by for k in (1, 2, 4)] == ["edges"] * 3
+    assert abs(r.offset_mm) < 0.05
+    w = r.windows[3]
+    win = prof[w.wire_start:w.wire_end]
+    _, runs = aperture.apertures(win, 3600 / 25.4)
+    assert len(runs) == 1, runs
+    length_mm = (runs[0][1] - runs[0][0]) / (3600 / 25.4)
+    assert abs(length_mm - holder.STRIP_FIDUCIAL.aperture_mm[2]) < 0.1, length_mm
+    # the invariant: "never positions alone" -- a profile with NO plausible
+    # run stays unresolved and cuts nothing although predicted edges exist
+    flat = np.full(len(prof), 800.0)
+    r2 = sweep.find_windows(flat, g, dpi=3600, wire_per_vis=1)
+    assert not r2.resolved and not r2.windows and g.predicted_edges, r2.reason
+    short = _plain_profile(g, dim=None)
+    short[:] = 800.0
+    a, _b = g.predicted_edges[2]
+    short[int(a):int(a) + int(20 * 3600 / 25.4)] = 40000.0     # one 20 mm run
+    r3 = sweep.find_windows(short, g, dpi=3600, wire_per_vis=1)
+    assert not r3.resolved and not r3.windows, r3.reason
+    print("test_plain_finder_study_case_pitch_located_edge_adjacent_content OK")
+
+
+def test_plain_numbering_follows_measured_edges_not_position():
+    """Everything +7 mm (the DPI-change shift): each window follows the
+    MEASURED run, so aperture k's window brackets the shifted run and not
+    the predicted position; with one run alone dark the offset still comes
+    from the siblings and that window is only pitch-located."""
+    g, _ = _pgeom(1, 4)
+    lpm = 3600 / 25.4
+    shifts = {k: (7.0, 7.0) for k in range(1, 5)}
+    r = sweep.find_windows(_plain_profile(g, shifts=shifts), g, dpi=3600, wire_per_vis=1)
+    assert r.resolved and abs(r.offset_mm - 7.0) < 0.05, r.reason
+    for k in range(1, 4):       # aperture 4's shifted end leaves the profile
+        a, b = g.predicted_edges[k]
+        w = r.windows[k]
+        assert w.located_by == "edges"
+        assert w.wire_start > a + 6.0 * lpm and w.wire_end >= b + 7.0 * lpm - 1, (k, w)
+    r = sweep.find_windows(_plain_profile(g, missing=(3,)), g, dpi=3600, wire_per_vis=1)
+    assert r.resolved and r.windows[3].located_by == "pitch"
+    print("test_plain_numbering_follows_measured_edges_not_position OK")
+
+
+W_PLAIN = 64
+
+
+def _synthetic_plain_sweep(missing=()):
+    """Raw wire buffer of a plain 1-4 sweep (real line counts, W=64): every
+    line visible, lit apertures with film specks."""
+    g, wire = _pgeom(1, 4)
+    n = g.chunks * CHUNK
+    col = _plain_profile(g, missing=missing).astype(np.uint16)
+    img = np.repeat(col[:, None], W_PLAIN, axis=1)
+    for k, (a, b) in g.predicted_edges.items():
+        if k in missing:
+            continue
+        r0 = int(round(a)) + 40 + 7 * k
+        img[r0:r0 + 2, 2:4] = 65000
+    raw = np.repeat(img[:, :, None], 3, axis=2).astype("<u2").tobytes()
+    assert len(raw) == n * W_PLAIN * 6
+    return raw, g
+
+
+class _PlainFakeScanner(_SweepFakeScanner):
+    def __init__(self, raw, g, events):
+        super().__init__(raw, g, tables, events)
+
+    def sweep(self, first, last, *, dpi, overscan_mm=None, sink, ir=True):
+        assert ir is False, "the plain flow must call sweep(ir=False)"
+        step = tables.IMAGE_CHUNK_LINES * W_PLAIN * 6
+        sent = 0
+        for i in range(0, len(self.raw), step):
+            sink(self.raw[i:i + step])
+            sent += 1
+        assert sent == self.g.chunks, (sent, self.g.chunks)
+        self.events.append(("sweep", first, last, dpi))
+        self.last_diag["sweep"] = {"first": first, "last": last, "chunk_count": sent}
+        return W_PLAIN, {"geometry": self.g, "width": W_PLAIN}
+
+
+def _plain_args(d, **over):
+    return _args(d, dpi=3600, ir=False, **over)
+
+
+def test_e2e_plain_sweep_products_identical_to_per_frame_writer():
+    raw, g = _synthetic_plain_sweep()
+    with tempfile.TemporaryDirectory() as d:
+        events = []
+        rc, out, err = _run(_plain_args(d, keep_sweep=True), _PlainFakeScanner(raw, g, events))
+        assert rc == 0, (rc, err, out)
+        assert events == [("initialize", False, 3600), ("sweep", 1, 4, 3600), "eject"], events
+        rdir = digitize.roll_dir(d, "", 1)
+        rec = digitize.read_manifest(d)[-1]
+        assert rec["status"] == "ok" and len(rec["per_frame"]) == 4, rec
+        for e in rec["per_frame"]:
+            assert e["coverage_verified"] is True and e["main"] and e["ir"] is None, e
+            assert e["located_by"] == "edges", e
+        sj = json.loads((rdir / "sweep.json").read_text())
+        assert sj["geometry"]["dual"] is False and sj["geometry"]["wire_per_vis"] == 1
+        assert sj["resolution"]["resolved"]
+        assert not list(rdir.glob("*-ir*")), sorted(p.name for p in rdir.iterdir())
+        mm = sweep.open_raw(rdir / "sweep.raw", W_PLAIN)
+        for k in range(1, 5):
+            w = sj["resolution"]["windows"][str(k)]
+            win = sweep.SweepWindow(k, w["wire_start"], w["wire_end"], w["located_by"])
+            with tempfile.TemporaryDirectory() as d2:
+                out2 = os.path.join(d2, f"f{k}.tiff")
+                with contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    cli._finish_digitize_frame(
+                        _plain_args(d2), bytes(sweep.window_bytes(mm, win)),
+                        W_PLAIN, out2, False, progress={})
+                for name in (f"f{k}.tiff", f"f{k}.overscan.tiff", f"f{k}-preview.tiff"):
+                    assert (rdir / name).read_bytes() == (Path(d2) / name).read_bytes(), name
+        del mm
+        # --from-sweep rebuilds byte-identically from sweep.json alone
+        before = {p.name: p.read_bytes() for p in rdir.iterdir() if p.suffix == ".tiff"}
+        assert len(before) == 12, sorted(before)
+        for p in rdir.glob("f*.tiff"):
+            p.unlink()
+        rc, err = _forbid_hardware(_plain_args(d, from_sweep=True))
+        assert rc == 0, err
+        assert {p.name: p.read_bytes() for p in rdir.iterdir() if p.suffix == ".tiff"} == before
+    print("test_e2e_plain_sweep_products_identical_to_per_frame_writer OK")
+
+
+def test_e2e_plain_sweep_pitch_located_window_goes_through_coverage():
+    """A window located BY PITCH is never verified coverage by itself: the
+    per-frame writer's own check refuses an empty/dark aperture, no
+    product is written, the sweep fails (exit 4) and the raw is kept."""
+    raw, g = _synthetic_plain_sweep(missing=(3,))
+    with tempfile.TemporaryDirectory() as d:
+        rc, out, err = _run(_plain_args(d), _PlainFakeScanner(raw, g, []))
+        rdir = digitize.roll_dir(d, "", 1)
+        assert rc == 4, (rc, err)
+        assert (rdir / "sweep.raw").exists() and "sweep.raw kept" in err
+        assert not (rdir / "f3.tiff").exists() and (rdir / "f1.tiff").exists()
+        e3 = digitize.read_manifest(d)[-1]["per_frame"][2]
+        assert e3["coverage_verified"] is False and e3["located_by"] == "pitch", e3
+    print("test_e2e_plain_sweep_pitch_located_window_goes_through_coverage OK")
+
+
+def test_old_sweep_json_without_dual_is_a_dual_sweep():
+    meta = {"dpi": 600, "width": 4, "first": 1, "last": 1, "lines_per_mm": 23.6,
+            "overscan_mm": 0.75, "predicted_edges": {"1": [0, 1]}}
+    assert bool(meta.get("dual", True)) is True
+    m = cli._sweep_meta(_pgeom(1, 4)[0], 64, 3600, 0.75, dual=False)
+    assert m["dual"] is False and m["wire_per_vis"] == 1
+    m = cli._sweep_meta(_sgeom(1, 4, 600)[0], 64, 600, 0.75)
+    assert m["dual"] is True and m["wire_per_vis"] == 2
+    print("test_old_sweep_json_without_dual_is_a_dual_sweep OK")
+
+
 def main():
     tests = [
+        test_plain_geometry_and_anchoring_gate,
+        test_scan_plain_phase_sequence_is_frozen,
+        test_device_wiring_plain_sweep,
+        test_public_plain_sweep_preconditions_and_dispatch,
+        test_visible_profile_blockwise_and_wire_per_vis_1,
+        test_plain_finder_study_case_pitch_located_edge_adjacent_content,
+        test_plain_numbering_follows_measured_edges_not_position,
+        test_e2e_plain_sweep_products_identical_to_per_frame_writer,
+        test_e2e_plain_sweep_pitch_located_window_goes_through_coverage,
+        test_old_sweep_json_without_dual_is_a_dual_sweep,
         test_sweep_busy_lock_exits_3_records_nothing,
         test_geometry_every_profile_and_range,
         test_device_wiring_sweep,
