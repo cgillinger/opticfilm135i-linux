@@ -457,6 +457,25 @@ class _DualCal:
     blocks_b: list
 
 
+@dataclass
+class _PlainCal:
+    """What _plain_calibration measured (or reused) -- everything the
+    plain scan/sweep diagnostics need."""
+
+    calibration: str            #: "fresh" or "cached"
+    cal_data: dict | None       #: None on a cache hit
+    gain_codes: tuple
+    offset_codes: tuple
+    dark_a_mean: list
+    dark_b_mean: list
+    dark_b_substituted: bool
+    warmup: dict
+    shading_stats: dict
+    shading2_stats: dict
+    white_dips_diag: list | None
+    white_blocked_diag: list | None
+
+
 class Scanner:
     """Drives the of135i scan sequence over a UsbIo transport."""
 
@@ -2083,29 +2102,14 @@ class Scanner:
             gain_r=bytes([gain_r]), gain_g=bytes([gain_g]), gain_b=bytes([gain_b]),
         )
 
-    def _scan_plain(self, frame: int,
-                    overscan_mm: float = holder.OVERSCAN_MM) -> tuple[bytes, int]:
-        # No homing move here. The vendor flow has none (protocol-notes.md
-        # pass 14): positioning below is an absolute mode-0x18 feed that
-        # works from wherever the previous frame left the carriage. The
-        # home() call that used to sit here executed mode 0x30 -- the
-        # scan pass -- with the previous frame's line count still in
-        # regs 0x25-0x27, i.e. a full-length engine run before the
-        # calibration reads (frame 2+ of a batch calibrated dark,
-        # 2026-09-01).
-
-        # ---- per-scan diagnostics: reset recording state (see diag.py) --
-        self._diag_phase_seconds = {}
-        self._diag_poll_timeouts = 0
-        self._diag_cr_mismatches = 0
-        self._diag_poll_timeout_details = []
-        self._diag_poll_settle = []
-        self._diag_poll_settle_max_s = 0.0
-        self._diag_warmup = None
-        self._diag_park_waits = None
-        started_utc = datetime.now(timezone.utc).isoformat()
-        t_start = time.monotonic()
-
+    def _plain_calibration(self) -> "_PlainCal":
+        """The plain-3600 calibration block of _scan_plain (fresh
+        measurement, or this session's cache), extracted UNCHANGED so
+        the plain whole-strip sweep (_sweep_plain) runs the identical op
+        stream. The per-scan diagnostics reset and the start timestamps
+        stay with the callers. Fills ``self._cal_cache`` on a fresh
+        calibration exactly as before; the callers clear it again if a
+        later phase raises."""
         # ---- calibration: fresh measurement, or this session's cache ----
         # See docs/protocol-notes.md pass 14 + addendum 3, and the
         # _cal_cache comment in __init__. The cache key is (dpi, dual);
@@ -2236,6 +2240,49 @@ class Scanner:
                 "shading_stats": shading_stats,
                 "shading2_stats": shading2_stats,
             }
+
+        return _PlainCal(
+            calibration=calibration, cal_data=cal_data,
+            gain_codes=(gain_r, gain_g, gain_b),
+            offset_codes=(off_r, off_g, off_b),
+            dark_a_mean=dark_a_mean, dark_b_mean=dark_b_mean,
+            dark_b_substituted=dark_b_substituted, warmup=warmup,
+            shading_stats=shading_stats, shading2_stats=shading2_stats,
+            white_dips_diag=white_dips_diag,
+            white_blocked_diag=white_blocked_diag)
+
+    def _scan_plain(self, frame: int,
+                    overscan_mm: float = holder.OVERSCAN_MM) -> tuple[bytes, int]:
+        # No homing move here. The vendor flow has none (protocol-notes.md
+        # pass 14): positioning below is an absolute mode-0x18 feed that
+        # works from wherever the previous frame left the carriage. The
+        # home() call that used to sit here executed mode 0x30 -- the
+        # scan pass -- with the previous frame's line count still in
+        # regs 0x25-0x27, i.e. a full-length engine run before the
+        # calibration reads (frame 2+ of a batch calibrated dark,
+        # 2026-09-01).
+
+        # ---- per-scan diagnostics: reset recording state (see diag.py) --
+        self._diag_phase_seconds = {}
+        self._diag_poll_timeouts = 0
+        self._diag_cr_mismatches = 0
+        self._diag_poll_timeout_details = []
+        self._diag_poll_settle = []
+        self._diag_poll_settle_max_s = 0.0
+        self._diag_warmup = None
+        self._diag_park_waits = None
+        started_utc = datetime.now(timezone.utc).isoformat()
+        t_start = time.monotonic()
+
+        cal = self._plain_calibration()
+        calibration, cal_data = cal.calibration, cal.cal_data
+        gain_r, gain_g, gain_b = cal.gain_codes
+        off_r, off_g, off_b = cal.offset_codes
+        dark_a_mean, dark_b_mean = cal.dark_a_mean, cal.dark_b_mean
+        dark_b_substituted, warmup = cal.dark_b_substituted, cal.warmup
+        shading_stats, shading2_stats = cal.shading_stats, cal.shading2_stats
+        white_dips_diag = cal.white_dips_diag
+        white_blocked_diag = cal.white_blocked_diag
 
         try:
             # ---- geometry: overscan sizes FEEDL and the line/chunk count -
