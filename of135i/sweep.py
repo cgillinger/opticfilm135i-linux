@@ -2,8 +2,12 @@
 and say where to cut it (docs/whole-strip-sweep-design.md section 5).
 
 Pure and offline-testable: nothing here touches the scanner. The sweep
-file is the raw wire buffer -- pixel-interleaved RGB16LE, alternating
-lines, even = IR, odd = visible -- written chunk by chunk by the CLI.
+file is the raw wire buffer -- pixel-interleaved RGB16LE -- written chunk
+by chunk by the CLI. Two layouts exist: the dual sweep (IR on) has
+alternating lines, even = IR, odd = visible, and is profiled by
+``ir_profile`` (2 wire lines per visible line); the plain-3600 sweep
+(``--no-ir``, black-and-white film) has every line visible, is profiled
+by ``visible_profile`` and cut with ``find_windows(wire_per_vis=1)``.
 It is 1.3-2 GB, so it is only ever read through a read-only memory map
 and block-wise reductions; no whole-sweep array exists.
 
@@ -44,7 +48,8 @@ SWEEP_MAX_OFFSET_MM = 12.0
 @dataclass(frozen=True)
 class SweepWindow:
     """One aperture's cut of the sweep, in WIRE lines [wire_start,
-    wire_end) -- both even, so the IR/visible parity is kept."""
+    wire_end) -- both even for a dual sweep (the IR/visible parity is
+    kept), plain integers for a plain sweep."""
 
     aperture: int
     wire_start: int
@@ -121,6 +126,35 @@ def ir_profile(mm: np.ndarray, *, dpi: int = 3600, band: float = 0.5,
     return chan.mean(axis=0)
 
 
+def visible_profile(mm: np.ndarray, *, dpi: int = 3600, band: float = 0.5,
+                    block_lines: int = 1024) -> np.ndarray:
+    """Along-strip profile of a NON-interleaved (plain) sweep, where every
+    line is visible: mean of the RED channel over the central ``band`` of
+    the width, block by block (no whole-array copy). Index = the
+    aligned-G line index, exactly as ir_profile's: the profile is rolled
+    by image.align_shift(dpi) the way ir_profile rolls its R channel
+    (a column mean commutes with a line shift).
+
+    Red because it is the channel the per-frame plain coverage check
+    uses by default (aperture_crop.measure_coverage), so the sweep and
+    the writer that verifies every window look at the same signal;
+    docs/bw-sweep-study.md 3.1: red matched IR on both real sweeps, and
+    on silver film the channels carry the same picture.
+    """
+    n_vis, width = mm.shape[0], mm.shape[1]
+    half = width * min(max(band, 0.0), 1.0) / 2.0
+    lo = max(0, int(round(width / 2.0 - half)))
+    hi = min(width, max(lo + 1, int(round(width / 2.0 + half))))
+    prof = np.empty(n_vis, dtype=np.float64)
+    for v0 in range(0, n_vis, block_lines):
+        v1 = min(n_vis, v0 + block_lines)
+        prof[v0:v1] = mm[v0:v1, lo:hi, 0].mean(axis=1, dtype=np.float64)
+    shift = image.align_shift(dpi)
+    if shift:
+        prof = np.roll(prof, -shift)
+    return prof
+
+
 def _even_floor(x: float) -> int:
     n = int(np.floor(x))
     return n - (n % 2)
@@ -132,9 +166,15 @@ def _even_ceil(x: float) -> int:
 
 
 def find_windows(profile: np.ndarray, geom, *, dpi: int,
-                 overscan_mm: float | None = None) -> SweepResolution:
-    """Locate the apertures in ``profile`` (visible-line IR profile of the
+                 overscan_mm: float | None = None,
+                 wire_per_vis: int = 2) -> SweepResolution:
+    """Locate the apertures in ``profile`` (visible-line profile of the
     sweep) and cut one window per aperture ``geom.first..geom.last``.
+
+    ``wire_per_vis`` is 2 for the dual (interleaved) sweep and 1 for the
+    plain sweep, where a visible line IS a wire line. Window bounds are
+    then plain integers: the even rounding only matters for the
+    interleaved dual buffer's IR/visible parity.
 
     ``geom`` needs ``first``, ``last``, ``predicted_edges`` (aperture ->
     (lead, trail) visible lines of the raw sweep). See the module
@@ -209,7 +249,9 @@ def find_windows(profile: np.ndarray, geom, *, dpi: int,
     off_lines = offset_mm * lpm
     over = ov * lpm
     crop = image.align_shift(dpi)
-    n_wire = 2 * n_vis
+    if wire_per_vis not in (1, 2):
+        raise ValueError(f"wire_per_vis must be 1 or 2, got {wire_per_vis!r}")
+    n_wire = wire_per_vis * n_vis
     windows: dict[int, SweepWindow] = {}
     for k in apertures_:
         if k in assigned:
@@ -220,8 +262,12 @@ def find_windows(profile: np.ndarray, geom, *, dpi: int,
             b = geom.predicted_edges[k][1] + off_lines
             how = "pitch"
         v0, v1 = a - over - crop, b + over + crop
-        w0 = max(0, _even_floor(2 * v0))
-        w1 = min(n_wire - (n_wire % 2), _even_ceil(2 * v1))
+        if wire_per_vis == 2:
+            w0 = max(0, _even_floor(2 * v0))
+            w1 = min(n_wire - (n_wire % 2), _even_ceil(2 * v1))
+        else:
+            w0 = max(0, int(np.floor(v0)))
+            w1 = min(n_wire, int(np.ceil(v1)))
         if w1 <= w0:
             return SweepResolution(
                 False, f"aperture {k}'s window falls outside the sweep",
