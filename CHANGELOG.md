@@ -6,6 +6,13 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **Sweeps longer than four apertures are refused** (`sweep.SWEEP_MAX_APERTURES_VERIFIED`,
+  checked in `digitize --sweep` before any hardware step, exit 2, and in
+  `Scanner.sweep`). Every hardware-run sweep so far covered 1–4 or 1–2;
+  after Test 112 the owner decided (2026-10-31) that a six-aperture colour
+  sweep gets its own hardware test (Test 113 plan,
+  docs/whole-strip-sweep-design.md) before it is allowed. Offline change;
+  the per-frame cycle covers 1–6 as before.
 - **Plain-3600 whole-strip sweep WITHDRAWN after Test 112** (2026-10-31,
   `docs/test-log.md`). `digitize --sweep --no-ir` exits 2 before any
   hardware step and `Scanner.sweep(ir=False)` raises, both naming the

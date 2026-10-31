@@ -468,7 +468,9 @@ the whole strip in a single pass — one calibration, one positioning move,
 one park — into `sweep.raw` in the roll directory, and cuts the frames from
 it in software; every frame goes through the same writer and the same
 aperture coverage check as the per-frame cycle. `--frames` must be a
-contiguous range. `sweep.raw` (1.3–2 GB) is deleted after a fully
+contiguous range of **at most four apertures** (no longer sweep has run on
+hardware; longer ranges are refused until a dedicated test, owner's decision
+after Test 112). `sweep.raw` (1.3–2 GB) is deleted after a fully
 successful roll unless `--keep-sweep`, and is always kept (with a note on
 stderr) when anything fails or does not verify; `--sweep --from-sweep
 --roll N` rebuilds a roll offline from it. **Hardware-run once** (Test 111,

@@ -519,6 +519,26 @@ What to expect under each anchoring hypothesis (section 3.1):
   flips nothing but tells us the convention; the pass stayed inside the
   proven travel (end ~60 400) by construction of the gate.
 
+### Hardware plan (Test 113): the first six-aperture colour sweep — not run, needs the owner's go
+
+Until this test is recorded in docs/test-log.md the driver refuses any
+sweep longer than four apertures (`sweep.SWEEP_MAX_APERTURES_VERIFIED`;
+owner's decision 2026-10-31 after Test 112). What is new in a 1–6 dual
+sweep is only length: ~76 mm more forward travel in one pass, to an end
+position (65 554 motor units) every per-frame scan of aperture 6 reaches
+(≈ 65 500). The anchoring is the dual engine's fixed start (FEEDL − K),
+shown on the 1–4 sweep to hold for a long window (offset +0.07 mm, Test
+111). No new backward motion. Plan: a colour-135 strip with six frames
+already digitized per frame (the A side); application closed; normal
+load; `digitize --sweep --frames 1-6 --dpi 3600 --no-clean --assume-loaded
+--keep-sweep`; the operator listens from the start of the pass to the end
+of the park and cuts the power on any scraping, stall or unfamiliar
+sound; abort criteria as Test 111/112. Expected: resolved, six windows by
+edges, offset within ±1 mm, device time ≈ 6 + 1.8 + 242 + 12 s; products
+compared frame by frame with the per-frame ones, eye check per the
+milestone rule. Only a recorded pass raises
+`SWEEP_MAX_APERTURES_VERIFIED` to 6.
+
 ## 9. Out of scope here
 
 The plain 3600 sweep altogether (withdrawn after Test 112; the plain
