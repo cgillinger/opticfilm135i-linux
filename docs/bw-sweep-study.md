@@ -63,7 +63,7 @@ Method, in the order it was run:
    window's lit range, since the edge finder's rules
    (`of135i/aperture.py`: `EDGE_GRADIENT`, `EDGE_CONTRAST`,
    `EDGE_MIN_STEP`, `PLASTIC_LEVEL`) are all relative.
-3. **Step 2b, a synthetic black-and-white sweep.** The six Test 59
+3. **Step 2b, a synthetic black-and-white sweep.** The six Test 60
    windows stitched into one profile with the holder's 2.0 mm crossbar
    between them (plastic level taken from the windows' own plastic),
    handed to `find_windows` as a six-aperture sweep, then each resulting
