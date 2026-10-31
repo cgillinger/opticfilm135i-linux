@@ -220,6 +220,26 @@ def test_public_sweep_requires_initialize():
     print("test_public_sweep_requires_initialize OK")
 
 
+def test_public_sweep_refuses_more_than_four_apertures():
+    """Owner's decision after Test 112 (2026-10-31): no sweep longer than
+    SWEEP_MAX_APERTURES_VERIFIED apertures until one has had its own
+    hardware test. Refused in Scanner.sweep before any phase or write,
+    for a dual profile too."""
+    from tests.test_calibrate import MockUsbIo
+    s = Scanner(MockUsbIo({}))
+    s._prepared_for_scan = True
+    for first, last in ((1, 6), (1, 5), (2, 6)):
+        try:
+            s.sweep(first, last, dpi=600, sink=lambda b: None)
+        except Exception as e:
+            assert type(e).__name__ == "Of135iError" and "4 apertures" in str(e), (first, last, e)
+        else:
+            raise AssertionError(f"sweep {first}-{last} must be refused")
+    assert not s.io.writes
+    assert sweep.SWEEP_MAX_APERTURES_VERIFIED == 4
+    print("test_public_sweep_refuses_more_than_four_apertures OK")
+
+
 # ------------------------------------------------------------ window finder
 
 
@@ -632,6 +652,14 @@ def test_cli_validation_exits_2_before_hardware():
         for fr in ("1-4", "1-6"):
             rc, err = _forbid_hardware(_args(d, dpi=3600, ir=False, frames=fr))
             assert rc == 2 and "Test 112" in err and "per-frame" in err, (fr, rc, err)
+        # Owner's decision after Test 112: no sweep longer than four apertures
+        # until one has had its own hardware test -- dual profiles included
+        for fr in ("1-5", "1-6", "2-6"):
+            rc, err = _forbid_hardware(_args(d, frames=fr))
+            assert rc == 2 and "4 apertures" in err and "Test 112" in err, (fr, rc, err)
+        for fr in ("1-4", "2-5", "3-6", "1-1"):
+            frames, msg = cli._sweep_validate(_args(d, frames=fr))
+            assert msg is None and frames, (fr, msg)
         assert not list(Path(d).iterdir()), "nothing may be created before the checks"
     print("test_cli_validation_exits_2_before_hardware OK")
 
@@ -1129,6 +1157,7 @@ def main():
         test_sweep_logs_scanning_frame_per_aperture,
         test_exec_ops_chunk_sink_streams_and_returns_empty,
         test_public_sweep_requires_initialize,
+        test_public_sweep_refuses_more_than_four_apertures,
         test_finder_cases_a_to_g,
         test_ir_profile_blockwise_equals_direct,
         test_finder_resolves_a_colour_staggered_ir_sweep,

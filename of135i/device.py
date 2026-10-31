@@ -2820,6 +2820,13 @@ class Scanner:
                 "(2026-10-31): black-and-white film keeps the per-frame cycle. "
                 f"{safety.NO_COMMANDS_SENT}")
         t = dual_tables(dpi) if ir else tables
+        from . import sweep as _sweep_mod
+        if last - first + 1 > _sweep_mod.SWEEP_MAX_APERTURES_VERIFIED:
+            raise Of135iError(
+                f"sweep over {last - first + 1} apertures ({first}-{last}) is refused: no "
+                f"sweep longer than {_sweep_mod.SWEEP_MAX_APERTURES_VERIFIED} apertures has "
+                f"run on hardware (owner's decision after Test 112, 2026-10-31). "
+                f"{safety.NO_COMMANDS_SENT}")
         if self.park_mode not in ("verbatim", "semantic"):
             raise ValueError(f"unknown park_mode {self.park_mode!r} (want 'verbatim' or 'semantic')")
         if self.session.cold_init_done and not self._loaded_this_session:

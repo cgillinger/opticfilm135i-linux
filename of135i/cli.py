@@ -2853,6 +2853,13 @@ def _sweep_validate(args: argparse.Namespace) -> "tuple[list[int] | None, str | 
         return None, ("--sweep needs --frames to be one contiguous range a-b "
                       f"(got {args.frames!r}): the pass covers every aperture "
                       f"between its first and last")
+    from . import sweep as _sweep_mod
+    if len(frames) > _sweep_mod.SWEEP_MAX_APERTURES_VERIFIED:
+        return None, (f"--sweep over {len(frames)} apertures ({frames[0]}-{frames[-1]}) is "
+                      f"refused: no sweep longer than "
+                      f"{_sweep_mod.SWEEP_MAX_APERTURES_VERIFIED} apertures has run on "
+                      f"hardware yet (owner's decision after Test 112, 2026-10-31); use "
+                      f"the per-frame cycle for this range. Nothing was sent to the scanner.")
     if getattr(args, "from_sweep", False) and args.roll is None:
         return None, "--from-sweep needs --roll N"
     dual = bool(args.ir or args.dpi != 3600)
@@ -3992,7 +3999,8 @@ def build_parser() -> argparse.ArgumentParser:
              "Dual-light profiles only: with --no-ir at 3600 dpi (plain, "
              "black-and-white film) the sweep is refused (withdrawn after "
              "Test 112, 2026-10-31; the per-frame cycle stays). "
-             "--frames must be a contiguous range")
+             "--frames must be a contiguous range of at most four apertures "
+             "(longer sweeps refused until Test 113; owner's decision 2026-10-31)")
     p_dig.add_argument("--keep-sweep", action="store_true",
         help="--sweep: keep sweep.raw (1.3-2 GB) after a fully successful "
              "roll (default: removed; always kept on any failure)")

@@ -43,6 +43,15 @@ SWEEP_OFFSET_SPREAD_MM = 1.0
 #: off by a whole aperture and no run could tell; 12 mm keeps a wide
 #: margin to that. Added by the implementation, not in the design doc.
 SWEEP_MAX_OFFSET_MM = 12.0
+#: The longest aperture range a sweep may cover, in apertures. Every
+#: hardware-run sweep so far covered four apertures or fewer (Test 111 A/B
+#: and every production sweep: 1-4, 1-2). A six-aperture pass adds ~76 mm
+#: of travel the sweep engine has never made in one pass; after Test 112
+#: (a never-run long pass displaced the magazine) the owner decided
+#: (2026-10-31) that longer ranges are refused until one has had its own
+#: hardware test (Test 113 plan, docs/whole-strip-sweep-design.md). Raise
+#: only with that test recorded in docs/test-log.md.
+SWEEP_MAX_APERTURES_VERIFIED = 4
 
 
 @dataclass(frozen=True)
