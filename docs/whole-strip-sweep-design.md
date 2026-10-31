@@ -44,8 +44,9 @@ own.
 `tables_ir.CAPTURED_LINES` is 10622 (one frame). The mechanism is
 identical (same registers, same 16-line chunks, the engine completes when
 every chunk has been read) but a long dual-3600 pass is a new data point,
-as plain 3600 is. It gets one hardware A/B before it is relied on. Plain
-3600 is out of scope here (the sweep refuses it; section 6).
+as plain 3600 is. It got one hardware A/B before it was relied on (Test
+111). Plain 3600 has its own geometry and anchoring gate (section 3) and
+awaits its first run (Test 112 plan, section 8).
 
 Sizes at 3600 dpi dual (W = 5184 px, 6 bytes/px, two wire lines per
 visible line):
@@ -126,8 +127,8 @@ only the centre hypothesis is checked. A refusal raises
 `safety.FeedlOutOfRangeError` (exit 2 before any write): "plain sweep
 over apertures a-b is refused until the plain engine's anchoring of a
 long pass is hardware-verified: under the fixed-start hypothesis the pass
-would reach N motor units, past the proven travel of 71490; apertures 1-4
-is the longest range allowed".
+would reach N motor units, past the proven travel of 71490; a range of
+four apertures (1-4, 2-5) is the longest allowed".
 
 | apertures | FEEDL | `end_hwdpi` (centre) | end, fixed start | program lines | gate |
 |---|---|---|---|---|---|

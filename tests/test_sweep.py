@@ -628,7 +628,7 @@ def test_cli_validation_exits_2_before_hardware():
             assert rc == 2, (over, rc, err)
             assert err.startswith("error:"), (over, err)
         rc, err = _forbid_hardware(_args(d, dpi=3600, ir=False, frames="1-6"))
-        assert "hardware-verified" in err and "1-4 is the longest range allowed" in err, err
+        assert "hardware-verified" in err and "longest allowed" in err, err
         # the plain 3600 sweep over 1-4 is now ACCEPTED by the validator
         frames, msg = cli._sweep_validate(_args(d, dpi=3600, ir=False))
         assert (frames, msg) == ([1, 2, 3, 4], None), (frames, msg)
@@ -712,7 +712,7 @@ def test_plain_geometry_and_anchoring_gate():
             assert f"plain sweep over apertures 1-{last} is refused until the plain " \
                    f"engine's anchoring of a long pass is hardware-verified" in m, m
             assert "fixed-start hypothesis" in m and "71490" in m
-            assert "apertures 1-4 is the longest range allowed" in m, m
+            assert "a range of four apertures (1-4, 2-5) is the longest allowed" in m, m
         else:
             raise AssertionError(f"1-{last} must be refused")
     # flipping the constant leaves only the centre hypothesis

@@ -696,7 +696,7 @@ def plain_sweep_geometry(
                 f"plain engine's anchoring of a long pass is hardware-verified: "
                 f"under the fixed-start hypothesis the pass would reach "
                 f"{round(k_end)} motor units, past the proven travel of "
-                f"{FEEDL_CEILING}; apertures 1-4 is the longest range allowed. "
+                f"{FEEDL_CEILING}; a range of four apertures (1-4, 2-5) is the longest allowed. "
                 f"Nothing was sent to the scanner.",
                 feedl=round(k_end), ceiling=FEEDL_CEILING)
 
