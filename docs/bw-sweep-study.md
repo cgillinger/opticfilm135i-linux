@@ -3,7 +3,7 @@
 Status: offline study, 2026-10-31. **No hardware was run for it.** Every
 number below comes from data the driver had already produced: the
 whole-strip sweep A/B raw of 2026-10-30 (`docs/test-log.md`, Test 111),
-the plain-3600 black-and-white strip of 2026-09-10 (Test 59), and the
+the plain-3600 black-and-white strip of 2026-09-10 (Test 60), and the
 production black-and-white strips of 2026-10-31 (Test 111, production
 confirmation, session 2). Nothing in the driver was changed by this
 study; it is the decision basis for whether to build a plain-3600 sweep.
@@ -38,7 +38,7 @@ cut a sweep. This study answers it offline before any code is written.
 | Material | Profile | Frames | Source |
 |---|---|---|---|
 | A/B sweep raw, one colour-135 strip, apertures 1–4 | dual 3600, IR + visible interleaved, 42 912 wire lines, 1.33 GB | 4 | Test 111 (2026-10-30), kept on disk |
-| Black-and-white strip, per-frame overscan windows | plain 3600, `--no-ir` | 6 | Test 59 (2026-09-10) |
+| Black-and-white strip, per-frame overscan windows | plain 3600, `--no-ir` | 6 | Test 60 (2026-09-10) |
 | Production black-and-white strips, per-frame overscan windows and diag sidecars | plain 3600, `--no-ir` | 16 strips, 7 refused apertures among them | Test 111 session 2 (2026-10-31) |
 
 For scale: the driver's hardware log (`docs/test-log.md`) holds 111
@@ -101,7 +101,7 @@ where IR does.
 
 ### 3.2 Step 2: black-and-white content comes much closer to the plastic
 
-Test 59's six frames all verify per frame (red and luminance alike),
+Test 60's six frames all verify per frame (red and luminance alike),
 with margins 0.49–0.70 mm leading and 0.85–1.05 mm trailing. But the
 picture content is darker relative to the plastic than on colour film:
 
@@ -124,7 +124,7 @@ floor.
 
 ### 3.3 Step 2b: the synthetic black-and-white sweep resolves and cuts 6 of 6
 
-Stitched into one six-aperture profile, the Test 59 strip resolves:
+Stitched into one six-aperture profile, the Test 60 strip resolves:
 four runs found (apertures 1, 2, 5, 6), lengths 35.82–36.10 mm, one
 strip offset (0.00 mm against the stitched prediction), and apertures 3
 and 4 cut **by pitch** from the siblings' offset. They were lost because
