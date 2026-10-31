@@ -7903,9 +7903,15 @@ from the capture, then its own hardware test on his go.
 
 **State after.** Scanner power-cycled without the magazine: reg 0x01 =
 0x00, 0x31 = 0xfe, 0x32 = 0xc2, magazine not detected — identical to the
-day's first cold start. Holder and strip to be inspected by the owner.
-No scan since; a normal per-frame scan is the next thing the transport
-should do, and only on the owner's go.
+day's first cold start. The owner inspected the magazine: no visible
+damage. **Post-incident check (same evening, 19:22–19:26, through the
+application):** a colour-135 strip, normal load (cold_init homing 3/3,
+jog 0xf855, load 0xdc55), `digitize --sweep` dual 3600 over apertures
+1–4: exit 0, 4 of 4 verified by edges (source IR), margins 0.75/0.74–0.75
+mm (aperture 4 trailing 0.59), FEEDL 6538, 2 682 chunks, 1.33 GB, phases
+in the usual band (calibration ~10 s, ~40 s per aperture of scan, park +
+eject by 19:26:01), the usual two best-effort poll warnings, no error.
+The transport is healthy after the incident.
 
 **Consequences.**
 1. The plain-3600 sweep is **withdrawn**: `digitize --sweep --no-ir`

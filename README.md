@@ -220,7 +220,11 @@ should know about:
   `--eject` works, before or after scanning. Ejecting from other
   transport states (e.g. after the older `--full` load flow) stalled
   the mechanism with the magazine stuck part-way; recovery was a power
-  cycle plus an initialization with the vendor software.
+  cycle plus an initialization with the vendor software. If the
+  magazine is stuck after a power cycle (jog fails with the loader bit
+  clear), `of135i load` now re-seats the cassette with the vendor's
+  traverse first -- offline from a vendor capture, **not yet
+  hardware-verified** (docs/hardware-safety.md).
 - **Film strip holder: all six frames hardware-verified for transport,
   scan and PARK; the full six-frame colour production workflow is
   accepted (Test 58/N3).** The holder's six apertures have been

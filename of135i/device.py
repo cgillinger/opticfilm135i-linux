@@ -1334,6 +1334,11 @@ class Scanner:
         # ---- 2: status word, poll until ready ---------------------------
         word = self.io.read_status_word()
         log.info("cold_init: initial status word %#06x", word)
+        # Magazine present at the opening, read where the loader sensor is
+        # still reliable (before any table is written, see
+        # is_magazine_present). Decides below whether a clear loader bit at
+        # the first pre-move read is a displaced cassette to re-seat.
+        magazine_at_start = bool(word & 0x0800)
         self.io.poll_status_word(mask=0xF000, value=0xF000, timeout=COLD_READY_TIMEOUT)
 
         # ---- 3-7: cold register table + end_access + AFE bring-up ------
@@ -1349,7 +1354,7 @@ class Scanner:
         for round_n in range(1, 4):
             log.info("cold_init: homing round %d/3", round_n)
             self.session.phase = f"cold_init:homing-{round_n}"
-            self._cold_homing_round()
+            self._cold_homing_round(reseat_check=(round_n == 1 and magazine_at_start))
             if round_n < 3:
                 self._cold_write_table_and_afe()
 
@@ -1426,7 +1431,56 @@ class Scanner:
                 last=e.last, want=e.want, observed=self.session.start_reg01,
                 session=self.session.snapshot()) from None
 
-    def _cold_homing_round(self) -> None:
+    def _cold_reseat_traverse(self) -> None:
+        """The vendor's recovery for a cassette that is present but not at
+        the loader sensor: the LOAD flow's traverse (mode 0x1c,
+        holder.FEEDL_CEILING = 71 490 steps, loader speed profile) run
+        BEFORE the app-start jog.
+
+        Source: the 2026-10-31 vendor capture of the stuck-magazine
+        recovery (docs/test-log.md Test 112; docs/load-analysis.md, "Cold
+        start on a displaced cassette"). The vendor read status 0xd055
+        (loader bit 0x08 clear) and ran this move before the jog; it took
+        6.42 s (d155 -> d955 -> d855) against 1.1 s in a normal load. The
+        batch is the capture's own: the six move registers only (mode,
+        0xae/0xaf, the THREE-byte count 0x3d/0x3e/0x3f -- the loader speed
+        profile is already primed by the cold table), the loader slope
+        table to both scanner-RAM addresses, GO. The capture shows no
+        0x09 write around this move and none is added here.
+
+        Completion is STRICT, like every cold-start motor completion: the
+        status word must read the LOAD flow's captured traverse completion
+        (load_completion_target(), compared under LOAD_STATUS_MASK) within
+        COLD_MOVE_TIMEOUT, else the cold start ends with nothing further
+        written and a power cycle is required.
+
+        Implemented offline from the 2026-10-31 vendor capture; NOT
+        hardware-verified."""
+        feedl = holder.FEEDL_CEILING
+        self.io.write_regs([
+            (0x02, 0x1C), (0xAE, 0x00), (0xAF, 0xFF),
+            (0x3D, (feedl >> 16) & 0xFF), (0x3E, (feedl >> 8) & 0xFF), (0x3F, feedl & 0xFF),
+        ])
+        for addr in (0x1000C000, 0x10010000):
+            self.io.buf_write(addr, tables_base.SLOPE_TABLE_LOADER)
+        self.io.write_regs([(0x0F, 0x01)])
+        want = load_completion_target()
+        mask = (LOAD_STATUS_MASK << 8) | 0xFF
+        try:
+            self.io.poll_status_word(mask=mask, value=want & mask,
+                                     timeout=COLD_MOVE_TIMEOUT, strict=True)
+        except safety.StrictPollTimeoutError as e:
+            raise safety.StrictPollTimeoutError(
+                f"cold_init: re-seating traverse did not complete within "
+                f"{COLD_MOVE_TIMEOUT:.0f}s: status word {e.last.hex()}, want "
+                f"{want:04x} under mask {mask:04x} (the vendor's recovery took 6.4 s). "
+                f"The transport state is unknown and the cold start stops here -- no "
+                f"further motor move is started. This is a new observation -- please "
+                f"record it. {safety.NO_RECOVERY_ATTEMPTED} {safety.POWER_CYCLE_INSTRUCTION}",
+                last=e.last, want=e.want, observed=self.session.start_reg01,
+                session=self.session.snapshot()) from None
+
+    def _cold_homing_round(self, reseat_check: bool = False) -> None:
         """One of cold_init()'s three homing rounds: pre-move sensor/
         int-ack prep, move 1 (feed 6690, minimal regs), a resync
         interstitial + move 2 (feed 6690, full speed-profile rewrite),
@@ -1444,7 +1498,22 @@ class Scanner:
         # ---- pre-move setup -----------------------------------------
         val32 = self.io.read_reg(0x32)
         self.io.write_regs([(0x32, val32 & ~0x02 & 0xFF)])
-        self.io.read_status_word()
+        w = self.io.read_status_word()
+        if reseat_check:
+            # The vendor's recovery (Test 112 capture): this very read
+            # (0xd055, loader bit clear) with a magazine present at the
+            # opening is followed by the load traverse, then the jog. The
+            # check reuses the existing read, so a cold start that does not
+            # re-seat is byte-identical on the wire to before.
+            if w & 0x0800:
+                log.info("cold_init: loader sensor set (status %#06x) -- no re-seating", w)
+            else:
+                log.info("cold_init: loader sensor clear (status %#06x) with a magazine "
+                         "present -- re-seating traverse before the jog (vendor "
+                         "recovery, Test 112; NOT hardware-verified)", w)
+                self.session.phase = "cold_init:reseat"
+                self._cold_reseat_traverse()
+                self.session.phase = "cold_init:homing-1"
         self.io.write_regs([(0x36, 0xFC)])
         self.io.write_regs([(0x33, 0x8E)])
         val32 = self.io.read_reg(0x32)

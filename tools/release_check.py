@@ -45,7 +45,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 # (suite, group). Order is the run order.
 SUITES = (
-    ("test_safety", "core"), ("test_calibrate", "core"), ("test_hwblock", "core"),
+    ("test_safety", "core"), ("test_cold_reseat", "core"), ("test_calibrate", "core"), ("test_hwblock", "core"),
     ("test_park", "core"), ("test_offline", "core"), ("test_diag", "core"),
     ("test_dpi", "core"), ("test_ir", "core"), ("test_image_probe", "core"),
     ("test_aperture_crop", "core"), ("test_overscan", "core"),
