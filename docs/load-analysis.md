@@ -168,3 +168,29 @@ the loader profile — which none of our loads ever ran. Driver: new
 (vendor's device-open state), and the tool runs initialize → jog →
 operator reinserts to the stop → load. Details and the next hardware
 step in docs/test-log.md, Test 15.
+
+## Cold start on a displaced cassette (Test 112)
+
+**Offline, from a vendor capture; NOT hardware-verified.** After the
+2026-10-31 incident (docs/test-log.md, Test 112) the scanner was power-
+cycled with the magazine stuck in the slot. Our recovery, `cold_init`'s
+homing round (feed 6690, feed 6690, eject 3090), stopped fail-closed on
+move 2 (status f055, loader bit 0x08 clear). The vendor application,
+started on the same state, read the status word 0xd055 (loader bit
+clear) and ran the LOAD flow's traverse BEFORE its app-start jog: mode
+0x1c, 71 490 steps (`holder.FEEDL_CEILING`), the loader slope tables,
+GO, completion d155 -> d955 -> d855 after 6.42 s (1.1 s in a normal
+load); then the ordinary jog completed normally. On a merely latched
+magazine (status 0xd855, capture 2026-09-07) the vendor jogs directly.
+The batch in the capture is the six move registers only (02=1c, ae/af,
+3d/3e/3f = 01 17 42); it shows no 0x09 write around the move.
+
+The driver's step (`Scanner._cold_reseat_traverse`) is that batch, with a
+strict completion poll on `load_completion_target()` under
+`LOAD_STATUS_MASK` (30 s budget; a timeout ends the cold start with
+nothing further written and the power-cycle instruction). It runs inside
+homing round 1, on the status read the round already makes after clearing
+reg 0x32 bit 0x02 -- the vendor's own point in the sequence -- and only
+when a magazine was present at the opening status word (read before any
+table is written) and the loader bit reads clear there. Otherwise the cold
+start is byte-identical on the wire to before.

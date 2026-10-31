@@ -24,7 +24,19 @@ one exists; "offline" means implemented and tested without the scanner.
   jog, which re-seats the cassette; our `cold_init` jogs directly and
   stopped fail-closed on the displaced magazine. Owner's decision: the
   driver gets this recovery (offline from the capture, then its own
-  hardware test). Not implemented yet.
+  hardware test).
+- **Cold start re-seats a displaced cassette first** (offline, from the
+  2026-10-31 vendor capture; NOT hardware-verified, hardware test pending
+  on the owner's go). `Scanner.cold_init` now runs the LOAD flow's
+  traverse (`_cold_reseat_traverse`: mode 0x1c, 71 490 steps, loader slope
+  tables, strict completion against `load_completion_target()` under
+  `LOAD_STATUS_MASK`, 30 s budget, fail-closed) between the first
+  pre-move status read of homing round 1 and the jog, only when a magazine
+  was present at the opening status word (loader bit set, read before any
+  table is written) AND the loader bit reads clear at that pre-move read.
+  Every other cold start is byte-identical on the wire to before
+  (golden op lists, `tests/test_cold_reseat.py`). The SANE backend's
+  cold start does not have the step yet (`docs/sane-port.md`).
 - Earlier the same day (PR #42, merged, now superseded by the
   withdrawal): the plain sweep had been implemented offline with an
   anchoring gate limiting it to four apertures; `_scan_plain`'s
