@@ -7762,3 +7762,55 @@ products of strips 10–16 are the A side of its future A/B; (2) the
 per-frame plain path could recover a single lost edge from the measured
 opposite edge plus the siblings' length the way the application did,
 content-based, never positions alone — a design question, not started.
+
+**Test 111, production confirmation, session 2 continued (2026-10-31
+afternoon, 13:00–14:30, same project, v0.2.9).** Nine more
+black-and-white 135 strips (Kodak T-MAX 100), per frame, `--no-ir
+--frames 1-4`, 3600 dpi, `--no-clean --assume-loaded`. A four-frame
+black-and-white strip took 153–154 s wall clock every time, with the same
+per-frame phase profile as strips 10–16 above.
+
+- Strips 17, 20, 24, 25: exit 0, 4/4.
+- Strip 18: exit 4, 2/4 — apertures 1–2 "no aperture found" = the roll's
+  start (unexposed or blackened). Correct refusal.
+- Strip 19: exit 4, 3/4, 153 s — aperture 1 "no aperture found" on a real
+  picture: bright sky and white foam hid BOTH edges in visible light.
+- Strip 21: exit 0, 4/4, 153 s — the strip lay crooked in the holder; the
+  windows verified anyway, several products contain black gap and a piece
+  of the neighbouring frame. The coverage check measures the aperture
+  edges, not the film's straightness.
+- Strips 22 and 23: the same crooked strip rescanned, exit 4 with 2/4 and
+  1/4 (apertures 1,3 then 1,3,4 "no aperture found").
+
+Incidents: 81 more best-effort poll-timeout warnings, no consequence.
+At 13:33:28 the load failed (rc 1) after two feed attempts; the
+application showed the power-cycle advice, the operator power-cycled,
+reg 0x01 read 0x00 (cold) afterwards; the application's button listener
+lost the USB device (Errno 19) and had it back at 13:33:37; the 13:34
+load went through. No abnormal sound reported. Exit 3 twice more
+(13:20:04, 13:34:11), same pattern as the morning: the application's own
+status call right after "load done" against its own lock; nothing sent.
+
+Operator-forwarded experience for the driver (recorded, not acted on):
+on `--no-ir` the visible-light edge finder loses the window when the
+picture content is as dense or as bright as the holder edge — seven
+apertures over the day (16:3, 19:1, 22:1, 22:3, 23:1, 23:3, 23:4; the
+last five on the crooked strip). All were rebuilt in the production
+workflow without touching the driver, in this order: (a) half-level
+crossing of the visible profile; (b) the one edge found plus the
+siblings' median length, accepted only when that edge's margin lies
+within 0.3 mm of the siblings'; (c) the same aperture on eight other
+strips — aperture 1 lay at lead 68–112 and trail 5193–5222 wire lines at
+3600 dpi (lines = 5367), a spread of about 0.3 mm, i.e. the positioning
+looks deterministic. The application session suggests the driver fall
+back to (b), or to a nominal FEEDL-derived position flagged in diag as
+"positioned, not measured", when the visible search fails. Design
+question for the black-and-white work: (b) is content-based and fits the
+rule; a position-only fallback must stay honestly flagged and never
+count as verified coverage. Also forwarded: per-frame black-and-white
+grows by ~2.1 s per aperture in park and position because each frame
+parks and repositions from home; and the post-load status collision is
+the application's, harmless.
+
+Day total 2026-10-31: 19 strips (3 colour sweeps, 16 black-and-white per
+frame), one project, one power cycle (load rc 1), no abnormal sound.
