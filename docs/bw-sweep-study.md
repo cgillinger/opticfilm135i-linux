@@ -38,14 +38,16 @@ cut a sweep. This study answers it offline before any code is written.
 | Material | Profile | Frames | Source |
 |---|---|---|---|
 | A/B sweep raw, one colour-135 strip, apertures 1–4 | dual 3600, IR + visible interleaved, 42 912 wire lines, 1.33 GB | 4 | Test 111 (2026-10-30), kept on disk |
+| Production sweep raw, one colour-135 strip whose film ends inside aperture 3 | dual 3600, same size | 4 (3 with film) | Test 111 session 2 (2026-10-31), kept because aperture 3 was refused |
 | Black-and-white strip, per-frame overscan windows | plain 3600, `--no-ir` | 6 | Test 60 (2026-09-10) |
-| Production black-and-white strips, per-frame overscan windows and diag sidecars | plain 3600, `--no-ir` | 16 strips, 7 refused apertures among them | Test 111 session 2 (2026-10-31) |
+| Production black-and-white strips, per-frame overscan windows and diag sidecars | plain 3600, `--no-ir` | 16 strips, 63 windows on disk, 5 of them refused by the driver | Test 111 session 2 (2026-10-31) |
 
 For scale: the driver's hardware log (`docs/test-log.md`) holds 111
 numbered tests since 2026-08-30; the production telemetry study
 (`docs/production-telemetry-2026-10.md`) analysed 711 delivered frames;
 the whole-strip sweep has run on 10 production colour strips plus the A/B
-pair as of this date.
+pair as of this date; the black-and-white per-frame cycle on 16
+production strips the same day.
 
 Method, in the order it was run:
 
@@ -99,6 +101,18 @@ of the strip's lit range in green and red — but the holder's edges are a
 step from that level to the plastic floor, and the finder places them
 where IR does.
 
+The second real sweep, with the film ending inside aperture 3, repeats
+the picture and adds a nuance. IR finds three runs (apertures 1, 2, 4;
+35.91–36.01 mm), resolves at +0.23 mm and cuts aperture 3 by pitch.
+Visible **red** finds the same three runs and the same windows (within
+0.03 mm). Green and luminance find two (apertures 2 and 4), blue one
+(aperture 4): on a colour negative aperture 1's leading edge is a step
+from the dim clear rebate to the plastic, and the dimmer channels do not
+clear the finder's absolute step rule there. All five still resolve on
+the runs they have and cut every aperture within 0.2 mm of IR. For
+colour film, red is the visible channel that matches IR; for silver film
+the channels carry the same picture and the choice is moot.
+
 ### 3.2 Step 2: black-and-white content comes much closer to the plastic
 
 Test 60's six frames all verify per frame (red and luminance alike),
@@ -140,18 +154,72 @@ included, verify there (one aperture each, 35.76–36.10 mm long, margins
 
 ### 3.4 Step 2c: the production refusals
 
-*Pending: the seven apertures refused on 2026-10-31 (two on real
-pictures — a dense sky against the leading edge; a bright sky with white
-foam hiding both edges — and five on one strip lying crooked in the
-holder) are being re-evaluated against the edge finder's criteria. This
-section is filled in when that run is done.*
+Of the 63 black-and-white windows on disk from 2026-10-31, the driver
+verified 58 (red and luminance agree on every one). Margins 0.42–0.90 mm
+leading, 0.51–1.17 mm trailing. Over the 116 verified edges the lit
+level next to the edge is a median 0.68 of the window's range, but 5
+edges sit below 0.15 and 3 below 0.12 (minimum 0.098); 7 verified frames
+have picture content below 0.10 somewhere inside the window. The five
+refusals:
+
+| Window | What was in it | Finder's verdict | Rule that failed, measured at the physical edge |
+|---|---|---|---|
+| strip 15, ap. 1 | roll start, fully blackened | no aperture | no lit run at all (content 0.002 of range) — correct |
+| strip 18, ap. 1 | roll start, unexposed clear | no aperture | no plastic step: the window is lit end to end (0.997) — correct |
+| strip 18, ap. 2 | roll start, blackened | no aperture | no lit run — correct |
+| strip 16, ap. 3 | a picture; dense sky against the leading edge | no aperture | leading edge: gradient 0.60 (rule 0.25), contrast 1.01 (rule 0.50), plastic side at 0.00 — **step 0.076 of range, rule 0.08**. Trailing edge found at 0.886. |
+| strip 19, ap. 1 | a picture; bright sky and white foam | no aperture | red: leading edge found (step 0.085) but the trailing run splits into two falling edges and no pair of length ≥ 25 mm survives; luminance: leading **step 0.079, rule 0.08** |
+
+So on the two real pictures the edge is physically there, with a clean
+gradient, full contrast and a plastic floor on one side; the one rule it
+fails is the absolute step, by 0.001–0.004 of the range. The two refused
+frames were later rebuilt by the owner's workflow outside the driver
+(from the trailing edge plus the siblings' median length, and from the
+same aperture's position on eight other strips, respectively); that is
+recorded in the test log, not adopted here.
+
+Five further refusals the same afternoon (strips 22 and 23, one strip
+lying crooked in the holder, scanned three times) have no files left and
+could not be re-measured; strip 21, the first scan of that strip,
+verified 4 of 4 with pictures that contain black gap and a slice of the
+neighbouring frame. The coverage rule measures the holder's edges, not
+the film's straightness; a crooked strip is an operator matter.
+
+### 3.5 Step 2d: synthetic sweeps from the production strips
+
+Three of the day's strips stitched as in 3.3 (a refused frame placed at
+the position its rebuilt sidecar gives, so the stitch has a geometry;
+the finder is not told which frames were refused):
+
+| Strip | Frames | Runs found | Resolved | Cut by edges / by pitch | Edge-adjacent content under 0.08 of the strip range |
+|---|---|---|---|---|---|
+| 16 | 6 | 5 | yes, offset 0.00 mm | 5 / 1 (aperture 3) | aperture 3 leading (0.056) |
+| 19 | 4 | 3 | yes, offset 0.00 mm | 3 / 1 (aperture 1) | aperture 1 leading (0.079) |
+| 12 | 6 | 5 | yes, offset 0.00 mm | 5 / 1 (aperture 6) | aperture 6 leading (0.049) |
+
+Every sweep resolves, and every frame the per-frame cycle verified is
+cut by its own edges or by pitch and re-verifies locally (strip 12's
+aperture 6 is the 3.3 case again: lost to the strip-wide range, passed
+by its own window's range). The two frames the per-frame cycle refused
+are cut at the right place by pitch — but their local re-check fails on
+the same 0.076/0.079 step, so the sweep as implemented today would
+refuse them too. What the sweep adds for them is information the
+per-frame cycle never has: the strip offset from the siblings, the
+siblings' measured run lengths in the same pass, and one measured edge
+of the frame itself (strip 16, aperture 3: trailing edge at 0.886 of
+range). A content-based single-edge rule — one edge measured in the
+frame, the length from the siblings of the same sweep, accepted only
+when it lands within the load variation of the pitch prediction — would
+have delivered both, flagged in the sidecar as what it is.
 
 ## 4. What this says about a black-and-white sweep
 
-1. **The window finder does not need IR.** On the one real sweep the
-   visible channels locate the apertures to within 0.014 mm of IR, and on
-   real black-and-white content a six-aperture synthetic sweep resolves
-   with four of six runs and cuts all six. Luminance is the natural
+1. **The window finder does not need IR.** On two real sweeps the
+   visible red channel locates the apertures to within 0.03 mm of IR,
+   and on real black-and-white content four synthetic sweeps (September's
+   six-frame strip and three production strips, 22 frames) all resolve,
+   with 17 of 22 apertures on their own edges and the rest cut by pitch
+   from the siblings' offset. Luminance is the natural
    channel for silver film (no colour information to prefer); red, the
    per-frame default, behaves identically here.
 2. **The sweep is more forgiving than the per-frame cycle, not less.**
@@ -160,20 +228,30 @@ section is filled in when that run is done.*
    aperture is still cut at the right place (by pitch, flagged as such in
    `sweep.json` and the diag sidecar), and the per-frame check then runs
    on the cut window with its own local range — which is exactly the
-   check that passed these frames in September. The numbering stays
+   check that passed these frames in September and on strip 12 today.
+   The sweep never delivers less than the per-frame cycle. The numbering stays
    content-based: an aperture number comes from measured runs and the
    holder pitch relative to the sweep's own start, never from position
    alone (`of135i/sweep.py`, numbering rule), and a sweep with no
    plausible run stays unresolved.
 3. **The absolute step rule is the weak point, and it is a known one.**
    `EDGE_MIN_STEP` exists to keep noise inside the plastic from
-   qualifying as an edge; measured against a whole strip's range it also
-   discards real edges next to dense black-and-white pictures. Two
-   options, to decide before building: evaluate the finder per predicted
-   aperture segment (local range, as the per-frame check effectively
-   does), or leave the finder alone and rely on the pitch cut plus the
-   local re-check, as 3.3 shows works. The second changes nothing in a
-   shared detector and is the conservative choice.
+   qualifying as an edge. On silver film it is also what refuses real
+   edges next to dense pictures: both production refusals on real
+   pictures failed it by less than 0.005 of the range with every other
+   rule passed cleanly (3.4), and 5 of 116 verified edges today sit
+   within 0.07 of it. Three options, to decide before building: (a)
+   leave the finder alone and rely on the pitch cut plus the local
+   re-check — delivers exactly what the per-frame cycle delivers, never
+   less (3.5); (b) add the content-based single-edge rule of 3.5 in the
+   sweep's cutter, where the siblings' lengths and the strip offset are
+   measured in the same pass — would have delivered both refused
+   pictures, flagged; (c) lower or localise `EDGE_MIN_STEP` — touches a
+   detector shared with the holder geometry measurement and every
+   per-frame verdict since 2026-09-10, so it needs the 647-frame
+   regression set, and is not recommended on five edges' evidence.
+   Recommendation: (a) first, (b) as the follow-up once the plain sweep
+   has run on hardware.
 4. **What the plain path lacks.** Everything hardware-side: a plain-3600
    sweep table (`holder.dual_sweep_geometry` has a dual-only chunk/parity
    model; plain 3600 has one wire line per visible line and its own
@@ -186,14 +264,15 @@ section is filled in when that run is done.*
 
 ## 5. Proposed next steps
 
-1. Finish 3.4 (offline).
-2. Decide point 4.3 (owner's call; recommendation: conservative).
-3. Implement the plain-3600 sweep offline with fixture tests: the
+1. Decide point 4.3 (owner's call; recommendation: (a), then (b)).
+2. Implement the plain-3600 sweep offline with fixture tests: the
    synthetic sweep of 3.3 and the production windows of 3.4 become the
    fixtures; invariants "content-based numbering, never positions alone"
    and "a pitch-located window is never counted as verified coverage by
-   itself" written as tests.
-4. One hardware A/B on a black-and-white strip already scanned per frame
+   itself" written as tests. Strip 16 (six frames, one refused) is the
+   natural first fixture: five by edges, one by pitch, local re-check
+   refusing it exactly as the per-frame cycle did.
+3. One hardware A/B on a black-and-white strip already scanned per frame
    on 2026-10-31 (its per-frame products are the A side): the strip
    through `digitize --sweep --no-ir`, products compared frame by frame,
    eye check, and the operator listening — the plain-3600 sweep moves the
