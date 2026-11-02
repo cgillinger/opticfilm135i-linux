@@ -25,6 +25,9 @@ one exists; "offline" means implemented and tested without the scanner.
   residual dark_b did not occur in any frame, so its effect is unproven;
   stays opt-in until the issue's reporter runs it. The SANE backend has no
   gate.
+  Credit: the mechanism, the code and the offline tests are by bearyjd
+  (https://github.com/bearyjd); the report and the Steam Deck logs are by
+  Krustenviech (https://github.com/Krustenviech), issue #35.
 - **Sweeps longer than four apertures are refused** (`sweep.SWEEP_MAX_APERTURES_VERIFIED`,
   checked in `digitize --sweep` before any hardware step, exit 2, and in
   `Scanner.sweep`). Every hardware-run sweep so far covered 1–4 or 1–2;

@@ -6,6 +6,9 @@ against the 0.3 s budget, but the residual dark_b did not occur in any
 of 18 frames, so the gate's effect is unproven. Opt-in, default `off`.**
 Making it the default waits for the Steam Deck reporter's `enforce` run.
 
+Credit: bearyjd designed and wrote the gate and its tests; Krustenviech
+reported the failure and supplied the Steam Deck logs.
+
 Origin: issue #35 (Krustenviech, Steam Deck) and bearyjd's fork
 `feat/cal-wait-scanstop`, commit f462b0b, ported onto master with the
 fork's offline tests. The port is a straight port of the mechanism; the
