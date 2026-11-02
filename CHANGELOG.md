@@ -19,8 +19,11 @@ one exists; "offline" means implemented and tested without the scanner.
   recorded in the `.diag.json` as `cal_scanstop_waits`. Ported from
   bearyjd's fork (`feat/cal-wait-scanstop`, f462b0b) with its offline tests
   (`tests/test_cal_wait_scanstop.py`, which also pins the default wire
-  against pre-gate digests). **Offline only; not hardware-verified on the
-  owner's unit** (Test 114 plan in the design doc). The SANE backend has no
+  against pre-gate digests). Hardware: Test 114 (owner's unit, 2026-11-02)
+  ran it off/on/on/off over frames 1–4 at 3600 dpi plus gated 600 dpi and
+  IR frame-1 runs: harmless (every wait ≤ 8 ms against 0.3 s) but the
+  residual dark_b did not occur in any frame, so its effect is unproven;
+  stays opt-in until the issue's reporter runs it. The SANE backend has no
   gate.
 - **Sweeps longer than four apertures are refused** (`sweep.SWEEP_MAX_APERTURES_VERIFIED`,
   checked in `digitize --sweep` before any hardware step, exit 2, and in

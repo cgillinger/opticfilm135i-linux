@@ -1,8 +1,10 @@
 # Calibration stop gate (`--cal-wait-scanstop`)
 
-Status 2026-11-02: **ported, offline-tested, NOT hardware-verified on the
-owner's unit. Opt-in, default `off`.** Making it the default waits for
-the hardware plan below (Test 114) and the Steam Deck reporter's runs.
+Status 2026-11-02: **ported, offline-tested, and run on the owner's
+unit (Test 114, docs/test-log.md): harmless there, every wait ≤ 8 ms
+against the 0.3 s budget, but the residual dark_b did not occur in any
+of 18 frames, so the gate's effect is unproven. Opt-in, default `off`.**
+Making it the default waits for the Steam Deck reporter's `enforce` run.
 
 Origin: issue #35 (Krustenviech, Steam Deck) and bearyjd's fork
 `feat/cal-wait-scanstop`, commit f462b0b, ported onto master with the
@@ -99,13 +101,15 @@ existed (plain 3600, dual 600, IR 3600, frame 1).
 - No gate-off comparison at 3600 dpi; no film-strip run; nobody has
   measured how long the bits take to clear (that is what `wait_s` is
   for), so the 0.3 s budget is a guess inherited from the poll floor.
-- The reporter's other symptoms are **not** explained by the gate: the
-  `prep` phase's two 0x0122 polls time out (`d855` vs `e855`, `dc55` vs
-  `ec55`; class D where the capture has class E, high byte bit 0x20),
-  which is not one of the three benign signatures in
-  docs/production-telemetry-2026-10.md, and `cold_init` logs
-  `poll_status_word` timing out at `0x4855` (class 4, never seen here).
-  Both may be unit- or host-specific; open.
+- The reporter's other symptoms are **not** explained by the gate, and
+  Test 114 showed both on the owner's unit as well: the `prep` phase's
+  0x0122 polls time out at the floor reading `d855`/`dc55` where the
+  capture has `e855`/`ec55` (the known post-park state classes,
+  docs/park-completion-analysis.md; they never reach the per-frame
+  diag, whose counters reset after prep), and the cold start's
+  `poll_status_word` gave up at `0x4855` once here too, followed by a
+  normal cold start. Neither singles out the Deck; neither explains the
+  dark_b failure.
 - The reporter's three `.diag.json` attachments need a logged-in GitHub
   session to fetch and have not been analysed.
 
@@ -116,7 +120,18 @@ the scan completes. With `enforce`, a bit that takes longer than 0.3 s
 to clear becomes a hard failure that needs a power cycle. Until
 `wait_s` has been measured on the owner's unit the gate stays opt-in.
 
-## Hardware plan: Test 114 (owner's unit) — not run, needs the owner's go
+## Test 114 result (owner's unit, 2026-11-02)
+
+Run as planned below, plus a gated 600 dpi dual and a gated IR frame 1:
+six runs, 18 frames, exit 0 everywhere, **no** `dark_b_substituted`
+anywhere (gate off included), all 70 gate waits `clear` at the first
+read of each register (`wait_s` ≤ 0.008 s, `since_clear_s` 0.02–0.04 s,
+0.18 s in the IR shading phases from host time between phases).
+`cr_mismatches` did not drop with the gate. Full table in
+docs/test-log.md. The gate is safe on this unit; whether it fixes #35
+only the reporter's Deck run can show.
+
+## Hardware plan: Test 114 (owner's unit) — as run
 
 Purpose: does the gate remove the residual dark_b on frames 2–4, and
 how long do the bits take to clear?
