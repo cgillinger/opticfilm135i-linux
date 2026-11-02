@@ -231,6 +231,19 @@ vendor's recovery capture; its hardware test waits for the owner's go. If
 the traverse itself does not complete in 30 s the driver stops with
 nothing further written: power-cycle and do not retry blindly.
 
+## Calibration stop gate (opt-in, not hardware-verified)
+
+`--cal-wait-scanstop enforce` (docs/cal-scanstop-gate.md, issue #35)
+adds one wait condition inside calibration: after each acquisition's
+SCAN-clear it polls reg 0x100 bit 0 and then reg 0x101 bit 0 clear
+before the next OUT transfer, within the existing 0.3 s non-strict poll
+floor. Reads only; at the deadline it raises `CalibrationError` before
+any write, the session is FAILED, no recovery is sent, power cycle. It
+never arms outside the seven calibration acquisition phases, so POSITION,
+the image pass and PARK are not delayed. Default `off` is byte-identical
+on the wire (pinned by `tests/test_cal_wait_scanstop.py`). Offline
+verified only; its hardware test (Test 114) waits for the owner's go.
+
 ## Cross-process exclusion
 
 `UsbIo.open()` takes an exclusive `flock` on `/tmp/of135i-07b3-1436.lock`
