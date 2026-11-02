@@ -128,8 +128,8 @@ to clear becomes a hard failure that needs a power cycle. Until
 Run as planned below, plus a gated 600 dpi dual and a gated IR frame 1:
 six runs, 18 frames, exit 0 everywhere, **no** `dark_b_substituted`
 anywhere (gate off included), all 70 gate waits `clear` at the first
-read of each register (`wait_s` ≤ 0.008 s, `since_clear_s` 0.02–0.04 s,
-0.18 s in the IR shading phases from host time between phases).
+read of each register (`wait_s` ≤ 0.008 s, `since_clear_s` 0.020–0.042 s,
+0.148/0.184 s in the IR shading phases from host time between phases).
 `cr_mismatches` did not drop with the gate. Full table in
 docs/test-log.md. The gate is safe on this unit; whether it fixes #35
 only the reporter's Deck run can show.
