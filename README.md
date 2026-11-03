@@ -14,11 +14,17 @@ batch feeding that officially supports only Windows and macOS.
 Yes, on the developer's test scanner. This is an experimental native Linux
 driver for the OpticFilm 135i (USB `07b3:1436`, GL126), **under active
 development**. On that unit it scans without Windows, a virtual machine, or the
-manufacturer's driver. It has so far been developed and hardware-tested by one
-person on a **single scanner unit** in a limited Linux environment, so
-compatibility with other OpticFilm 135i units and other Linux setups is **not
-yet broadly verified** — additional hardware testing is welcome, and results on
-other units are not yet known.
+manufacturer's driver. It was developed and hardware-tested by one person on a
+**single scanner unit** in a limited Linux environment. As of November 2026 it
+has also scanned on **two other units** reported by users (one on a Steam
+Deck, one through a fork), but on both of them calibration fails
+intermittently at a step the developer's unit has never failed
+([issue #35](https://github.com/cgillinger/opticfilm135i-linux/issues/35));
+a fix contributed by one of those users is on master as an opt-in flag until
+it has been confirmed on their hardware. So compatibility with other
+OpticFilm 135i units and other Linux setups is **not yet verified** —
+additional hardware testing is welcome, and reports from other units are
+what moves it forward (see [Acknowledgements](#acknowledgements)).
 
 The project has two parts, at different stages:
 
@@ -212,7 +218,8 @@ backend is a separate effort with its own status** — working locally, submitte
 upstream 2026-09-29 and not merged (see Project status above and
 [docs/ROADMAP.md](docs/ROADMAP.md)); do not read the CLI driver's hardware
 verification as the backend's. This is early software,
-verified on the single unit that exists, and these are the rough edges you
+verified on the developer's unit and run on two others with a known
+calibration failure (issue #35), and these are the rough edges you
 should know about:
 
 - **Eject depends on how the magazine was loaded.** Load with
@@ -714,10 +721,31 @@ interoperability constants and our own code.
 ## Status & disclaimer
 
 Working prototype, developed and tested against a single OpticFilm 135i
-unit. This project is not affiliated with, endorsed by, or supported by
-Plustek Inc. Use at your own risk. Plustek and OpticFilm are trademarks
-of their respective owner; they are used here only to identify the
-hardware this software interoperates with.
+unit, with first reports from two more (issue #35). This project is not
+affiliated with, endorsed by, or supported by Plustek Inc. Use at your own
+risk. Plustek and OpticFilm are trademarks of their respective owner; they
+are used here only to identify the hardware this software interoperates
+with.
+
+## Acknowledgements
+
+Everything up to October 2026 was built and verified on one scanner. The
+first evidence from other units came from users, and it changed the
+driver:
+
+- **[bearyjd](https://github.com/bearyjd)** found that a fast host can
+  re-arm the next calibration acquisition while the scanner's engine is
+  still running, which leaves a stale dark frame behind; wrote the
+  calibration stop gate (`--cal-wait-scanstop`) and its offline tests in
+  a fork, and ran the A/B on their own unit. The code on master is a port
+  of that work, credited as co-author.
+- **[Krustenviech](https://github.com/Krustenviech)** reported the
+  failure from a Steam Deck with the logs and register dumps that made it
+  diagnosable (issue #35), and is the second unit the driver has ever
+  scanned on.
+
+If you got the driver working, or failing, on another unit, an issue
+saying so is the most useful thing you can send.
 
 ## License
 

@@ -6,6 +6,12 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **Docs: the driver is no longer single-unit.** README, CONTRIBUTING and
+  the ROADMAP now say what is true as of 2026-11-03: the driver has
+  scanned on two units besides the maintainer's (a Steam Deck and a fork's
+  unit, issue #35), both of which show an intermittent calibration failure
+  this unit never has; the fix below came from one of those users. README
+  gains an Acknowledgements section. No code change.
 - **Calibration stop gate, opt-in** (`scan`/`digitize --cal-wait-scanstop
   {off,enforce}`, default `off`; `Scanner.cal_wait_scanstop`;
   docs/cal-scanstop-gate.md). Issue #35: on a Steam Deck the residual

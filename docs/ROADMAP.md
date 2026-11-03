@@ -138,8 +138,12 @@ complete.**
 ## A — Accepted limitations
 
 Each is outside the promised function or has a verified safe handling:
-- **Cross-unit:** only one unit exists; behaviour is compensated by
-  run-time calibration and honestly labelled. (Out of scope.)
+- **Cross-unit:** the maintainer has one unit; behaviour is compensated by
+  run-time calibration and honestly labelled. Since 2026-10 two other
+  units have reported (issue #35): both scan, both fail calibration
+  intermittently on a step this unit never fails; the contributed fix
+  (`--cal-wait-scanstop`) is opt-in pending their confirmation.
+  (Out of scope for A; tracked in the issue.)
 - **Colour interpretation:** the driver delivers correct raw data; colour
   is the application's job. (Out of scope by design.)
 - **Speed:** correct but not tuned. (Out of scope for A; a functional scan
