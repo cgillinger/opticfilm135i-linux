@@ -23,8 +23,8 @@ intermittently at a step the developer's unit has never failed
 a fix contributed by one of those users is on master as an opt-in flag until
 it has been confirmed on their hardware. So compatibility with other
 OpticFilm 135i units and other Linux setups is **not yet verified** —
-additional hardware testing is welcome, and reports from other units are
-what moves it forward (see [Acknowledgements](#acknowledgements)).
+additional hardware testing is welcome (see
+[Acknowledgements](#acknowledgements)).
 
 The project has two parts, at different stages:
 
@@ -729,23 +729,23 @@ with.
 
 ## Acknowledgements
 
-Everything up to October 2026 was built and verified on one scanner. The
-first evidence from other units came from users, and it changed the
-driver:
+Everything up to October 2026 was built and verified on one scanner. Two
+users have since run the driver on their own units and reported back
+(issue #35):
 
-- **[bearyjd](https://github.com/bearyjd)** found that a fast host can
-  re-arm the next calibration acquisition while the scanner's engine is
-  still running, which leaves a stale dark frame behind; wrote the
-  calibration stop gate (`--cal-wait-scanstop`) and its offline tests in
-  a fork, and ran the A/B on their own unit. The code on master is a port
-  of that work, credited as co-author.
-- **[Krustenviech](https://github.com/Krustenviech)** reported the
-  failure from a Steam Deck with the logs and register dumps that made it
-  diagnosable (issue #35), and is the second unit the driver has ever
-  scanned on.
+- **[Krustenviech](https://github.com/Krustenviech)** ran it on a Steam
+  Deck, the second unit it has scanned on, and reported the calibration
+  failure with the logs and register dumps needed to work on it.
+- **[bearyjd](https://github.com/bearyjd)** saw the same failure on a
+  third unit, proposed a cause (the host re-arms the next calibration
+  acquisition before the scanner's engine has stopped), wrote the
+  calibration stop gate (`--cal-wait-scanstop`) with its offline tests in
+  a fork, and ran an A/B on their unit. The code on master is a port of
+  that work, with bearyjd as co-author. Whether it fixes the failure is
+  still to be confirmed on their hardware.
 
 If you got the driver working, or failing, on another unit, an issue
-saying so is the most useful thing you can send.
+saying so is genuinely useful.
 
 ## License
 
