@@ -6,6 +6,16 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **Status-read inventory (offline).** `tools/status_read_inventory.py`
+  lists every read of reg 0x100/0x101 in the op tables with the
+  engine command before it; docs/status-read-inventory.md judges the
+  142 "read once after a stop or start, no wait" cases: 111 are the
+  calibration acquisitions of issue #35 (gated by
+  `--cal-wait-scanstop`), 27 are the image-pass start where bulk IN
+  does the waiting, 4 are a POSITION pre-move read behind the gate and
+  a strict completion poll. Policy: no new lone read after a stop or
+  start; per-phase mismatch records in the diag are the next step. No
+  code change to the driver.
 - **Docs: the driver is no longer single-unit.** README, CONTRIBUTING and
   the ROADMAP now say what is true as of 2026-11-03: the driver has
   scanned on two units besides the maintainer's (a Steam Deck and a fork's
