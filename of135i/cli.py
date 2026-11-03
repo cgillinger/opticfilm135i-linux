@@ -358,6 +358,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     def body(scanner: Scanner) -> int:
         scanner.park_mode = args.park
         scanner.recalibrate = bool(getattr(args, 'recalibrate', False))
+        scanner.cal_wait_scanstop = getattr(args, "cal_wait_scanstop", "off")
         if getattr(args, 'warmup_budget', None) is not None:
             scanner.warmup_budget_s = float(args.warmup_budget)
         # Read-only start-state check up front, so an unsafe scanner
@@ -3083,6 +3084,7 @@ def _digitize_sweep(args: argparse.Namespace) -> int:
     def body(scanner: Scanner) -> int:
         scanner.park_mode = args.park
         scanner.recalibrate = bool(getattr(args, "recalibrate", False))
+        scanner.cal_wait_scanstop = getattr(args, "cal_wait_scanstop", "off")
         if getattr(args, "warmup_budget", None) is not None:
             scanner.warmup_budget_s = float(args.warmup_budget)
         scanner.check_start_state()
@@ -3475,6 +3477,7 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
     def body(scanner: Scanner) -> int:
         scanner.park_mode = args.park
         scanner.recalibrate = bool(getattr(args, "recalibrate", False))
+        scanner.cal_wait_scanstop = getattr(args, "cal_wait_scanstop", "off")
         if getattr(args, "warmup_budget", None) is not None:
             scanner.warmup_budget_s = float(args.warmup_budget)
         scanner.check_start_state()
@@ -3870,6 +3873,17 @@ def build_parser() -> argparse.ArgumentParser:
              "overscan frame(s) to <o>.overscan.<ext> (and "
              "<stem>-ir.overscan.tiff); on a coverage failure only the "
              "overscan raw is kept and the exit status is non-zero")
+    p_scan.add_argument("--cal-wait-scanstop", choices=("off", "enforce"), default="off",
+        help="EXPERIMENTAL, not hardware-verified on the owner's unit, motor-adjacent "
+             "(docs/cal-scanstop-gate.md, issue #35): 'enforce' waits, after each "
+             "calibration acquisition's scan-clear and before the next write, until "
+             "the data-enable bit (register 0x100) and then the motor-enable bit "
+             "(register 0x101) read clear; both share the existing non-strict poll "
+             "floor (0.3 s, no longer budget) and at that deadline the scan stops "
+             "(CalibrationError, power cycle) before anything further is sent. "
+             "Delays the next calibration execute pulse. Each wait is recorded in "
+             "the .diag.json as cal_scanstop_waits. Default: off, the transfer "
+             "sequence is byte-identical to before")
     p_scan.add_argument("--no-diag", action="store_true",
         help="skip writing the <output>.diag.json calibration/timing sidecar")
     p_scan.add_argument("--no-cal-data", action="store_true",
@@ -4047,6 +4061,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip IR-based dust/scratch removal on the visible image")
     p_dig.add_argument("--no-diag", action="store_true",
         help="skip writing per-frame .diag.json sidecars")
+    p_dig.add_argument("--cal-wait-scanstop", choices=("off", "enforce"), default="off",
+        help="EXPERIMENTAL, not hardware-verified on the owner's unit, motor-adjacent "
+             "(docs/cal-scanstop-gate.md, issue #35): 'enforce' waits, after each "
+             "calibration acquisition's scan-clear and before the next write, until "
+             "the data-enable bit (register 0x100) and then the motor-enable bit "
+             "(register 0x101) read clear; both share the existing non-strict poll "
+             "floor (0.3 s, no longer budget) and at that deadline the scan stops "
+             "(CalibrationError, power cycle) before anything further is sent. "
+             "Delays the next calibration execute pulse. Each wait is recorded in "
+             "the .diag.json as cal_scanstop_waits. Default: off, the transfer "
+             "sequence is byte-identical to before")
     p_dig.add_argument("--no-cal-data", action="store_true",
         help="do not write the per-frame .cal.npz per-pixel calibration data "
              "(white line, dark/shading measurements, uploaded tables; about 13 "

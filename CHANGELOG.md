@@ -6,6 +6,28 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **Calibration stop gate, opt-in** (`scan`/`digitize --cal-wait-scanstop
+  {off,enforce}`, default `off`; `Scanner.cal_wait_scanstop`;
+  docs/cal-scanstop-gate.md). Issue #35: on a Steam Deck the residual
+  dark_b of Test 32 appears on frame 1, which Test 33's substitution
+  cannot cover. Our tables read registers 0x100/0x101 once after every
+  calibration SCAN-clear and move on; a fast host re-arms the next
+  acquisition while the engine still runs. `enforce` polls reg 0x100 bit 0
+  (data enable) and then reg 0x101 bit 0 (motor enable) clear before the
+  next OUT transfer, within the existing 0.3 s non-strict poll floor, and
+  fails closed (`CalibrationError`, power cycle) at the deadline; waits are
+  recorded in the `.diag.json` as `cal_scanstop_waits`. Ported from
+  bearyjd's fork (`feat/cal-wait-scanstop`, f462b0b) with its offline tests
+  (`tests/test_cal_wait_scanstop.py`, which also pins the default wire
+  against pre-gate digests). Hardware: Test 114 (owner's unit, 2026-11-02)
+  ran it off/on/on/off over frames 1–4 at 3600 dpi plus gated 600 dpi and
+  IR frame-1 runs: harmless (every wait ≤ 8 ms against 0.3 s) but the
+  residual dark_b did not occur in any frame, so its effect is unproven;
+  stays opt-in until the issue's reporter runs it. The SANE backend has no
+  gate.
+  Credit: the mechanism, the code and the offline tests are by bearyjd
+  (https://github.com/bearyjd); the report and the Steam Deck logs are by
+  Krustenviech (https://github.com/Krustenviech), issue #35.
 - **Sweeps longer than four apertures are refused** (`sweep.SWEEP_MAX_APERTURES_VERIFIED`,
   checked in `digitize --sweep` before any hardware step, exit 2, and in
   `Scanner.sweep`). Every hardware-run sweep so far covered 1–4 or 1–2;

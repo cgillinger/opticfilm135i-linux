@@ -7934,3 +7934,114 @@ The transport is healthy after the incident.
 5. Lesson recorded: the gate reasoned about the furthest FORWARD position
    only; the new motion was the backward one, and nothing in the plan
    named the magazine's seating as a thing the back-up could disturb.
+
+
+## 2026-11-02 — Test 114: the calibration stop gate (`--cal-wait-scanstop enforce`) A/B on hardware — harmless here (waits ≤ 8 ms against the 0.3 s budget), but the residual dark_b did not occur, so the gate's effect could not be shown
+
+Hardware, owner's unit and host, branch `claude/busy-bohr-jkyio2` (commit
+8e97437, the port of bearyjd's gate as opt-in; docs/cal-scanstop-gate.md).
+Driven from a Remote Control session with the owner approving each
+scanner command; the owner listened for anything abnormal (nothing).
+Film strip in the holder, four frames. Nothing committed from the run;
+the `.diag.json`/image output is in the owner's local `test114/`
+(excluded from git).
+
+**Setup.** The scanner was not on the USB bus when the session began and
+appeared during it (whether it was power-cycled or just switched on is
+not recorded). `doctor` then read reg 0x01 = 0x00, status word `0x4055`,
+no magazine. The owner's first `load` was refused by the read-only
+magazine check (nothing sent). On the second attempt reg 0x01 was 0x00
+and reg 0x101 0x48 (magazine present), and `load` ran the cold start
+first. `doctor` afterwards read reg 0x01 = 0x22, status word `dc55`,
+magazine present. Two observations from the cold start and load, before
+any scan:
+
+- **The cold start's `poll_status_word` gave up at `0x4855`** (1.5 s,
+  non-raising, then the cold start continued normally). The line is in
+  the owner's terminal output of the `load`, pasted into the session; it
+  is not in any log under `test114/`. This is the first time that
+  signature is seen on this unit; it is exactly the reporter's
+  cold-start symptom in issue #35, which docs/cal-scanstop-gate.md had
+  listed as "never seen here". It is therefore not a Steam Deck
+  peculiarity and not evidence about the dark_b failure. A reading of
+  it, from one observation: the cold scanner without a magazine read
+  `0x4055`, and `0x4855` differs only by the loader-sensor bit 0x08, so
+  `0x4855` looks like the ordinary cold status word with a magazine
+  present (state class 4), while the poll waits for class F.
+- The cold start's re-seating step (PR #44) logged "no re-seating" with
+  the magazine seated: the normal-load check that step was waiting for.
+
+**Runs**, all `--dpi 3600 --recalibrate` (a fresh calibration on every
+frame, so each frame has its own dark_b; the cache would otherwise hide
+frames 2–4), interleaved off/on/on/off, then two gated frame-1 runs:
+
+| run | gate | frames | exit | dark_b_substituted | cr_mismatches (f1/f2/f3/f4) | gate waits | max `wait_s` | max `since_clear_s` | duration |
+|---|---|---|---|---|---|---|---|---|---|
+| a | off | 1–4 | 0 | none | 15/27/24/29 | – | – | – | 2:43 |
+| b | enforce | 1–4 | 0 | none | 13/28/25/27 | 28, all `clear` | 0.008 s | 0.042 s | 2:43 |
+| c | enforce | 1–4 | 0 | none | 11/27/25/27 | 28, all `clear` | 0.008 s | 0.041 s | 2:43 |
+| d | off | 1–4 | 0 | none | 13/26/24/27 | – | – | – | 2:43 |
+| e | enforce | 1, 600 dpi dual | 0 | none | 41 | 7, all `clear` | 0.008 s | 0.030 s | 0:20 |
+| f | enforce | 1, IR 3600 | 0 | none | 22 | 7, all `clear` | 0.008 s | 0.184 s | 1:19 |
+
+**What the gate saw.** Every one of the 70 waits ended at the first
+read of each register: reg 0x100 always `f055`, reg 0x101 `dc55` or
+`d855`, i.e. both bits already clear when the gate read them, 20–42 ms
+after the SCAN-clear on this host (`since_clear_s`). The ~8 ms of
+`wait_s` is two control reads. The IR run's two shading phases had
+`since_clear_s` of 0.148 and 0.184 s: host time between phases, not
+engine time, and not counted against the budget (it runs from the
+gate's start). The gate changed nothing outside calibration: across
+a–d the prep poll warnings, the run time and the register values were
+identical with and without it, and `cr_mismatches` did NOT drop. (A
+likely reason, inferred, not shown by the data: the gate's reads are
+separate from the table's single post-clear `cr`s, which still mismatch
+when the host is ahead of the capture's dynamic bits.)
+
+**What the test could not show.** Test 32's residual dark_b on frames
+2–4 did not occur in any of the 18 frames, gate off included, so there
+was nothing for the gate to remove. Whether the mechanism (re-arming
+while the engine still runs) is the cause of issue #35 is still open;
+on this host the next acquisition is re-armed tens of milliseconds
+after the clear and the engine has always stopped by then, consistent
+with the fork's claim that the failing re-arms came 5.7–11.9 ms after
+the clear on a faster host. The decisive run is the reporter's, on the
+Steam Deck, with `enforce` and the diag attached.
+
+**The reporter's prep-phase poll timeouts are ours too.** In every run
+the `prep` phase's non-strict status polls timed out at the 0.3 s
+floor. Before frame 1 they read `d855`/`dc55`; in runs a–e the capture
+has `e855`/`ec55` there (exactly the reporter's values), in the IR run
+f the IR table's capture has `f855`/`fc55`. Before frames 2–4 they read
+`f855`/`fc55`. In runs a–d only, once before frame 1, the reg 0x32 poll
+(wv=0x008e, wi=0x3222) also timed out reading `1f55` where the capture
+has `8d55` (reg 0x32 also read 0x1f at the load). The status-word values are the
+known post-park state classes (docs/park-completion-analysis.md) and
+never reach the per-frame diag (`poll_timeouts` 0 there, since the diag
+counters are reset at scan start, after `initialize()`'s prep). So the
+reporter's `d855`/`dc55` do not single out their unit or host and do
+not explain their failure.
+
+**Status after the test.** The gate stays **opt-in** (default `off`)
+until the reporter has run `enforce` on the Deck; that was the
+recommendation from the run, not yet a recorded owner decision. Safety-wise it
+is cleared for this unit: ≤ 8 ms against 0.3 s is a ~37× margin and it
+never waited more than one read. The "frame 1 is always healthy"
+docstring of `_healthy_dark_b` stays until the Deck run says otherwise.
+docs/cal-scanstop-gate.md updated: 0x4855 and the prep `d855`/`dc55`
+moved from "never seen here" to "seen here too, benign".
+
+Fact check (2026-11-02): the session that drove the runs compared this
+entry with the raw logs and diags in `test114/` and confirmed the table,
+the 70 waits and the IR timings; the corrections it found (start-up
+sequence, the 0x4855 source, the reg 0x32 poll only in a–d, the IR
+run's expected prep values, run b's 0.042 s) are applied above. It
+agreed with the three conclusions: harmless here and unproven for #35;
+opt-in until the Deck run (a recommendation, not an owner decision);
+0x4855 and `d855`/`dc55` do not explain the Deck failure, though they
+cannot be fully ruled out as contributing on the Deck.
+
+Side note from the run: `tests/test_cal_wait_scanstop.py` as first
+written needed pytest, which the owner's venv does not have and
+`tools/release_check.py` does not use (it runs `python tests/<suite>.py`);
+fixed in the follow-up commit so the suite runs both ways.
