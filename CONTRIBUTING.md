@@ -3,6 +3,8 @@
 This is a personal hobby project — a reverse-engineered Linux driver for the
 Plustek OpticFilm 135i — maintained by one person, on a single scanner, in
 spare time. Contributions are welcome, with a few honest expectations.
+Contributors are credited in the CHANGELOG entry for their change and, for
+code, as co-author on the commit; see README "Acknowledgements".
 
 - **No promises on response time.** I may be slow, and I may decline changes
   that widen the scope beyond what I can test and maintain on one unit.
@@ -21,4 +23,6 @@ spare time. Contributions are welcome, with a few honest expectations.
   documentation under CC BY 4.0.
 
 If you got the driver working on another unit, an issue saying so is genuinely
-valuable — cross-unit behaviour is otherwise unknown.
+valuable — cross-unit behaviour is otherwise unknown. The first two such
+reports (issue #35) found a calibration failure the maintainer's unit never
+shows, and one of them came with the fix.
