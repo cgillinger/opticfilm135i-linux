@@ -6,6 +6,11 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **Cross-unit protocol (offline).** `tools/cross_unit_check.py` runs a fixed
+  doctor / load / four-scan sequence (`--cal-wait-scanstop off,enforce,enforce,off`),
+  stops on the first failure without sending any recovery command, and packs the
+  sidecars, doctor reports and log into a tarball without images or personal paths.
+  Protocol in docs/cross-unit-protocol.md; tests in tests/test_cross_unit_check.py.
 - **Status-read inventory (offline).** `tools/status_read_inventory.py`
   lists every read of reg 0x100/0x101 in the op tables with the
   engine command before it; docs/status-read-inventory.md judges the

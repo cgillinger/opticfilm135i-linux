@@ -667,6 +667,8 @@ cold-start checks) behind a single human confirmation, recording every
 image, `.diag.json` sidecar, and a `summary.json`/`report.md` report —
 and stops immediately on the first anomaly.
 
+For a report from another unit, run the cross-unit protocol: `python3 tools/cross_unit_check.py --out results/xu-01` (docs/cross-unit-protocol.md).
+
 Troubleshooting: if the device is not found, check that nothing else
 holds it (a virtual machine's USB passthrough, another scanning
 application) and that it has not entered standby — the scanner drops
