@@ -6,6 +6,12 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **Diag: cr mismatches are now locatable.** Each control-read reply that
+  differs from the capture is recorded in the `.diag.json` as
+  `cr_mismatch_details` (phase, op index, wv/wi, got/want; first 20 per
+  scan; `cr_mismatches` still counts all). Reason: docs/status-read-inventory.md
+  section 6 item 4. Offline, no wire change.
+
 - **Cross-unit protocol (offline).** `tools/cross_unit_check.py` runs a fixed
   doctor / load / four-scan sequence (`--cal-wait-scanstop off,enforce,enforce,off`),
   stops on the first failure without sending any recovery command, and packs the

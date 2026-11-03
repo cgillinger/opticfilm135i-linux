@@ -49,7 +49,9 @@ bits clear, so the engine had stopped within the ~4 ms between its
 transfers. (For the plain-3600 `cal_shading_measure` the capture shows
 the 0x100 read repeated, i.e. the vendor *polled* it there until
 `f055`.) Our replayer reads once, counts a mismatch
-(`cr_mismatches` in the diag, debug log) and continues straight into
+(`cr_mismatches` in the diag, debug log; each one is also recorded in
+`cr_mismatch_details`: phase, op index, register, got/want, first 20 per
+scan) and continues straight into
 the next phase. Nothing waits for the engine to stop. A faster host
 re-arms the next acquisition while the previous one is still running;
 the fork's logs put that at 5.7–11.9 ms after the clear, and the reads

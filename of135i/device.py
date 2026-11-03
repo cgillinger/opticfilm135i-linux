@@ -575,6 +575,7 @@ class Scanner:
         self._diag_phase_seconds: dict[str, float] = {}
         self._diag_poll_timeouts: int = 0
         self._diag_cr_mismatches: int = 0
+        self._diag_cr_mismatch_details: list[dict] = []
         self._diag_poll_timeout_details: list[dict] = []
         self._diag_poll_settle: list[dict] = []
         self._diag_poll_settle_max_s: float = 0.0
@@ -855,6 +856,12 @@ class Scanner:
                 got = bytes(dev.ctrl_transfer(op.bm, op.br, op.wv, op.wi, op.length))
                 if got != op.resp:
                     self._diag_cr_mismatches += 1
+                    if len(self._diag_cr_mismatch_details) < 20:
+                        self._diag_cr_mismatch_details.append({
+                            "phase": self.session.phase, "idx": idx,
+                            "wv": op.wv, "wi": op.wi,
+                            "got": got.hex(), "want": op.resp.hex(),
+                        })
                     log.debug(
                         "cr wv=%#06x wi=%#06x: got %s want %s -- continuing",
                         op.wv, op.wi, got.hex(), op.resp.hex(),
@@ -2517,6 +2524,7 @@ class Scanner:
         self._diag_phase_seconds = {}
         self._diag_poll_timeouts = 0
         self._diag_cr_mismatches = 0
+        self._diag_cr_mismatch_details = []
         self._cal_scanstop_waits = []
         self._scanstop_go_phase = None
         self._scanstop_armed = None
@@ -2637,6 +2645,7 @@ class Scanner:
             "total_seconds": time.monotonic() - t_start,
             "poll_timeouts": self._diag_poll_timeouts,
             "cr_mismatches": self._diag_cr_mismatches,
+            "cr_mismatch_details": list(self._diag_cr_mismatch_details),
             "cal_scanstop_waits": list(self._cal_scanstop_waits),
             "poll_timeout_details": list(self._diag_poll_timeout_details),
             "poll_settle": list(self._diag_poll_settle),
@@ -2819,6 +2828,7 @@ class Scanner:
         self._diag_phase_seconds = {}
         self._diag_poll_timeouts = 0
         self._diag_cr_mismatches = 0
+        self._diag_cr_mismatch_details = []
         self._cal_scanstop_waits = []
         self._scanstop_go_phase = None
         self._scanstop_armed = None
@@ -2959,6 +2969,7 @@ class Scanner:
             "total_seconds": time.monotonic() - t_start,
             "poll_timeouts": self._diag_poll_timeouts,
             "cr_mismatches": self._diag_cr_mismatches,
+            "cr_mismatch_details": list(self._diag_cr_mismatch_details),
             "cal_scanstop_waits": list(self._cal_scanstop_waits),
             "poll_timeout_details": list(self._diag_poll_timeout_details),
             "poll_settle": list(self._diag_poll_settle),
@@ -3078,6 +3089,7 @@ class Scanner:
         self._diag_phase_seconds = {}
         self._diag_poll_timeouts = 0
         self._diag_cr_mismatches = 0
+        self._diag_cr_mismatch_details = []
         self._cal_scanstop_waits = []
         self._scanstop_go_phase = None
         self._scanstop_armed = None
@@ -3187,6 +3199,7 @@ class Scanner:
             "total_seconds": time.monotonic() - t_start,
             "poll_timeouts": self._diag_poll_timeouts,
             "cr_mismatches": self._diag_cr_mismatches,
+            "cr_mismatch_details": list(self._diag_cr_mismatch_details),
             "cal_scanstop_waits": list(self._cal_scanstop_waits),
             "poll_timeout_details": list(self._diag_poll_timeout_details),
             "poll_settle": list(self._diag_poll_settle),
@@ -3214,6 +3227,7 @@ class Scanner:
         self._diag_phase_seconds = {}
         self._diag_poll_timeouts = 0
         self._diag_cr_mismatches = 0
+        self._diag_cr_mismatch_details = []
         self._cal_scanstop_waits = []
         self._scanstop_go_phase = None
         self._scanstop_armed = None
@@ -3344,6 +3358,7 @@ class Scanner:
             "total_seconds": time.monotonic() - t_start,
             "poll_timeouts": self._diag_poll_timeouts,
             "cr_mismatches": self._diag_cr_mismatches,
+            "cr_mismatch_details": list(self._diag_cr_mismatch_details),
             "cal_scanstop_waits": list(self._cal_scanstop_waits),
             "poll_timeout_details": list(self._diag_poll_timeout_details),
             "poll_settle": list(self._diag_poll_settle),
