@@ -1,0 +1,399 @@
+#!/usr/bin/env python3
+"""Offline transfer recorder/converter tests; stdlib runner, no pytest.
+
+Adapted from bearyjd's a02b4b6 and 6c2be93. USB is always FakeUsbDevice.
+The upstream calibration suite supplies pre-existing wire digests.
+"""
+from __future__ import annotations
+
+import gzip
+import json
+import logging
+import os
+from pathlib import Path
+import stat
+import sys
+import tempfile
+import time
+import unittest
+from unittest.mock import patch
+
+REPO = Path(__file__).resolve().parents[1]
+sys.path[:0] = [str(REPO), str(REPO / "tests"), str(REPO / "tools")]
+
+import usb.core
+from of135i import safety, trace
+from of135i.usbio import UsbIo
+from test_safety import FakeUsbDevice, _cal_buffers, fast_time, make_scanner
+from test_cal_wait_scanstop import BASELINE, _baseline_run, _digest
+import trace_to_compiled as converter
+
+
+class TraceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.path = self.root / "run.jsonl"
+        env = patch.dict(os.environ, {trace.TRACE_ENV: str(self.path)})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def device(self, fake=None):
+        fake = fake or FakeUsbDevice()
+        transport = UsbIo(fake)
+        transport.session.arm(0x22)
+        self.addCleanup(transport.close)
+        return transport.dev, fake
+
+    def records(self):
+        return [json.loads(line) for line in self.path.read_text().splitlines()]
+
+    def transfers(self):
+        return [r for r in self.records() if "kind" in r]
+
+    def test_records_scripted_transfers(self):
+        dev, fake = self.device()
+        dev.ctrl_transfer(0x40, 4, 0x83, 0, b"\x03\x30")
+        got = bytes(dev.ctrl_transfer(0xc0, 4, 0x8e, 0x122, 2))
+        dev.write(2, b"abc", timeout=123)
+        dev.read(0x81, 100, timeout=456)
+        cw, cr, bo, bi = self.transfers()
+        self.assertEqual(self.records()[0], {"format": trace.FORMAT})
+        self.assertEqual([(r["kind"], r["dir"]) for r in (cw, cr, bo, bi)],
+                         [("ctrl", "out"), ("ctrl", "in"), ("bulk", "out"), ("bulk", "in")])
+        self.assertEqual((cw["bm"], cw["br"], cw["wv"], cw["wi"], cw["wlen"]),
+                         (0x40, 4, 0x83, 0, 2))
+        self.assertEqual(cw["data"], "0330")
+        self.assertEqual(cr["data"], got.hex())
+        self.assertEqual((bo["ep"], bo["data"], bo["len"]), (2, "616263", 3))
+        self.assertEqual((bi["ep"], bi["len"]), (0x81, 100))
+        self.assertEqual([r["seq"] for r in self.transfers()], [1, 2, 3, 4])
+        self.assertEqual(len(fake.wire_log), 4)
+        stamps = [r["t"] for r in self.transfers()]
+        self.assertEqual(stamps, sorted(stamps))
+        self.assertTrue(all(r["dur"] >= 0 and r["status"] == "ok" for r in self.transfers()))
+
+    def test_bulk_in_image_data_never_stored(self):
+        dev, _ = self.device()
+        dev.read(0x81, 100)
+        self.assertNotIn("data", self.transfers()[0])
+        self.assertNotIn("00700070", self.path.read_text())
+
+    def test_bulk_in_length_does_not_copy_buffer(self):
+        class Buffer:
+            def __len__(self):
+                return 100
+            def __bytes__(self):
+                raise AssertionError("image buffer copied")
+        rec = trace.TraceRecorder(str(self.path))
+        self.addCleanup(rec.close)
+        buf = Buffer()
+        self.assertIs(rec.run("bulk", "in", 0x81, None, None, lambda: buf), buf)
+        self.assertEqual(self.transfers()[0]["len"], 100)
+
+    def test_buffer_read_integer_result_records_actual_length(self):
+        rec = trace.TraceRecorder(str(self.path))
+        self.addCleanup(rec.close)
+        self.assertEqual(rec.run("bulk", "in", 0x81, None, None, lambda: 17), 17)
+        self.assertEqual(self.transfers()[0]["len"], 17)
+
+    def test_payload_cap_and_full_length(self):
+        dev, _ = self.device()
+        big = bytes(range(200))
+        dev.write(2, big)
+        dev.ctrl_transfer(0x40, 4, 0x83, 0, big[:128])
+        bo, cw = self.transfers()
+        self.assertEqual(bo["data"], big[:64].hex())
+        self.assertEqual(bo["len"], 200)
+        self.assertEqual((cw["data"], cw["wlen"]), (big[:64].hex(), 128))
+
+    def test_control_in_payload_cap(self):
+        dev, _ = self.device()
+        dev.ctrl_transfer(0xc0, 9, 0, 0, 200)
+        rec = self.transfers()[0]
+        self.assertEqual(rec["len"], 200)
+        self.assertEqual(len(bytes.fromhex(rec["data"])), 64)
+
+    def test_failed_transfer_preserves_exception_identity(self):
+        error = usb.core.USBTimeoutError("boom", -7, 110)
+        dev, _ = self.device(FakeUsbDevice(fault=lambda ev: error))
+        with self.assertRaises(usb.core.USBTimeoutError) as caught:
+            dev.ctrl_transfer(0xc0, 4, 0x8e, 0x122, 2)
+        self.assertIs(caught.exception, error)
+        self.assertEqual(self.transfers()[0]["status"], "error:USBTimeoutError")
+
+    def test_keyboard_interrupt_leaves_valid_prefix(self):
+        seen = 0
+        def fault(ev):
+            nonlocal seen
+            seen += 1
+            if seen == 40:
+                return KeyboardInterrupt()
+        fake = FakeUsbDevice(fault=fault, cal_buffers=_cal_buffers())
+        with fast_time(), self.assertRaises(KeyboardInterrupt):
+            scanner = make_scanner(fake)
+            self.addCleanup(scanner.io.close)
+            scanner.initialize()
+            scanner.scan(frame=1)
+        records = self.transfers()
+        self.assertEqual(len(fake.wire_log), 39)
+        self.assertEqual(len(records), 40)
+        self.assertEqual([r["status"] for r in records[:39]], ["ok"] * 39)
+        self.assertEqual(records[-1]["status"], "error:KeyboardInterrupt")
+        self.assertTrue(self.path.read_bytes().endswith(b"\n"))
+
+    def test_file_is_private_with_open_umask(self):
+        old = os.umask(0)
+        try:
+            self.device()
+        finally:
+            os.umask(old)
+        self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
+
+    def test_existing_file_refused_once_and_io_continues(self):
+        self.path.write_bytes(b"precious\n")
+        with self.assertLogs("of135i", logging.WARNING) as logs:
+            dev, fake = self.device()
+            dev.write(2, b"abc")
+            dev.write(2, b"def")
+        self.assertEqual(self.path.read_bytes(), b"precious\n")
+        self.assertEqual(len(fake.wire_log), 2)
+        self.assertEqual(len(logs.records), 1)
+
+    def test_symlink_refused(self):
+        victim = self.root / "victim"
+        victim.write_bytes(b"keep")
+        self.path.symlink_to(victim)
+        with self.assertLogs("of135i", logging.WARNING):
+            dev, _ = self.device()
+            dev.write(2, b"abc")
+        self.assertEqual(victim.read_bytes(), b"keep")
+
+    def test_bad_path_warns_once(self):
+        with patch.dict(os.environ, {trace.TRACE_ENV: str(self.root / "missing" / "t")}), \
+                self.assertLogs("of135i", logging.WARNING) as logs:
+            dev, fake = self.device()
+            dev.write(2, b"abc")
+        self.assertEqual(len(fake.wire_log), 1)
+        self.assertEqual(len(logs.records), 1)
+
+    def test_write_error_disables_recording_once(self):
+        dev, fake = self.device()
+        dev.write(2, b"one")
+        with patch.object(trace.os, "write", side_effect=OSError("disk full")) as write, \
+                self.assertLogs("of135i", logging.WARNING) as logs:
+            self.assertEqual(dev.write(2, b"two"), 3)
+            self.assertEqual(dev.write(2, b"three"), 5)
+            self.assertEqual(len(dev.read(0x81, 8)), 8)
+        self.assertEqual(write.call_count, 1)
+        self.assertEqual(len(logs.records), 1)
+        self.assertEqual(len(fake.wire_log), 4)
+        self.assertEqual(len(self.transfers()), 1)
+
+    def test_zero_write_disables_instead_of_looping(self):
+        dev, _ = self.device()
+        with patch.object(trace.os, "write", return_value=0) as write, \
+                self.assertLogs("of135i", logging.WARNING):
+            self.assertEqual(dev.write(2, b"abc"), 3)
+        self.assertEqual(write.call_count, 1)
+        self.assertFalse(dev._recorder.active)
+
+    def test_partial_writes_complete_the_line(self):
+        dev, _ = self.device()
+        real_write = os.write
+        def short_write(fd, data):
+            return real_write(fd, data[:7])
+        with patch.object(trace.os, "write", side_effect=short_write):
+            dev.write(2, b"abc")
+        self.assertEqual(self.transfers()[0]["data"], "616263")
+
+    def test_encoding_error_never_reaches_io(self):
+        dev, fake = self.device()
+        with patch.object(trace.json, "dumps", side_effect=ValueError("encode")), \
+                self.assertLogs("of135i", logging.WARNING):
+            self.assertEqual(dev.write(2, b"abc"), 3)
+        self.assertEqual(len(fake.wire_log), 1)
+
+    def test_clock_failure_never_prevents_transfer(self):
+        dev, fake = self.device()
+        with patch.object(trace.time, "perf_counter", side_effect=OSError("clock")), \
+                self.assertLogs("of135i", logging.WARNING):
+            self.assertEqual(dev.write(2, b"abc"), 3)
+        self.assertEqual(len(fake.wire_log), 1)
+
+    def test_initial_clock_failure_closes_file(self):
+        real_close = os.close
+        with patch.object(trace.time, "perf_counter", side_effect=OSError("clock")), \
+                patch.object(trace.os, "close", wraps=real_close) as close, \
+                self.assertLogs("of135i", logging.WARNING) as logs:
+            self.assertIsNone(trace.from_env())
+        self.assertEqual(close.call_count, 1)
+        self.assertEqual(len(logs.records), 1)
+
+    def test_close_releases_file(self):
+        dev, _ = self.device()
+        fd = dev._recorder._fd
+        dev.dispose()
+        with self.assertRaises(OSError):
+            os.fstat(fd)
+
+    def test_unset_and_empty_env_are_silent_and_clock_free(self):
+        with patch.object(trace.time, "perf_counter", side_effect=AssertionError("clock")), \
+                patch.object(trace.os, "open", side_effect=AssertionError("open")), \
+                patch.object(trace.log, "warning") as warning:
+            for value in (None, ""):
+                if value is None:
+                    os.environ.pop(trace.TRACE_ENV, None)
+                else:
+                    os.environ[trace.TRACE_ENV] = value
+                dev, _ = self.device()
+                self.assertIsNone(dev._recorder)
+                self.assertEqual(dev.write(2, b"abc"), 3)
+        warning.assert_not_called()
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_recorder_does_not_touch_poll_clock_or_sleep(self):
+        dev, _ = self.device()
+        with patch.object(time, "monotonic", side_effect=AssertionError("poll clock")), \
+                patch.object(time, "sleep", side_effect=AssertionError("sleep")):
+            dev.write(2, b"abc")
+            dev.read(0x81, 8)
+        self.assertEqual(len(self.transfers()), 2)
+
+    def test_recording_on_matches_upstream_wire_baselines(self):
+        for name in sorted(BASELINE):
+            with self.subTest(name=name):
+                self.path = self.root / (name + ".jsonl")
+                os.environ[trace.TRACE_ENV] = str(self.path)
+                fake, scanner = _baseline_run(name, None)
+                scanner.io.close()
+                self.assertEqual((_digest(fake.wire_log), len(fake.wire_log)), BASELINE[name])
+                self.assertEqual(len([r for r in self.transfers() if r["kind"] != "intr"]),
+                                 BASELINE[name][1])
+
+    def test_recording_off_matches_upstream_wire_baselines(self):
+        os.environ.pop(trace.TRACE_ENV, None)
+        for name in sorted(BASELINE):
+            with self.subTest(name=name):
+                fake, scanner = _baseline_run(name, None)
+                scanner.io.close()
+                self.assertEqual((_digest(fake.wire_log), len(fake.wire_log)), BASELINE[name])
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_converter_ops_and_padded_bulk_payload(self):
+        dev, _ = self.device()
+        dev.ctrl_transfer(0x40, 4, 0x83, 0, b"\x03\x30")
+        dev.ctrl_transfer(0xc0, 4, 0x8e, 0x122, 2)
+        dev.write(2, bytes(range(100)))
+        dev.read(0x81, 4096)
+        ops, skipped = converter.convert(converter.read_records(self.path.read_text()))
+        self.assertEqual(skipped, 0)
+        self.assertEqual([o["t"] for o in ops], ["cw", "cr", "bo", "bi"])
+        self.assertEqual(ops[0]["data"], "0330")
+        self.assertEqual(ops[1]["resp"], "2255")
+        self.assertEqual(bytes.fromhex(ops[2]["data"]), bytes(range(64)) + bytes(36))
+        self.assertEqual(ops[3]["len"], 4096)
+        self.assertTrue(all(o["dt"] >= 0 for o in ops))
+
+    def test_converter_skips_errors_interrupt_and_partial_line(self):
+        error = usb.core.USBTimeoutError("t", -7, 110)
+        dev, _ = self.device(FakeUsbDevice(fault=lambda ev: error if ev["kind"] == "bulk_in" else None))
+        dev.write(2, b"ab")
+        for endpoint in (0x81, 0x83):
+            with self.assertRaises(usb.core.USBTimeoutError):
+                dev.read(endpoint, 8)
+        text = self.path.read_text() + '{"seq":9,"kind":"ct'
+        ops, skipped = converter.convert(converter.read_records(text))
+        self.assertEqual([o["t"] for o in ops], ["bo"])
+        self.assertEqual(skipped, 2)
+
+    def test_short_out_fails_session_and_converter_skips(self):
+        for kind in ("bulk_out", "ctrl_out"):
+            with self.subTest(kind=kind):
+                self.path = self.root / (kind + ".jsonl")
+                os.environ[trace.TRACE_ENV] = str(self.path)
+                dev, fake = self.device(FakeUsbDevice(fault=lambda ev: 2 if ev["kind"] == kind else None))
+                with self.assertRaises(safety.ShortTransferError):
+                    if kind == "bulk_out":
+                        dev.write(2, b"abcdef")
+                    else:
+                        dev.ctrl_transfer(0x40, 4, 0x83, 0, b"abcdef")
+                self.assertEqual(self.transfers()[0]["status"], "short:2")
+                self.assertEqual(self.transfers()[0]["len"], 6)
+                self.assertEqual(converter.convert(self.transfers()), ([], 1))
+                with self.assertRaises(safety.SessionFailedError):
+                    dev.write(2, b"more")
+                self.assertEqual(len(self.transfers()), 1)
+
+    def test_converter_cli_private_plain_and_gzip_refuses_overwrite(self):
+        dev, _ = self.device()
+        dev.write(2, b"ab")
+        old = os.umask(0)
+        try:
+            for name in ("out.trace.json", "out.trace.json.gz"):
+                out = self.root / name
+                self.assertEqual(converter.main([str(self.path), "-o", str(out)]), 0)
+                self.assertEqual(stat.S_IMODE(out.stat().st_mode), 0o600)
+                opener = gzip.open if out.suffix == ".gz" else open
+                with opener(out, "rt") as handle:
+                    self.assertEqual(json.load(handle)[0]["t"], "bo")
+                before = out.read_bytes()
+                self.assertEqual(converter.main([str(self.path), "-o", str(out)]), 1)
+                self.assertEqual(out.read_bytes(), before)
+        finally:
+            os.umask(old)
+
+    def test_short_control_in_preserves_reply_and_converter_skips(self):
+        reply = b"\x55"
+        fake = FakeUsbDevice()
+        with patch.object(fake, "ctrl_transfer", return_value=reply):
+            dev, _ = self.device(fake)
+            self.assertIs(dev.ctrl_transfer(0xc0, 4, 0x8e, 0x122, 2), reply)
+        record = self.transfers()[0]
+        self.assertEqual((record["status"], record["len"], record["data"]),
+                         ("short:1", 1, "55"))
+        self.assertEqual(converter.convert([record]), ([], 1))
+
+    def test_short_bulk_in_retains_actual_length(self):
+        fake = FakeUsbDevice()
+        with patch.object(fake, "read", return_value=b"abc"):
+            dev, _ = self.device(fake)
+            self.assertEqual(dev.read(0x81, 100), b"abc")
+        record = self.transfers()[0]
+        self.assertEqual((record["status"], record["len"]), ("ok", 3))
+        ops, skipped = converter.convert([record])
+        self.assertEqual((ops[0]["t"], ops[0]["len"], skipped), ("bi", 3, 0))
+
+    def test_converter_refuses_symlink(self):
+        dev, _ = self.device()
+        dev.write(2, b"ab")
+        out = self.root / "link.trace.json"
+        victim = self.root / "victim"
+        victim.write_bytes(b"keep")
+        out.symlink_to(victim)
+        self.assertEqual(converter.main([str(self.path), "-o", str(out)]), 1)
+        self.assertEqual(victim.read_bytes(), b"keep")
+
+    def test_converter_keeps_submission_spacing(self):
+        records = []
+        for start, dur, direction in ((0., .1, "out"), (1., .2, "out"), (2., .5, "in")):
+            records.append(dict(t=start, dur=dur, kind="ctrl", dir=direction, status="ok",
+                                bm=0xc0 if direction == "in" else 0x40, br=4,
+                                wv=0x8e if direction == "in" else 0x83, wi=0,
+                                wlen=2, len=2, data="2255" if direction == "in" else "0330"))
+        ops, skipped = converter.convert(records)
+        cumulative = 0.
+        starts = []
+        for op in ops:
+            cumulative += op["dt"]
+            starts.append(cumulative - op.get("dur", 0.))
+        self.assertEqual(starts, [0., 1., 2.])
+        self.assertEqual(skipped, 0)
+
+
+if __name__ == "__main__":
+    result = unittest.TextTestRunner(stream=sys.stdout, verbosity=1).run(
+        unittest.defaultTestLoader.loadTestsFromTestCase(TraceTests))
+    print(f"{result.testsRun - len(result.failures) - len(result.errors)} tests passed")
+    sys.exit(0 if result.wasSuccessful() else 1)

@@ -26,7 +26,7 @@ from typing import Iterable, Sequence, Tuple
 
 import usb.core
 
-from . import safety
+from . import safety, trace
 from .errors import Of135iError
 
 log = logging.getLogger("of135i")
@@ -99,7 +99,7 @@ class UsbIo:
     def __init__(self, dev: "usb.core.Device", readonly: bool = False,
                  lock: "safety.ProcessLock | None" = None):
         self.session = safety.HardwareSession(readonly=readonly)
-        self.dev = safety.GuardedDevice(dev, self.session)
+        self.dev = safety.GuardedDevice(dev, self.session, trace.from_env())
         self._lock = lock
 
     # ------------------------------------------------------------ lifecycle

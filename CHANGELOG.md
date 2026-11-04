@@ -93,6 +93,18 @@ one exists; "offline" means implemented and tested without the scanner.
   stated under its counting rule, "polled" is distinguished from "waited"
   (non-strict polls outside JOG/LOAD/POSITION only log on timeout), and
   categorical phrasings are hedged as our reading of the tables.
+- **Opt-in transfer recorder** (`OF135I_TRACE=/new/path/run.jsonl`):
+  records transfers passing through the guarded USB layer, with bounded
+  control/OUT payloads and bulk-IN lengths only. Unset or empty leaves
+  recording off; no command, retry or sleep is added. Files are created
+  exclusively with mode 0600; recording failures warn once and disable
+  recording without changing USB results. `tools/trace_to_compiled.py`
+  converts the diagnostic JSONL to compiled traces for offline comparison
+  (payloads beyond 64 bytes are incomplete; not a replay capture).
+  Offline only: standalone tests cover failure handling, conversion and
+  the upstream wire digests with recording on/off; no hardware run.
+  Credit: adapted from bearyjd (https://github.com/bearyjd),
+  commits a02b4b6 and 6c2be93 in bearyjd/opticfilm135i-linux.
 - **Docs: the driver is no longer single-unit.** README, CONTRIBUTING and
   the ROADMAP now say what is true as of 2026-11-03: the driver has
   scanned on two units besides the maintainer's (a Steam Deck and a fork's

@@ -74,7 +74,7 @@ Each is a standalone script that prints `N tests passed` and exits 0:
 ```
 for t in test_safety test_calibrate test_hwblock test_park test_offline \
          test_diag test_dpi test_ir test_image_probe test_aperture_crop \
-         test_overscan test_dual_overscan; do
+         test_overscan test_dual_overscan test_trace_recorder; do
     .venv/bin/python tests/$t.py || exit 1
 done
 ```
@@ -83,6 +83,35 @@ These cover the safety model, calibration maths, the park state machine,
 the image path, the DPI and IR logic, the overscan/coverage geometry and
 the bulk-digitisation workflow — the driver's own logic, all without
 hardware.
+
+`test_trace_recorder` uses fake USB devices and the upstream scan wire
+digests, exercising recording on/off, private exclusive files, short and
+failed transfers, recording failures and the converter. It needs no pytest.
+The suite is also mandatory in `tools/release_check.py` and included in
+the provided workflow.
+
+For an explicitly requested hardware session, setting
+`OF135I_TRACE=/new/path/run.jsonl` enables the diagnostic recorder; unset
+or empty leaves it off. It observes transfers through `GuardedDevice`,
+including interrupt reads, without adding commands, retries or sleeps.
+Synchronous file writes do add host overhead, so recorded timing includes
+that overhead and has not been hardware-validated. Files are created
+exclusively as 0600; existing files and symlinks are refused. One warning
+disables recording after an error while USB I/O continues.
+
+Convert an existing recording entirely offline:
+
+```
+.venv/bin/python tools/trace_to_compiled.py run.jsonl -o run.trace.json.gz
+```
+
+The converter also creates its output exclusively as 0600. It ignores a
+damaged final line and skips failed transfers, short OUT/control-IN
+transfers and interrupt records; bulk-IN retains the actual returned length.
+Only the first 64 bytes of control and bulk-OUT payloads are recorded;
+bulk-IN image data is never recorded. Conversion zero-pads bulk-OUT beyond
+64 bytes and leaves long control payloads truncated, so these are
+diagnostic comparisons, not complete payload captures for replay or hashes.
 
 ### 4. Compiler-based suites (need `g++`, no backend)
 
