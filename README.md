@@ -621,6 +621,18 @@ stdout/stderr pipe can no longer abort a scan.
 .venv/bin/python -m of135i buttons [--duration S]  # read-only: print button presses
 ```
 
+`watch` exits **0** for Ctrl+C while idle, **1** for an error/refusal or
+absent device, **3** when another process holds the scanner lock, and **75**
+when `eject()` raises or is interrupted. On 75,
+power-cycle the scanner before restarting. The watch loop ends immediately;
+a service manager needs an explicit policy to prevent automatic restart.
+For systemd services using `Restart=on-failure` or `Restart=always`, add
+`RestartPreventExitStatus=75`.
+
+This only changes CLI error reporting. The existing eject completion timeout
+logs a warning and returns success; it does **not** produce exit 75. Exit 75
+therefore does not prove detection of every unsuccessful physical eject.
+
 `doctor` is strictly read-only on the wire (USB control reads and
 descriptor queries only — no register writes, no motor commands, no
 `initialize()`/`cold_init()`): it prints USB descriptor info, the
@@ -656,7 +668,9 @@ Every error message ends with the next safe action. The rules behind them:
 
 Exit codes: `0` success, `1` refused or failed (details on stderr),
 `2` usage error, `3` scanner busy (another of135i process holds the lock;
-nothing was sent, no power cycle needed), `130` interrupted (Ctrl-C).
+nothing was sent, no power cycle needed), `75` watch eject raised or was
+interrupted (power-cycle before restarting; configure the supervisor to prevent
+restart), `130` interrupted (Ctrl-C outside a watch eject).
 
 ### Release check
 

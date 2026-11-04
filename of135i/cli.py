@@ -47,6 +47,9 @@ EXIT_BUSY = safety.EXIT_BUSY   # another of135i process holds the scanner lock
 
 log = logging.getLogger("of135i")
 
+#: Watch eject raised or was interrupted; supervisor policy must prevent restart.
+EXIT_WATCH_EJECT_FAILED = 75
+
 #: Sanity ceiling on --overscan (mm). The real per-frame bound is the
 #: transport ceiling, checked by holder.overscan_geometry frame by frame;
 #: this only rejects absurd input early.
@@ -3792,7 +3795,15 @@ def _cmd_watch(args: argparse.Namespace) -> int:
                 elif name == "eject":
                     print("eject button pressed", flush=True)
                     if scanner.is_magazine_present():
-                        scanner.eject()
+                        try:
+                            scanner.eject()
+                        except (Exception, KeyboardInterrupt) as e:
+                            print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
+                            _print_session_failure(scanner)
+                            print("eject failed or was interrupted; power-cycle the scanner. "
+                                  "Configure the supervisor to prevent restart on exit 75.",
+                                  file=sys.stderr)
+                            return EXIT_WATCH_EJECT_FAILED
                         print("ejected", flush=True)
                     else:
                         print("magazine not detected, ignoring", flush=True)
@@ -3962,7 +3973,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_status = sub.add_parser("status", help="read and print status registers")
     p_status.set_defaults(func=_cmd_status)
 
-    p_watch = sub.add_parser("watch", help="poll buttons; eject on the eject button")
+    p_watch = sub.add_parser("watch", help="poll buttons; eject on the eject button",
+        epilog="Exit codes: 0 = stopped while idle; 1 = error/refused/absent; "
+               "3 = scanner busy (another process holds the lock); "
+               "75 = eject raised or was interrupted (power-cycle before restart). "
+               "For systemd, configure RestartPreventExitStatus=75. "
+               "Existing eject completion timeouts only warn and still return success; "
+               "exit 75 does not detect those timeouts.")
     p_watch.set_defaults(func=_cmd_watch)
 
     p_buttons = sub.add_parser(
