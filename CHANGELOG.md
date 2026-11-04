@@ -98,7 +98,9 @@ one exists; "offline" means implemented and tested without the scanner.
   control/OUT payloads and bulk-IN lengths only. Unset or empty leaves
   recording off; no command, retry or sleep is added. Files are created
   exclusively with mode 0600; recording failures warn once and disable
-  recording without changing USB results. `tools/trace_to_compiled.py`
+  recording without changing USB results. Trace files close before warning;
+  recorder warnings remain best effort even if a logging handler fails.
+  `tools/trace_to_compiled.py`
   converts the diagnostic JSONL to compiled traces for offline comparison
   (payloads beyond 64 bytes are incomplete; not a replay capture).
   Offline only: standalone tests cover failure handling, conversion and

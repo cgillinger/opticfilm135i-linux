@@ -41,6 +41,14 @@ DATA_CAP = 64
 FORMAT = "of135i-trace/1"
 
 
+def _warn(message, *args) -> None:
+    """A broken logging sink must not change a USB result or exception."""
+    try:
+        log.warning(message, *args)
+    except Exception:
+        pass
+
+
 class TraceRecorder:
     """Appends one JSON line per transfer to an exclusively created file."""
 
@@ -131,13 +139,13 @@ class TraceRecorder:
 
     def _disable(self, err: BaseException) -> None:
         fd, self._fd = self._fd, None
-        log.warning("transfer trace disabled (%s: %s); scanning continues unrecorded",
-                    type(err).__name__, err)
         if fd is not None:
             try:
                 os.close(fd)
             except OSError:
                 pass
+        _warn("transfer trace disabled (%s: %s); scanning continues unrecorded",
+              type(err).__name__, err)
 
     def close(self) -> None:
         fd, self._fd = self._fd, None
@@ -157,7 +165,7 @@ def from_env() -> "TraceRecorder | None":
     try:
         rec = TraceRecorder(path)
     except Exception as e:
-        log.warning("transfer trace not started (%s: %s); scanning continues unrecorded",
-                    type(e).__name__, e)
+        _warn("transfer trace not started (%s: %s); scanning continues unrecorded",
+              type(e).__name__, e)
         return None
     return rec if rec.active else None

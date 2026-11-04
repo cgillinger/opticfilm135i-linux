@@ -6,6 +6,7 @@ The upstream calibration suite supplies pre-existing wire digests.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import gzip
 import json
 import logging
@@ -27,6 +28,26 @@ from of135i.usbio import UsbIo
 from test_safety import FakeUsbDevice, _cal_buffers, fast_time, make_scanner
 from test_cal_wait_scanstop import BASELINE, _baseline_run, _digest
 import trace_to_compiled as converter
+
+
+@contextmanager
+def broken_logging():
+    class Handler(logging.Handler):
+        calls = 0
+        def emit(self, record):
+            self.calls += 1
+            raise RuntimeError("log sink failed")
+
+    logger = logging.getLogger("of135i")
+    saved = logger.handlers, logger.level, logger.propagate
+    handler = Handler()
+    logger.handlers, logger.propagate = [handler], False
+    logger.setLevel(logging.WARNING)
+    try:
+        yield handler
+    finally:
+        logger.handlers, _, logger.propagate = saved
+        logger.setLevel(saved[1])
 
 
 class TraceTests(unittest.TestCase):
@@ -214,6 +235,37 @@ class TraceTests(unittest.TestCase):
                 self.assertLogs("of135i", logging.WARNING):
             self.assertEqual(dev.write(2, b"abc"), 3)
         self.assertEqual(len(fake.wire_log), 1)
+
+    def test_logging_failure_preserves_success_and_closes_trace(self):
+        dev, fake = self.device()
+        fd = dev._recorder._fd
+        with broken_logging() as handler, \
+                patch.object(trace.os, "write", side_effect=OSError("disk full")):
+            self.assertEqual(dev.write(2, b"abc"), 3)
+            self.assertEqual(dev.write(2, b"def"), 3)
+        self.assertEqual(handler.calls, 1)
+        self.assertEqual(len(fake.wire_log), 2)
+        self.assertFalse(dev._recorder.active)
+        with self.assertRaises(OSError):
+            os.fstat(fd)
+
+    def test_logging_failure_preserves_original_usb_exception(self):
+        original = usb.core.USBTimeoutError("original USB failure", -7, 110)
+        dev, _ = self.device(FakeUsbDevice(fault=lambda ev: original))
+        with broken_logging() as handler, \
+                patch.object(trace.os, "write", side_effect=OSError("disk full")):
+            with self.assertRaises(usb.core.USBTimeoutError) as caught:
+                dev.ctrl_transfer(0xc0, 4, 0x8e, 0x122, 2)
+        self.assertIs(caught.exception, original)
+        self.assertEqual(handler.calls, 1)
+        self.assertFalse(dev._recorder.active)
+
+    def test_logging_failure_on_open_error_still_disables_trace(self):
+        self.path.write_bytes(b"precious")
+        with broken_logging() as handler:
+            self.assertIsNone(trace.from_env())
+        self.assertEqual(handler.calls, 1)
+        self.assertEqual(self.path.read_bytes(), b"precious")
 
     def test_clock_failure_never_prevents_transfer(self):
         dev, fake = self.device()
