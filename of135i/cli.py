@@ -34,6 +34,7 @@ import re
 import shutil
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Callable
 
@@ -3804,7 +3805,11 @@ def _cmd_watch(args: argparse.Namespace) -> int:
                                 # (nothing reached the hardware): the outer
                                 # handler's `refused:` + exit 1, restartable.
                                 raise
-                            print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
+                            if not (scanner.session.failure or scanner.session.refusal):
+                                # No session record repeats the exception text.
+                                print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
+                            if not isinstance(e, (OSError, Of135iError, KeyboardInterrupt)):
+                                traceback.print_exc()  # a bug in eject(), not a device fault
                             _print_session_failure(scanner)
                             print("eject failed or was interrupted; power-cycle the scanner. "
                                   "Configure the supervisor to prevent restart on exit 75.",

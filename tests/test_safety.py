@@ -2162,6 +2162,33 @@ def test_watch_session_failed_refusal_decision_follows_writes_sent():
     assert code == 75, (code, se)
 
 
+def test_watch_eject_failure_text_printed_once():
+    fake = FakeUsbDevice(reg01=0x22)
+    fake.regs[0x31] = 0xFE
+    fake.button_events.extend([0x48, None])
+    fake.fault = lambda ev: _usb_timeout() if ev.get("pulse") else None
+    with cli_over(fake):
+        code, so, se = _cli(["watch"])
+    assert code == 75, (code, se)
+    assert se.count("USBTimeoutError") == 1, se
+
+
+def test_watch_unexpected_exception_exits_75_with_traceback():
+    code, so, se = _watch_with_eject_raising(lambda: RuntimeError("boom-bug"), 2)
+    assert code == 75, (code, se)
+    assert "Traceback (most recent call last)" in se and "RuntimeError: boom-bug" in se, se
+    # Expected failure types stay traceback-free.
+    fake = FakeUsbDevice(reg01=0x22)
+    fake.regs[0x31] = 0xFE
+    fake.button_events.extend([0x48, None])
+    fake.fault = lambda ev: _usb_timeout() if ev.get("pulse") else None
+    with cli_over(fake):
+        code, so, se = _cli(["watch"])
+    assert "Traceback" not in se, se
+    code, so, se = _watch_with_eject_raising(lambda: KeyboardInterrupt(), 2)
+    assert code == 75 and "Traceback" not in se, se
+
+
 def test_watch_idle_interrupt_exit_0():
     fake = FakeUsbDevice(reg01=0x22)
     fake.regs[0x31] = 0xFE
@@ -2861,6 +2888,8 @@ def main() -> int:
         test_watch_interrupt_during_eject_exit_75,
         test_watch_unejectable_state_refusal_exits_1_not_75,
         test_watch_session_failed_refusal_decision_follows_writes_sent,
+        test_watch_eject_failure_text_printed_once,
+        test_watch_unexpected_exception_exits_75_with_traceback,
         test_watch_idle_interrupt_exit_0,
         test_watch_unsafe_start_exit_1,
         test_watch_failed_eject_leaves_second_press_unread_and_no_further_writes,
