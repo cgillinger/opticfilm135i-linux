@@ -1,11 +1,16 @@
 # Cross-unit protocol
 
-Status: run twice on the developer unit (Test 115, docs/test-log.md).
-The first run found that the tool missed the sidecars and packed the
-images; the second run was made with the fixed tool, as published here,
-and produced a complete report and an archive without images. Not yet
-run on a second unit; the stop-on-failure, exit-4 and interrupt paths
-have only been run offline (`tests/test_cross_unit_check.py`).
+Status: run twice on the developer unit with the sequence `on,off,off,on`
+(Test 115, docs/test-log.md). The first run found that the tool missed
+the sidecars and packed the images; the second run was made with the
+fixed tool and produced a complete report and an archive without images.
+The default sequence is now `on,on,on,on` (gated scans only, section 3);
+the gated scans it consists of have run on hardware on three units (the
+developer unit through this tool, the other two as individual commands),
+but the new default sequence as a whole has not been run, and the tool
+has not been run on a second unit. The stop-on-failure, exit-4 and
+interrupt paths, the NOTE and the after-the-run text have only been run
+offline (`tests/test_cross_unit_check.py`).
 
 ## 1. Why
 
@@ -75,8 +80,8 @@ a second thing, mid-run (section 4). The steps, in this order:
 1. `of135i doctor --json doctor-before.json` (reads only).
 2. `of135i load` (MOTOR; you take the magazine out and push it back in).
 3. Four scans, `of135i -v scan --frames 1 --dpi 600 --recalibrate
-   --cal-wait-scanstop X -o run-NN-X.tiff`, with X = `enforce`, `off`,
-   `off`, `enforce` (`--sequence on,off,off,on`). Each scan calibrates
+   --cal-wait-scanstop X -o run-NN-X.tiff`, with X = `enforce` in all
+   four by default (`--sequence on,on,on,on`). Each scan calibrates
    afresh. MOTOR.
 4. `of135i doctor --json doctor-after.json` (reads only).
 
@@ -92,11 +97,24 @@ be started, with a new `--out` directory. If the exit code is 3, another
 process holds the scanner; nothing was sent, and the tool stops without
 the final `doctor`. Close the other process and start again.
 
-**Why `on,off,off,on`.** On a unit that is affected by issue #35, a scan
-with the gate off is the likely failure, and the tool stops there. The
-sequence therefore starts with a gated run, so that the first
-result is a gated one; it is still symmetric (gated, ungated, ungated,
-gated), so a drift over the run does not favour either setting.
+**Why `on,on,on,on`.** The ungated failure is already established on the
+affected units (issue #35: 5 of 5 ungated scans failed on the two fast
+hosts, docs/cal-scanstop-gate.md); repeating it only costs a power
+cycle, with the magazine still loaded. The gate is also the driver's
+default now, so the default sequence is four ordinary scans. The
+developer unit's own runs used `on,off,off,on`, a symmetric order with a
+gated run first.
+
+**NOTE on a sequence with `off`** (`--sequence`, for example
+`on,off,off,on`). Run one only if you were asked to. On a unit affected
+by issue #35 the ungated scan is expected to fail in calibration
+(`dark_b is residual`). That harms nothing that has been seen, but the
+tool stops at the failed scan, register 0x01 reads 0x02 (not an accepted
+start state, so the driver sends nothing more), and the scanner needs a
+power cycle with the magazine still loaded; the README's `load --release`
+note may then apply (sections 9B and 10). The tool prints this NOTE and
+writes it to `plan.txt` when the sequence contains `off`, and not
+otherwise.
 
 **Ctrl-C or an unexpected error of the tool.** The evidence so far is
 still written: `summary.json` (result `interrupted` or `error`),
@@ -297,7 +315,226 @@ stays in the issue; nothing is published from it without saying so.
 Only if the default run passed:
 
 - The same at 3600 dpi: `--dpi 3600`.
-- A longer sequence: `--sequence on,off,off,on,on,off`.
+- A longer gated sequence: `--sequence on,on,on,on,on,on`. A sequence
+  with `off` only when asked (section 3, NOTE).
 
 Use a new `--out` directory each time, and power-cycle the scanner
 before each run.
+
+## 9. Risks
+
+The list is built only from what this repository documents. Where the
+repo does not say, this section says so.
+
+### 9A. What could damage the scanner
+
+Only events with a documented mechanical side: a motor driving against a
+stop, stalling or grinding, a displaced or jammed magazine, force by
+hand. The scanner in question is a single unit that cannot be replaced
+(docs/hardware-safety.md, first lines).
+
+**1. Motor commands sent in an undefined state.**
+
+- What happened (developer unit). Test 11d (2026-09-04,
+  docs/hardware-safety.md, first paragraph): an aborted session left the
+  scan engine running (register 0x01 = 0x23); a new session was started
+  on top of it, its writes and execute pulse hit the running engine and
+  the firmware hung; the scanner stayed enumerated but answered nothing
+  until the power was cut. Tests 44 and 46 (docs/test-log.md, 2026-09-07;
+  docs/protocol-notes.md): the driver's eject stalled twice, with a harsh
+  or "slightly louder" motor sound and the magazine mechanically stuck,
+  when it was issued from the base-table-only state (registers 0x3b/0x3c
+  = 0xff/0xff) the SANE open had created. A power cycle alone did not free
+  the magazine in the earlier stalls (docs/protocol-notes.md); a
+  vendor-software start did.
+- Recognise it: a grinding, scraping or harsh sound; the holder stopping;
+  a scanner that stays on the bus but does not answer.
+- Do: the abort rule. Switch the scanner off at its power switch at once
+  (docs/hardware-safety.md, "Recovery after an interrupted scan"). Send no
+  recovery command (no eject, home or park); restarting the program is not
+  a recovery.
+- How long a stalled move can last: the repo does not say. It records the
+  bound after which the driver stops waiting (30 s for each cold-start
+  move, `COLD_MOVE_TIMEOUT` in `of135i/device.py`; the park waits are
+  longer) and, for Test 112's stalled park, that the operator cut the
+  power at once; it does not record how long a stall would have run.
+- Why this tool does not do it: before a session's first write the driver
+  reads register 0x01 and accepts only 0x22 (idle, homed) and 0x00 (cold,
+  cold-start path only); anything else is refused with nothing sent
+  (docs/hardware-safety.md, "Accepted start states"). The tool runs only
+  `doctor` (read-only), `load` and `scan`; after the first failure it
+  sends nothing but the final read-only `doctor` (no `doctor` at all
+  after Ctrl-C or a busy scanner), and it sends no eject, home, initialize
+  or park. The SANE backend, the source of the Test 44/46 state, is not
+  involved.
+
+**2. A displaced magazine, and the re-seating step that has not run on
+hardware.**
+
+- What happened. Test 112 (2026-10-31, docs/test-log.md): a whole-strip
+  sweep mode, since withdrawn and not used by this protocol, started its
+  pass about 19 mm late; the magazine ended pushed against the front edge
+  of the slot, the park stalled with a loud noise and the operator cut the
+  power at once. After the power cycle the cold start's jog did not
+  complete within 30 s (loader bit clear) and the magazine could not be
+  pulled out by hand; it was released with the vendor application. The
+  owner found no visible damage, and a normal sweep the same evening ran
+  normally.
+- What came out of it: `cold_init` now runs a re-seating traverse before
+  the jog when a magazine is present at the opening and the loader bit is
+  clear at the first read. It was implemented from a vendor capture and
+  has **not been run on hardware** (docs/hardware-safety.md, "Power-cycled
+  with the magazine present and the jog failing (Test 112)"). The driver
+  logs which path it takes (`of135i/device.py`, `cold_init`). The normal
+  path logs
+
+      cold_init: loader sensor set (status 0x....) -- no re-seating
+
+  and has been seen on the developer unit three times (Test 114 once,
+  Test 115 twice, from the `log.txt` of each run). The path that has never
+  run on hardware logs
+
+      cold_init: loader sensor clear (status 0x....) with a magazine present -- re-seating traverse before the jog (vendor recovery, Test 112; NOT hardware-verified)
+
+  If you see this second line in the output of `load`, you are on that
+  path: watch the scanner and apply the abort rule at the first unusual
+  sound. If the traverse does not complete in 30 s the driver stops with
+  nothing further written; power-cycle and do not retry blindly.
+- Recognise it: that log line; a magazine that sits crooked or against the
+  front of the slot; a jog that stops.
+- Do: do not pull on a magazine that does not come out freely (next item),
+  power-cycle, and report the log line and what you saw on the issue.
+
+**3. Pulling a magazine that does not come out freely.** In Test 112 the
+magazine could not be pulled out by hand and was released by the vendor
+software. The repo records no test of pulling by force and no damage from
+it; the rule here is to not do it. If the magazine does not come out
+freely, power-cycle and use the `load --release` procedure (README, Usage
+step 1), or report it on the issue; do not force it.
+
+**4. Running any command after a failure or an interrupt instead of
+power-cycling.** This is item 1 again from the user's side: the state
+after a failure is unknown (register 0x01 reads 0x02 or 0x23, not an
+accepted start state; docs/hardware-safety.md, "What fail closed means").
+Do not run `eject`, `home`, `park`, another `load` or another run of this
+tool until the scanner has been power-cycled (off, wait until its lights
+are out and it has left the USB bus, on). Eject after a failure is a
+motor command from a state the driver does not know; the eject stalls of
+Tests 44 and 46 were of that kind.
+
+### 9B. What costs you a scan or a power cycle, but does not harm the scanner
+
+These are inconveniences. "Harmless" is said only where the repo says it;
+otherwise the entry says no damage has been seen and where that is
+recorded.
+
+**5. The expected ungated failure on an affected unit** (only with a
+sequence containing `off`, section 3). A scan with the gate off fails in
+`cal_dark_b` (`dark_b is residual ...`); register 0x01 reads 0x02 and the
+status word 0xec55 afterwards. It cost the other units a power cycle each
+time. Their reports (docs/test-log.md, 2026-11-04 and 2026-11-05) record
+supervised runs and, on the second unit, that the motor never stalled; no
+damage has been reported. Recognise it: the tool stops, exit code 1, and
+says `dark_b is residual`. Do: power-cycle, do not run eject (section 10),
+send the tarball.
+
+**6. Ctrl-C at the prompt or during a scan.** At the `load` prompt the
+prompt itself says a power cycle is then required. During a scan the
+driver marks the session failed and sends nothing more; an interrupted
+scan can leave the engine running (register 0x01 = 0x23, the state
+behind Test 11d), which is why nothing may be sent afterwards (item 4).
+The tool still writes `summary.json`, `report.md` and the tarball, sends
+nothing more and exits 130. The repo records no hardware Ctrl-C of a scan
+in this protocol; the interrupt paths are covered by offline fault
+injection (docs/hardware-safety.md, "Verification status"). Do:
+power-cycle; no command before that.
+
+**7. The reinsert step done wrong.** If the magazine is not taken fully
+out and pushed back to the mechanical stop at the `load` prompt before
+Enter, the load feed does not engage (status 0xfc55). The driver's own
+message says: "This is almost always because the magazine was not taken
+fully out and reinserted to the mechanical stop when the prompt asked for
+it -- the scanner is fine and nothing is stuck." (`of135i/loadflow.py`,
+`FEED_NOT_ENGAGED_MSG`; Tests 48 and 49, 2 of 2 the same benign
+signature.) The session is failed and a power cycle is required. Do:
+power-cycle and run `load` again, reinserting to the stop before Enter.
+
+**8. A magazine left loaded through a power cycle.** The tool never
+ejects, so after a failed run the magazine is still loaded. README, Usage
+step 1: if the scanner is power-cycled with the magazine still latched,
+the first plain `load` stops at the feed instead of engaging (Test 49).
+The way out, from the README: `of135i load --release` (releases the
+magazine, then stops), power-cycle again, then `of135i load` from the now
+loose magazine. No damage has been recorded from this state; it cost a
+second power cycle (Tests 49 and 51).
+
+**9. Another program or a virtual machine holding the device.** Another
+`of135i` process makes the tool stop with exit code 3: nothing was sent
+and no power cycle is needed; close the other program and start again.
+The lock is between `of135i` processes only; a SANE session takes no lock
+and a virtual machine with USB passthrough is not covered by it, and
+"two processes configuring or driving the scanner at once is itself a
+hazard" (docs/hardware-safety.md, "Cross-process exclusion"). Close any
+scanning application and any virtual machine that has the scanner before
+you start (section 2).
+
+**10. A scan that exits 4.** The image check could not verify aperture
+coverage; the scan, calibration and park finished and the sidecar was
+written (section 5). It counts as completed.
+
+**Information, not a risk: the calibration phases.** The calibration
+acquisitions are listed as "may move the motor": each is one execute
+pulse (0x0f) with no motor mode written; the repo has no statement that
+they leave the holder still, and none that they move it (section 4).
+
+### What the protocol deliberately does not do
+
+No sweep mode, no eject, no home, no initialize, no park, no recovery of
+any kind, and nothing but frame 1 at 600 dpi unless you pass `--dpi` or
+`--frame`. Which of this has run: the gated scans it consists of have
+completed on three units (the developer unit: Tests 114 and 115; the
+second unit: 7 gated scans at 600 dpi, frame 4; the Steam Deck: 6 runs /
+7 frames at 600 dpi, frame 1; docs/cal-scanstop-gate.md). The tool itself
+has been run on the developer unit only, twice, with `on,off,off,on`.
+The default `on,on,on,on` has not been run as a sequence.
+
+## 10. After the run
+
+The tool never ejects, so the magazine is still loaded when it ends. It
+prints one of these texts at the end, by result, and the plan (also
+written to `plan.txt`) carries both.
+
+**Result ok (every scan completed, exit 4 included).** Eject it yourself:
+
+```bash
+python3 -m of135i eject
+```
+
+This is a MOTOR step: the scanner ejects the magazine. What the repo
+establishes about ejecting from the state a completed scan leaves:
+`Scanner.eject` documents the variant it uses as the one that freed the
+magazine each time the vendor software was used, and docs/test-log.md
+(Test 44, correction) records that every verified eject was issued
+straight after the magazine flow or after a scan's PARK; it refuses
+read-only (nothing written) from the base-table-only state (registers
+0x3b/0x3c = 0xff/0xff), and its start state must be 0x22 or 0x00
+(docs/hardware-safety.md, "Protected entry points"); the README's normal
+workflow ends with the same eject (Usage, step 4); and the owner ran this
+eject after the four scans of both runs of Test 115. The scanner leaves
+the USB bus about five minutes after a session ends and only a power
+cycle brings it back (README, "When something goes wrong"), so eject soon.
+If the eject reports an error, send nothing more and follow the driver's
+message (a power cycle).
+
+**Result failed, interrupted or error.** Do NOT run eject or any other
+command. A motor command from a state the driver does not know is the
+hardware risk of section 9A (items 1 and 4). Power-cycle the scanner (off,
+wait until its lights are out, on). The magazine is then still loaded:
+if the next `load` stops at the feed, follow the README's `load --release`
+procedure (Usage, step 1; section 9B, item 8). Never pull a magazine out
+that does not come out freely.
+
+**Result busy (exit 3).** Nothing was sent. Do not run eject or any other
+command until the other program has ended.
+
+The tool still does not run eject itself.

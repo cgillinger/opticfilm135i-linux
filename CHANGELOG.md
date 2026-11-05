@@ -23,6 +23,19 @@ one exists; "offline" means implemented and tested without the scanner.
   Tests that compare the wire with the vendor captures state `off`
   explicitly. Thanks to Krustenviech (reported the failure, ran the Deck A/B)
   and bearyjd (designed and wrote the gate, ran the first A/B).
+- **Cross-unit protocol made gentler on other people's units.** The default
+  sequence is now `on,on,on,on`: the ungated failure is already established
+  on the affected units and repeating it only costs a power cycle. A sequence
+  with `off` still works and prints a NOTE that the ungated scan is expected
+  to fail on an affected unit (harmless, but the tool stops and the scanner
+  needs a power cycle with the magazine loaded). The plan and the final
+  printout now say what to do after the run: eject command on success; after
+  a failure or interrupt send no command (a motor command from an unknown
+  state), power-cycle, `load --release` if the feed does not engage, never pull
+  a magazine by force. docs/cross-unit-protocol.md gets a Risks section split
+  into what could damage the scanner and what only costs a scan or a power
+  cycle. The gated scans the new default consists of have run on hardware (three
+  units); the new default sequence as a whole has not.
 - **Stop gate confirmed on a second unit (external report, issue #35).**
   bearyjd ran the A/B asked for on master: gate off 0 of 3 scans completed
   (all fail at `cal_dark_b`), `--cal-wait-scanstop enforce` 3 of 3 plus four
