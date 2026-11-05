@@ -33,6 +33,10 @@ Notes:
   are skipped. Bulk-IN records retain the actual returned length and,
   as ``want``, the requested one (a short bulk read is kept).
 
+Exit codes: 0 converted; 1 refused (damaged lines, existing output) or
+write error; 2 input unreadable or not an OF135I_TRACE recording, or a
+usage error.
+
 Usage: trace_to_compiled.py TRACE.jsonl [-o OUT.trace.json[.gz]] [--skip-damaged]
 """
 

@@ -99,6 +99,9 @@ that overhead and has not been hardware-validated. Files are created
 exclusively as 0600; existing files and symlinks are refused. One warning
 disables recording after an error while USB I/O continues; Ctrl-C while
 recording disables it too and never replaces a failed transfer's error.
+If Ctrl-C lands while a failed transfer is being recorded, it survives only
+as a note on that USB exception: code that catches and retries the USB
+error loses the Ctrl-C.
 Bulk-IN and interrupt reads record the requested size (`want`) and mark
 short reads `short:N`. One recorder is opened per `UsbIo`, so a process
 that opens the device more than once records only the first session
@@ -113,7 +116,7 @@ Convert an existing recording entirely offline:
 The converter requires the recorder's `{"format": ...}` header and
 validates every record. It ignores a damaged final line (interrupted
 write); any other damaged or malformed line is reported on stderr and the
-conversion is refused (exit 1) unless `--skip-damaged` is given. It skips
+conversion is refused unless `--skip-damaged` is given. It skips
 failed transfers, short OUT/control-IN transfers and interrupt records;
 bulk-IN keeps the actual returned length plus `want`. Timestamps follow
 `compile_trace.py` (cw/cr/bo at submission, bi at completion). The output
@@ -121,6 +124,11 @@ is written to a private temp file and linked into place (on filesystems
 without hard links, such as exFAT or some FUSE/SMB mounts, it is copied to
 an exclusively created 0600 file instead), so a failure leaves no partial
 file; an existing output or symlink is refused.
+
+Exit codes: 0 converted; 1 conversion refused or output not written
+(damaged lines without `--skip-damaged`, existing output or symlink,
+write error); 2 input unreadable or not an OF135I_TRACE recording
+(missing or wrong `{"format": ...}` header), or a command-line usage error.
 
 Only the first 64 bytes of control and bulk-OUT payloads are recorded;
 bulk-IN image data is never recorded. A longer payload is never padded or

@@ -20,7 +20,10 @@ Contract:
   ONE warning, disables recording and lets scanner I/O continue. A
   KeyboardInterrupt/SystemExit while recording also disables it (a
   partial line stays the last one) and still propagates; it never
-  replaces the exception of a failed transfer.
+  replaces the exception of a failed transfer. Caveat: a Ctrl-C that
+  lands while a FAILED transfer is being recorded survives only as a
+  note on the USB exception (``e.__notes__``); a caller that catches
+  and retries that USB error loses the Ctrl-C.
 - The file is created exclusively (``O_EXCL``: an existing file or a
   symlink is refused, never overwritten) with mode 0600. Records are
   written immediately; an interrupted write can leave a partial final
@@ -79,7 +82,12 @@ class TraceRecorder:
         exception passes through untouched. ``setup`` is (bm, br, wv, wi,
         wlen) for control transfers, else None; ``out_data`` the bytes
         sent for an OUT transfer; ``size`` the requested length or buffer
-        of a bulk/interrupt read."""
+        of a bulk/interrupt read.
+
+        If ``call()`` raises, the transfer's exception is re-raised even
+        when recording it raises KeyboardInterrupt/SystemExit; that
+        interrupt is then only a note on the USB exception, so a caller
+        that catches and retries the USB error loses the Ctrl-C."""
         if self._fd is None:
             return call()
         try:

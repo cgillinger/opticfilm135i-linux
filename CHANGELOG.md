@@ -114,7 +114,14 @@ one exists; "offline" means implemented and tested without the scanner.
   emits `null` + `"partial": true` instead of padded/truncated payloads,
   follows compile_trace.py timestamps and writes atomically; and
   `tools/replay_trace.py` refuses partial or data-less write ops before
-  opening the device.
+  opening the device. Round 2 (offline): record data must be strict hex
+  of exactly `min(len, 64)` bytes (converter) and strict hex (replay);
+  every converted op carries `"src": "of135i-trace/1"` and replay refuses
+  it (converter output is diagnostic only; committed captures unaffected);
+  the converter copies into place where hard links are unsupported;
+  `gen_tables.py` refuses partial or null-data write ops; documented the
+  converter exit codes 0/1/2 and that a Ctrl-C during recording of a
+  failed transfer is only a note on the USB exception.
 - **Docs: the driver is no longer single-unit.** README, CONTRIBUTING and
   the ROADMAP now say what is true as of 2026-11-03: the driver has
   scanned on two units besides the maintainer's (a Steam Deck and a fork's
