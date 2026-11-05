@@ -1,0 +1,98 @@
+From 18bea9b3242d0f099155a6be761273dca55132bb Mon Sep 17 00:00:00 2001
+From: Christian Gillinger <christian.gillinger@gmail.com>
+Date: Thu, 5 Nov 2026 20:07:19 +0100
+Subject: [PATCH 7/7] genesys: GL126, name the gl124 files the GL126 files
+ derive from
+
+gl126.cpp, gl126.h and gl126_registers.h started as copies of the gl124
+files and were then rewritten for the GL126. Little of the original
+remains, but the headers named only the new author. Say where the files
+come from and keep the original copyright lines.
+
+Also correct the banner of the generated tables. It said that reads and
+polls are not reproduced, which was true before the op programs
+existed.
+
+No code changes.
+---
+ backend/genesys/gl126.cpp         | 2 ++
+ backend/genesys/gl126.h           | 2 ++
+ backend/genesys/gl126_registers.h | 2 ++
+ backend/genesys/gl126_tables.cpp  | 5 +++--
+ backend/genesys/gl126_tables.h    | 5 +++--
+ 5 files changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/backend/genesys/gl126.cpp b/backend/genesys/gl126.cpp
+index 539f650d0..1cd65b190 100644
+--- a/backend/genesys/gl126.cpp
++++ b/backend/genesys/gl126.cpp
+@@ -1,6 +1,8 @@
+ /* sane - Scanner Access Now Easy.
+ 
+    Copyright (C) 2026 Christian Gillinger
++   Portions derived from gl124.cpp,
++   Copyright (C) 2010-2016 Stéphane Voltz <stef.dev@free.fr>
+ 
+    This file is part of the SANE package.
+ 
+diff --git a/backend/genesys/gl126.h b/backend/genesys/gl126.h
+index feec07aa9..416bb6950 100644
+--- a/backend/genesys/gl126.h
++++ b/backend/genesys/gl126.h
+@@ -1,6 +1,8 @@
+ /* sane - Scanner Access Now Easy.
+ 
+    Copyright (C) 2026 Christian Gillinger
++   Portions derived from gl124.h,
++   Copyright (C) 2010-2016 Stéphane Voltz <stef.dev@free.fr>
+ 
+    This file is part of the SANE package.
+ 
+diff --git a/backend/genesys/gl126_registers.h b/backend/genesys/gl126_registers.h
+index 3521c6d88..ec5290f66 100644
+--- a/backend/genesys/gl126_registers.h
++++ b/backend/genesys/gl126_registers.h
+@@ -1,6 +1,8 @@
+ /* sane - Scanner Access Now Easy.
+ 
+    Copyright (C) 2026 Christian Gillinger
++   Portions derived from gl124_registers.h,
++   Copyright (C) 2019 Povilas Kanapickas <povilas@radix.lt>
+ 
+    This file is part of the SANE package.
+ 
+diff --git a/backend/genesys/gl126_tables.cpp b/backend/genesys/gl126_tables.cpp
+index d1e985c09..aca107e23 100644
+--- a/backend/genesys/gl126_tables.cpp
++++ b/backend/genesys/gl126_tables.cpp
+@@ -24,8 +24,9 @@
+  *
+  * Register values captured from the vendor driver and verified
+  * byte-exact against USB traces; these are interoperability
+- * facts, not vendor code. Reads and polls are not reproduced
+- * here: the backend polls explicitly with timeouts.
++ * facts, not vendor code. The register tables hold the writes
++ * only; the op programs carry every transfer in order, with the
++ * waits as explicit polls with timeouts.
+  *
+  * Protocol notes and the reverse-engineering record:
+  * https://github.com/cgillinger/opticfilm135i-linux
+diff --git a/backend/genesys/gl126_tables.h b/backend/genesys/gl126_tables.h
+index 321890e28..33bd6d6df 100644
+--- a/backend/genesys/gl126_tables.h
++++ b/backend/genesys/gl126_tables.h
+@@ -24,8 +24,9 @@
+  *
+  * Register values captured from the vendor driver and verified
+  * byte-exact against USB traces; these are interoperability
+- * facts, not vendor code. Reads and polls are not reproduced
+- * here: the backend polls explicitly with timeouts.
++ * facts, not vendor code. The register tables hold the writes
++ * only; the op programs carry every transfer in order, with the
++ * waits as explicit polls with timeouts.
+  *
+  * Protocol notes and the reverse-engineering record:
+  * https://github.com/cgillinger/opticfilm135i-linux
+-- 
+2.56.0
+

@@ -1,7 +1,7 @@
 """Facts learned from static analysis of the vendor's Windows software.
 
-This module is deliberately empty of values for now. The rules for what
-may live here (policy: docs/static-analysis.md):
+It holds a few hypotheses so far (finding SA-002, at the end of the file).
+The rules for what may live here (policy: docs/static-analysis.md):
 
   * It holds ONLY values, conditions and orderings learned from static
     analysis of the vendor's Windows software, done for interoperability.

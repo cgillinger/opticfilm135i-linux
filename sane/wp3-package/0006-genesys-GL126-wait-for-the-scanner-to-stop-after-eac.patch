@@ -1,7 +1,7 @@
-From b00450486b02273ee736b52c9bf332ff2af35aeb Mon Sep 17 00:00:00 2001
+From 8f409b42c0da6c07e735d778497cd02cb97528d3 Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
 Date: Thu, 5 Nov 2026 18:54:40 +0100
-Subject: [PATCH 6/6] genesys: GL126, wait for the scanner to stop after each
+Subject: [PATCH 6/7] genesys: GL126, wait for the scanner to stop after each
  calibration acquisition
 
 Every calibration acquisition ends with a SCAN-clear, then one read of
@@ -30,6 +30,8 @@ Tested on the scanner at 600 and 3600 dpi. At 3600 dpi three of the
 fourteen polls had to wait, 11 to 18 ms.
 
 The wait is bearyjd's design, from the companion driver.
+
+Co-authored-by: bearyjd <28201062+bearyjd@users.noreply.github.com>
 ---
  backend/genesys/gl126.cpp        |  25 ++++-
  backend/genesys/gl126_ops.cpp    |   6 +-

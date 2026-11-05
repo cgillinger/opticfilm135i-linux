@@ -412,8 +412,7 @@ backend passed such reads over on this unit in most runs, without a
 residual dark_b (docs/test-log.md, Test 118). **Not run on a host that
 shows the issue #35 failure, and not at 1200/2400/7200 dpi or ir3600.**
 No timeout has occurred on hardware. The change is exported as revision
-v9 of the submission series (`sane/wp3-package/`, one commit on top of
-v8); v9 has not been pushed to the merge request.
+v9 of the submission series (`sane/wp3-package/`, on top of v8); v9 has not been pushed to the merge request.
 
 Where the backend's wait differs from the Python gate:
 

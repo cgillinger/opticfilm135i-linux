@@ -1,7 +1,7 @@
 From 506f5898ee03ecc8dd254c28a1a15f6830c06303 Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
 Date: Mon, 28 Sep 2026 19:07:54 +0200
-Subject: [PATCH 3/6] genesys: frame selection and magazine handling for the
+Subject: [PATCH 3/7] genesys: frame selection and magazine handling for the
  OpticFilm 135i
 
 Five options, inactive on every other ASIC: 'frame' (which frame of the
