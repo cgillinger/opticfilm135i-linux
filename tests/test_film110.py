@@ -928,12 +928,11 @@ def test_thumbnail_and_decide_orientation():
 
 
 def test_bar_centering_shifts_put_the_bar_in_the_gap():
-    bars = film110.bar_spans_mm(1, 1)
+    bars = film110.bar_spans_mm()
     # The holder's end wall before aperture 1 counts as a bar (one bar
     # wide), then the crossbar after each aperture.
     assert bars[0] == (-(STRIP.pitch_mm - STRIP.aperture_mm), 0.0), bars[0]
     assert abs(bars[1][0] - STRIP.aperture_mm) < 1e-9
-    assert film110.bar_spans_mm(2, 2)[0][0] > 100.0        # slot 2: no end wall
     # Image 1 seated at the end wall (0.0 mm, Test 104): a move of about
     # a gap's half plus half a bar further in frees it.
     c0 = film110.bar_centering_shifts(0.0, bars)

@@ -454,7 +454,7 @@ def _args(d, **over):
     base = dict(out=d, prefix="", roll=1, force=False, assume_loaded=True,
                 dpi=DPI_E2E, positive=True, rotate=0, ir=True, no_clean=True,
                 no_diag=False, no_cal_data=False, park="verbatim",
-                warmup_budget=None, frames="1-4", film="135", strips=1,
+                warmup_budget=None, frames="1-4", film="135",
                 placement=None, sweep=True, keep_sweep=False, from_sweep=False,
                 from_frames=False)
     base.update(over)
@@ -641,7 +641,7 @@ def test_clear_roll_outputs_sweep_files():
 
 def test_cli_validation_exits_2_before_hardware():
     with tempfile.TemporaryDirectory() as d:
-        for over in (dict(film="110"), dict(dpi=3600, ir=False, frames="1-6"), dict(strips=2),
+        for over in (dict(film="110"), dict(dpi=3600, ir=False, frames="1-6"),
                      dict(frames="1,3"), dict(frames="1-9"), dict(from_sweep=True, roll=None),
                      dict(sweep=False, keep_sweep=True), dict(from_frames=True)):
             rc, err = _forbid_hardware(_args(d, **over))
