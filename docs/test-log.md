@@ -8317,3 +8317,46 @@ decision (docs/cal-scanstop-gate.md, "Decision"). The gated runs were all
 unit.
 
 Details: docs/cal-scanstop-gate.md, "Third unit".
+
+## 2026-11-05 — Test 116: `enforce` as the default, on hardware (owner's unit) — a scan with no gate option ran gated, 7 waits cleared at the first read; the cross-unit tool's default sequence `on,on,on,on` completed 4 of 4
+
+Hardware, owner's unit and host, branch `cal-gate-default` at 91ce3c5
+(the gate's default changed to `enforce`; the cross-unit tool's default
+sequence changed to gated only), run by the owner in a terminal window
+before the change was pushed. A power cycle first, magazine loose in the
+slot, film strip in the film-strip holder.
+
+**1. The cross-unit tool with its default sequence.** Course from
+`log.txt` (stamp at the end of each step): doctor 12:50:15, load
+12:50:47, scans 12:51:07 / 12:51:27 / 12:51:47 / 12:52:06, doctor
+12:52:08. Cold status word `0x4855` with the 1.5 s poll timeout and "no
+re-seating" as in Tests 114 and 115 (the fourth time for the normal
+branch of the re-seating check).
+
+| run | gate | exit | dark_b_substituted | cr_mismatches | gate waits | `wait_s` | `since_clear_s` |
+|---|---|---|---|---|---|---|---|
+| 1 | enforce | 0 | no | 34 | 7, all `clear`, one read each | up to 8.0 ms | 20–30 ms |
+| 2 | enforce | 0 | no | 37 | 7, all `clear`, one read each | up to 8.0 ms | 20–31 ms |
+| 3 | enforce | 0 | no | 38 | 7, all `clear`, one read each | up to 8.0 ms | 20–32 ms |
+| 4 | enforce | 0 | no | 39 | 7, all `clear`, one read each | up to 8.0 ms | 20–30 ms |
+
+Gains 45/34/39, offsets 266/265/266; `poll_timeouts` 0; coverage
+verified. The archive holds the ten allowlisted files (16.1 kB, no
+image). The tool's final text was the one for a completed run: the eject
+command, marked MOTOR, and the note about the USB bus.
+
+**2. A scan with no gate option**, straight after, the same session:
+`of135i -v scan --frames 1 --dpi 600 --recalibrate -o ...`. Exit 0. The
+sidecar has `cal_scanstop_waits` with seven entries, all `clear` at the
+first read of each register, `wait_s` 7.0–8.0 ms, `since_clear_s`
+20–32 ms; `dark_b_substituted` false, `poll_timeouts` 0,
+`cr_mismatches` 36, coverage verified. So the default is the gate, on
+the CLI path, on hardware.
+
+The owner ejected with `of135i eject` afterwards.
+
+**What this does not cover.** 600 dpi dual, frame 1, on the unit whose
+host never has to wait. The default now also applies to resolutions and
+modes that have not been run gated on any unit (docs/cal-scanstop-gate.md,
+"Decision"): 1200, 2400 and 7200 dpi, the whole-strip sweep and
+`digitize`, 110 film.

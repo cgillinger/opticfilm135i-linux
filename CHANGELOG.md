@@ -12,7 +12,8 @@ one exists; "offline" means implemented and tested without the scanner.
   `cal_dark_b`; six gated runs / seven frames completed, longest wait 29 ms),
   and bearyjd's A/B on a second unit (ungated 0 of 3, gated 7 of 7, longest
   wait 24 ms); the developer unit completed all 14 gated frames of Tests
-  114-115. Across the three units ungated scans failed 5 of 5 on the two fast
+  114-115, and in Test 116 a scan with no gate option ran gated (the default,
+  on hardware). Across the three units ungated scans failed 5 of 5 on the two fast
   hosts; gated scans completed on all. `--cal-wait-scanstop off` stays and
   sends exactly the transfers of a driver without the gate. Not run with the
   gate on hardware: 1200/2400/7200 dpi, the whole-strip sweep, 110 film, the
@@ -34,8 +35,8 @@ one exists; "offline" means implemented and tested without the scanner.
   state), power-cycle, `load --release` if the feed does not engage, never pull
   a magazine by force. docs/cross-unit-protocol.md gets a Risks section split
   into what could damage the scanner and what only costs a scan or a power
-  cycle. The gated scans the new default consists of have run on hardware (three
-  units); the new default sequence as a whole has not.
+  cycle. The new default sequence ran once on the developer unit (Test 116); the
+  tool has not been run on a second unit.
 - **Stop gate confirmed on a second unit (external report, issue #35).**
   bearyjd ran the A/B asked for on master: gate off 0 of 3 scans completed
   (all fail at `cal_dark_b`), `--cal-wait-scanstop enforce` 3 of 3 plus four

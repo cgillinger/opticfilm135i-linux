@@ -1,16 +1,14 @@
 # Cross-unit protocol
 
-Status: run twice on the developer unit with the sequence `on,off,off,on`
-(Test 115, docs/test-log.md). The first run found that the tool missed
-the sidecars and packed the images; the second run was made with the
-fixed tool and produced a complete report and an archive without images.
-The default sequence is now `on,on,on,on` (gated scans only, section 3);
-the gated scans it consists of have run on hardware on three units (the
-developer unit through this tool, the other two as individual commands),
-but the new default sequence as a whole has not been run, and the tool
-has not been run on a second unit. The stop-on-failure, exit-4 and
-interrupt paths, the NOTE and the after-the-run text have only been run
-offline (`tests/test_cross_unit_check.py`).
+Status: run three times on the developer unit (docs/test-log.md). Test
+115, twice with the earlier sequence `on,off,off,on`: the first run found
+that the tool missed the sidecars and packed the images, the second was
+made with the fixed tool and produced a complete report and an archive
+without images. Test 116, once with the present default `on,on,on,on`
+(gated scans only, section 3) and the after-the-run text. The tool has
+not been run on a second unit. The stop-on-failure, exit-4 and interrupt
+paths and the NOTE for a sequence with `off` have only been run offline
+(`tests/test_cross_unit_check.py`).
 
 ## 1. Why
 
@@ -495,8 +493,10 @@ any kind, and nothing but frame 1 at 600 dpi unless you pass `--dpi` or
 completed on three units (the developer unit: Tests 114 and 115; the
 second unit: 7 gated scans at 600 dpi, frame 4; the Steam Deck: 6 runs /
 7 frames at 600 dpi, frame 1; docs/cal-scanstop-gate.md). The tool itself
-has been run on the developer unit only, twice, with `on,off,off,on`.
-The default `on,on,on,on` has not been run as a sequence.
+has been run on the developer unit only: twice with `on,off,off,on`
+(Test 115) and once with the default (Test 116).
+The default `on,on,on,on` has been run once, on the developer unit
+(Test 116).
 
 ## 10. After the run
 

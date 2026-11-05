@@ -295,7 +295,10 @@ Run gated (with the gate on):
 - Owner's unit, Test 114: plain 3600 dpi, film strip, frames 1-4 with
   `--recalibrate`, twice (28 waits each); 600 dpi dual, frame 1; IR 3600
   dpi, frame 1. Test 115: 600 dpi, frame 1, four gated scans in two runs
-  (the cross-unit tool).
+  (the cross-unit tool). Test 116, with this change: four more through
+  the tool's default sequence, and one scan with no gate option at all,
+  which ran gated (7 waits, all cleared at the first read): the default
+  itself, on hardware.
 - bearyjd's unit (external report, 2026-11-04): 600 dpi, frame 4, seven
   scans; which holder was in the unit is not confirmed.
 - Steam Deck (external report, 2026-11-05): 600 dpi, film strip, frame 1,
