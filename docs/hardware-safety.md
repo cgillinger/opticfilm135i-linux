@@ -231,7 +231,7 @@ vendor's recovery capture; its hardware test waits for the owner's go. If
 the traverse itself does not complete in 30 s the driver stops with
 nothing further written: power-cycle and do not retry blindly.
 
-## Calibration stop gate (opt-in, not hardware-verified)
+## Calibration stop gate (opt-in)
 
 `--cal-wait-scanstop enforce` (docs/cal-scanstop-gate.md, issue #35)
 adds one wait condition inside calibration: after each acquisition's
@@ -241,8 +241,11 @@ floor. Reads only; at the deadline it raises `CalibrationError` before
 any write, the session is FAILED, no recovery is sent, power cycle. It
 never arms outside the seven calibration acquisition phases, so POSITION,
 the image pass and PARK are not delayed. Default `off` is byte-identical
-on the wire (pinned by `tests/test_cal_wait_scanstop.py`). Offline
-verified only; its hardware test (Test 114) waits for the owner's go.
+on the wire (pinned by `tests/test_cal_wait_scanstop.py`). Run on
+hardware on two units: Tests 114 and 115 on the developer unit (every
+wait cleared at the first read, at most 8 ms) and an external report on
+a second unit (longest wait 24 ms against the 0.3 s); see
+docs/cal-scanstop-gate.md.
 
 ## Cross-process exclusion
 

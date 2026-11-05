@@ -6,6 +6,62 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **Stop gate confirmed on a second unit (external report, issue #35).**
+  bearyjd ran the A/B asked for on master: gate off 0 of 3 scans completed
+  (all fail at `cal_dark_b`), `--cal-wait-scanstop enforce` 3 of 3 plus four
+  warm-up scans, longest wait 24 ms against the 0.3 s budget. His sidecars
+  compared with Test 114's: the two units calibrate to nearly the same offsets
+  and gains; his host completes a control read about ten times faster (0.39 ms
+  against 3.9 ms), which is why it reaches the next acquisition while the
+  engine still runs. Reading, not proof: the failure follows the host's pace,
+  and the developer unit is hidden by its slower host rather than immune.
+  docs/cal-scanstop-gate.md ("Second unit, on master"), docs/test-log.md.
+  The gate stays opt-in until the owner decides on the default.
+
+- **Diag: cr mismatches are now locatable.** Each control-read reply that
+  differs from the capture is recorded in the `.diag.json` as
+  `cr_mismatch_details` (phase, op index, wv/wi, got/want; first 20 per
+  scan; `cr_mismatches` still counts all). Reason: docs/status-read-inventory.md
+  section 6 item 4. Offline, no wire change.
+
+- **Cross-unit protocol (run on the developer unit, Test 115).** `tools/cross_unit_check.py` runs a fixed
+  doctor / load / four-scan sequence (`--cal-wait-scanstop enforce,off,off,enforce`),
+  stops on the first failure without sending any recovery command, and packs the
+  sidecars, doctor reports and log into a tarball without images or personal paths.
+  Protocol in docs/cross-unit-protocol.md; tests in tests/test_cross_unit_check.py.
+  Review by bearyjd, who asked for each step to say what it sends, led to:
+  the printed plan, `plan.txt` and a table in the protocol doc now state for
+  every step whether it only reads, writes registers or moves the film holder
+  (marked MOTOR), what the operator must do (`load` jogs, prompts you to take
+  the magazine out and back in, and needs a real terminal) and what the step is
+  for, with the scan broken down by phase and the code or doc each claim rests
+  on; calibration acquisitions are listed as "may move the motor" because the
+  repo does not establish otherwise. `--dry-run` now writes nothing, not even
+  `plan.txt`. The default sequence is `on,off,off,on` (a gated run first, still
+  symmetric). A scan that exits 4 but left its sidecar (the image check, not
+  the transport or calibration) is recorded as `completed-coverage-unverified`
+  and the run goes on; every run has an `outcome`. A failed scan whose output
+  contains `dark_b is residual` gets `failure_class: dark_b_residual` and is
+  reported as the issue #35 failure. Ctrl-C or an unexpected error still writes
+  `summary.json`, `report.md` and the tarball, and sends nothing more to the
+  scanner. The first hardware run found that the tool missed the sidecars
+  (`--frames` makes the driver name outputs `-f<N>`) and packed the scanned
+  images into the tarball; sidecars are now found by what is on disk, and the
+  archive is built from an allowlist and verified after packing. A second
+  hardware run with the fixed tool confirmed both (Test 115, developer unit).
+- **Status-read inventory (offline).** `tools/status_read_inventory.py`
+  lists every read of reg 0x100/0x101 in the op tables with the
+  engine command before it; docs/status-read-inventory.md judges the
+  142 "read once after a stop or start, no wait" cases: 111 are the
+  calibration acquisitions of issue #35 (gated by
+  `--cal-wait-scanstop`), 27 are the image-pass start where bulk IN
+  does the waiting, 4 are a POSITION pre-move read behind the gate and
+  a strict completion poll. Policy: no new lone read after a stop or
+  start; per-phase mismatch records in the diag are the next step. No
+  code change to the driver. Wording after review by bearyjd: the 142 is
+  stated under its counting rule, "polled" is distinguished from "waited"
+  (non-strict polls outside JOG/LOAD/POSITION only log on timeout), and
+  categorical phrasings are hedged as our reading of the tables.
 - **Docs: the driver is no longer single-unit.** README, CONTRIBUTING and
   the ROADMAP now say what is true as of 2026-11-03: the driver has
   scanned on two units besides the maintainer's (a Steam Deck and a fork's

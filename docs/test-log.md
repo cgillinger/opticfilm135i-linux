@@ -8045,3 +8045,231 @@ Side note from the run: `tests/test_cal_wait_scanstop.py` as first
 written needed pytest, which the owner's venv does not have and
 `tools/release_check.py` does not use (it runs `python tests/<suite>.py`);
 fixed in the follow-up commit so the suite runs both ways.
+
+## 2026-11-04 — External report (issue #35): the stop gate A/B on a second unit, on master — gate off 0 of 3, gate on 3 of 3; the two units calibrate alike and differ in host pace
+
+Not run by the owner. Reported by bearyjd on issue #35 (comment of
+2026-11-05) with seven `.diag.json` sidecars and three `doctor` reports
+in a gist; this entry is the owner's side reading those files
+(2026-11-05). Hardware: bearyjd's unit and host (Linux 7.2.11, Python
+3.14.8, pyusb 1.3.1), upstream master 6270867 (the gate as merged in PR
+#46), 600 dpi, frame 4, holder loaded with `of135i load`, supervised;
+the motor never stalled. What was in the holder is not confirmed (the
+report says "slide frame 4"). The order asked for was off, on, on, off,
+off, on after a warm-up scan. Every gate-off failure needed a power
+cycle, so the sequence ran over several sessions, each with a power
+cycle, a load and a gated warm-up scan.
+
+| # | gate | result |
+|---|---|---|
+| warm-up | enforce | completed |
+| 1 | off | failed in `cal_dark_b` after about 2 s, `dark_b is residual and no healthy dark_b has been measured this session`; reg 0x01 = 0x02 afterwards |
+| warm-up | enforce | completed |
+| 2 | enforce | completed, `dark_b_substituted` false, 7 waits |
+| 3 | enforce | completed, same |
+| 4 | off | failed, same error and state |
+| warm-up | enforce | completed |
+| 5 | off | failed, same error and state |
+| warm-up | enforce | completed |
+| 6 | enforce | completed, `dark_b_substituted` false, 7 waits |
+
+Gate off 0 of 3, gate on 3 of 3 plus all four warm-ups. One unit, one
+operator: consistent, not a rate. The three `doctor` reports after the
+failures read reg 0x01 = 0x02 and status word `0xec55`.
+
+**From the seven sidecars** (49 gate waits, all `clear`; compared with
+the 70 waits of Test 114):
+
+| | this unit and host | owner's (Test 114) |
+|---|---|---|
+| reads of reg 0x100 per wait | 2–6, never 1 | always 1 |
+| `wait_s` | 5.0–24.4 ms, median 14.0 | 7.0–8.0 ms |
+| `since_clear_s` | 14.2–32.2 ms, median 23.6 | 20–42 ms (148/184 ms in the IR run) |
+| one control read (the gate sleeps 4 ms between busy reads) | 0.30–0.67 ms, median 0.39 | 3.5–4.0 ms, median 3.9 |
+| gate start after the scan-clear, dark/white/gain phases | median 1.5–1.8 ms | median 12.3 ms |
+| offsets / gains | 266/265/266, 42/32–33/38–39 | 266/265/266, 44/32/39 (run e, 600 dpi) |
+| dark_a / dark_b means | 21 200–24 300 / 23 700–26 800 | 21 700–24 500 / 24 100–27 000 (run e) |
+| `cr_mismatches` | 47–51 | 41 (run e) |
+| calibration phases, seconds (dark_a / dark_b / white) | 0.04 / 0.05 / 0.07 | 0.11 / 0.12 / 0.28 (run e) |
+
+In the dark/white/gain phases bit 0 of reg 0x100 was seen clear 14–18 ms
+after the scan-clear in the three scans later in a session (last busy
+read at about 9–13 ms) and 15–26 ms after it in the four warm-up scans,
+the first scan after a load (last busy read at about 20 ms). In the
+shading phases it was 24–32 ms.
+
+**Conclusions.**
+
+- The gate on master does on this unit what it did in the fork: without
+  it the scan fails at `cal_dark_b` every time, with it every scan
+  completes and no substitution is needed. This is the confirmation
+  Test 114 could not give.
+- The two units calibrate to nearly the same values. The host is what
+  differs: a control read is about ten times faster here, so the next
+  acquisition is reached within a few milliseconds of the scan-clear,
+  while the engine still runs; the owner's host reaches it after about
+  12 ms. Reading, not proof (two units): the failure follows the host's
+  pace rather than a fault in a unit, and the owner's host sits just
+  outside the window rather than the owner's unit being immune.
+- A difference between the units is not excluded: the first scan after
+  a load needs up to 26 ms here, and Test 114 had no gated scan directly
+  after a load.
+- Longest wait 24 ms against the 0.3 s budget: a 12× margin on the
+  slowest stop seen so far.
+
+**Not explained.** Every completed scan exited 4 (`aperture coverage NOT
+verified`, "no aperture found in profile" for IR and visible). The scan,
+calibration, park and sidecar were complete. Why a control read takes
+about 3.9 ms on the owner's host (the scanner is on a high-speed root
+port) is open too.
+
+**Own misreading, corrected the same day.** The first comparison of the
+two hosts gave "about 3.5 ms against 7.5 ms per control read". Both
+figures were wrong: the 4 ms sleep between busy reads had not been
+subtracted on this unit, and the owner's `wait_s` covers two reads, not
+one. The table above has the corrected figures.
+
+Details and what follows for the gate's default:
+docs/cal-scanstop-gate.md, "Second unit, on master".
+
+## 2026-11-05 — Test 115: the cross-unit protocol (`tools/cross_unit_check.py`), first hardware run, owner's unit — 4 of 4 scans completed, the first gated scan after a cold load cleared at the first read; the tool missed the sidecars and packed the images (found here, fixed)
+
+Hardware, owner's unit and host, the PR #48 branch at 945dfd4, run by
+the owner in a terminal window with the default sequence (`on,off,off,on`,
+600 dpi, frame 1). Film strip in the film-strip holder. The scanner had
+been switched on with the workstation and nothing had been sent to it;
+the magazine sat loose in the slot. The first attempt sent nothing: the
+command line given to the owner broke in two at the paste and the tool
+stopped on its argument error.
+
+**Course**, from `log.txt` (the stamp is taken when a step ends): doctor
+10:38:04, load 10:38:35, scans 10:38:55 / 10:39:15 / 10:39:34 / 10:39:54,
+doctor 10:39:56. About two minutes from the first command to the last,
+the operator's reinsert included.
+
+- `doctor` before: reg 0x01 = 0x00 (cold, never homed), status word
+  `0x4855`, magazine present. This is the second time `0x4855` is read
+  on a cold scanner with a magazine in the slot (Test 114 was the
+  first), which supports the reading there: the ordinary cold status
+  word with the loader bit set.
+- `load`: the cold start's `poll_status_word` gave up at `0x4855` after
+  1.5 s and went on, as in Test 114. Homing round 1 logged "loader
+  sensor set (status 0xd855) -- no re-seating", the normal-load branch
+  of the re-seating check (PR #44), for the second time. Jog complete
+  at `f855`; after the reinsert the feed settled at `f455` and the
+  traverse at `dc55`. The prompt was visible and answered.
+- `doctor` after: reg 0x01 = 0x22 (idle, homed), status word `f855`.
+- The owner ejected with `of135i eject` afterwards.
+
+| run | gate | exit | seconds | dark_b_substituted | cr_mismatches | gate waits | `wait_s` | `since_clear_s` |
+|---|---|---|---|---|---|---|---|---|
+| 1 | enforce | 0 | 17.6 | no | 21 | 7, all `clear`, one read each | 6.9–8.0 ms | 20–33 ms |
+| 2 | off | 0 | 17.6 | no | 39 | – | – | – |
+| 3 | off | 0 | 17.6 | no | 37 | – | – | – |
+| 4 | enforce | 0 | 17.6 | no | 38 | 7, all `clear`, one read each | 7.0–8.0 ms | 20–31 ms |
+
+Gains 44/32/39 and offsets 266/265/266 in all four; `poll_timeouts` 0;
+aperture coverage verified in all four. The prep phase's two 0x0122
+poll warnings (`d855`/`dc55` against `e855`/`ec55`) appeared in every
+scan, as before.
+
+**The first gated scan directly after a cold load** (run 1) is the case
+Test 114 did not have. All seven waits ended at the first read of each
+register, sampled about 16 ms after the scan-clear. On the second unit
+(external report of 2026-11-04 above) the engine was still running at
+about 20 ms in the same situation. So in this situation the two differ
+by more than the host's pace. Whether that is the units or something in
+the conditions (the reports do not say what was in that unit's holder)
+cannot be told from two runs.
+
+**First hardware data from `cr_mismatch_details`** (first 20 per scan,
+so the list is cut in the scan phase):
+
+- Runs 2, 3 and 4: the table's own single read of reg 0x100 straight
+  after the scan-clear returned `f155` (bit 0 set) where the capture has
+  `f055`, in `cal_gain_check_a`, `cal_gain_check_b`,
+  `cal_shading_measure` and `cal_shading_verify` (run 2) and in
+  `cal_white`, `cal_shading_measure` and `cal_shading_verify` (runs 3
+  and 4); reg 0x101 returned `d955`/`dd55` for `d855`/`dc55` in the
+  shading phases. So the engine is seen running after the scan-clear on
+  this unit too, at the table's read a few milliseconds after the clear;
+  by the gate's read at about 16 ms it has stopped. In the ungated runs
+  2 and 3 the driver went straight on, and both scans completed with no
+  residual dark_b. This is the same window as on the second unit, seen
+  from the slow side.
+- Run 1 (the first scan after the cold load) has no mismatch at all in
+  the dark, white and gain phases; its 21 are in the shading phases and
+  the image pass. In runs 2–4 the reads with wIndex 0x0422 and 0x0522
+  (by the pattern of 0x0022 = reg 0x100 and 0x0122 = reg 0x101, regs
+  0x104 and 0x105) differ from the capture in every calibration phase
+  (`0055` for `0155`, `0055`/`e455` for `e055`, and so on). The capture
+  agrees with a first scan after a load and not with the scans that
+  follow it; what those two registers hold has not been worked out.
+
+**Defects in the tool, found by this run:**
+
+1. `of135i scan --frames 1 -o run-01-enforce.tiff` writes
+   `run-01-enforce-f1.tiff` (the multi-frame naming) with its
+   `.overscan.tiff`, `.cal.npz` and `.diag.json` beside it. The tool
+   looked for `run-01-enforce.diag.json`: `sidecar_present` was false for
+   all four runs and `summary.json` and `report.md` carry none of the
+   sidecar values. The table above was read from the sidecars directly.
+2. For the same reason the images were not deleted and went into the
+   tarball: twelve image and calibration files, 43.8 MB. The tarball was
+   not sent anywhere. The offline tests had not caught either defect
+   because the fake scan wrote the names the tool expected. Fixed in the
+   follow-up commit: sidecars are found by what is on disk, the archive
+   is built from an allowlist and checked after packing, and the tests
+   name their files with the CLI's own rule.
+3. Cosmetic: the child's standard output is block-buffered when piped,
+   so in `log.txt` some of `load`'s lines appear after later log lines.
+
+**Second run, with the fixed tool** (the same day, 6b5274b, the version
+that was pushed to PR #48; a power cycle before it, magazine loose in
+the slot, same film strip). The owner asked for it: the version handed
+to other units should be the one that has run here.
+
+Course from `log.txt`: doctor 12:00:28, load 12:01:06, scans 12:01:26 /
+12:01:46 / 12:02:06 / 12:02:26, doctor 12:02:27. Cold status word
+`0x4855` and the 1.5 s poll timeout again, "no re-seating" again, feed
+`f455`, traverse `dc55`. The owner ejected afterwards.
+
+| run | gate | exit | seconds | dark_b_substituted | cr_mismatches | gate waits | `wait_s` | `since_clear_s` |
+|---|---|---|---|---|---|---|---|---|
+| 1 | enforce | 0 | 17.7 | no | 29 | 7, all `clear`, one read each | 7.0–8.0 ms | 20–33 ms |
+| 2 | off | 0 | 17.6 | no | 39 | – | – | – |
+| 3 | off | 0 | 17.6 | no | 39 | – | – | – |
+| 4 | enforce | 0 | 17.6 | no | 38 | 7, all `clear`, one read each | 7.3–8.0 ms | 20–33 ms |
+
+Gains 44–45/33/39, offsets 266/265–266/266; `poll_timeouts` 0; coverage
+verified in all four.
+
+- The tool: all four sidecars found and lifted into `summary.json` and
+  `report.md`; the result directory and the tarball hold the ten
+  allowlisted files and nothing else (15.8 kB, no image, no `.cal.npz`,
+  no home path); the final line says "no images". With the child's
+  output unbuffered the `load` lines come in the order they were
+  written, and the reinsert prompt appeared after the jog and before the
+  operator did anything.
+- The first gated scan after the cold load cleared at the first read
+  again (two of two on this unit).
+- `f155` at the table's own read of reg 0x100 again: in
+  `cal_gain_check_a`, `cal_gain_check_b`, `cal_shading_measure` and
+  `cal_shading_verify` in runs 2 and 3, and in `cal_dark_a`,
+  `cal_dark_b`, `cal_gain_check_a` and `cal_shading_measure` in the gated
+  run 4. That includes the two dark phases issue #35 is about, on the
+  developer unit.
+
+**Own misreading, corrected by the second run.** From the first run
+this entry concluded that the capture agrees with a first scan after a
+load, because run 1 there had no mismatch in the dark, white and gain
+phases. In the second run the first scan after the cold load has them
+too (wIndex 0x0422 and 0x0522 in `cal_dark_a` and `cal_dark_b`, 0x0422
+in the white and gain phases), 29 in all against 21. One run was not
+enough to say that; what decides whether those two registers read as in
+the capture is not known.
+
+**Status after the test.** The protocol's command sequence has run twice
+on the developer unit, the second time with the tool as published. No
+failure is expected on this unit, so the stop-on-failure, exit-4 and
+interrupt paths have only been run offline.
