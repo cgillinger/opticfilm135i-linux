@@ -5,7 +5,7 @@ driver (Python/pyusb) that delivers **calibrated raw 16-bit RGB**.
 Image processing (negative inversion, orange mask, color) is the
 application's job — the driver is a data layer, SANE backend style.
 
-## Module layout (`driver/of135i/`)
+## Module layout (`of135i/`)
 
 | Module | Responsibility |
 |---|---|
@@ -18,7 +18,7 @@ application's job — the driver is a data layer, SANE backend style.
 | `tables_load.py` | Vendor magazine-load sequence compiled from a trace (`tools/gen_load_table.py`), driven by `Scanner.load_magazine()` |
 | `calibrate.py` | M2a: dark/offset measurement (AFE gain 0 / offset 0xff), white line, gain/offset computation, shading measurement + correction-data synthesis, upload to scanner RAM (addr 0x10014000) |
 | `image.py` | Raw assembly (pixel-interleaved RGB16 LE, width 3762 @ 3600 dpi, lines = reg 0x26:0x27), 16-bit TIFF output |
-| `cli.py` | `of135i scan --frame N --dpi 3600 [--ir] -o out.tiff`, `of135i eject`, `of135i preview`, `of135i status`, `of135i watch`, `of135i doctor` |
+| `cli.py` | `of135i scan --frame N --dpi 3600 [--ir] -o out.tiff`, `of135i digitize`, `of135i load`, `of135i eject`, `of135i preview`, `of135i status`, `of135i watch`, `of135i buttons`, `of135i doctor`, `of135i version` |
 | `diag.py` | Read-only hardware health report (`doctor`) and the per-scan `.diag.json` sidecar (see "Diagnostics" below) |
 
 ## Scan sequence (from segment 03, frames → phases)
@@ -123,11 +123,12 @@ single USB operation the driver would otherwise perform:
 - Automatic recovery from an unknown start state is intentionally **not**
   attempted anywhere in the driver — the only recovery is a power cycle.
   See [`docs/hardware-safety.md`](hardware-safety.md).
-- [ ] Calibration formulas (gain from white-line level, offset from
-      dark level, shading from 128-line mean) — reverse from captured
-      measurement→result pairs (we hold two sessions' worth).
-- [ ] Motor-busy indicator (replace captured-poll targets with a real
-      busy flag; candidates: reg 0x01 bits, interrupt EP).
+- [x] Calibration formulas (gain from white-line level, offset from
+      dark level, shading from 128-line mean). Done: `calibrate.py`,
+      hardware-verified against the vendor application's output.
+- [x] Motor-busy indicator. Found: bit 0x20 of reg 0x01 clears while
+      the engine runs and sets on completion (docs/protocol-notes.md,
+      Pass 8); the interrupt endpoint carries no motor-done signal.
 - [x] Loader feed sequence extraction from segment 02 (driver-managed
       magazine insertion) → `load()`. Done: `tools/load_magazine.py`.
 - [x] dpi profiles beyond 3600. Implemented 2026-09-02 (passes 17-18),

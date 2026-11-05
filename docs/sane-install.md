@@ -3,7 +3,8 @@
 Written offline 2026-09-13 against HEAD `aed052a`. This is the install and
 frontend half of ROADMAP's **WP-2**. §9 states exactly what has been
 exercised and what has not; the system install itself and the two hardware
-scans are in `docs/sane-wp2-hardware-plan.md` and wait for Christian's go.
+scans are in `docs/sane-wp2-hardware-plan.md` and were done the same day
+(Test 74, recorded at the end of §9).
 
 Reference host: Fedora 44 KDE, `sane-backends` 1.4.0-6.fc44 (RPM),
 digiKam 9.1.0 (RPM) on KSaneCore/KSaneWidgets 26.08.0 (RPM). Not Flatpak,

@@ -97,8 +97,8 @@ calibration path) are not acquisition phases, so the image pass is
 never delayed, and the `_exec_ops` NOTE (no idle wait during the image
 pass; it overflows the scanner buffer) is untouched.
 
-`off` (default) adds no read, sleep or clock call;
-`tests/test_cal_wait_scanstop.py` pins the default wire against sha256
+`off` adds no read, sleep or clock call;
+`tests/test_cal_wait_scanstop.py` pins the `off` wire against sha256
 digests of the transfer log taken on master `1d0091a` before the gate
 existed (plain 3600, dual 600, IR 3600, frame 1).
 
@@ -109,8 +109,9 @@ existed (plain 3600, dual 600, IR 3600, frame 1).
   clean 3/3. One clean 3600 dpi four-slide run with the gate on. The
   fork's own CHANGELOG for its default-on branch says the hardware
   evidence is pending and must not merge before it is complete.
-- No gate-off comparison at 3600 dpi on an affected unit; no film-strip
-  run on one. How long the bits take to clear was unmeasured when the
+- No gate-off comparison at 3600 dpi on an affected unit. A film strip
+  has since run on one (the Steam Deck, 600 dpi, "Third unit" below).
+  How long the bits take to clear was unmeasured when the
   gate was ported; it has since been measured on three units (Test 114,
   "Second unit, on master" and "Third unit" below). The 0.3 s budget was
   inherited from the poll floor; the longest wait seen so far is 29 ms.

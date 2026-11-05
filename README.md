@@ -2,7 +2,7 @@
 
 ![License: GPL-2.0-or-later or MIT (driver), CC BY 4.0 (docs)](https://img.shields.io/badge/License-GPL--2.0--or--later%20%7C%20MIT%20%7C%20CC--BY--4.0-blue.svg)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
-![Release: v0.2.7](https://img.shields.io/badge/Release-v0.2.7-blue.svg)
+![Release: v0.2.9](https://img.shields.io/badge/Release-v0.2.9-blue.svg)
 ![Status: CLI driver complete, SANE backend working locally](https://img.shields.io/badge/Status-CLI%20driver%20complete%2C%20SANE%20backend%20working%20locally-green.svg)
 
 **Unofficial, community-built Linux driver for the Plustek OpticFilm 135i**
@@ -29,7 +29,7 @@ additional hardware testing is welcome (see
 
 The project has two parts, at different stages:
 
-- **Python / pyusb command-line driver — released (v0.2.7), working on the
+- **Python / pyusb command-line driver — released (v0.2.9), working on the
   test unit.** Scans to raw 16-bit TIFF/PNM at all five resolutions
   (600 / 1200 / 2400 / 3600 / 7200 dpi), with an infrared dust/scratch channel,
   whole-strip batch scanning, and a resumable bulk-digitisation workflow.
@@ -180,8 +180,8 @@ installed from this repository's build.
 
 ## Development status
 
-**Status: v0.2.7 released (2026-10-28, the CLI driver; the SANE backend is
-unchanged since v0.2.3; [release notes](docs/release-notes-v0.2.7.md)).** The standalone Python/pyusb
+**Status: v0.2.9 released (2026-10-30, the CLI driver; the SANE backend is
+unchanged since v0.2.3; [release notes](docs/release-notes-v0.2.9.md)).** The standalone Python/pyusb
 command-line driver reached its defined milestone — magazine loading,
 single-frame and whole-strip batch scanning, all five resolutions, IR and dust
 removal, and eject — with scan, calibration, IR and dust removal
@@ -211,9 +211,14 @@ discarded — and fills a calibration white measurement blocked by film;
 v0.2.7 (2026-10-28) scans 110 over all six apertures by default and adds
 black-and-white 110 (dense pictures, no IR), proven on five black-and-white
 strips the same evening, with three numbering gaps closed that had left
-photographs unnumbered or undelivered.
+photographs unnumbered or undelivered; v0.2.8 (2026-10-30) adds the
+whole-strip sweep (`digitize --sweep`: one calibration, one pass and one
+park for a colour strip, Test 111); v0.2.9 (the same evening) adds
+progress lines during the sweep and exit code 3 when another of135i
+process holds the scanner. Changes on master after v0.2.9 are in
+[CHANGELOG.md](CHANGELOG.md) under "Unreleased".
 "Complete" here means that functional milestone is met **within
-its frozen scope on the one test unit** — it is **not** broad field testing or
+its frozen scope on the developer's unit** — it is **not** broad field testing or
 proof of compatibility with other scanners or Linux systems. The **SANE
 backend is a separate effort with its own status** — working locally, submitted
 upstream 2026-09-29 and not merged (see Project status above and
@@ -278,8 +283,8 @@ know about:
   scanned without IR (`--no-ir`) and was proven on five strips
   (Tests 109–110); `digitize --film 110` scans apertures 1–6 by default.
   `digitize --film 110` runs the two placements as two runs into one roll
-  directory and writes one `image<N>.tiff` per photograph (implemented
-  offline, hardware check pending); the 600 dpi survey prints which images are whole and which
+  directory and writes one `image<N>.tiff` per photograph
+  (hardware-verified in Test 104); the 600 dpi survey prints which images are whole and which
   need the other placement. Built and checked offline against one
   strip's saved scans (Test 86, 22 apertures, all verdicts right; a
   review then found and fixed a crop that cut up to 0.4 mm of picture,
@@ -304,10 +309,10 @@ know about:
   frame therefore takes noticeably longer than in the vendor software.
   Slow and correct first. The stream is now classified op by op in
   [`docs/replay-analysis.md`](docs/replay-analysis.md) and the first
-  phase (PARK) has a semantic implementation behind `--park semantic`
-  (real read-modify-write and condition waits instead of captured
-  pacing); it is off by default until it has been A/B-tested on
-  hardware.
+  phase (PARK) has a semantic implementation (real read-modify-write
+  and condition waits instead of captured pacing), the default since
+  2026-09-17: 3.7–3.8 s against the captured 13.6–16.9 s.
+  `--park verbatim` replays the captured stream.
 - **After a power-on, load first.** The driver detects a freshly
   power-cycled scanner (reg 0x01 = 0x00) and runs the vendor's cold-start
   homing sequence automatically inside the magazine load flow — no VM or
@@ -448,8 +453,10 @@ every dust speck appeared three times in the IR image).
 five dual profiles in Test 61, including measured sub-line IR-to-
 visible registration.)
 
-`--park semantic` on `scan` selects an experimental park phase (see
-docs/replay-analysis.md); it is off by default and not hardware-verified.
+`--park {semantic,verbatim}` selects the park phase: `semantic` (the
+default) sends the same motor sequence with real condition waits,
+`verbatim` replays the captured stream byte for byte (see
+docs/replay-analysis.md).
 `--warmup-budget SECONDS` bounds how long a scan waits for the lamp.
 `--cal-wait-scanstop {enforce,off}` (default `enforce`) makes calibration
 wait, by reading two status registers, until the scanner has stopped
@@ -674,7 +681,10 @@ Every error message ends with the next safe action. The rules behind them:
 
 Exit codes: `0` success, `1` refused or failed (details on stderr),
 `2` usage error, `3` scanner busy (another of135i process holds the lock;
-nothing was sent, no power cycle needed), `75` watch eject raised or was
+nothing was sent, no power cycle needed), `4` the scan ran to the end but
+aperture coverage was not verified for at least one frame (no product for
+that frame; the overscan raw and the sidecar are kept), `5` 110 film only:
+a product was refused or photographs were written unnumbered, `75` watch eject raised or was
 interrupted (power-cycle before restarting; do not auto-restart, see `watch`
 above; a failed watch eject used to exit 1), `130` interrupted (Ctrl-C
 anywhere except idle `watch` (0) and a `watch` eject (75)).

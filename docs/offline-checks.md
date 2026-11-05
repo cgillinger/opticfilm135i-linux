@@ -4,10 +4,10 @@ Every check here runs without a scanner and without network access. It
 is the reproducibility answer the project's updated course asks for: a
 documented set of checks, their dependencies, their commands and their
 expected results, that any commit can be held to. The substantiated
-mechanism is the local commands below. A GitHub Actions workflow file is
-also provided (`.github/workflows/offline-checks.yml`) but has not been
-activated and no CI run has occurred -- see "The GitHub Actions workflow"
-at the end.
+mechanism is the local commands below. A GitHub Actions workflow
+(`.github/workflows/offline-checks.yml`) runs part of them on every push
+to master and every pull request -- see "The GitHub Actions workflow" at
+the end for what it covers and what it leaves to the local run.
 
 Nothing here talks to USB. The suites that would drive hardware are the
 scanning tests, and those are not offline — they live in
@@ -51,8 +51,8 @@ The parser and the verdict are pure functions pinned by
 `tests/test_release_check.py` (mixed passed/skipped, entirely skipped,
 zero tests, normal success, failure, and the `--no-backend` scope).
 
-Substantiated: a full local run on 2026-09-15, against a built backend,
-reported **FULL VERIFICATION PASSED, 338 tests, 0 skipped** (a later run the same day, after the parser fix and the cold-start change). Run it where the backend is
+Substantiated: a full local run on 2026-11-05, against a built backend,
+reported **FULL VERIFICATION PASSED, 739 tests, 0 skipped** (the first such run, on 2026-09-15, had 338). Run it where the backend is
 built (the development clone) for full verification, or with
 `--no-backend` for the buildless subset.
 
@@ -72,12 +72,21 @@ apart. Expected: `generated SANE tables are up to date`.
 Each is a standalone script that prints `N tests passed` and exits 0:
 
 ```
-for t in test_safety test_calibrate test_hwblock test_park test_offline \
-         test_diag test_dpi test_ir test_image_probe test_aperture_crop \
-         test_overscan test_dual_overscan test_trace_recorder; do
+for t in test_safety test_cold_reseat test_calibrate test_hwblock \
+         test_park test_offline test_diag test_dpi test_ir \
+         test_image_probe test_aperture_crop test_overscan \
+         test_dual_overscan test_sweep test_calibration_cache \
+         test_film110 test_film110_digitize test_film110_report \
+         test_film110_sideband test_vendor_isolation test_watch_events \
+         test_buttons test_release_check test_poll test_white_blockage \
+         test_cal_wait_scanstop test_cross_unit_check \
+         test_cr_mismatch_details test_trace_recorder; do
     .venv/bin/python tests/$t.py || exit 1
 done
 ```
+
+The list is the "core" group of `SUITES` in `tools/release_check.py`,
+which is the authority if the two ever differ.
 
 These cover the safety model, calibration maths, the park state machine,
 the image path, the DPI and IR logic, the overscan/coverage geometry and
@@ -200,18 +209,21 @@ three suites whose logic the op and geometry suites already cover on the
 wire. Run them in the development clone, or against a recreated WP-3
 package build (`sane/wp3-package/README.md` shows how).
 
-## The GitHub Actions workflow (provided, not yet activated)
+## The GitHub Actions workflow
 
-A workflow file, `.github/workflows/offline-checks.yml`, is provided to
-run checks 2-4 (the generator check, the twelve Python suites and the four
-compiler-based suites) on push and pull request, installing only the four
-Python packages, using the distribution's `g++`, building no backend and
-touching no hardware.
+`.github/workflows/offline-checks.yml` runs on every push to master, on
+every pull request and on manual dispatch. It runs check 2 (the
+generator check), nineteen of the Python suites of check 3 and the four
+compiler-based suites of check 4, installing only the four Python
+packages, using the runner's `g++`, building no backend and touching no
+hardware.
 
-It has **not been activated, and no CI run has occurred.** Publishing a
-workflow file to this repository needs a token carrying the `workflow`
-scope, which is the owner's to grant; until then the file sits ready and
-the substantiated mechanism is the local commands above. **No green CI is
-claimed.** Once enabled, the workflow would cover the driver's logic, the
-generated tables and the backend's wire-level and lock behaviour, but
-never an installed backend (check 5) or the scanner.
+It is narrower than the local gate. Not run in CI: the three backend
+suites (check 5), and these ten core suites, which only
+`tools/release_check.py` or the loop above runs: `test_cold_reseat`,
+`test_sweep`, `test_calibration_cache`, `test_vendor_isolation`,
+`test_watch_events`, `test_buttons`, `test_poll`,
+`test_cal_wait_scanstop`, `test_cross_unit_check` and
+`test_cr_mismatch_details`. A green CI run therefore says less than
+FULL VERIFICATION PASSED from a local run, and neither says anything
+about an installed backend or the scanner.

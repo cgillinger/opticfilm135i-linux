@@ -87,8 +87,10 @@ does not authorize contacting recipients or sending material.
 
 **Deferred to a later version (explicitly out of scope for A):**
 - Speed tuning of the replayed command stream.
-- Cross-unit support (only one physical unit exists — a documented
-  limitation, compensated by run-time calibration).
+- Cross-unit support (the developer has one physical unit — a documented
+  limitation, compensated by run-time calibration; since 2026-10
+  two other users' units have run the driver, see **A — Accepted
+  limitations**).
 - Hardware-button daemon / auto-load on insert.
 - Any GUI or SANE frontend integration (that is B1+).
 
@@ -353,8 +355,11 @@ progress.**
   its pipeline passed all seven jobs). The
   owner submitted it himself:
   <https://gitlab.com/sane-project/backends/-/merge_requests/1032>, from
-  his fork into `sane-project/backends` `master`; its pipeline is green
-  and there has been no maintainer response yet. B2's definition of done
+  his fork into `sane-project/backends` `master`. Since then: revision
+  v7 (2026-10-13) and revision v8 (2026-10-16), the latter dropping the
+  backend's process lock at a maintainer's question; v8 is what the
+  merge request carries, its pipeline is green, and there is no review
+  verdict yet. B2's definition of done
   is *submitted, review-ready* (see **B2 — SANE contribution delivered**
   above), which the submission meets; *accepted → published* is the
   maintainers' decision and is not a gate we can close. The blocker list
@@ -824,7 +829,7 @@ Image-side only: no motor, wait, calibration or geometry change
    whole picture present on all four, a little overscan).
 3. README says "supported", with n = 2 stated — **DONE 2026-09-20**.
 4. `digitize --film 110` + inferred placement — **implemented offline
-   2026-10-21, hardware check pending (Test 102).** `--placement` is
+   2026-10-21, hardware-verified 2026-10-22 (Test 104).** `--placement` is
    optional (inferred from the first image's position); a strip is a
    two-run roll with one `image<N>.tiff` per photograph and the sag rule
    applied automatically (`docs/film-110.md` §11).
