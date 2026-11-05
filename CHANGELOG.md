@@ -11,8 +11,11 @@ one exists; "offline" means implemented and tested without the scanner.
   as roll N, slot 2 = apertures 4-6 as roll N+1; docs/film-110.md §12). It
   ran on hardware in Tests 103 and 104; one strip per load is the routine,
   so the option, the per-slot code and its tests are gone. A one-strip run
-  behaves exactly as before (offline-tested against the previous code, no
-  hardware run). A roll whose manifest records `"strips": 2` is still
+  behaves exactly as before: 27 scenarios (110 colour and black-and-white
+  passes, rebuilds, a turned strip, 135 per-frame and sweep, failures) gave
+  the same exit codes, output and file hashes before and after. Offline,
+  no hardware run. Three tests that used the two-strip harness for
+  one-strip behaviour were kept as one-strip tests. A roll whose manifest records `"strips": 2` is still
   refused by `--from-frames`, with a message that no longer names the
   removed option.
 

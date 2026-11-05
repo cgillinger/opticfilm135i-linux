@@ -1083,6 +1083,79 @@ def test_rebuild_refusals_touch_nothing():
     print("test_rebuild_refusals_touch_nothing OK")
 
 
+def test_image_seated_on_the_aperture_edge_is_a_leading_split_of_its_own():
+    """Test 103, strip 1: image 1 flush with aperture 1's edge (-0.1 mm)
+    and image 4 starting at +0.03 mm in aperture 3 with no trailing split
+    before it (its predecessor ended under aperture 2's bar). Both are
+    first sightings: numbered as leading splits (no product, the other
+    placement delivers them), not dropped as "already counted"."""
+    starts = [-0.1, 25.4, 50.9, 2 * PITCH + 0.03]
+    spec = _strip_spec(starts, "lo", tail=8.0)     # room for the hole after image 4
+    with tempfile.TemporaryDirectory() as d:
+        rc, r1, scans, out, err = _run(d, _holder_apertures(spec, None))
+        assert rc == 0, (rc, err)
+        assert r1["placement"] == "A" and r1["problems"] == [], r1
+        assert _shape(r1) == {1: "L", 2: "T", 3: "W", 4: "L"}, _shape(r1)
+        assert _images(r1)[1]["aperture"] == 1 and _images(r1)[4]["aperture"] == 3
+        # Near-whole (owner's decision, Test 106): an image within the cut
+        # tolerance of the boundary with its other edge confirmed IS delivered.
+        im = _images(r1)
+        assert im[1]["cut_mm"] is not None and abs(im[1]["cut_mm"] - 0.1) <= 0.1, im[1]
+        assert im[1]["main"] and im[4]["main"] and im[1]["whole"] is False, (im[1], im[4])
+        assert im[2]["main"] is None and "cut_mm" not in im[2]
+        adv = r1["advice"]
+        assert adv["missing"] == [2], adv
+        assert "split image 2 (already counted)" in out, out
+    print("test_image_seated_on_the_aperture_edge_is_a_leading_split_of_its_own OK")
+
+
+def test_whole_image_before_the_first_seen_one_is_delivered_as_image0():
+    """The system serves the photographs: an earlier pass missed the
+    strip's first image (here: under the holder's end wall in pass 1);
+    when a later pass shows it whole it is number 0, delivered as
+    image0.tiff, certain (it fits the grid), not a problem; and the roll
+    is not done while the strip's start has never been seen."""
+    with _content():
+        with tempfile.TemporaryDirectory() as d:
+            pitch = FILM_110.pitch_mm
+            # Pass 1: photograph 1 at -22 mm (under the wall), 2..4 visible.
+            rc, r1, *_ = _run(d, _holder_apertures(_starts_for(3.5 - pitch), None))
+            assert rc == 0 and sorted(_images(r1)) == [1, 2, 3], _shape(r1)
+            # Pass 2: slid one pitch in -- photograph 1 appears at 3.5 mm.
+            rc, r2, scans, out, err = _run(d, _holder_apertures(_starts_for(3.5), None))
+            assert rc == 0, (rc, err[-300:])
+            assert r2["numbering"] == "content" and r2["orientation"] == "same", r2
+            e0 = _images(r2)[0]
+            assert e0["whole"] and e0["main"] and not e0["uncertain"], e0
+            assert e0["main"].endswith("image0.tiff") and "image0.tiff" in _names(d), _names(d)
+            assert "lies before the roll's first image (number 0)" in out, out
+            assert r2["problems"] == [], r2["problems"]
+            # The others keep pass 1's numbers: photograph 2 ("1") is now
+            # split, 3 ("2") whole and new, 4 ("3") kept.
+            assert _shape(r2) == {0: "W", 1: "T", 2: "W", 3: "W"}, _shape(r2)
+            assert _images(r2)[3]["kept"] is True and _images(r2)[2]["main"]
+            # Done: photograph 1 now lies at the holder's end wall (nothing
+            # can be beyond it) and the strip's end was seen in aperture 3.
+            assert r2["advice"]["done"] is True and digitize.roll_is_done(d, 1) is True
+    print("test_whole_image_before_the_first_seen_one_is_delivered_as_image0 OK")
+
+
+def test_either_rail_gives_the_same_numbering():
+    """Nothing in the numbering assumes which rail the strip lies against:
+    with the perforated edge on either lateral side, both placements
+    number identically."""
+    for placement in ("A", "B"):
+        seen = set()
+        for side in ("lo", "hi"):
+            with tempfile.TemporaryDirectory() as d:
+                rc, r1, *_ = _run(d, _holder_apertures(_strip1(placement, side=side), None))
+                assert rc == 0, (side, placement, rc)
+                assert r1["problems"] == [], (side, placement, r1["problems"])
+                seen.add(tuple(sorted(_shape(r1).items())))
+        assert len(seen) == 1, (placement, seen)
+    print("test_either_rail_gives_the_same_numbering OK")
+
+
 def test_rebuild_refuses_a_roll_recorded_as_a_two_strip_load():
     """Manifests written by the withdrawn two-strip mode carry "strips": 2;
     such a roll is still refused by --from-frames and nothing is touched."""
@@ -1538,6 +1611,9 @@ def main() -> int:
         test_rebuild_reproduces_a_three_pass_roll_offline,
         test_rebuild_after_rotate_90_gives_identical_products,
         test_rebuild_refusals_touch_nothing,
+        test_image_seated_on_the_aperture_edge_is_a_leading_split_of_its_own,
+        test_whole_image_before_the_first_seen_one_is_delivered_as_image0,
+        test_either_rail_gives_the_same_numbering,
         test_rebuild_refuses_a_roll_recorded_as_a_two_strip_load,
         test_rebuild_writes_an_unrecognised_pass_unnumbered_and_goes_on,
         test_rebuild_with_an_exception_mid_write_changes_nothing,

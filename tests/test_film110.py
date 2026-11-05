@@ -927,34 +927,6 @@ def test_thumbnail_and_decide_orientation():
     print("test_thumbnail_and_decide_orientation OK")
 
 
-def test_bar_centering_shifts_put_the_bar_in_the_gap():
-    bars = film110.bar_spans_mm()
-    # The holder's end wall before aperture 1 counts as a bar (one bar
-    # wide), then the crossbar after each aperture.
-    assert bars[0] == (-(STRIP.pitch_mm - STRIP.aperture_mm), 0.0), bars[0]
-    assert abs(bars[1][0] - STRIP.aperture_mm) < 1e-9
-    # Image 1 seated at the end wall (0.0 mm, Test 104): a move of about
-    # a gap's half plus half a bar further in frees it.
-    c0 = film110.bar_centering_shifts(0.0, bars)
-    s0 = min((c for c in c0 if c > 0), key=abs)
-    assert 2.5 < s0 < 4.5, (s0, c0)
-    # Image 2 of placement A (29.0 .. 46.2 mm) is split by the first bar.
-    cands = film110.bar_centering_shifts(29.0, bars)
-    assert len(cands) == 2, cands
-    s = min(cands, key=abs)
-    centre = (bars[1][0] + bars[1][1]) / 2
-    gap = FILM_110.pitch_mm - FILM_110.image_mm[0]
-    new_start = 29.0 + s
-    # The bar's centre ends up in the middle of a gap beside the image.
-    before = new_start - gap / 2
-    after = new_start + FILM_110.image_mm[0] + gap / 2
-    assert min(abs(before - centre), abs(after - centre)) < 1e-6, (s, new_start)
-    assert abs(s - 12.2) < 0.2, s
-    # No image under a bar: nothing to centre.
-    assert film110.bar_centering_shifts(10.0, bars) == []
-    print("test_bar_centering_shifts_put_the_bar_in_the_gap OK")
-
-
 def test_cli_scan_parser_defaults_to_135():
     parser = cli.build_parser()
     args = parser.parse_args(["scan", "-o", "/tmp/x.tiff"])
@@ -1449,7 +1421,6 @@ def main() -> int:
         test_cli_hook_is_noop_for_film_135,
         test_number_by_shift,
         test_thumbnail_and_decide_orientation,
-        test_bar_centering_shifts_put_the_bar_in_the_gap,
         test_cli_scan_parser_defaults_to_135,
         test_validate_film110_args,
         test_default_fixture_is_byte_stable,

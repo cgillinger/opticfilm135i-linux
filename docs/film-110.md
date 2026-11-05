@@ -629,6 +629,30 @@ strip per load, and the code was removed on 2026-11-05. A roll whose
 manifest records `strips: 2` is refused by `--from-frames`; the earlier text
 of this section is in the repository history.
 
+Three seating rules were first written down in this section and apply to
+any strip:
+
+- **The edge with the small holes may lie either way, even flush against
+  a rail, as long as the holes themselves show** (Test 104, roll 7: a film
+  edge resting against the rail with no air gap is read since 2026-10-22;
+  before that it gave "no perforation found", as Test 103's wrongly seated
+  strips did). A hole edge pushed UNDER the rail hides the holes and the
+  aperture reads nothing. To turn a strip, turn it in its plane (the
+  images then run the other way along the holder); never flip it over.
+- **Both film edges stay visible.** A strip pushed under the rail is
+  accepted while no more than `film110.RAIL_HIDDEN_MAX_MM` (3.0 mm) of it
+  is hidden (`ApertureFind.rail_hidden_mm`; Test 103 measured 0.6–2.1 mm),
+  but the picture's own margin on that side is only ~1 mm: beyond it the
+  CLI warns that the picture is clipped by the rail and asks for the strip
+  to be nudged towards the open side.
+- **If an image at the strip's end comes out poor, try to seat the strip
+  so that its end has support at the outer edge** (the operator's own
+  rule, Test 103 pass B, 2026-10-21). This is the sag rule of §4 seen from
+  the operator's side: a strip end that rests on nothing in either
+  placement — a short or missing leader — has no supported copy of its
+  edge image, and the driver then delivers the free-end copy marked
+  `free_end_near` rather than nothing.
+
 ## 13. Free passes — any seating, slide or turn (2026-10-22, offline)
 
 *Implemented offline after Test 103 (Christian's decision: "utred fri

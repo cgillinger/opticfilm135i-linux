@@ -1469,41 +1469,6 @@ def number_by_shift(position_mm: float, shift_mm: float, recorded,
     return num + direction * round(k), (k - round(k)) * film.pitch_mm
 
 
-def bar_spans_mm(holder=STRIP) -> list:
-    """The plastic that can split an image of the strip, as (start, end)
-    mm along the holder: the crossbar after each of the six apertures, and
-    the holder's end wall before aperture 1 -- taken as one bar wide, so
-    centring it in a gap works like any bar. (Test 104: image 1 seated at
-    0.0 mm was "split by the leading bar" and the advice found no bar to
-    centre.)"""
-    aps = range(1, 7)
-    bar = holder.pitch_mm - holder.aperture_mm
-    spans = [((j - 1) * holder.pitch_mm + holder.aperture_mm,
-              j * holder.pitch_mm) for j in aps]
-    spans.insert(0, (-bar, 0.0))
-    return spans
-
-
-def bar_centering_shifts(position_mm: float, bars, film: Film = FILM_110) -> list:
-    """Shifts (mm, signed along the holder) that put a bar which splits the
-    image starting at `position_mm` into the gap between films -- the gap
-    after the image or the gap before it -- at the gap's middle. The gap is
-    a pitch minus an image long (8.3 mm), the bar about 2 mm, so the
-    centring leaves about 3 mm either way. Pure."""
-    length = film.image_mm[0]
-    gap = film.pitch_mm - length
-    out = []
-    for b0, b1 in bars:
-        # A bar within WHOLE_MARGIN_MM of the image splits it, as the
-        # detector's whole/split rule says (an image seated exactly at
-        # the holder's end wall touches it without overlapping it).
-        if b1 > position_mm - WHOLE_MARGIN_MM and b0 < position_mm + length + WHOLE_MARGIN_MM:
-            c = (b0 + b1) / 2
-            out.append(c - (position_mm + length + gap / 2))
-            out.append(c - (position_mm - gap / 2))
-    return out
-
-
 # ------------------------------------------- slid or turned? (image content)
 #
 # Between two runs the operator may also TURN the strip 180 degrees in its
