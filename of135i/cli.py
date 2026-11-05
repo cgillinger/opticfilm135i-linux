@@ -64,7 +64,9 @@ WATCH_EXIT_CODES_HELP = (
     "exited 1, so supervisors and wrappers need updating; "
     "130 = Ctrl+C anywhere else (startup, the read-only magazine-presence "
     "check): nothing was in progress. Eject completion timeouts only warn "
-    "and still return success; exit 75 does not detect them."
+    "and still return success; exit 75 does not detect them. "
+    "writes_attempted counts for the whole watch session, so after one "
+    "successful eject a later refusal that sends nothing also exits 75."
 )
 
 #: Sanity ceiling on --overscan (mm). The real per-frame bound is the

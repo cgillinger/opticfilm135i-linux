@@ -635,6 +635,8 @@ systemd. A failed eject previously exited 1, so supervisors and wrappers
 need updating; 130 = Ctrl+C anywhere else (startup, the read-only
 magazine-presence check): nothing was in progress. Eject completion timeouts
 only warn and still return success; exit 75 does not detect them.
+writes_attempted counts for the whole watch session, so after one successful
+eject a later refusal that sends nothing also exits 75.
 ```
 
 `doctor` is strictly read-only on the wire (USB control reads and

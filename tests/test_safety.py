@@ -2219,7 +2219,8 @@ def test_watch_exit_codes_readme_matches_help_epilog():
     # which can split hyphenated words and make a text comparison width-dependent.
     assert watch.epilog == cli.WATCH_EXIT_CODES_HELP
     # The wording distinguishes the three interrupt outcomes and the break.
-    for needle in ("130", "EX_TEMPFAIL", "previously", "RestartPreventExitStatus=75"):
+    for needle in ("130", "EX_TEMPFAIL", "previously", "RestartPreventExitStatus=75",
+                   "writes_attempted counts for the whole watch session"):
         assert needle in cli.WATCH_EXIT_CODES_HELP, needle
 
 
