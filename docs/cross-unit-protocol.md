@@ -30,9 +30,11 @@ packs the evidence.
 - The film-strip holder, with a film strip in it or empty; both are
   fine. The image check at the end of each scan looks for the edges of
   the holder's aperture and was built on the film-strip holder. If it
-  does not find them (reported once so far, probably with the slide
-  holder), the scan exits 4; the tool records that and goes on
-  (section 5).
+  does not find them, the scan exits 4; the tool records that and goes
+  on (section 5). That is what the slide holder gives (seven scans on
+  one unit, outside this tool). If the slide holder is the only one you
+  have, run with it and say so in the comment; the tool itself has not
+  yet been run with a slide holder.
 - The magazine in the slot, as for any `of135i load` (README, "Usage").
   You push it to the stop later, when `load` asks for it. One case to
   know: if the scanner was switched off while the magazine was still

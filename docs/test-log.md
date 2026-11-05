@@ -8437,3 +8437,29 @@ the recorder did not disturb this scan; it is not a timing validation
 recorder's failure paths (unwritable file, Ctrl-C while recording) ran
 offline only. `status`, `load` and `eject` were not traced. The
 converter and the replay refusal were exercised on this one file.
+
+## 2026-11-05 — External report (issue #35), follow-up from the second unit: the slide holder was in for every scan (the exit 4 explained); a blinking power light after each ungated failure
+
+Not run by the owner. bearyjd's answers on issue #35 (2026-11-05) to
+two questions left open in the entry of 2026-11-04 above. No new scans.
+
+- **Holder.** The slide holder was in the unit for every scan of the
+  A/B, and it is the only holder bearyjd has. The image check looks for the
+  film-strip holder's aperture, so "no aperture found in profile" and
+  exit 4 on all seven completed scans is what a slide holder gives. The
+  2026-11-04 entry lists the exit 4 under "Not explained" and says the
+  holder was not confirmed; both are settled by this. The seven gated
+  scans are therefore slide-holder scans with master's gate:
+  calibration, gate, scan and park complete, coverage not verifiable.
+- **State after an ungated failure.** After each of the three gate-off
+  failures the scanner was in an unknown state and the blue power light
+  was blinking. The unit was switched fully off. After that a plain
+  `of135i load` worked, followed by a gated warm-up scan.
+  `load --release` was never needed and has not been tried there.
+
+What the blinking light means is not known; the owner's unit has not
+shown it in this failure, because the failure does not occur there. The
+cross-unit protocol cannot be run there with a film-strip holder; with the
+slide holder the tool records each exit 4 as
+`completed-coverage-unverified` and goes on (docs/cross-unit-protocol.md,
+section 5). That path has not been run yet.
