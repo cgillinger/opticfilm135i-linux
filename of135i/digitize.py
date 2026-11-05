@@ -224,7 +224,7 @@ def roll_is_done(out_dir: str, roll: int, prefix: str = "") -> bool:
     `missing` number (seen only split, never delivered) and no `free_end`
     number (delivered with the strip end free, docs/film-110.md §4). A
     roll without a single image is never done: the strip was not read
-    (Test 103: slot 2's strip with its holes against the rail). The
+    (Test 103: a strip with its holes against the rail). The
     driver cannot know how many images a strip has; "done" is about what
     it has seen, and the operator may stop earlier. A record from before
     the pass-based advice has only `images`, which is read the same way."""

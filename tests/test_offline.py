@@ -485,7 +485,7 @@ def test_busy_lock_exits_3_without_power_cycle_advice():
             out=d, prefix="", roll=1, force=False, assume_loaded=True,
             dpi=3600, positive=False, rotate=0, ir=True, no_clean=False,
             no_diag=True, park="verbatim", warmup_budget=None,
-            frames="1-2", film="135", strips=1, placement=None)
+            frames="1-2", film="135", placement=None)
         orig = cli._run_writing_session
         cli._run_writing_session = lambda body: 3
         try:

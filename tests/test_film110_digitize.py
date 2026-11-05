@@ -675,14 +675,13 @@ def test_three_passes_have_their_own_prefixes_and_old_advice_keys():
     print("test_three_passes_have_their_own_prefixes_and_old_advice_keys OK")
 
 
-# ------------------------------------------------- two strips (docs §12)
+# ------------------------------------------------------- strip fixtures
 #
-# Six apertures, two strips of up to four images: strip 1 against the
-# holder's left end (slot 1 = apertures 1-3), strip 2 against its right end
-# (slot 2 = apertures 4-6). Positions below are GLOBAL mm from aperture 1's
-# start; aperture j starts at (j-1)*pitch and is APERTURE_MM long. Each
-# strip carries its own lateral side ("lo"/"hi" = which film edge is
-# perforated), so the fixtures cover either rail.
+# Six apertures, a strip of up to four images against the holder's left
+# end. Positions below are GLOBAL mm from aperture 1's start; aperture j
+# starts at (j-1)*pitch and is APERTURE_MM long. A strip carries its own
+# lateral side ("lo"/"hi" = which film edge is perforated), so the
+# fixtures cover either rail.
 
 PITCH = STRIP.pitch_mm
 LEAD = FILM_110.perforation_lead_mm
@@ -694,9 +693,6 @@ FPITCH = FILM_110.pitch_mm
 # detector's prediction of the image BEFORE a hole 1.1 mm off, so a real
 # leading split's end edge was never confirmed in these fixtures.)
 HOLE_MM = FPITCH - ILEN - LEAD - FILM_110.perforation_trail_mm
-S2_END = 5 * PITCH + APERTURE_MM - 0.6      # strip 2's last image ends here (A)
-B_SHIFT = FPITCH / 2
-BOTH_RUNS = (1, 2)
 
 
 def _starts(first, n):
@@ -826,18 +822,6 @@ def _strip1(placement, n=4, side="lo", tail=4.1):
                        side, tail=tail)
 
 
-def _strip2(placement, n=4, side="hi", first=None):
-    """Strip 2 against the holder's right end in A; moved half a film pitch
-    towards the middle in B. `first` overrides the first image's start."""
-    a_first = S2_END - (n - 1) * FPITCH - ILEN
-    if first is None:
-        first = a_first - (B_SHIFT if placement == "B" else 0.0)
-    return {"starts": _starts(first, n), "side": side,
-            "start": first - LEAD - 1.5 - 2.0,
-            "end": first + (n - 1) * FPITCH + ILEN,
-            "ids": list(range(1, n + 1)), "turned": False}
-
-
 def _piece(j, spec, seed):
     """Aperture j's view of one strip: (array, rows-with-film mask,
     band_lo, band_hi) from the single-strip fixture builder."""
@@ -918,22 +902,6 @@ def _holder_apertures(*specs):
     return out
 
 
-def _run2(d, apertures, *, roll=None, force=False, placement=None, frames=None,
-          **flags):
-    """One `digitize --film 110 --strips 2` run. Returns (rc, [rec1, rec2],
-    scans, stdout, stderr); the records are the last ones of rolls N, N+1
-    (None when the run exited 2 before hardware)."""
-    r = roll if roll is not None else digitize.next_roll(d, "")
-    rc, _rec, scans, out, err = _run(d, apertures, roll=roll, force=force,
-                                     placement=placement, frames=frames,
-                                     strips=2, **flags)
-    recs = []
-    for n in (r, r + 1):
-        rr = digitize.roll_records(d, n)
-        recs.append(rr[-1] if rr and rc != 2 else None)
-    return rc, recs, scans, out, err
-
-
 def _images(rec):
     return {e["number"]: e for e in rec["images"]}
 
@@ -942,416 +910,6 @@ def _shape(rec):
     """number -> 'W' (whole), 'L' (leading split), 'T' (trailing split)."""
     return {n: ("W" if e["whole"] else "L" if e["split"] == "leading" else "T")
             for n, e in _images(rec).items()}
-
-
-def test_slot_constants_and_anchored_numbering():
-    assert film110.SLOT_APERTURES == 3
-    assert [film110.slot_of(a, 2) for a in range(1, 7)] == [1, 1, 1, 2, 2, 2]
-    assert [film110.slot_of(a, 1) for a in range(1, 7)] == [1] * 6
-    assert list(film110.slot_apertures(2)) == [4, 5, 6]
-    assert film110.image_number_anchored(100.0, 100.0) == (1, 0.0)
-    n, r = film110.image_number_anchored(100.0 + FPITCH * 2 + 1.5, 100.0)
-    assert n == 3 and abs(r - 1.5) < 1e-9, (n, r)
-    n, r = film110.image_number_anchored(100.0 - FPITCH, 100.0)
-    assert n == 0, n                       # before the anchor: the caller refuses
-    # Agrees with image_number's arithmetic when anchored on its phase.
-    g = film110.global_position_mm(2, 12.0 * PPM, DPI)
-    assert abs(g - (PITCH + 12.0)) < 1e-9
-    n1, _ = film110.image_number(2, 12.0 * PPM, DPI, "A")
-    n2, _ = film110.image_number_anchored(
-        g, film110.placement_phase_mm("A"))
-    assert n1 == n2
-    print("test_slot_constants_and_anchored_numbering OK")
-
-
-def test_two_strips_run_a_makes_two_rolls():
-    with tempfile.TemporaryDirectory() as d:
-        rc, (r1, r2), scans, out, err = _run2(
-            d, _holder_apertures(_strip1("A"), _strip2("A")))
-        assert rc == 0, (rc, err)
-        assert scans == [1, 2, 3, 4, 5, 6, "eject"], scans
-        # Slot 1 = roll 1, slot 2 = roll 2; each with its own record.
-        assert (r1["roll"], r1["slot"], r1["companion_roll"]) == (1, 1, 2)
-        assert (r2["roll"], r2["slot"], r2["companion_roll"]) == (2, 2, 1)
-        assert r1["strips"] == r2["strips"] == 2
-        assert r1["frames"] == [1, 2, 3] and r2["frames"] == [4, 5, 6]
-        assert r1["status"] == r2["status"] == "ok"
-        assert r1["film_found"] is True and r2["film_found"] is True
-        assert r1["placement"] == r2["placement"] == "A"
-        assert r1["placement_source"] == "inferred", r1["placement_source"]
-        assert r2["placement_source"] == "slot 1 inferred", r2["placement_source"]
-        # Slot 1 numbers as a lone strip: 2 is split by a bar.
-        assert _shape(r1) == {1: "W", 2: "T", 3: "W", 4: "W"}, _shape(r1)
-        # Slot 2 is anchored on its first image, wherever it lies.
-        assert _shape(r2) == {1: "W", 2: "W", 3: "T", 4: "W"}, _shape(r2)
-        a1, a2 = r1["advice"], r2["advice"]
-        assert (a1["missing"], a1["free_end"], a1["images"], a1["other_placement"]) \
-            == ([2], [4], [2, 4], "B"), a1
-        assert (a2["missing"], a2["free_end"], a2["images"], a2["other_placement"]) \
-            == ([3], [1, 4], [1, 3, 4], "B"), a2
-        assert "strip 1:" in a1["suggest"] and "strip 2:" in a2["suggest"], (a1, a2)
-        assert (r1["pass"], r2["pass"]) == (1, 1) and r1["orientation"] == "same"
-        assert r1["problems"] == [] and r2["problems"] == [], (r1["problems"], r2["problems"])
-        n1, n2 = _names(d, 1), _names(d, 2)
-        assert {"p1-f1.tiff", "p1-f2.tiff", "p1-f3.tiff"} <= set(n1), n1
-        assert not any(n.startswith(("p1-f4", "p1-f5", "p1-f6")) for n in n1), n1
-        # The HOLDER aperture number stays in slot 2's file names.
-        assert {"p1-f4.tiff", "p1-f5.tiff", "p1-f6.tiff"} <= set(n2), n2
-        assert not any(n.startswith("x-") for n in n1 + n2), (n1, n2)
-        for n in (1, 3, 4):
-            assert f"image{n}.tiff" in n1 and f"image{n}-ir.tiff" in n1, n1
-        assert "image2.tiff" not in n1
-        for n in (1, 2, 4):
-            assert f"image{n}.tiff" in n2, n2
-        assert "image3.tiff" not in n2
-        assert digitize.roll_is_done(d, 1) is False
-        assert digitize.roll_is_done(d, 2) is False
-        # The closing message names both rolls and both advices.
-        assert "rolls 1 and 2 done" in out and "roll 1 (slot 1)" in out \
-            and "roll 2 (slot 2)" in out, out
-        assert "missing [2], strip end free [4]" in out, out
-        assert "missing [3], strip end free [1, 4]" in out, out
-        assert "--strips 2 --roll 1" in out, out
-    print("test_two_strips_run_a_makes_two_rolls OK")
-
-
-def test_second_run_fills_both_rolls():
-    # Real photographs differ from each other; the second run is numbered
-    # by recognising them (docs/film-110.md), so the fixture needs content.
-    with _content():
-        with tempfile.TemporaryDirectory() as d:
-            assert _run2(d, _holder_apertures(_strip1("A"), _strip2("A")))[0] == 0
-            first = {(r, n): (digitize.roll_dir(d, "", r) / f"image{n}.tiff").read_bytes()
-                     for r, ns in ((1, (1, 3)), (2, (2,))) for n in ns}
-            rc, (r1, r2), scans, out, err = _run2(
-                d, _holder_apertures(_strip1("B"), _strip2("B")), roll=1)
-            assert rc == 0, (rc, err)
-            assert (r1["placement"], r2["placement"]) == ("B", "B")
-            assert r1["placement_source"] == "inferred"
-            assert _shape(r1) == {1: "W", 2: "W", 3: "T", 4: "W"}, _shape(r1)
-            assert _shape(r2) == {1: "W", 2: "T", 3: "W", 4: "W"}, _shape(r2)
-            # Every photograph of both strips now exists; the sag rule replaced
-            # the free-end copies (1 of roll 2, 4 of roll 1) with supported ones.
-            for r in (1, 2):
-                names = _names(d, r)
-                for n in (1, 2, 3, 4):
-                    assert f"image{n}.tiff" in names, (r, n, names)
-            assert _images(r1)[4]["replaced_free_end_copy"] is True
-            assert _images(r2)[1]["replaced_free_end_copy"] is True
-            # Delivered images are kept, not overwritten.
-            for (r, n), data in first.items():
-                assert (digitize.roll_dir(d, "", r) / f"image{n}.tiff").read_bytes() == data \
-                    or (r, n) == (2, 1), (r, n)
-            assert r1["advice"]["images"] == [], r1["advice"]
-            # Strip 2's last image has its strip end free in BOTH seatings: no
-            # supported copy exists, so that roll is not done.
-            assert r2["advice"]["missing"] == [] and r2["advice"]["free_end"] == [4], r2["advice"]
-            assert digitize.roll_is_done(d, 1) and not digitize.roll_is_done(d, 2)
-            assert (r1["pass"], r2["pass"]) == (2, 2)
-            # p2- frame files per slot, aperture numbers kept.
-            assert {"p2-f1.tiff", "p2-f3.tiff"} <= set(_names(d, 1))
-            assert {"p2-f4.tiff", "p2-f6.tiff"} <= set(_names(d, 2))
-            # A pair is refused only when BOTH rolls are done; here roll 2 is not,
-            # so a third pass is accepted (roll 1's images are all kept).
-            rc, (t1, t2), scans, out, err = _run2(
-                d, _holder_apertures(_strip1("B"), _strip2("B")), roll=1)
-            assert rc == 0 and (t1["pass"], t2["pass"]) == (3, 3), (rc, err)
-            assert all(e["kept"] or not e["whole"] for e in t1["images"])
-            # A new pair numbers on at 3, 4.
-            rc, (r3, r4), *_ = _run2(d, _holder_apertures(_strip1("A"), _strip2("A")))
-            assert rc == 0 and (r3["roll"], r4["roll"]) == (3, 4)
-        print("test_second_run_fills_both_rolls OK")
-
-
-def test_either_rail_gives_the_same_numbering():
-    """Nothing in the slot logic assumes which rail a strip lies against:
-    the four combinations (and lone-side swaps) number identically."""
-    results = {}
-    for sides in (("lo", "hi"), ("hi", "lo"), ("lo", "lo"), ("hi", "hi")):
-        for placement in ("A", "B"):
-            with tempfile.TemporaryDirectory() as d:
-                rc, (r1, r2), *_ = _run2(d, _holder_apertures(
-                    _strip1(placement, side=sides[0]),
-                    _strip2(placement, side=sides[1])))
-                assert rc == 0, (sides, placement, rc)
-                assert r1["problems"] == [] and r2["problems"] == [], (sides, placement)
-                results.setdefault(placement, set()).add(
-                    (tuple(sorted(_shape(r1).items())), tuple(sorted(_shape(r2).items()))))
-    for placement, seen in results.items():
-        assert len(seen) == 1, (placement, seen)
-    print("test_either_rail_gives_the_same_numbering OK")
-
-
-def test_slot_two_leading_split_is_image_one_and_slot_one_split_is_reported():
-    """Placement B with strip 2's first image straddling the bar between
-    apertures 3 and 4: slot 2 counts the leading split in aperture 4 as its
-    image 1 (no product), slot 1 reports the matching trailing split in
-    aperture 3 as the next strip's -- not a problem, not a number of its own
-    -- and drops the image the detector predicts BEFORE that strip's first
-    hole (no strip lies there). Both strips on the same side so the detector
-    can read aperture 3 (see the mixed-side note in docs §12)."""
-    first_b = 110.0
-    a_first = first_b + B_SHIFT
-    with tempfile.TemporaryDirectory() as d:
-        # Run A first.
-        rc, (r1, r2), scans, out, err = _run2(d, _holder_apertures(
-            _strip1("A", n=3, side="hi"),
-            _strip2("A", side="hi", first=a_first)))
-        assert rc == 0, (rc, err)
-        assert _shape(r2) == {1: "W", 2: "T", 3: "T", 4: "W"}, _shape(r2)
-        assert sorted(_shape(r1)) == [1, 2, 3], _shape(r1)
-        rc, (b1, b2), scans, out, err = _run2(d, _holder_apertures(
-            _strip1("B", n=3, side="hi"),
-            _strip2("B", side="hi", first=first_b)), roll=1)
-        assert rc == 0, (rc, err)
-        assert b1["problems"] == [] and b2["problems"] == [], (b1["problems"], b2["problems"])
-        assert "next strip's leading image, counted there" in out, out
-        assert "no strip lies there" in out, out
-        # Slot 1 (B): its own three images, nothing from the next strip.
-        assert _shape(b1) == {1: "W", 2: "W", 3: "T"}, _shape(b1)
-        assert sorted(_images(b1)) == [1, 2, 3]
-        # Slot 2 (B): the leading split in aperture 4 IS image 1.
-        e1 = _images(b2)[1]
-        assert e1["aperture"] == 4 and e1["split"] == "leading" and e1["whole"] is False \
-            and e1["main"] is None, e1
-        assert _shape(b2) == {1: "L", 2: "T", 3: "W", 4: "T"}, _shape(b2)
-        # Image 1 (whole in A) is not wanted again; 2 is split in A AND B
-        # (unlucky phase) and stays on the advice, 4 likewise delivered in A.
-        a2 = b2["advice"]
-        assert (a2["missing"], a2["free_end"], a2["images"]) == ([2], [1, 4], [1, 2, 4]), a2
-        assert a2["other_placement"] == "A", a2
-        assert digitize.roll_is_done(d, 1) and not digitize.roll_is_done(d, 2)
-    print("test_slot_two_leading_split_is_image_one_and_slot_one_split_is_reported OK")
-
-
-def test_image_seated_on_the_aperture_edge_is_a_leading_split_of_its_own():
-    """Test 103, strip 1: image 1 flush with aperture 1's edge (-0.1 mm)
-    and image 4 starting at +0.03 mm in aperture 3 with no trailing split
-    before it (its predecessor ended under aperture 2's bar). Both are
-    first sightings: numbered as leading splits (no product, the other
-    placement delivers them), not dropped as "already counted"."""
-    starts = [-0.1, 25.4, 50.9, 2 * PITCH + 0.03]
-    spec = _strip_spec(starts, "lo", tail=8.0)     # room for the hole after image 4
-    with tempfile.TemporaryDirectory() as d:
-        rc, (r1, r2), scans, out, err = _run2(d, _holder_apertures(spec, None))
-        assert rc == 0, (rc, err)
-        assert r1["placement"] == "A" and r1["problems"] == [], r1
-        assert _shape(r1) == {1: "L", 2: "T", 3: "W", 4: "L"}, _shape(r1)
-        assert _images(r1)[1]["aperture"] == 1 and _images(r1)[4]["aperture"] == 3
-        # Near-whole (owner's decision, Test 106): an image within the cut
-        # tolerance of the boundary with its other edge confirmed IS delivered.
-        im = _images(r1)
-        assert im[1]["cut_mm"] is not None and abs(im[1]["cut_mm"] - 0.1) <= 0.1, im[1]
-        assert im[1]["main"] and im[4]["main"] and im[1]["whole"] is False, (im[1], im[4])
-        assert im[2]["main"] is None and "cut_mm" not in im[2]
-        adv = r1["advice"]
-        assert adv["missing"] == [2], adv
-        assert "split image 2 (already counted)" in out, out
-        # (The leader ghost needs the first hole inside the aperture: in A
-        # it lies before aperture 1; placement B exercises it in
-        # test_either_rail_gives_the_same_numbering.)
-    print("test_image_seated_on_the_aperture_edge_is_a_leading_split_of_its_own OK")
-
-
-def test_whole_image_before_the_first_seen_one_is_delivered_as_image0():
-    """The system serves the photographs: an earlier pass missed the
-    strip's first image (here: under the holder's end wall in pass 1);
-    when a later pass shows it whole it is number 0, delivered as
-    image0.tiff, certain (it fits the grid), not a problem; and the roll
-    is not done while the strip's start has never been seen."""
-    with _content():
-        with tempfile.TemporaryDirectory() as d:
-            pitch = FILM_110.pitch_mm
-            # Pass 1: photograph 1 at -22 mm (under the wall), 2..4 visible.
-            rc, r1, *_ = _run(d, _holder_apertures(_starts_for(3.5 - pitch), None))
-            assert rc == 0 and sorted(_images(r1)) == [1, 2, 3], _shape(r1)
-            # Pass 2: slid one pitch in -- photograph 1 appears at 3.5 mm.
-            rc, r2, scans, out, err = _run(d, _holder_apertures(_starts_for(3.5), None))
-            assert rc == 0, (rc, err[-300:])
-            assert r2["numbering"] == "content" and r2["orientation"] == "same", r2
-            e0 = _images(r2)[0]
-            assert e0["whole"] and e0["main"] and not e0["uncertain"], e0
-            assert e0["main"].endswith("image0.tiff") and "image0.tiff" in _names(d), _names(d)
-            assert "lies before the roll's first image (number 0)" in out, out
-            assert r2["problems"] == [], r2["problems"]
-            # The others keep pass 1's numbers: photograph 2 ("1") is now
-            # split, 3 ("2") whole and new, 4 ("3") kept.
-            assert _shape(r2) == {0: "W", 1: "T", 2: "W", 3: "W"}, _shape(r2)
-            assert _images(r2)[3]["kept"] is True and _images(r2)[2]["main"]
-            # Done: photograph 1 now lies at the holder's end wall (nothing
-            # can be beyond it) and the strip's end was seen in aperture 3.
-            assert r2["advice"]["done"] is True and digitize.roll_is_done(d, 1) is True
-    print("test_whole_image_before_the_first_seen_one_is_delivered_as_image0 OK")
-
-
-def test_empty_slot_two_is_a_found_nothing_roll():
-    with tempfile.TemporaryDirectory() as d:
-        aps = _holder_apertures(_strip1("A"), None)
-        rc, (r1, r2), scans, out, err = _run2(d, aps)
-        assert rc == 0, (rc, err)
-        assert scans == [1, 2, 3, 4, 5, 6, "eject"], scans   # no film seen in slot 2: no stop
-        assert r2["status"] == "ok" and r2["images"] == [], r2
-        assert r2["film_found"] is False and r1["film_found"] is True
-        assert r2["placement"] == "A" and r2["placement_source"] == "slot 1 inferred"
-        assert r2["advice"]["images"] == []
-        # Not done (no image), yet the number is not reused ...
-        assert digitize.roll_is_done(d, 2) is False
-        assert digitize.next_roll(d, "") == 3
-        names = _names(d, 2)
-        assert {"p1-f4.overscan.tiff", "p1-f5.overscan.tiff", "p1-f6.overscan.tiff"} <= set(names), names
-        assert not any(n.startswith("x-") for n in names), names
-        assert "(no film found)" in out, out
-        # ... yet the other placement's run may still use it.
-        rc, (b1, b2), *_ = _run2(d, _holder_apertures(_strip1("B"), None), roll=1)
-        assert rc == 0 and b2["placement"] == "B" and b2["film_found"] is False
-    print("test_empty_slot_two_is_a_found_nothing_roll OK")
-
-
-def test_empty_slot_one_labels_the_run_by_run_order():
-    with tempfile.TemporaryDirectory() as d:
-        aps = _holder_apertures(None, _strip2("A"))
-        rc, (r1, r2), scans, out, err = _run2(d, aps)
-        assert rc == 0, (rc, err)
-        assert r1["film_found"] is False and r1["images"] == [], r1
-        assert r1["placement"] == "A" and r1["placement_source"] == "run order", r1
-        assert r2["placement"] == "A" and r2["placement_source"] == "run order", r2
-        assert _shape(r2) == {1: "W", 2: "W", 3: "T", 4: "W"}, _shape(r2)
-        n1 = _names(d, 1)
-        assert "p1-f1.overscan.tiff" in n1 and not any(n.startswith("x-") for n in n1), n1
-        # The second run: roll 1 already has a 110 record -> "B".
-        aps = _holder_apertures(None, _strip2("B"))
-        rc, (b1, b2), *_ = _run2(d, aps, roll=1)
-        assert rc == 0, rc
-        assert b1["placement"] == "B" and b1["placement_source"] == "run order", b1
-        assert b2["placement"] == "B" and b2["placement_source"] == "run order", b2
-        # Roll 2's last image has its strip end free in both seatings.
-        assert not digitize.roll_is_done(d, 1) and not digitize.roll_is_done(d, 2)
-        assert b2["numbering"] == "content" and b2["pass"] == 2, b2
-    print("test_empty_slot_one_labels_the_run_by_run_order OK")
-
-
-def test_given_placement_covers_both_slots():
-    with tempfile.TemporaryDirectory() as d:
-        rc, (r1, r2), *_ = _run2(d, _holder_apertures(_strip1("A"), _strip2("A")),
-                                 placement="A")
-        assert rc == 0
-        assert (r1["placement_source"], r2["placement_source"]) == ("given", "given")
-        assert r1["placement_given"] is True and r2["placement_given"] is True
-    print("test_given_placement_covers_both_slots OK")
-
-
-def test_stop_rule_is_per_slot():
-    with tempfile.TemporaryDirectory() as d:
-        # Slot 1 holds one image; aperture 2 is empty after film -> aperture
-        # 3 is skipped, but slot 2 is still scanned.
-        aps = _holder_apertures(_strip_spec([3.5], "lo"), _strip2("A", n=2))
-        rc, (r1, r2), scans, out, err = _run2(d, aps)
-        assert rc == 0, (rc, err)
-        assert scans == [1, 2, 4, 5, 6, "eject"], scans
-        assert r1["skipped_frames"] == [3] and "empty aperture at frame 2" in r1["stop_reason"]
-        assert "skipped_frames" not in r2
-        assert r2["film_found"] is True
-    with tempfile.TemporaryDirectory() as d:
-        # Slot 2 holds one image in aperture 4; aperture 5 is empty after
-        # film -> aperture 6 skipped. An empty slot-1 aperture never stops
-        # slot 2 and empty slot-2 apertures BEFORE film do not stop it.
-        aps = _holder_apertures(_strip1("A"), _strip_spec(
-            [PITCH * 3 + 8.0], "hi", lead_in=PITCH * 3 + 8.0 - LEAD - 3.5))
-        rc, (r1, r2), scans, out, err = _run2(d, aps)
-        assert rc == 0, (rc, err)
-        assert scans == [1, 2, 3, 4, 5, "eject"], scans
-        assert r2["skipped_frames"] == [6] and "skipped_frames" not in r1
-        assert _shape(r2).get(1) == "W", _shape(r2)
-    with tempfile.TemporaryDirectory() as d:
-        aps = _holder_apertures(_strip_spec([3.5], "lo"), _strip2("A", n=2))
-        rc, (r1, r2), scans, out, err = _run2(d, aps, no_stop_at_empty=True)
-        assert scans == [1, 2, 3, 4, 5, 6, "eject"], scans
-    print("test_stop_rule_is_per_slot OK")
-
-
-def test_frames_validation_and_flags():
-    parser = cli.build_parser()
-    a = parser.parse_args(["digitize", "-o", "x", "--film", "110"])
-    assert a.strips == 1 and a.frames is None
-    a = parser.parse_args(["digitize", "-o", "x", "--film", "110", "--strips", "2"])
-    assert a.strips == 2 and cli._validate_film110_args(a) is None
-    a = parser.parse_args(["digitize", "-o", "x", "--strips", "2"])
-    assert cli._validate_film110_args(a) == "--strips 2 only applies with --film 110"
-    aps = _holder_apertures(_strip1("A"), _strip2("A"))
-    for spec, which in (("1-3", "slot 2"), ("4-6", "slot 1"), ("2", "slot 2")):
-        with tempfile.TemporaryDirectory() as d:
-            rc, recs, scans, out, err = _run2(d, aps, frames=spec)
-            assert rc == 2 and scans == [] and which in err, (spec, rc, err)
-            assert not (Path(d) / "roll-001").exists()
-    with tempfile.TemporaryDirectory() as d:
-        rc, recs, scans, out, err = _run2(d, aps, frames="1,4")
-        assert rc == 0 and scans == [1, 4, "eject"], (rc, scans, err)
-        assert recs[0]["frames"] == [1] and recs[1]["frames"] == [4]
-    with tempfile.TemporaryDirectory() as d:
-        rc, _r, scans, out, err = _run(d, aps, strips=2, frames="1-4")
-        assert rc == 0 and scans == [1, 2, 3, 4, "eject"], (rc, scans, err)
-    print("test_frames_validation_and_flags OK")
-
-
-def test_pair_guard_and_force():
-    with tempfile.TemporaryDirectory() as d:
-        # A lone-strip roll 1 is not half of a pair.
-        assert _run_a(d)[0] == 0
-        rc, recs, scans, out, err = _run2(
-            d, _holder_apertures(_strip1("A"), _strip2("A")), roll=1)
-        assert rc == 2 and scans == [] and "not recorded as slot 1" in err, (rc, err)
-    with tempfile.TemporaryDirectory() as d:
-        aps = _holder_apertures(_strip1("A"), _strip2("A"))
-        assert _run2(d, aps)[0] == 0
-        # The same seating again is pass 2: accepted, every copy kept.
-        rc, recs, scans, out, err = _run2(d, aps, roll=1, placement="A")
-        assert rc == 0 and [r["pass"] for r in recs] == [2, 2], (rc, err)
-        rc, recs, scans, out, err = _run2(d, aps, roll=1)
-        assert rc == 0 and [r["pass"] for r in recs] == [3, 3], (rc, err)
-        # --force on the pair clears BOTH rolls (pass 1 again).
-        rc, recs, *_ = _run2(d, _holder_apertures(_strip1("B"), _strip2("B")),
-                             roll=1, force=True)
-        assert rc == 0 and [r["pass"] for r in recs] == [1, 1], recs
-    with tempfile.TemporaryDirectory() as d:
-        aps = _holder_apertures(_strip1("A"), _strip2("A"))
-        assert _run2(d, aps)[0] == 0
-        assert _run2(d, _holder_apertures(_strip1("B"), _strip2("B")), roll=1)[0] == 0
-        rc, (r1, r2), scans, out, err = _run2(d, aps, roll=1, force=True)
-        assert rc == 0, (rc, err)
-        for r in (1, 2):
-            names = _names(d, r)
-            assert not any(n.startswith("p2-") for n in names), (r, names)
-        assert "removed" in out
-    print("test_pair_guard_and_force OK")
-
-
-def test_two_strips_three_passes():
-    """A pair over three passes at three different seatings (A, midway,
-    B), both slots numbered from the roll's own data from pass 2 on,
-    each pass with its own frame prefix."""
-    with tempfile.TemporaryDirectory() as d:
-        mid = B_SHIFT / 2
-        assert _run2(d, _holder_apertures(_strip1("A"), _strip2("A")))[0] == 0
-        s2 = _strip2("A")
-        rc, (m1, m2), scans, out, err = _run2(d, _holder_apertures(
-            _strip_spec([x + mid for x in _strip1("A")["starts"]], "lo"),
-            _strip2("A", first=s2["starts"][0] - mid)), roll=1)
-        assert rc == 0 and (m1["pass"], m2["pass"]) == (2, 2), (rc, err[-300:])
-        assert m1["numbering"] == m2["numbering"] == "content"
-        assert m1["placement"] == "free" and m2["placement"] == "free", (m1["placement"], m2["placement"])
-        rc, (b1, b2), scans, out, err = _run2(
-            d, _holder_apertures(_strip1("B"), _strip2("B")), roll=1)
-        assert rc == 0 and (b1["pass"], b2["pass"]) == (3, 3), (rc, err[-300:])
-        for r in (1, 2):
-            names = _names(d, r)
-            assert {"p1-f1.tiff" if r == 1 else "p1-f4.tiff",
-                    "p2-f1.tiff" if r == 1 else "p2-f4.tiff",
-                    "p3-f1.tiff" if r == 1 else "p3-f4.tiff"} <= set(names), names
-        for r in (b1, b2):
-            assert r["problems"] == [], r["problems"]
-        assert b1["advice"]["missing"] == [] and b1["advice"]["free_end"] == []
-        assert digitize.roll_is_done(d, 1)
-    print("test_two_strips_three_passes OK")
 
 
 def test_pattern_contents_are_distinct():
@@ -1367,17 +925,6 @@ def test_pattern_contents_are_distinct():
             if i != j:
                 assert abs(film110.thumb_correlation(th[i], th[j])) < 0.3, (i, j)
     print("test_pattern_contents_are_distinct OK")
-
-
-def test_strips_one_is_unchanged():
-    """--strips 1 (and the default) write no two-strip fields."""
-    with tempfile.TemporaryDirectory() as d:
-        rc, rec, scans, out, err = _run_a(d, strips=1)
-        assert rc == 0 and scans == [1, 2, 3, 4, "eject"]
-        for k in ("strips", "slot", "companion_roll", "film_found", "placement_source"):
-            assert k not in rec, (k, rec)
-        assert "roll 1 scanned, not done (110, placement A)" in out, out
-    print("test_strips_one_is_unchanged OK")
 
 
 # --------------------------------------------------- --from-frames (rebuild)
@@ -1505,7 +1052,6 @@ def test_rebuild_refusals_touch_nothing():
                 assert rc == 2 and needle in err, (rc, err)
                 assert _tree(d) == snap, "a refused rebuild touched files"
 
-            refused(["--strips", "2"], needle="--strips 2")
             refused([], roll=7, needle="no 110 records")
             # not --film 110
             args = cli.build_parser().parse_args(
@@ -1535,6 +1081,99 @@ def test_rebuild_refusals_touch_nothing():
             assert rc == 2 and "no stored frame files" in err, (rc, err)
             assert _tree(d) == snap
     print("test_rebuild_refusals_touch_nothing OK")
+
+
+def test_image_seated_on_the_aperture_edge_is_a_leading_split_of_its_own():
+    """Test 103, strip 1: image 1 flush with aperture 1's edge (-0.1 mm)
+    and image 4 starting at +0.03 mm in aperture 3 with no trailing split
+    before it (its predecessor ended under aperture 2's bar). Both are
+    first sightings: numbered as leading splits (no product, the other
+    placement delivers them), not dropped as "already counted"."""
+    starts = [-0.1, 25.4, 50.9, 2 * PITCH + 0.03]
+    spec = _strip_spec(starts, "lo", tail=8.0)     # room for the hole after image 4
+    with tempfile.TemporaryDirectory() as d:
+        rc, r1, scans, out, err = _run(d, _holder_apertures(spec, None))
+        assert rc == 0, (rc, err)
+        assert r1["placement"] == "A" and r1["problems"] == [], r1
+        assert _shape(r1) == {1: "L", 2: "T", 3: "W", 4: "L"}, _shape(r1)
+        assert _images(r1)[1]["aperture"] == 1 and _images(r1)[4]["aperture"] == 3
+        # Near-whole (owner's decision, Test 106): an image within the cut
+        # tolerance of the boundary with its other edge confirmed IS delivered.
+        im = _images(r1)
+        assert im[1]["cut_mm"] is not None and abs(im[1]["cut_mm"] - 0.1) <= 0.1, im[1]
+        assert im[1]["main"] and im[4]["main"] and im[1]["whole"] is False, (im[1], im[4])
+        assert im[2]["main"] is None and "cut_mm" not in im[2]
+        adv = r1["advice"]
+        assert adv["missing"] == [2], adv
+        assert "split image 2 (already counted)" in out, out
+    print("test_image_seated_on_the_aperture_edge_is_a_leading_split_of_its_own OK")
+
+
+def test_whole_image_before_the_first_seen_one_is_delivered_as_image0():
+    """The system serves the photographs: an earlier pass missed the
+    strip's first image (here: under the holder's end wall in pass 1);
+    when a later pass shows it whole it is number 0, delivered as
+    image0.tiff, certain (it fits the grid), not a problem; and the roll
+    is not done while the strip's start has never been seen."""
+    with _content():
+        with tempfile.TemporaryDirectory() as d:
+            pitch = FILM_110.pitch_mm
+            # Pass 1: photograph 1 at -22 mm (under the wall), 2..4 visible.
+            rc, r1, *_ = _run(d, _holder_apertures(_starts_for(3.5 - pitch), None))
+            assert rc == 0 and sorted(_images(r1)) == [1, 2, 3], _shape(r1)
+            # Pass 2: slid one pitch in -- photograph 1 appears at 3.5 mm.
+            rc, r2, scans, out, err = _run(d, _holder_apertures(_starts_for(3.5), None))
+            assert rc == 0, (rc, err[-300:])
+            assert r2["numbering"] == "content" and r2["orientation"] == "same", r2
+            e0 = _images(r2)[0]
+            assert e0["whole"] and e0["main"] and not e0["uncertain"], e0
+            assert e0["main"].endswith("image0.tiff") and "image0.tiff" in _names(d), _names(d)
+            assert "lies before the roll's first image (number 0)" in out, out
+            assert r2["problems"] == [], r2["problems"]
+            # The others keep pass 1's numbers: photograph 2 ("1") is now
+            # split, 3 ("2") whole and new, 4 ("3") kept.
+            assert _shape(r2) == {0: "W", 1: "T", 2: "W", 3: "W"}, _shape(r2)
+            assert _images(r2)[3]["kept"] is True and _images(r2)[2]["main"]
+            # Done: photograph 1 now lies at the holder's end wall (nothing
+            # can be beyond it) and the strip's end was seen in aperture 3.
+            assert r2["advice"]["done"] is True and digitize.roll_is_done(d, 1) is True
+    print("test_whole_image_before_the_first_seen_one_is_delivered_as_image0 OK")
+
+
+def test_either_rail_gives_the_same_numbering():
+    """Nothing in the numbering assumes which rail the strip lies against:
+    with the perforated edge on either lateral side, both placements
+    number identically."""
+    for placement in ("A", "B"):
+        seen = set()
+        for side in ("lo", "hi"):
+            with tempfile.TemporaryDirectory() as d:
+                rc, r1, *_ = _run(d, _holder_apertures(_strip1(placement, side=side), None))
+                assert rc == 0, (side, placement, rc)
+                assert r1["problems"] == [], (side, placement, r1["problems"])
+                seen.add(tuple(sorted(_shape(r1).items())))
+        assert len(seen) == 1, (placement, seen)
+    print("test_either_rail_gives_the_same_numbering OK")
+
+
+def test_rebuild_refuses_a_roll_recorded_as_a_two_strip_load():
+    """Manifests written by the withdrawn two-strip mode carry "strips": 2;
+    such a roll is still refused by --from-frames and nothing is touched."""
+    with _content():
+        with tempfile.TemporaryDirectory() as d:
+            rc, *_ = _run(d, _holder_apertures(_strip_spec(_starts(3.5, 3), "lo"), None))
+            assert rc == 0
+            m = Path(d) / "manifest.jsonl"
+            lines = m.read_text().splitlines()
+            last = json.loads(lines[-1])
+            last.update(strips=2, slot=1, companion_roll=2)
+            lines[-1] = json.dumps(last)
+            m.write_text("\n".join(lines) + "\n")
+            snap = _tree(d)
+            rc, out, err = _rebuild(d)
+            assert rc == 2 and "recorded as a two-strip load" in err, (rc, err)
+            assert _tree(d) == snap, "a refused rebuild touched files"
+    print("test_rebuild_refuses_a_roll_recorded_as_a_two_strip_load OK")
 
 
 def _snapshot(d):
@@ -1951,21 +1590,6 @@ def main() -> int:
     tests = [
         test_pass_one_between_the_phases_is_numbered_from_its_first_whole_image,
         test_black_and_white_passes_are_compared_in_density,
-        test_slot_constants_and_anchored_numbering,
-        test_two_strips_run_a_makes_two_rolls,
-        test_second_run_fills_both_rolls,
-        test_either_rail_gives_the_same_numbering,
-        test_slot_two_leading_split_is_image_one_and_slot_one_split_is_reported,
-        test_image_seated_on_the_aperture_edge_is_a_leading_split_of_its_own,
-        test_whole_image_before_the_first_seen_one_is_delivered_as_image0,
-        test_empty_slot_two_is_a_found_nothing_roll,
-        test_empty_slot_one_labels_the_run_by_run_order,
-        test_given_placement_covers_both_slots,
-        test_stop_rule_is_per_slot,
-        test_frames_validation_and_flags,
-        test_pair_guard_and_force,
-        test_strips_one_is_unchanged,
-        test_two_strips_three_passes,
         test_run_a_infers_placement_numbers_and_advises,
         test_two_pass_roll_end_to_end,
         test_same_seating_twice_is_accepted_and_changes_nothing,
@@ -1987,6 +1611,10 @@ def main() -> int:
         test_rebuild_reproduces_a_three_pass_roll_offline,
         test_rebuild_after_rotate_90_gives_identical_products,
         test_rebuild_refusals_touch_nothing,
+        test_image_seated_on_the_aperture_edge_is_a_leading_split_of_its_own,
+        test_whole_image_before_the_first_seen_one_is_delivered_as_image0,
+        test_either_rail_gives_the_same_numbering,
+        test_rebuild_refuses_a_roll_recorded_as_a_two_strip_load,
         test_rebuild_writes_an_unrecognised_pass_unnumbered_and_goes_on,
         test_rebuild_with_an_exception_mid_write_changes_nothing,
         test_frame_located_image_reaches_the_manifest,

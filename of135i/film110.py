@@ -1417,35 +1417,11 @@ def infer_placement(aperture: int, line0: float, dpi: float,
     return placement, residual
 
 
-# ------------------------------------------------------------ two strips
+# ---------------------------------------------------------- holder positions
 #
-# `digitize --film 110 --strips 2` (docs/film-110.md §12) loads two 110
-# strips side by side in the six-aperture holder: slot 1 = apertures 1-3,
-# slot 2 = apertures 4-6. Slot 1 is numbered exactly like a lone strip
-# (`image_number`, phase from the holder's left end). Slot 2's strip lies
-# against the holder's RIGHT end, so its start depends on the strip's
-# length and leader: its numbering is anchored by the data instead -- its
-# first numbered image is image 1, every later one is numbered by its
-# distance from that one in film pitches (`image_number_anchored`).
-# Nothing here assumes which lateral rail a strip lies against.
-SLOT_APERTURES = 3
 # An image cannot start before the film does; an image predicted this far
 # before a free film start (px_per_mm * mm) is a hole's ghost, not an image.
 FILM_START_TOLERANCE_MM = 1.0
-
-
-def slot_of(aperture: int, strips: int = 1) -> int:
-    """1-based slot of a holder aperture: always 1 when `strips == 1`;
-    with two strips, apertures 1-3 are slot 1 and 4-6 slot 2."""
-    if strips <= 1:
-        return 1
-    return (aperture - 1) // SLOT_APERTURES + 1
-
-
-def slot_apertures(slot: int) -> range:
-    """The holder apertures of a slot (two-strip loads)."""
-    first = (slot - 1) * SLOT_APERTURES + 1
-    return range(first, first + SLOT_APERTURES)
 
 
 def global_position_mm(aperture: int, line0: float, dpi: float,
@@ -1454,18 +1430,6 @@ def global_position_mm(aperture: int, line0: float, dpi: float,
     aperture 1's start along the holder's own aperture grid -- the same
     coordinate `image_number` works in."""
     return (aperture - 1) * holder.pitch_mm + line0 / (dpi / MM_PER_INCH)
-
-
-def image_number_anchored(line0_mm_global: float, anchor_mm: float,
-                          film: Film = FILM_110) -> tuple:
-    """Number (1-based) and phase residual in mm (signed, |r| <= pitch/2)
-    of the image starting at `line0_mm_global`, counted from the image
-    that starts at `anchor_mm` (image 1). The anchor itself is (1, 0.0).
-    A number < 1 means the image lies before the anchor; the caller
-    refuses it. Pure."""
-    k = (line0_mm_global - anchor_mm) / film.pitch_mm
-    n = round(k) + 1
-    return n, (k - round(k)) * film.pitch_mm
 
 
 # ------------------------------------------------------- free passes (shift)
@@ -1505,43 +1469,6 @@ def number_by_shift(position_mm: float, shift_mm: float, recorded,
     return num + direction * round(k), (k - round(k)) * film.pitch_mm
 
 
-def bar_spans_mm(slot: int = 1, strips: int = 2, holder=STRIP) -> list:
-    """The plastic that can split an image of a slot's strip, as (start,
-    end) mm along the holder: the crossbar after each of its apertures,
-    and the holder's end wall before aperture 1 (slot 1, or a lone strip)
-    -- taken as one bar wide, so centring it in a gap works like any bar.
-    (Test 104: image 1 seated at 0.0 mm was "split by the leading bar"
-    and the advice found no bar to centre.) A lone strip (`strips` 1)
-    owns all six apertures; slot 2's last bar is the holder's far end."""
-    aps = slot_apertures(slot) if strips == 2 else range(1, 7)
-    bar = holder.pitch_mm - holder.aperture_mm
-    spans = [((j - 1) * holder.pitch_mm + holder.aperture_mm,
-              j * holder.pitch_mm) for j in aps]
-    if aps[0] == 1:
-        spans.insert(0, (-bar, 0.0))
-    return spans
-
-
-def bar_centering_shifts(position_mm: float, bars, film: Film = FILM_110) -> list:
-    """Shifts (mm, signed along the holder) that put a bar which splits the
-    image starting at `position_mm` into the gap between films -- the gap
-    after the image or the gap before it -- at the gap's middle. The gap is
-    a pitch minus an image long (8.3 mm), the bar about 2 mm, so the
-    centring leaves about 3 mm either way. Pure."""
-    length = film.image_mm[0]
-    gap = film.pitch_mm - length
-    out = []
-    for b0, b1 in bars:
-        # A bar within WHOLE_MARGIN_MM of the image splits it, as the
-        # detector's whole/split rule says (an image seated exactly at
-        # the holder's end wall touches it without overlapping it).
-        if b1 > position_mm - WHOLE_MARGIN_MM and b0 < position_mm + length + WHOLE_MARGIN_MM:
-            c = (b0 + b1) / 2
-            out.append(c - (position_mm + length + gap / 2))
-            out.append(c - (position_mm - gap / 2))
-    return out
-
-
 # ------------------------------------------- slid or turned? (image content)
 #
 # Between two runs the operator may also TURN the strip 180 degrees in its
@@ -1566,7 +1493,7 @@ ORIENT_EVIDENCE_MARGIN = 1.0    # ... its evidence (the sum over DISTINCT new si
                                 # many different pictures agree, not by one pair
 END_AGREE_MM = 3.0              # a slide must agree with a free film end seen in both runs
 RANGE_SLACK_MM = 3.0            # a hypothesis may put a recorded image this far outside the
-                                # slot's range (edge refinement and the wall's exact place:
+                                # holder's range (edge refinement and the wall's exact place:
                                 # Test 104, roll 6, a strip turned about its own centre put
                                 # photograph 4 at -17.7 mm against the range's -17.2 and the
                                 # true hypothesis was pruned)
@@ -1783,13 +1710,12 @@ def decide_orientation(new, old, film: Film = FILM_110, *,
             "pairs": n, "evidence": evidence, "runner_up_evidence": runner_up}
 
 
-def slot_position_range(slot: int = 1, strips: int = 1, film: Film = FILM_110,
-                        holder=STRIP) -> tuple:
-    """(lo, hi) mm along the holder where an image START of this slot's
-    strip can lie: from one image length before the slot's first aperture
-    (a leading split) to the end of its last one. A lone strip owns the
-    whole holder. Pure."""
-    aps = slot_apertures(slot) if strips == 2 else range(1, 7)
+def holder_position_range(film: Film = FILM_110, holder=STRIP) -> tuple:
+    """(lo, hi) mm along the holder where an image START of the strip can
+    lie: from one image length before the first aperture (a leading
+    split) to the end of the last one. The strip owns the whole holder.
+    Pure."""
+    aps = range(1, 7)
     lo = (aps[0] - 1) * holder.pitch_mm - film.image_mm[0]
     hi = aps[-1] * holder.pitch_mm
     return lo, hi

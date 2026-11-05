@@ -109,14 +109,6 @@ single USB operation the driver would otherwise perform:
   `refused`), `problems` and `advice` (`other_placement`, `images` still to
   be taken there); a 110 roll takes two records, one per placement
   (`docs/film-110.md` §11).
-  `digitize --film 110 --strips 2` writes one such record per slot's roll
-  (N and N+1) and adds `strips` (`2`), `slot` (`1`/`2`), `companion_roll`
-  (the other roll), `placement_source` (`"given"`, `"inferred"` for slot 1,
-  `"slot 1 inferred"` for slot 2, or `"run order"`) and `film_found`
-  (false when every aperture of the slot was empty — the roll is still
-  recorded `ok` and counts as done); `frames` lists the slot's apertures and
-  an `images` entry may be `split: "leading"` (slot 2's first image)
-  (`docs/film-110.md` §12). A one-strip run writes none of these.
 
 ## Open M2 items
 
