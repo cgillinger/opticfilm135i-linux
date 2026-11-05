@@ -43,8 +43,9 @@ HEX = re.compile(r"(?:[0-9a-fA-F]{2})*")
 
 def replay_problem(ops):
     """Why ``ops`` must not be replayed, or None. Checked before the
-    device is opened: an OF135I_TRACE conversion marks ops whose payload
-    was not fully recorded as partial, and a write must carry real hex."""
+    device is opened: an OF135I_TRACE conversion marks every op with
+    ``src`` (diagnostic only) and ops whose payload was not fully recorded
+    as partial, and a write must carry strict hex."""
     if not isinstance(ops, list):
         return "trace is not a list of ops"
     for i, op in enumerate(ops):
@@ -52,6 +53,9 @@ def replay_problem(ops):
             return f"op{i} is not an object"
         if op.get("partial"):
             return f"op{i} ({op.get('t')}) has a partial payload (diagnostic recording)"
+        if "src" in op:
+            return (f"op{i} ({op.get('t')}) comes from {op['src']!r}, a converted "
+                    f"OF135I_TRACE recording (diagnostic only, transfers may be missing)")
         if op.get("t") in ("cw", "bo"):
             data = op.get("data")
             if not isinstance(data, str) or HEX.fullmatch(data) is None:

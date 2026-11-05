@@ -664,6 +664,26 @@ class TraceTests(unittest.TestCase):
                 self.assertIn("refused", self.replay([dict(t="bi", len=8, dt=0.0), op]))
         self.assertIn("refused", self.replay({"ops": []}))
 
+    def test_converter_marks_every_op_and_replay_refuses_it(self):
+        dev, _ = self.device()
+        dev.ctrl_transfer(0x40, 4, 0x83, 0, b"\x03\x30")
+        dev.write(2, b"ab")
+        dev.read(0x81, 8)
+        ops, _ = converter.convert(converter.read_records(self.path.read_text()))
+        self.assertEqual([o.get("src") for o in ops], [converter.FORMAT] * 3)
+        self.assertFalse(any(o.get("partial") for o in ops))
+        code = self.replay(ops, "--dry-run")
+        self.assertIn("refused", code)
+        self.assertIn("diagnostic", code)
+        self.assertFalse((self.root / "replay-out").exists())
+
+    def test_committed_captures_pass_replay_check(self):
+        captures = sorted((REPO / "traces").glob("*.trace.json.gz"))
+        self.assertEqual(len(captures), 9)
+        for path in captures:
+            with self.subTest(path=path.name), gzip.open(path, "rt") as handle:
+                self.assertIsNone(replay_trace.replay_problem(json.load(handle)))
+
     def test_replay_accepts_capture_shaped_trace(self):
         ops = [dict(t="cw", bm=0x40, br=4, wv=0x83, wi=0, data="", dt=0.0),
                dict(t="bo", data="0102", dt=0.1), dict(t="bi", len=8, dt=0.1)]

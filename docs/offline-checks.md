@@ -123,10 +123,16 @@ leaves no partial file; an existing output is refused.
 Only the first 64 bytes of control and bulk-OUT payloads are recorded;
 bulk-IN image data is never recorded. A longer payload is never padded or
 cut: its op gets `data`/`resp` `null`, the full `len` and
-`"partial": true`. `tools/replay_trace.py` refuses, before opening the
-device, any trace with a partial op or a control/bulk write without
-complete hex data, so a converted recording cannot be replayed with fake
-payloads. These are diagnostic comparisons, not replay captures.
+`"partial": true`. A record whose `data` is not strict hex or not exactly
+`min(len, 64)` bytes counts as damaged.
+
+Converter output is diagnostic only: transfers are dropped (failed, short
+OUT/control-IN, interrupt reads, damaged lines), so every converted op
+carries `"src": "of135i-trace/1"`. `tools/replay_trace.py` refuses,
+before opening the device, any trace containing an op with `src`, a
+partial op, or a control/bulk write whose data is not strict hex (pairs
+of hex digits, no whitespace). Committed captures in `traces/` carry no
+`src` key and still pass; loaders that read ops by key ignore it.
 
 ### 4. Compiler-based suites (need `g++`, no backend)
 

@@ -19,9 +19,13 @@ Notes:
 - The recorder keeps only the first 64 bytes of control and bulk-OUT
   payloads. An op whose payload was longer gets ``data``/``resp`` null,
   its full ``len`` and ``"partial": true`` -- no padded or truncated bytes
-  are ever emitted, and tools/replay_trace.py refuses any trace carrying
-  a partial op or a write without data. These diagnostic traces are not
-  complete captures for replay.
+  are ever emitted.
+- The output is diagnostic only, never a replayable capture: transfers
+  are dropped (failed, short OUT/control-IN, interrupt, damaged lines),
+  so every op carries ``"src": "of135i-trace/1"`` and
+  tools/replay_trace.py refuses any trace containing such an op (or a
+  partial op, or a write without strict hex data). Loaders that read
+  ops by key ignore the extra key.
 - The output is written to a 0600 temp file in the same directory and
   hard-linked into place, so a failed run leaves no partial output; an
   existing file or symlink is refused. Failed transfers, short OUT and short control-IN transfers
@@ -175,6 +179,7 @@ def convert(records: list[dict]) -> tuple[list[dict], int]:
         if whole is None and op["t"] != "bi":
             op.update(len=r["len"], partial=True)
         op["dt"] = round(dt, 6)
+        op["src"] = FORMAT          # diagnostic only: replay_trace.py refuses it
         ops.append(op)
     return ops, skipped
 
