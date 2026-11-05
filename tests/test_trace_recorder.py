@@ -528,20 +528,18 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(converter.main([str(self.path), "-o", str(out)]), 1)
         self.assertEqual(victim.read_bytes(), b"keep")
 
-    def test_converter_keeps_submission_spacing(self):
-        records = []
-        for start, dur, direction in ((0., .1, "out"), (1., .2, "out"), (2., .5, "in")):
-            records.append(dict(t=start, dur=dur, kind="ctrl", dir=direction, status="ok",
-                                bm=0xc0 if direction == "in" else 0x40, br=4,
-                                wv=0x8e if direction == "in" else 0x83, wi=0,
-                                wlen=2, len=2, data="2255" if direction == "in" else "0330"))
+    def test_converter_timestamps_follow_compile_trace(self):
+        # compile_trace.py: cw/cr/bo stamped at submission, bi at completion,
+        # dt from the previous op, first dt 0.0, and cr carries no dur.
+        ctrl = dict(kind="ctrl", status="ok", br=4, wi=0, wlen=2, len=2)
+        records = [dict(ctrl, t=.25, dur=.1, dir="out", bm=0x40, wv=0x83, data="0330"),
+                   dict(ctrl, t=1., dur=.2, dir="in", bm=0xc0, wv=0x8e, data="2255"),
+                   dict(t=2., dur=.5, kind="bulk", dir="in", status="ok", len=8),
+                   dict(t=3., dur=.1, kind="bulk", dir="out", status="ok", len=1, data="00")]
         ops, skipped = converter.convert(records)
-        cumulative = 0.
-        starts = []
-        for op in ops:
-            cumulative += op["dt"]
-            starts.append(cumulative - op.get("dur", 0.))
-        self.assertEqual(starts, [0., 1., 2.])
+        self.assertEqual([o["t"] for o in ops], ["cw", "cr", "bi", "bo"])
+        self.assertEqual([o["dt"] for o in ops], [0.0, 0.75, 1.5, 0.5])
+        self.assertNotIn("dur", ops[1])
         self.assertEqual(skipped, 0)
 
     def test_converter_format_matches_recorder(self):

@@ -145,10 +145,11 @@ def convert(records: list[dict]) -> tuple[list[dict], int]:
             skipped += 1
             continue
         start, dur = float(r["t"]), float(r.get("dur", 0.0))
-        # The loader places a control read at (running sum - dur) and every
-        # other op at the running sum: keep submission-time spacing.
-        at = start + dur if r["kind"] == "ctrl" and r["dir"] == "in" else start
-        dt = max(0.0, at - prev) if ops else at
+        # compile_trace.py stamps cw/cr/bo at URB submission and bi at its
+        # completion; dt is the gap to the previous op (0.0 for the first).
+        bulk_in = r["kind"] == "bulk" and r["dir"] == "in"
+        at = start + dur if bulk_in else start
+        dt = max(0.0, at - prev) if ops else 0.0
         prev = max(prev, at)
         data = bytes.fromhex(r.get("data", ""))
         # A payload longer than the recorded cap is never padded or cut:
@@ -159,7 +160,7 @@ def convert(records: list[dict]) -> tuple[list[dict], int]:
             if r["dir"] == "out":
                 op.update(t="cw", data=whole)
             else:
-                op.update(t="cr", len=r["wlen"], resp=whole, dur=dur)
+                op.update(t="cr", len=r["wlen"], resp=whole)
         elif r["dir"] == "out":
             op = {"t": "bo", "data": whole}
         else:
