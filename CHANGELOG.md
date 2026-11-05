@@ -18,9 +18,12 @@ one exists; "offline" means implemented and tested without the scanner.
   `cal_shading_measure` site keeps its class-F match and 5 s), and a
   timeout reports "the previous acquisition did not stop". A control read
   that returns no data no longer counts as a match in any masked poll.
-  Transfers are unchanged when the scanner has already stopped. Offline only
-  (`tests/test_sane_ops.py`); not run on hardware and not in the
-  submitted series. The wait was designed by bearyjd for the Python
+  Transfers are unchanged when the scanner has already stopped. Offline
+  tests in `tests/test_sane_ops.py`. Hardware, the developer's unit
+  (Test 118): frame 1 at 600 dpi and at plain 3600 dpi completed; at
+  plain 3600 three of the fourteen polls waited 11-18 ms for reg 0x100,
+  where earlier builds went on. Not run on a unit that shows the failure
+  and not in the submitted series. The wait was designed by bearyjd for the Python
   driver; the failure was reported by Krustenviech (#35).
 
 - **Removed: `digitize --film 110 --strips 2`.** The mode let two short 110

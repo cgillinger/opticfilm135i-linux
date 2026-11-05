@@ -327,8 +327,10 @@ reports show:
   unit ran them).
 - The whole-strip sweep (`digitize --sweep`) and `digitize` in general.
 - 110 film.
-- The SANE backend: its generated op programs now wait at the same
-  sites ("The SANE backend" below), offline-tested only.
+- The SANE backend on a fast host: its generated op programs now wait
+  at the same sites ("The SANE backend" below) and ran on the owner's
+  unit at 600 and plain 3600 dpi (Test 118); no affected unit has run
+  it.
 
 Callers of those paths are gated from this change on without a hardware
 run of that combination. The mechanism is the same executor change in
@@ -396,10 +398,19 @@ fails if a read is missing. A timeout is a fail-closed `PollTimeout`
 (nothing further is written, power cycle) reported as "the previous
 acquisition did not stop". `position`, `scan`, `park`, the upload
 programs and the magazine programs have no gate. With a scanner that has
-already stopped the transfers are unchanged. **Offline-tested only
-(tests/test_sane_ops.py); not run on hardware, not in the submitted
-series (`sane/wp3-package/`).** The wait was designed by bearyjd for the
-Python driver and ported here.
+already stopped the transfers are unchanged. The wait was designed by
+bearyjd for the Python driver and ported here.
+
+**Hardware (Test 118, owner's unit, 2026-11-05):** one frame at 600 dpi
+and one at plain 3600 dpi completed. All 14 gate polls of the 600 dpi
+scan settled at the first read. At plain 3600 dpi three of the 14 found
+bit 0 of reg 0x100 still set and waited 11–18 ms (after `cal_white`,
+`cal_shading_measure` and `cal_shading_verify`). Earlier builds of the
+backend passed such reads over on this unit in most runs, without a
+residual dark_b (docs/test-log.md, Test 118). **Not run on a host that
+shows the issue #35 failure, not at 1200/2400/7200 dpi or ir3600, and not
+in the submitted series yet (`sane/wp3-package/`).** No timeout has
+occurred on hardware.
 
 Where the backend's wait differs from the Python gate:
 

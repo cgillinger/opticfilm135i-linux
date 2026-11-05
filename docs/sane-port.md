@@ -64,7 +64,11 @@ with nothing to re-sync. The eventual merge request takes copies.
   same as before (84 op lines differ, in kind / mask / want / timeout
   only). Verified offline with the op-program probe (a late stop is
   waited for, a stop that never comes fails closed with no transfer
-  after the last read). **Not run on hardware**, and not in the
+  after the last read). **Hardware (Test 118, 2026-11-05, the
+  developer's unit):** frame 1 at 600 dpi and at plain 3600 dpi
+  completed; at plain 3600 three of the fourteen gate polls found bit 0
+  of reg 0x100 still set and waited 11-18 ms, the rest settled at the
+  first read. Not run on a unit that shows the failure, and not in the
   submitted series: `sane/wp3-package/` still carries the previous
   tables.
 - **Stage 2 — done (offline).** `tools/gen_sane_tables.py` emits
