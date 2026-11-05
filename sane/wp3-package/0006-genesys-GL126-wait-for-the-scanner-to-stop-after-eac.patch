@@ -1,38 +1,35 @@
-From f58f405ef041704068d3a5c73d2a05edcc94738a Mon Sep 17 00:00:00 2001
+From b00450486b02273ee736b52c9bf332ff2af35aeb Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
 Date: Thu, 5 Nov 2026 18:54:40 +0100
 Subject: [PATCH 6/6] genesys: GL126, wait for the scanner to stop after each
  calibration acquisition
 
-Each of the seven calibration acquisitions ends with a SCAN-clear
-followed by one read of reg 0x100 and one of reg 0x101. The vendor
-traffic reads each register once, and the backend did the same and went
-on. Bit 0 of either register is still set while the engine is running.
-On a fast host the next acquisition was then armed too early and the
-second dark measurement came back as a repeat of the first, which the
-backend detects and refuses. Two users of the reverse-engineered
-companion driver saw that failure on every scan until the driver
-waited.
+Every calibration acquisition ends with a SCAN-clear, then one read of
+reg 0x100 and one of reg 0x101. Bit 0 of each is set while the engine
+still runs. The vendor driver reads them once and so did the backend,
+without acting on the result. On a fast host the next acquisition then
+starts too early and the second dark measurement returns stale data,
+which the backend refuses. Two users of the companion driver hit this
+on nearly every scan.
 
-The two reads are now masked polls: bit 0 of reg 0x100 clear, then
-bit 0 of reg 0x101 clear, 300 ms each, 4 ms apart. The one site the
-vendor polls (plain 3600 dpi, after the shading measurement) keeps its
-class-F match and its 5 s and now also requires bit 0 clear. A timeout
-ends the scan with nothing further written and is reported as "the
-previous acquisition did not stop". When the scanner has already
-stopped, the transfers are those of the previous revision.
+Turn the two reads into masked polls that wait for bit 0 to clear
+(300 ms each, 4 ms interval). The site the vendor already polls, after
+the shading measurement at plain 3600 dpi, keeps class F and 5 s and
+requires bit 0 clear as well. On timeout nothing more is written and
+the error says "the previous acquisition did not stop".
 
-A masked poll's reply buffer now starts at a value that cannot match,
-so a control read that returns no data is never taken for the awaited
-state.
+While here, start a masked poll's reply buffer at a value that cannot
+match. sanei_usb reports a short control reply as success, and with a
+zeroed buffer a wait for a clear bit would pass on an empty reply.
 
-Only the generated tables, the runner's masked poll and one error text
-change; 84 ops in gl126_tables.cpp differ, in kind, mask, want and
-timeout. Verified on the scanner at 600 and 3600 dpi: at 3600 dpi three
-of the fourteen polls waited 11 to 18 ms, the others settled at the
-first read.
+No change in the transfers when the scanner has already stopped. Only
+gl126_tables.cpp (84 ops), the masked poll in gl126_ops.cpp and one
+error text in gl126.cpp are touched.
 
-The wait was designed by bearyjd for the companion driver.
+Tested on the scanner at 600 and 3600 dpi. At 3600 dpi three of the
+fourteen polls had to wait, 11 to 18 ms.
+
+The wait is bearyjd's design, from the companion driver.
 ---
  backend/genesys/gl126.cpp        |  25 ++++-
  backend/genesys/gl126_ops.cpp    |   6 +-

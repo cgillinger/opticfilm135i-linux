@@ -99,7 +99,7 @@ branch 'various_fix_warnings' into 'master'", `origin/master` as fetched
 | 3 | `506f5898ee03ecc8dd254c28a1a15f6830c06303` | `fbf1a80ae26fd519d6d92175894cae75be7676b7` | genesys: frame selection and magazine handling for the OpticFilm 135i |
 | 4 | `cfb390a6d9922d0b39fa7eb498b2ceef01497264` | `caef408a84ad66d95005275b83aac4aa5afd1795` | genesys: document the GL126 and the OpticFilm 135i |
 | 5 | `94628f3f2f538b7bc215d90d65ef1f92ff5dae6a` | `ab97f45fcb35d812262216f815423f3716a0159a` | genesys: GL126 cold start, restore the reg 0x32 write between moves 2 and 3 |
-| 6 | `f58f405ef041704068d3a5c73d2a05edcc94738a` | `43df73bdcf2e1449699fa07b13badf43ad7514ae` | genesys: GL126, wait for the scanner to stop after each calibration acquisition |
+| 6 | `b00450486b02273ee736b52c9bf332ff2af35aeb` | `43df73bdcf2e1449699fa07b13badf43ad7514ae` | genesys: GL126, wait for the scanner to stop after each calibration acquisition |
 
 The tip tree `43df73bd…` is the identity of the package: any route below
 that ends on that tree has recreated it exactly. v8 was tip
@@ -174,7 +174,7 @@ git clone https://gitlab.com/sane-project/backends.git sane-backends
 cd sane-backends
 git fetch /path/to/wp3-gl126-submission.bundle wp3-gl126-submission-v9
 git checkout -b wp3-gl126-submission FETCH_HEAD
-git rev-parse HEAD            # f58f405ef041704068d3a5c73d2a05edcc94738a
+git rev-parse HEAD            # b00450486b02273ee736b52c9bf332ff2af35aeb
 git rev-parse HEAD^{tree}     # 43df73bdcf2e1449699fa07b13badf43ad7514ae
 ```
 
@@ -228,10 +228,15 @@ Offline, with no scanner contact, in the worktree `sane-wp3-v9`.
 | clang build of the genesys backend in the project's CI image (`registry.gitlab.com/sane-project/ci-envs:fedora-39-clang`, clang 17.0.1, `CXXFLAGS=-Werror`; `lib`, `sanei`, `backend/libsane-genesys.la`) | exit 0, 0 warnings |
 | upstream `genesys_unit_tests` in the same container (`make -C testsuite/backend/genesys check`) | PASS (1/1) |
 | upstream `tools/style-check.sh` on the four changed files | exit 0 |
-| Route A: fetch from the bundle in a clean clone | tip `f58f405e…`, tree `43df73bd…`, identical |
+| Route A: fetch from the bundle in a clean clone | tip `b0045048…`, tree `43df73bd…`, identical |
 | Route B: `git am` of the six patches onto `59d255866` in a clean clone | tree `43df73bd…`, identical |
 | symlinks in the recreated tree | 0 |
 | the GL126 files against this repository's `sane/` | byte-identical except `gl126.cpp` (the v7 divergence only) |
+
+The message of commit 6 was reworded after these checks, which changed
+its id and nothing else: the tree is the same (`43df73bd…`), so every
+result above applies, and both recreate routes were run again on the
+final commit.
 
 Not run for v9: the full replay of the upstream `make-dist` and compile
 jobs (only the genesys backend was built with clang), `make distcheck`,
