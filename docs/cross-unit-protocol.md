@@ -1,7 +1,11 @@
 # Cross-unit protocol
 
-Status: offline-tested (`tests/test_cross_unit_check.py`), not yet run on
-any scanner.
+Status: run once on the developer unit (Test 115, docs/test-log.md),
+where it completed. That run found that the tool missed the sidecars and
+packed the images; both are fixed, and the fix was checked offline against
+that run's real file names. Not yet run on a second unit; the
+stop-on-failure, exit-4 and interrupt paths have only been run offline
+(`tests/test_cross_unit_check.py`).
 
 ## 1. Why
 
@@ -41,7 +45,8 @@ packs the evidence.
   the magazine and reads your Enter key (section 4), so the tool cannot
   run with its input piped or redirected; without `--yes` it refuses to
   start in that case, before anything is sent.
-- About 10 minutes.
+- A few minutes. On the developer unit the whole sequence took about
+  two minutes, the operator's part included (Test 115).
 
 ## 3. The run
 

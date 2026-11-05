@@ -265,7 +265,10 @@ def run_command(argv: list) -> tuple:
     terminal also sends to the child) the tool waits a short time for the
     child to end and re-raises with the partial output in `partial_output`;
     it sends nothing to the scanner itself."""
-    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    # Unbuffered child output: its print() lines and its log lines (stderr)
+    # then reach the terminal and log.txt in the order they were written.
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            env=dict(os.environ, PYTHONUNBUFFERED="1"))
     chunks = []
     fd = proc.stdout.fileno()
     try:
@@ -426,7 +429,7 @@ def render_report(summary: dict) -> str:
     L.append(f"- Host: {h.get('platform')}, Python {h.get('python')}, pyusb {h.get('pyusb')}, "
              f"driver {h.get('driver_revision') or h.get('driver_version')}")
     L.append(f"- Sequence: {','.join(summary['sequence'])} at {summary['dpi']} dpi, "
-             f"{summary['frame']} frame(s) per scan")
+             f"frame {summary['frame']}")
     L.append(f"- Result: {summary['result']}")
     if summary.get("failed_step"):
         L.append(f"- Failed step: {summary['failed_step']}")
