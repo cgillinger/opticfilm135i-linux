@@ -161,8 +161,10 @@ operator, upstream master 6270867, 600 dpi, frame 4, order as asked
 
 Three failures are consistent, not a rate. Every completed scan exited
 4 (aperture coverage not verified, "no aperture found in profile"); that
-is the image check and is unexplained here (the report says "slide frame
-4"; which holder was in the unit has not been confirmed).
+is the image check, which was built on the film-strip holder. bearyjd
+confirmed afterwards (issue #35, 2026-11-05) that the slide holder was
+in the unit for every scan and is the only holder available there, which
+explains it.
 
 ### What the two units' numbers say
 
@@ -236,7 +238,12 @@ Open questions:
   cadence for control transfers on that host, not a slow host.
 - Why the second unit is still running at about 20 ms in its first scan
   after a load when the owner's has stopped by about 16 ms (Test 115).
-- The exit 4 on the second unit.
+- What the blinking blue power light means that the second unit showed
+  after each gate-off failure (it needed a full power off; a plain
+  `of135i load` worked afterwards).
+
+Answered since: the exit 4 on the second unit was the slide holder (see
+above).
 
 ## Third unit: Steam Deck (Krustenviech, 2026-11-05)
 
@@ -303,7 +310,9 @@ Run gated (with the gate on):
   which ran gated (7 waits, all cleared at the first read): the default
   itself, on hardware.
 - bearyjd's unit (external report, 2026-11-04): 600 dpi, frame 4, seven
-  scans; which holder was in the unit is not confirmed.
+  scans, all with the slide holder (confirmed 2026-11-05). Calibration
+  and the gate ran in full; each scan exited 4 because the image check
+  does not find the film-strip aperture in a slide holder.
 - Steam Deck (external report, 2026-11-05): 600 dpi, film strip, frame 1,
   six runs / seven frames.
 - Earlier, with the fork's version of the gate and not master: one clean
@@ -317,7 +326,6 @@ reports show:
   unit ran them).
 - The whole-strip sweep (`digitize --sweep`) and `digitize` in general.
 - 110 film.
-- The slide holder with master's gate (bearyjd's holder is unconfirmed).
 - The SANE backend, which has no gate.
 
 Callers of those paths are gated from this change on without a hardware

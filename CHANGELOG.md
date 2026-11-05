@@ -32,8 +32,9 @@ one exists; "offline" means implemented and tested without the scanner.
   on hardware). Across the three units ungated scans failed 5 of 5 on the two fast
   hosts; gated scans completed on all. `--cal-wait-scanstop off` stays and
   sends exactly the transfers of a driver without the gate. Not run with the
-  gate on hardware: 1200/2400/7200 dpi, the whole-strip sweep, 110 film, the
-  slide holder with master's gate (docs/cal-scanstop-gate.md, "Decision"). A
+  gate on hardware: 1200/2400/7200 dpi, the whole-strip sweep, 110 film
+  (docs/cal-scanstop-gate.md, "Decision"; the slide holder has run gated,
+  bearyjd's seven scans, confirmed afterwards). A
   gate timeout is a fail-closed `CalibrationError` needing a power cycle. The
   residual-dark_b error now names the gate when it is off; the
   `_healthy_dark_b` docstring no longer claims frame 1 is always healthy.
