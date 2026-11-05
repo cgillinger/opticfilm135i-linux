@@ -70,7 +70,7 @@ with nothing to re-sync. The eventual merge request takes copies.
   of reg 0x100 still set and waited 11-18 ms, the rest settled at the
   first read. Not run on a unit that shows the failure. Exported the
   same day as revision v9 of the submission series (`sane/wp3-package/`,
-  one commit on top of v8), not pushed to the merge request.
+  on top of v8), not pushed to the merge request.
 - **Stage 2 — done (offline).** `tools/gen_sane_tables.py` emits
   `sane/gl126_tables.{h,cpp}` from `of135i/tables*.py`: the base, AFE,
   cold-init and loader-speed tables, the deduplicated motor slope tables,

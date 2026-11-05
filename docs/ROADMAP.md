@@ -359,7 +359,7 @@ progress.**
   v7 (2026-10-13) and revision v8 (2026-10-16), the latter dropping the
   backend's process lock at a maintainer's question; v8 is what the
   merge request carries, its pipeline is green, and there is no review
-  verdict yet. Revision v9 (2026-11-05: v8 plus one commit, the
+  verdict yet. Revision v9 (2026-11-05: v8 plus the
   calibration stop gate, `docs/cal-scanstop-gate.md`) is prepared in
   `sane/wp3-package/` and not pushed. B2's definition of done
   is *submitted, review-ready* (see **B2 — SANE contribution delivered**

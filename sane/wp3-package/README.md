@@ -3,11 +3,11 @@
 **Status: revision v9 prepared 2026-11-05, NOT pushed.** The merge request
 (!1032, <https://gitlab.com/sane-project/backends/-/merge_requests/1032>)
 still holds v8 (fork source branch `wp3-gl126-submission-v5`, tip
-`94628f3f2`; open, no conflicts, checked 2026-11-05). v9 is v8 with one
-commit added on top; the five v8 commits keep their ids and the base is
+`94628f3f2`; open, no conflicts, checked 2026-11-05). v9 is v8 with two
+commits added on top; the five v8 commits keep their ids and the base is
 unchanged, so nothing is rebased. The series is exactly the repository's
 `sane/` (the nine `gl126_*` files and `gl126-integration.patch`) with the
-two exposure-time edits described under v7, as six commits in two forms
+two exposure-time edits described under v7, as seven commits in two forms
 that recreate it without manual reconstruction.
 
 ## Why v9 exists
@@ -17,7 +17,7 @@ the next calibration acquisition while the previous one was still
 running, and the second dark measurement came back as residual data,
 which the backend detects and refuses. Two other units showed this in the
 companion driver on every scan (this repository's issue #35); the
-backend had never been run there. Commit 6:
+backend had never been run there. Commit 6 (commit 7 follows below):
 
 - **The two reads after each calibration SCAN-clear are masked polls.**
   Bit 0 of reg 0x100 clear, then bit 0 of reg 0x101 clear, 300 ms each,
@@ -36,6 +36,13 @@ backend had never been run there. Commit 6:
 Every GL126 file in the v9 tree is byte-identical to this repository's
 `sane/` except `gl126.cpp`, which keeps the v7 divergence (the
 `exposure_lperiod` assignment exists only in `sane/`).
+
+Commit 7 changes comments only. `gl126.cpp`, `gl126.h` and
+`gl126_registers.h` started as copies of the gl124 files and named only
+the new author; they now say which files they derive from and keep the
+original copyright lines (Stéphane Voltz, Povilas Kanapickas). The banner
+of the generated tables no longer says that reads and polls are not
+reproduced.
 
 ## History: why v8 existed (v8 is the series before this one)
 
@@ -82,9 +89,10 @@ clone is based on the older upstream).
 | `0004-genesys-document-the-GL126-and-the-OpticFilm-135i.patch` | commit 4 |
 | `0005-genesys-GL126-cold-start-restore-the-reg-0x32-write-.patch` | commit 5 |
 | `0006-genesys-GL126-wait-for-the-scanner-to-stop-after-eac.patch` | commit 6 (new in v9) |
+| `0007-genesys-GL126-name-the-gl124-files-the-GL126-files-d.patch` | commit 7 (new in v9, comments only) |
 
 Patches 1 to 5 differ from the v8 export only in their numbering
-(`n/6`) and the git version line.
+(`n/7`) and the git version line.
 
 ## Revisions
 
@@ -99,9 +107,12 @@ branch 'various_fix_warnings' into 'master'", `origin/master` as fetched
 | 3 | `506f5898ee03ecc8dd254c28a1a15f6830c06303` | `fbf1a80ae26fd519d6d92175894cae75be7676b7` | genesys: frame selection and magazine handling for the OpticFilm 135i |
 | 4 | `cfb390a6d9922d0b39fa7eb498b2ceef01497264` | `caef408a84ad66d95005275b83aac4aa5afd1795` | genesys: document the GL126 and the OpticFilm 135i |
 | 5 | `94628f3f2f538b7bc215d90d65ef1f92ff5dae6a` | `ab97f45fcb35d812262216f815423f3716a0159a` | genesys: GL126 cold start, restore the reg 0x32 write between moves 2 and 3 |
-| 6 | `b00450486b02273ee736b52c9bf332ff2af35aeb` | `43df73bdcf2e1449699fa07b13badf43ad7514ae` | genesys: GL126, wait for the scanner to stop after each calibration acquisition |
+| 6 | `8f409b42c0da6c07e735d778497cd02cb97528d3` | `43df73bdcf2e1449699fa07b13badf43ad7514ae` | genesys: GL126, wait for the scanner to stop after each calibration acquisition |
+| 7 | `18bea9b3242d0f099155a6be761273dca55132bb` | `60c3bff8768a39b201a2dd0282e733a45273a7de` | genesys: GL126, name the gl124 files the GL126 files derive from |
 
-The tip tree `43df73bd…` is the identity of the package: any route below
+The tip tree `60c3bff8…` is the identity of the package (the tree after
+commit 6, `43df73bd…`, is the code the second unit's test refers to;
+commit 7 adds comments only): any route below
 that ends on that tree has recreated it exactly. v8 was tip
 `94628f3f2f53…`, tree `ab97f45fcb35…`; v7 was tip
 `cf21d4327b86…`, tree `f2a530c170b9…`; v6 tip `ec21b712f1c1…`, tree
@@ -174,8 +185,8 @@ git clone https://gitlab.com/sane-project/backends.git sane-backends
 cd sane-backends
 git fetch /path/to/wp3-gl126-submission.bundle wp3-gl126-submission-v9
 git checkout -b wp3-gl126-submission FETCH_HEAD
-git rev-parse HEAD            # b00450486b02273ee736b52c9bf332ff2af35aeb
-git rev-parse HEAD^{tree}     # 43df73bdcf2e1449699fa07b13badf43ad7514ae
+git rev-parse HEAD            # 18bea9b3242d0f099155a6be761273dca55132bb
+git rev-parse HEAD^{tree}     # 60c3bff8768a39b201a2dd0282e733a45273a7de
 ```
 
 **Route B — the patches (same trees, new commit ids):**
@@ -184,8 +195,8 @@ git rev-parse HEAD^{tree}     # 43df73bdcf2e1449699fa07b13badf43ad7514ae
 git clone https://gitlab.com/sane-project/backends.git sane-backends
 cd sane-backends
 git checkout -b wp3-gl126-submission 59d255866
-git am /path/to/000[1-6]-*.patch
-git rev-parse HEAD^{tree}     # 43df73bdcf2e1449699fa07b13badf43ad7514ae
+git am /path/to/000[1-7]-*.patch
+git rev-parse HEAD^{tree}     # 60c3bff8768a39b201a2dd0282e733a45273a7de
 ```
 
 The bundle's one prerequisite is `59d255866…` (`git bundle verify`, run
@@ -222,21 +233,21 @@ Offline, with no scanner contact, in the worktree `sane-wp3-v9`.
 
 | check | result |
 |---|---|
-| Standalone build on `59d255866` + the six commits (`autogen`, `configure --sysconfdir=/etc`, `lib`, `sanei`, `backend/libsane-genesys.la`, `-j8`), gcc | exit 0, **0 compiler warnings** |
+| Standalone build on `59d255866` + the seven commits (`autogen`, `configure --sysconfdir=/etc`, `lib`, `sanei`, `backend/libsane-genesys.la`, `-j8`), gcc | exit 0, **0 compiler warnings** |
 | exported symbols | **105** mentioning `gl126` (as v8) |
 | `tools/release_check.py` with `SANE_BACKENDS_DIR` pointing at that build (all offline suites, including the three backend suites linked against it) | FULL VERIFICATION PASSED, 733 tests, 0 skipped (backend suites 7 + 6 + 42) |
 | clang build of the genesys backend in the project's CI image (`registry.gitlab.com/sane-project/ci-envs:fedora-39-clang`, clang 17.0.1, `CXXFLAGS=-Werror`; `lib`, `sanei`, `backend/libsane-genesys.la`) | exit 0, 0 warnings |
 | upstream `genesys_unit_tests` in the same container (`make -C testsuite/backend/genesys check`) | PASS (1/1) |
-| upstream `tools/style-check.sh` on the four changed files | exit 0 |
-| Route A: fetch from the bundle in a clean clone | tip `b0045048…`, tree `43df73bd…`, identical |
-| Route B: `git am` of the six patches onto `59d255866` in a clean clone | tree `43df73bd…`, identical |
+| upstream `tools/style-check.sh` on the changed files | exit 0 |
+| Route A: fetch from the bundle in a clean clone | tip `18bea9b3…`, tree `60c3bff8…`, identical |
+| Route B: `git am` of the seven patches onto `59d255866` in a clean clone | tree `60c3bff8…`, identical |
 | symlinks in the recreated tree | 0 |
 | the GL126 files against this repository's `sane/` | byte-identical except `gl126.cpp` (the v7 divergence only) |
 
-The message of commit 6 was reworded after these checks, which changed
-its id and nothing else: the tree is the same (`43df73bd…`), so every
-result above applies, and both recreate routes were run again on the
-final commit.
+All checks above were run on the final seven-commit tip (tree
+`60c3bff8…`). Commit 6's message was reworded and given a
+`Co-authored-by` line for bearyjd after its first export; its tree
+(`43df73bd…`) did not change.
 
 Not run for v9: the full replay of the upstream `make-dist` and compile
 jobs (only the genesys backend was built with clang), `make distcheck`,

@@ -1,7 +1,7 @@
 From cfb390a6d9922d0b39fa7eb498b2ceef01497264 Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
 Date: Mon, 28 Sep 2026 19:07:54 +0200
-Subject: [PATCH 4/6] genesys: document the GL126 and the OpticFilm 135i
+Subject: [PATCH 4/7] genesys: document the GL126 and the OpticFilm 135i
 
 The man page's chip list, an AUTHORS entry, and the .desc status from
 :untested to :basic, with a comment describing the scanner and marking the
