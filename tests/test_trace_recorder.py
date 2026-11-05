@@ -29,6 +29,7 @@ from of135i.usbio import UsbIo
 from test_safety import FakeUsbDevice, _cal_buffers, fast_time, make_scanner
 from test_cal_wait_scanstop import BASELINE, _baseline_run, _digest
 import trace_to_compiled as converter
+import replay_trace
 
 
 @contextmanager
@@ -388,20 +389,31 @@ class TraceTests(unittest.TestCase):
                 self.assertEqual((_digest(fake.wire_log), len(fake.wire_log)), BASELINE[name])
         self.assertEqual(list(self.root.iterdir()), [])
 
-    def test_converter_ops_and_padded_bulk_payload(self):
+    def test_converter_ops_and_unpadded_long_bulk_payload(self):
         dev, _ = self.device()
         dev.ctrl_transfer(0x40, 4, 0x83, 0, b"\x03\x30")
         dev.ctrl_transfer(0xc0, 4, 0x8e, 0x122, 2)
         dev.write(2, bytes(range(100)))
         dev.read(0x81, 4096)
+        dev.write(2, bytes(range(64)))
         ops, skipped = converter.convert(converter.read_records(self.path.read_text()))
         self.assertEqual(skipped, 0)
-        self.assertEqual([o["t"] for o in ops], ["cw", "cr", "bo", "bi"])
+        self.assertEqual([o["t"] for o in ops], ["cw", "cr", "bo", "bi", "bo"])
         self.assertEqual(ops[0]["data"], "0330")
         self.assertEqual(ops[1]["resp"], "2255")
-        self.assertEqual(bytes.fromhex(ops[2]["data"]), bytes(range(64)) + bytes(36))
+        self.assertEqual((ops[2]["data"], ops[2]["len"], ops[2]["partial"]), (None, 100, True))
         self.assertEqual(ops[3]["len"], 4096)
+        self.assertEqual(ops[4]["data"], bytes(range(64)).hex())
+        self.assertNotIn("partial", ops[4])
         self.assertTrue(all(o["dt"] >= 0 for o in ops))
+
+    def test_converter_never_emits_truncated_control_payloads(self):
+        dev, _ = self.device()
+        dev.ctrl_transfer(0x40, 4, 0x83, 0, bytes(range(128)))
+        dev.ctrl_transfer(0xc0, 9, 0, 0, 200)
+        cw, cr = converter.convert(converter.read_records(self.path.read_text()))[0]
+        self.assertEqual((cw["t"], cw["data"], cw["len"], cw["partial"]), ("cw", None, 128, True))
+        self.assertEqual((cr["t"], cr["resp"], cr["len"], cr["partial"]), ("cr", None, 200, True))
 
     def test_converter_skips_errors_interrupt_and_partial_line(self):
         error = usb.core.USBTimeoutError("t", -7, 110)
@@ -586,6 +598,40 @@ class TraceTests(unittest.TestCase):
                 self.assertEqual(code, 2)
                 self.assertIn("OF135I_TRACE", err)
                 self.assertFalse(out.exists())
+
+    def replay(self, ops, *args):
+        """replay_trace.main() on a .gz of ``ops``; opening the device fails the test."""
+        src = self.root / "replay.trace.json.gz"
+        with gzip.open(src, "wt") as handle:
+            json.dump(ops, handle)
+        argv = ["replay_trace.py", str(src), "--out", str(self.root / "replay-out"), *args]
+        with patch.object(replay_trace.UsbIo, "open", side_effect=AssertionError("opened")), \
+                patch.object(sys, "argv", argv), redirect_stderr(io.StringIO()):
+            try:
+                return replay_trace.main()
+            except SystemExit as e:
+                return e.code
+
+    def test_replay_refuses_converted_partial_payloads(self):
+        dev, _ = self.device()
+        dev.write(2, bytes(range(100)))
+        ops, _ = converter.convert(converter.read_records(self.path.read_text()))
+        code = self.replay(ops)
+        self.assertIn("refused", code)
+        self.assertIn("partial", code)
+        self.assertFalse((self.root / "replay-out").exists())
+
+    def test_replay_refuses_writes_without_real_data(self):
+        for op in ({"t": "cw", "bm": 0x40, "br": 4, "wv": 0x83, "wi": 0, "data": None},
+                   {"t": "bo"}, {"t": "bo", "data": "zz"}, "cw"):
+            with self.subTest(op=op):
+                self.assertIn("refused", self.replay([dict(t="bi", len=8, dt=0.0), op]))
+        self.assertIn("refused", self.replay({"ops": []}))
+
+    def test_replay_accepts_capture_shaped_trace(self):
+        ops = [dict(t="cw", bm=0x40, br=4, wv=0x83, wi=0, data="", dt=0.0),
+               dict(t="bo", data="0102", dt=0.1), dict(t="bi", len=8, dt=0.1)]
+        self.assertEqual(self.replay(ops, "--dry-run"), 0)
 
 
 if __name__ == "__main__":

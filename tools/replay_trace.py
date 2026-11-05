@@ -37,6 +37,25 @@ from of135i import safety  # noqa: E402
 from of135i.usbio import EP_BULK_IN, EP_BULK_OUT, Of135iError, UsbIo  # noqa: E402
 
 
+def replay_problem(ops):
+    """Why ``ops`` must not be replayed, or None. Checked before the
+    device is opened: an OF135I_TRACE conversion marks ops whose payload
+    was not fully recorded as partial, and a write must carry real hex."""
+    if not isinstance(ops, list):
+        return "trace is not a list of ops"
+    for i, op in enumerate(ops):
+        if not isinstance(op, dict):
+            return f"op{i} is not an object"
+        if op.get("partial"):
+            return f"op{i} ({op.get('t')}) has a partial payload (diagnostic recording)"
+        if op.get("t") in ("cw", "bo"):
+            try:
+                bytes.fromhex(op.get("data"))
+            except (TypeError, ValueError):
+                return f"op{i} ({op['t']}) has no complete write data"
+    return None
+
+
 class Replayer:
     def __init__(self, dev, outdir, log):
         self.dev, self.outdir, self.log = dev, outdir, log
@@ -104,6 +123,9 @@ def main():
     args = ap.parse_args()
 
     ops = json.load(gzip.open(args.trace, "rt"))
+    problem = replay_problem(ops)
+    if problem:
+        sys.exit(f"refused: {problem}; nothing was sent and no device was opened.")
     outdir = Path(args.out)
     outdir.mkdir(parents=True, exist_ok=True)
 

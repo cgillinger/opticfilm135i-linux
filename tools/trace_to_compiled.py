@@ -14,12 +14,12 @@ Notes:
   (exit 1) unless ``--skip-damaged`` is given, which skips those lines.
 - Failed transfers and the interrupt endpoint are skipped (the compiled
   format has no place for them); the count is printed.
-- The recorder keeps only the first 64 bytes of a bulk-OUT payload; the
-  converter zero-pads it to the recorded length so op lengths stay
-  correct. Bytes beyond the first 64 are therefore NOT real data, and
-  bulk-OUT content hashes are not comparable for payloads over 64 bytes.
-- Control payloads in both directions longer than 64 bytes are likewise
-  truncated. These diagnostic traces are not complete captures for replay.
+- The recorder keeps only the first 64 bytes of control and bulk-OUT
+  payloads. An op whose payload was longer gets ``data``/``resp`` null,
+  its full ``len`` and ``"partial": true`` -- no padded or truncated bytes
+  are ever emitted, and tools/replay_trace.py refuses any trace carrying
+  a partial op or a write without data. These diagnostic traces are not
+  complete captures for replay.
 - The output file is created exclusively with mode 0600; an existing file
   is refused. Failed transfers, short OUT and short control-IN transfers
   are skipped. Bulk-IN records retain the actual returned length and,
@@ -149,19 +149,23 @@ def convert(records: list[dict]) -> tuple[list[dict], int]:
         dt = max(0.0, at - prev) if ops else at
         prev = max(prev, at)
         data = bytes.fromhex(r.get("data", ""))
+        # A payload longer than the recorded cap is never padded or cut:
+        # it becomes null and the op is marked partial (replay refuses it).
+        whole = data.hex() if len(data) >= r["len"] else None
         if r["kind"] == "ctrl":
             op = {"bm": r["bm"], "br": r["br"], "wv": r["wv"], "wi": r["wi"]}
             if r["dir"] == "out":
-                op.update(t="cw", data=data.hex())
+                op.update(t="cw", data=whole)
             else:
-                op.update(t="cr", len=r["wlen"], resp=data.hex(), dur=dur)
+                op.update(t="cr", len=r["wlen"], resp=whole, dur=dur)
         elif r["dir"] == "out":
-            data = data + bytes(max(0, r["len"] - len(data)))
-            op = {"t": "bo", "data": data.hex()}
+            op = {"t": "bo", "data": whole}
         else:
             op = {"t": "bi", "len": r["len"]}
             if "want" in r:
                 op["want"] = r["want"]
+        if whole is None and op["t"] != "bi":
+            op.update(len=r["len"], partial=True)
         op["dt"] = round(dt, 6)
         ops.append(op)
     return ops, skipped
