@@ -97,7 +97,12 @@ including interrupt reads, without adding commands, retries or sleeps.
 Synchronous file writes do add host overhead, so recorded timing includes
 that overhead and has not been hardware-validated. Files are created
 exclusively as 0600; existing files and symlinks are refused. One warning
-disables recording after an error while USB I/O continues.
+disables recording after an error while USB I/O continues; Ctrl-C while
+recording disables it too and never replaces a failed transfer's error.
+Bulk-IN and interrupt reads record the requested size (`want`) and mark
+short reads `short:N`. One recorder is opened per `UsbIo`, so a process
+that opens the device more than once records only the first session
+(later opens warn); the recorder is not thread-safe.
 
 Convert an existing recording entirely offline:
 
@@ -105,13 +110,23 @@ Convert an existing recording entirely offline:
 .venv/bin/python tools/trace_to_compiled.py run.jsonl -o run.trace.json.gz
 ```
 
-The converter also creates its output exclusively as 0600. It ignores a
-damaged final line and skips failed transfers, short OUT/control-IN
-transfers and interrupt records; bulk-IN retains the actual returned length.
+The converter requires the recorder's `{"format": ...}` header and
+validates every record. It ignores a damaged final line (interrupted
+write); any other damaged or malformed line is reported on stderr and the
+conversion is refused (exit 1) unless `--skip-damaged` is given. It skips
+failed transfers, short OUT/control-IN transfers and interrupt records;
+bulk-IN keeps the actual returned length plus `want`. Timestamps follow
+`compile_trace.py` (cw/cr/bo at submission, bi at completion). The output
+is written to a private temp file and linked into place, so a failure
+leaves no partial file; an existing output is refused.
+
 Only the first 64 bytes of control and bulk-OUT payloads are recorded;
-bulk-IN image data is never recorded. Conversion zero-pads bulk-OUT beyond
-64 bytes and leaves long control payloads truncated, so these are
-diagnostic comparisons, not complete payload captures for replay or hashes.
+bulk-IN image data is never recorded. A longer payload is never padded or
+cut: its op gets `data`/`resp` `null`, the full `len` and
+`"partial": true`. `tools/replay_trace.py` refuses, before opening the
+device, any trace with a partial op or a control/bulk write without
+complete hex data, so a converted recording cannot be replayed with fake
+payloads. These are diagnostic comparisons, not replay captures.
 
 ### 4. Compiler-based suites (need `g++`, no backend)
 

@@ -107,6 +107,14 @@ one exists; "offline" means implemented and tested without the scanner.
   the upstream wire digests with recording on/off; no hardware run.
   Credit: adapted from bearyjd (https://github.com/bearyjd),
   commits a02b4b6 and 6c2be93 in bearyjd/opticfilm135i-linux.
+  Review fixes (offline): Ctrl-C while recording disables the recorder
+  and never replaces a failed transfer's exception; reads record the
+  requested size and mark short reads; the converter validates the header
+  and records, reports damaged lines (refusing unless `--skip-damaged`),
+  emits `null` + `"partial": true` instead of padded/truncated payloads,
+  follows compile_trace.py timestamps and writes atomically; and
+  `tools/replay_trace.py` refuses partial or data-less write ops before
+  opening the device.
 - **Docs: the driver is no longer single-unit.** README, CONTRIBUTING and
   the ROADMAP now say what is true as of 2026-11-03: the driver has
   scanned on two units besides the maintainer's (a Steam Deck and a fork's

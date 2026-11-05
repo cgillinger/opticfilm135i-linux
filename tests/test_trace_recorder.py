@@ -250,6 +250,15 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(len(fake.wire_log), 2)
         self.assertEqual(len(logs.records), 1)
 
+    def test_second_open_in_process_runs_unrecorded(self):
+        first, _ = self.device()
+        with self.assertLogs("of135i", logging.WARNING) as logs:
+            second, fake = self.device()
+            second.write(2, b"abc")
+        self.assertTrue(first._recorder.active)
+        self.assertIsNone(second._recorder)
+        self.assertEqual((len(logs.records), len(fake.wire_log)), (1, 1))
+
     def test_symlink_refused(self):
         victim = self.root / "victim"
         victim.write_bytes(b"keep")

@@ -17,14 +17,22 @@ Contract:
   ``time.perf_counter`` (not ``time.monotonic``/``time.sleep``, which the
   driver's poll loops use for their deadlines).
 - Failures are never fatal: any error opening, encoding or writing logs
-  ONE warning, disables recording and lets scanner I/O continue.
+  ONE warning, disables recording and lets scanner I/O continue. A
+  KeyboardInterrupt/SystemExit while recording also disables it (a
+  partial line stays the last one) and still propagates; it never
+  replaces the exception of a failed transfer.
 - The file is created exclusively (``O_EXCL``: an existing file or a
   symlink is refused, never overwritten) with mode 0600. Records are
   written immediately; an interrupted write can leave a partial final
   line, which the converter ignores.
 - Data: control transfers (both directions) and bulk-OUT keep the first
   ``DATA_CAP`` bytes plus the full length; bulk-IN (image data) and the
-  interrupt endpoint record only the length.
+  interrupt endpoint record only the returned length and the requested
+  one (``want``); a short read is marked ``short:N``.
+- One recorder per ``UsbIo``: the path is opened exclusively, so a
+  process that opens the device more than once records only the first
+  session; later opens warn once and run unrecorded.
+- Not thread-safe: one recorder must only be used from one thread.
 """
 
 from __future__ import annotations
