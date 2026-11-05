@@ -120,10 +120,12 @@ conversion is refused unless `--skip-damaged` is given. It skips
 failed transfers, short OUT/control-IN transfers and interrupt records;
 bulk-IN keeps the actual returned length plus `want`. Timestamps follow
 `compile_trace.py` (cw/cr/bo at submission, bi at completion). The output
-is written to a private temp file and linked into place (on filesystems
-without hard links, such as exFAT or some FUSE/SMB mounts, it is copied to
-an exclusively created 0600 file instead), so a failure leaves no partial
-file; an existing output or symlink is refused.
+is written to a private temp file and hard-linked into place, which is
+atomic: the output appears complete or not at all. On filesystems without
+hard links (such as exFAT or some FUSE/SMB mounts) it is copied to an
+exclusively created 0600 file instead; a failed copy removes that file,
+but a hard kill or power loss mid-copy can leave a truncated one. An
+existing output or symlink is refused.
 
 Exit codes: 0 converted; 1 conversion refused or output not written
 (damaged lines without `--skip-damaged`, existing output or symlink,
@@ -138,7 +140,10 @@ cut: its op gets `data`/`resp` `null`, the full `len` and
 
 Converter output is diagnostic only: transfers are dropped (failed, short
 OUT/control-IN, interrupt reads, damaged lines), so every converted op
-carries `"src": "of135i-trace/1"`. `tools/replay_trace.py` refuses,
+carries `"src": "of135i-trace/1"`, and the file is wrapped as
+`{"format": "of135i-trace-converted/1", "ops": [...]}` (a dict, not a bare
+list), so deleting every `src` key still leaves a file replay refuses.
+`tools/replay_trace.py` refuses,
 before opening the device, any trace containing an op with `src`, a
 partial op, or a control/bulk write whose data is not strict hex (pairs
 of hex digits, no whitespace). Committed captures in `traces/` carry no

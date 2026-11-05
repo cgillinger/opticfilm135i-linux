@@ -479,7 +479,7 @@ class TraceTests(unittest.TestCase):
                 self.assertEqual(stat.S_IMODE(out.stat().st_mode), 0o600)
                 opener = gzip.open if out.suffix == ".gz" else open
                 with opener(out, "rt") as handle:
-                    self.assertEqual(json.load(handle)[0]["t"], "bo")
+                    self.assertEqual(json.load(handle)["ops"][0]["t"], "bo")
                 before = out.read_bytes()
                 self.assertEqual(converter.main([str(self.path), "-o", str(out)]), 1)
                 self.assertEqual(out.read_bytes(), before)
@@ -590,7 +590,7 @@ class TraceTests(unittest.TestCase):
     def test_converter_cli_accepts_partial_final_line(self):
         code, _, out = self.convert_file(HEADER + bo_line() + '{"seq":2,"ki')
         self.assertEqual(code, 0)
-        self.assertEqual(len(json.loads(out.read_text())), 1)
+        self.assertEqual(len(json.loads(out.read_text())["ops"]), 1)
 
     def test_converter_skips_and_counts_malformed_records(self):
         bad = [bo_line(t="x"), bo_line(t=float("nan")), bo_line(len=True),
@@ -679,6 +679,52 @@ class TraceTests(unittest.TestCase):
         self.assertIn("diagnostic", code)
         self.assertFalse((self.root / "replay-out").exists())
 
+    def test_converter_output_is_dict_and_stripping_src_stays_refused(self):
+        dev, _ = self.device()
+        dev.write(2, b"ab")
+        code, _, out = self.convert_file(self.path.read_bytes(), name="o.json")
+        self.assertEqual(code, 0)
+        doc = json.loads(out.read_text())
+        self.assertIsInstance(doc, dict)
+        self.assertEqual(doc["format"], "of135i-trace-converted/1")
+        self.assertTrue(all("src" in o for o in doc["ops"]))
+        stripped = [{k: v for k, v in o.items() if k != "src"} for o in doc["ops"]]
+        self.assertIn("refused", self.replay(doc, "--dry-run"))
+        self.assertIn("not a list", replay_trace.replay_problem(doc))
+        self.assertIsNone(replay_trace.replay_problem(stripped))  # bare list is the capture shape
+        self.assertIn("refused", self.replay({"ops": stripped}, "--dry-run"))
+
+    def test_copy_cleanup_unlinks_only_own_file(self):
+        out = self.root / "o.json"
+        tmp = self.root / "t.tmp"
+        tmp.write_bytes(b"x")
+        err = OSError(errno.ENOSPC, "full")
+        with patch.object(converter.shutil, "copyfileobj", side_effect=err):
+            with self.assertRaises(OSError) as ctx:
+                converter._copy_exclusive(str(tmp), out)
+        self.assertIs(ctx.exception, err)
+        self.assertFalse(out.exists())
+        # the path was swapped for another file: leave it alone
+        other = self.root / "other"
+
+        def swap(src, dst):
+            os.unlink(out)
+            other.write_bytes(b"keep")
+            os.link(other, out)
+            raise err
+        with patch.object(converter.shutil, "copyfileobj", side_effect=swap):
+            with self.assertRaises(OSError) as ctx:
+                converter._copy_exclusive(str(tmp), out)
+        self.assertIs(ctx.exception, err)
+        self.assertEqual(out.read_bytes(), b"keep")
+        # unlink failure must not mask the copy error
+        out.unlink()
+        with patch.object(converter.shutil, "copyfileobj", side_effect=err), \
+                patch.object(converter.os, "unlink", side_effect=PermissionError("no")):
+            with self.assertRaises(OSError) as ctx:
+                converter._copy_exclusive(str(tmp), out)
+        self.assertIs(ctx.exception, err)
+
     def test_committed_captures_pass_replay_check(self):
         captures = sorted((REPO / "traces").glob("*.trace.json.gz"))
         self.assertEqual(len(captures), 9)
@@ -702,7 +748,7 @@ class TraceTests(unittest.TestCase):
                     os.umask(old)
                 self.assertEqual(status, 0)
                 self.assertEqual(stat.S_IMODE(out.stat().st_mode), 0o600)
-                self.assertEqual(json.loads(out.read_text())[0]["data"], "6162")
+                self.assertEqual(json.loads(out.read_text())["ops"][0]["data"], "6162")
                 self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["in.jsonl", "o.json"])
                 before = out.read_bytes()
                 self.assertEqual(self.convert_file(HEADER + bo_line("6364"), name="o.json")[0], 1)
@@ -753,7 +799,7 @@ class TraceTests(unittest.TestCase):
                 self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["in.jsonl"])
                 self.assertEqual(self.convert_file(HEADER + bo_line(), name="o.json.gz")[0], 0)
                 with gzip.open(out, "rt") as handle:
-                    self.assertEqual(json.load(handle)[0]["t"], "bo")
+                    self.assertEqual(json.load(handle)["ops"][0]["t"], "bo")
                 out.unlink()
 
 

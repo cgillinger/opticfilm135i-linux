@@ -122,6 +122,13 @@ one exists; "offline" means implemented and tested without the scanner.
   `gen_tables.py` refuses partial or null-data write ops; documented the
   converter exit codes 0/1/2 and that a Ctrl-C during recording of a
   failed transfer is only a note on the USB exception.
+  Round 3 (offline): converter output is a dict
+  `{"format": "of135i-trace-converted/1", "ops": [...]}`, which replay
+  refuses as not a list (stripping `src` cannot undo it; committed bare-list
+  captures unchanged); the failed-copy cleanup unlinks only the file it
+  created (device/inode check) and cannot mask the original error; docs
+  qualify atomicity (hard-link path atomic, copy fallback not under a hard
+  kill).
 - **Docs: the driver is no longer single-unit.** README, CONTRIBUTING and
   the ROADMAP now say what is true as of 2026-11-03: the driver has
   scanned on two units besides the maintainer's (a Steam Deck and a fork's

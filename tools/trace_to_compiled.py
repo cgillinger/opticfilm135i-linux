@@ -24,12 +24,15 @@ Notes:
   are dropped (failed, short OUT/control-IN, interrupt, damaged lines),
   so every op carries ``"src": "of135i-trace/1"`` and
   tools/replay_trace.py refuses any trace containing such an op (or a
-  partial op, or a write without strict hex data). Loaders that read
-  ops by key ignore the extra key.
+  partial op, or a write without strict hex data). The file is also
+  wrapped as ``{"format": "of135i-trace-converted/1", "ops": [...]}``
+  (a dict, not a bare list), which replay_trace.py refuses outright, so
+  deleting every ``src`` key cannot make it replayable.
 - The output is written to a 0600 temp file in the same directory and
-  hard-linked into place (on filesystems without hard links it is copied
-  to an exclusively created 0600 file instead), so a failed run leaves no
-  partial output; an existing file or symlink is refused. Failed transfers, short OUT and short control-IN transfers
+  hard-linked into place (atomic: complete or absent). On filesystems
+  without hard links it is copied to an exclusively created 0600 file
+  instead; a failed copy removes that file, but a hard kill or power loss
+  mid-copy can leave a truncated one. An existing file or symlink is refused. Failed transfers, short OUT and short control-IN transfers
   are skipped. Bulk-IN records retain the actual returned length and,
   as ``want``, the requested one (a short bulk read is kept).
 
@@ -43,6 +46,7 @@ Usage: trace_to_compiled.py TRACE.jsonl [-o OUT.trace.json[.gz]] [--skip-damaged
 from __future__ import annotations
 
 import argparse
+import contextlib
 import errno
 import gzip
 import json
@@ -55,6 +59,7 @@ import tempfile
 from pathlib import Path
 
 
+OUT_FORMAT = "of135i-trace-converted/1"   # envelope: replay_trace.py needs a bare list
 FORMAT = "of135i-trace/1"           # of135i.trace.FORMAT (no pyusb import)
 DATA_CAP = 64                       # of135i.trace.DATA_CAP
 HEX = re.compile(r"(?:[0-9a-fA-F]{2})*")
@@ -200,11 +205,17 @@ def _copy_exclusive(tmp: str, out: Path) -> None:
     follow); a failed copy removes the ``out`` it created."""
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(out, flags, 0o600)
+    made = os.fstat(fd)
     try:
         with os.fdopen(fd, "wb") as dst, open(tmp, "rb") as src:
             shutil.copyfileobj(src, dst)
     except BaseException:
-        os.unlink(out)
+        # Unlink only the file this call created, never what the path
+        # names now, and never let a failed unlink replace the real error.
+        with contextlib.suppress(OSError):
+            now = os.lstat(out)
+            if (now.st_dev, now.st_ino) == (made.st_dev, made.st_ino):
+                os.unlink(out)
         raise
 
 
@@ -256,7 +267,7 @@ def main(argv: list[str]) -> int:
             return 1
     ops, skipped = convert(records)
     try:
-        write_exclusive(out, json.dumps(ops).encode())
+        write_exclusive(out, json.dumps({"format": OUT_FORMAT, "ops": ops}).encode())
     except FileExistsError:
         print(f"refusing to overwrite {out}", file=sys.stderr)
         return 1
