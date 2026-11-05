@@ -310,8 +310,8 @@ Two readings, Christian's call — the definition is not being edited here:
   parked "power-cycled + latched magazine" requirement.
 
 Where this stands: the external review (Astra, 2026-09-13) considers (a) a
-reasonable **first delivery** of B1, and so do I — but neither of us decides
-it. Until Christian says which reading holds, B1 stays open, and nothing in
+reasonable **first delivery** of B1, and so does this plan — but that is
+not the decision. Until Christian says which reading holds, B1 stays open, and nothing in
 this repository describes magazine handling from digiKam as implemented.
 
 Recommendation: **(a)**, documented explicitly, with (b) recorded as a

@@ -197,7 +197,7 @@ found here.
 | Offset | No clean small-target model fits; `final ≈ 0xff + 11..12` in code domain | Low / inconclusive — needs a 3rd bracket point |
 | Shading table | 4-byte (offset, gain-clamped-≤0x4000-Q2.14) pairs; index→pixel mapping unresolved | Format: moderate–high; pixel mapping: inconclusive |
 
-## Resolution (main session follow-up, 2026-08-30)
+## Resolution (follow-up, 2026-08-30)
 
 The shading-table mapping is SOLVED. The 45856 B upload is streamed in
 512-byte blocks of 128 (offset,gain) u16 LE pairs each, where the LAST

@@ -310,6 +310,6 @@ operator listens throughout as usual.
 5. Exit after the run by power cycle + load, not by eject (§7).
 
 Work split once decided: generator extension and runner + tests are
-mechanical against this document (Sonnet); the genesys.cpp gating and
-the hook body are small; review and the hardware run stay with the
-main session and Christian.
+mechanical against this document; the genesys.cpp gating and
+the hook body are small; review and the hardware run stay with
+Christian.
