@@ -117,10 +117,22 @@ class TraceTests(unittest.TestCase):
         self.assertTrue(all(r["dur"] >= 0 and r["status"] == "ok" for r in self.transfers()))
 
     def test_bulk_in_image_data_never_stored(self):
-        dev, _ = self.device()
-        dev.read(0x81, 100)
-        self.assertNotIn("data", self.transfers()[0])
-        self.assertNotIn("00700070", self.path.read_text())
+        image = b"IMAGEDATA" * 16
+        fake = FakeUsbDevice()
+        def read_into(endpoint, size_or_buffer, timeout=None):
+            if isinstance(size_or_buffer, int):
+                return image
+            size_or_buffer[:] = image
+            return len(image)
+        with patch.object(fake, "read", side_effect=read_into):
+            dev, _ = self.device(fake)
+            self.assertEqual(dev.read(0x81, len(image)), image)
+            self.assertEqual(dev.read(0x81, bytearray(len(image))), len(image))
+        raw = self.path.read_bytes()
+        self.assertEqual([r["len"] for r in self.transfers()], [len(image)] * 2)
+        self.assertTrue(all("data" not in r for r in self.transfers()))
+        for needle in (b"IMAGEDATA", image[:8].hex().encode(), b"SU1BR0VEQVRB"):
+            self.assertNotIn(needle, raw)
 
     def test_bulk_in_length_does_not_copy_buffer(self):
         class Buffer:
