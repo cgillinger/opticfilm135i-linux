@@ -224,6 +224,18 @@ def test_main_reports_counts_and_exit_code():
     print("test_main_reports_counts_and_exit_code OK")
 
 
+def test_version_is_the_same_in_both_places():
+    """`of135i version`, the cross-unit report and release_check print
+    of135i.__version__; packaging reads pyproject.toml. They drifted apart
+    twice (0.2.7 against 0.2.9), so the two are held equal here."""
+    import re
+    sys.path.insert(0, str(REPO))
+    from of135i import __version__
+    m = re.search(r'^version\s*=\s*"([^"]+)"', (REPO / "pyproject.toml").read_text(), re.M)
+    assert m and m.group(1) == __version__, (m and m.group(1), __version__)
+    print("test_version_is_the_same_in_both_places OK")
+
+
 def main() -> int:
     tests = [
         test_classify_normal_success,
@@ -237,6 +249,7 @@ def main() -> int:
         test_verdict_no_backend_excuses_only_the_backend_group,
         test_verdict_failure_and_dirty_checkout,
         test_main_reports_counts_and_exit_code,
+        test_version_is_the_same_in_both_places,
     ]
     for t in tests:
         t()
