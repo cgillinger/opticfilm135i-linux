@@ -495,7 +495,7 @@ class Film110State:
     LATER PASSES (`ref` set: the roll's newest record with numbered images)
     number from the roll's own data: the strip may have SLID or been TURNED
     180 degrees since, which the image content decides (`finalize`, see
-    _film110_finalize); numbering then waits for the end of the slot, the
+    _film110_finalize); numbering then waits for the end of the strip, the
     whole images of every aperture being held in `deferred` until then.
     `orientation` is the strip's turn relative to pass 1 ("same" or
     "turned"); products of a turned pass are rotated back.
@@ -717,7 +717,7 @@ def _film110_process_aperture(args: argparse.Namespace, state: Film110State,
 
     if state.ref is not None:
         # A later pass: hold the whole images (copies: a view would keep
-        # the whole aperture alive) until the slot is complete.
+        # the whole aperture alive) until the strip is complete.
         for it in items:
             if "fr" not in it:
                 continue
@@ -1119,7 +1119,7 @@ def _film110_write_unidentified(args: argparse.Namespace, state: Film110State,
 
 def _film110_finalize(args: argparse.Namespace, state: Film110State, roll: int,
                       emit) -> None:
-    """The end of a slot in a later pass: decide how the strip lies --
+    """The end of a strip in a later pass: decide how the strip lies --
     slid or turned since the reference record (image content, see
     of135i.film110.decide_orientation) -- number the held images and write
     the whole ones. When it cannot be decided nothing is written and
@@ -1160,7 +1160,7 @@ def _film110_finalize(args: argparse.Namespace, state: Film110State, roll: int,
         _film110_write_unidentified(args, state, deferred, emit)
         return
     # What is physically possible: every recorded image must still lie in
-    # the slot after the move; and when the strip's own free end was seen
+    # the holder after the move; and when the strip's own free end was seen
     # in both runs, a slide must agree with that end's move.
     end_shift = None
     for key in ("film_end_mm", "film_start_mm"):
@@ -1175,7 +1175,7 @@ def _film110_finalize(args: argparse.Namespace, state: Film110State, roll: int,
     # compared in density: its pictures sit near black (Test 110).
     log = not getattr(args, "ir", True) and ref.get("ir") is False
     dec = film110.decide_orientation(
-        new, old, pos_range=film110.slot_position_range(),
+        new, old, pos_range=film110.holder_position_range(),
         end_shift=end_shift, log=log)
     if dec is None:
         state.aborted = (

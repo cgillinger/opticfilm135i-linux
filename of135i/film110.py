@@ -1493,7 +1493,7 @@ ORIENT_EVIDENCE_MARGIN = 1.0    # ... its evidence (the sum over DISTINCT new si
                                 # many different pictures agree, not by one pair
 END_AGREE_MM = 3.0              # a slide must agree with a free film end seen in both runs
 RANGE_SLACK_MM = 3.0            # a hypothesis may put a recorded image this far outside the
-                                # slot's range (edge refinement and the wall's exact place:
+                                # holder's range (edge refinement and the wall's exact place:
                                 # Test 104, roll 6, a strip turned about its own centre put
                                 # photograph 4 at -17.7 mm against the range's -17.2 and the
                                 # true hypothesis was pruned)
@@ -1710,7 +1710,7 @@ def decide_orientation(new, old, film: Film = FILM_110, *,
             "pairs": n, "evidence": evidence, "runner_up_evidence": runner_up}
 
 
-def slot_position_range(film: Film = FILM_110, holder=STRIP) -> tuple:
+def holder_position_range(film: Film = FILM_110, holder=STRIP) -> tuple:
     """(lo, hi) mm along the holder where an image START of the strip can
     lie: from one image length before the first aperture (a leading
     split) to the end of the last one. The strip owns the whole holder.
