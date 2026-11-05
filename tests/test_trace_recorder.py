@@ -28,7 +28,7 @@ import usb.core
 from of135i import safety, trace
 from of135i.usbio import UsbIo
 from test_safety import FakeUsbDevice, _cal_buffers, fast_time, make_scanner
-from test_cal_wait_scanstop import BASELINE, _baseline_run, _digest
+from test_cal_wait_scanstop import BASELINE, _baseline_run, _digest, _frame1
 import trace_to_compiled as converter
 import replay_trace
 import gen_tables
@@ -397,17 +397,29 @@ class TraceTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.path = self.root / (name + ".jsonl")
                 os.environ[trace.TRACE_ENV] = str(self.path)
-                fake, scanner = _baseline_run(name, None)
+                fake, scanner = _baseline_run(name, "off")
                 scanner.io.close()
                 self.assertEqual((_digest(fake.wire_log), len(fake.wire_log)), BASELINE[name])
                 self.assertEqual(len([r for r in self.transfers() if r["kind"] != "intr"]),
                                  BASELINE[name][1])
 
+    def test_gated_default_run_records_every_wire_transfer(self):
+        # Upstream's default is enforce: the gate adds status reads, and the
+        # trace must show all of them (the wire, not the "off" baseline).
+        self.path = self.root / "gated.jsonl"
+        os.environ[trace.TRACE_ENV] = str(self.path)
+        fake, scanner = _frame1(None)
+        scanner.io.close()
+        self.assertEqual(scanner.cal_wait_scanstop, "enforce")
+        self.assertTrue(scanner.last_diag["cal_scanstop_waits"])
+        self.assertEqual(len([r for r in self.transfers() if r["kind"] != "intr"]),
+                         len(fake.wire_log))
+
     def test_recording_off_matches_upstream_wire_baselines(self):
         os.environ.pop(trace.TRACE_ENV, None)
         for name in sorted(BASELINE):
             with self.subTest(name=name):
-                fake, scanner = _baseline_run(name, None)
+                fake, scanner = _baseline_run(name, "off")
                 scanner.io.close()
                 self.assertEqual((_digest(fake.wire_log), len(fake.wire_log)), BASELINE[name])
         self.assertEqual(list(self.root.iterdir()), [])

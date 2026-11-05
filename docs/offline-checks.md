@@ -107,6 +107,19 @@ short reads `short:N`. One recorder is opened per `UsbIo`, so a process
 that opens the device more than once records only the first session
 (later opens warn); the recorder is not thread-safe.
 
+A traced run is slower between transfers, so it can hide timing problems.
+Use the trace to compare what was sent, not to show that timing is
+unchanged. The control-read pace is the example: 0.4 ms per read on one
+host against 3.9 ms on another made issue #35 invisible on the slower one
+(docs/cal-scanstop-gate.md). Note also that the default
+`--cal-wait-scanstop enforce` adds its status reads to a trace; compare
+against `off` only when you want the vendor-capture wire.
+
+If the same `OF135I_TRACE` value reaches several processes, only the first
+records, because the file then exists and later opens warn and do not record (for
+example under `tools/cross_unit_check.py` only the first `doctor` is
+recorded). A per-process file name could come later.
+
 Convert an existing recording entirely offline:
 
 ```
