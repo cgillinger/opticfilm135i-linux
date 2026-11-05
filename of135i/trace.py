@@ -66,11 +66,12 @@ class TraceRecorder:
     def active(self) -> bool:
         return self._fd is not None
 
-    def run(self, kind, direction, ep, setup, out_data, call):
+    def run(self, kind, direction, ep, setup, out_data, call, size=None):
         """Perform ``call()`` and record it; the transfer's result or
         exception passes through untouched. ``setup`` is (bm, br, wv, wi,
         wlen) for control transfers, else None; ``out_data`` the bytes
-        sent for an OUT transfer."""
+        sent for an OUT transfer; ``size`` the requested length or buffer
+        of a bulk/interrupt read."""
         if self._fd is None:
             return call()
         try:
@@ -83,17 +84,18 @@ class TraceRecorder:
         except BaseException as e:
             try:
                 self._record(kind, direction, ep, setup, out_data, None, t0,
-                             f"error:{type(e).__name__}")
+                             f"error:{type(e).__name__}", size)
             except BaseException as secondary:  # never replaces the USB outcome
                 try:
                     e.add_note(f"transfer trace: {type(secondary).__name__} while recording")
                 except BaseException:
                     pass
             raise
-        self._record(kind, direction, ep, setup, out_data, result, t0, "ok")
+        self._record(kind, direction, ep, setup, out_data, result, t0, "ok", size)
         return result
 
-    def _record(self, kind, direction, ep, setup, out_data, result, t0, status):
+    def _record(self, kind, direction, ep, setup, out_data, result, t0, status,
+                size=None):
         try:
             dur = time.perf_counter() - t0
             rec = {"seq": self._seq + 1, "t": round(t0 - self._t0, 6),
@@ -103,22 +105,25 @@ class TraceRecorder:
                 rec["ep"] = ep
             if setup is not None:
                 rec["bm"], rec["br"], rec["wv"], rec["wi"], rec["wlen"] = setup
+            if size is not None:    # never copies a read buffer
+                rec["want"] = size if isinstance(size, int) else len(size)
             payload = b""
             if direction == "out":
-                payload = bytes(out_data) if out_data is not None else b""
-                rec["len"] = len(payload)
+                payload = bytes(out_data[:DATA_CAP]) if out_data is not None else b""
+                rec["len"] = len(out_data) if out_data is not None else 0
                 if status == "ok":
                     try:
-                        if int(result) != len(payload):
+                        if int(result) != rec["len"]:
                             rec["status"] = f"short:{int(result)}"
                     except (TypeError, ValueError):
                         rec["status"] = "short:?"
             elif result is not None:
                 # Do not copy large image buffers merely to count them.
                 rec["len"] = len(result) if not isinstance(result, int) else result
+                want = setup[4] if kind == "ctrl" else rec.get("want")
+                if status == "ok" and want is not None and rec["len"] != want:
+                    rec["status"] = f"short:{rec['len']}"
                 if kind == "ctrl":
-                    if status == "ok" and rec["len"] != setup[4]:
-                        rec["status"] = f"short:{rec['len']}"
                     payload = bytes(result[:DATA_CAP]) if not isinstance(result, int) else b""
             if kind == "ctrl" or (kind == "bulk" and direction == "out"):
                 rec["data"] = payload[:DATA_CAP].hex()

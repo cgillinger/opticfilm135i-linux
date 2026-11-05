@@ -582,11 +582,11 @@ class GuardedDevice:
         # after the fact, never alters them.
         object.__setattr__(self, "_recorder", recorder)
 
-    def _traced(self, kind, direction, ep, setup, out_data, call):
+    def _traced(self, kind, direction, ep, setup, out_data, call, size=None):
         rec = self._recorder
         if rec is None:
             return call()
-        return rec.run(kind, direction, ep, setup, out_data, call)
+        return rec.run(kind, direction, ep, setup, out_data, call, size)
 
     # pyusb signature, kept positional-compatible with every call site.
     def ctrl_transfer(self, bmRequestType, bRequest, wValue=0, wIndex=0,
@@ -663,8 +663,10 @@ class GuardedDevice:
 
     def read(self, endpoint, size_or_buffer, timeout=None):
         extra = {} if timeout is None else {"timeout": timeout}
-        return self._traced("bulk" if endpoint == 0x81 else "intr", "in", endpoint, None, None,
-                            lambda: self.__raw.read(endpoint, size_or_buffer, **extra))
+        from .usbio import EP_BULK_IN   # usbio imports this module first
+        return self._traced("bulk" if endpoint == EP_BULK_IN else "intr", "in", endpoint,
+                            None, None, lambda: self.__raw.read(endpoint, size_or_buffer, **extra),
+                            size_or_buffer)
 
     def dispose(self) -> None:
         """Release the pyusb handle (usb.util.dispose_resources): a

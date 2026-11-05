@@ -448,9 +448,43 @@ class TraceTests(unittest.TestCase):
             dev, _ = self.device(fake)
             self.assertEqual(dev.read(0x81, 100), b"abc")
         record = self.transfers()[0]
-        self.assertEqual((record["status"], record["len"]), ("ok", 3))
+        self.assertEqual((record["status"], record["len"], record["want"]),
+                         ("short:3", 3, 100))
         ops, skipped = converter.convert([record])
-        self.assertEqual((ops[0]["t"], ops[0]["len"], skipped), ("bi", 3, 0))
+        self.assertEqual((ops[0]["t"], ops[0]["len"], ops[0]["want"], skipped),
+                         ("bi", 3, 100, 0))
+
+    def test_reads_record_requested_size(self):
+        dev, fake = self.device()
+        fake.button_events.append(0x05)
+        dev.read(0x81, 100)
+        dev.read(0x83, 1)
+        bi, intr = self.transfers()
+        self.assertEqual((bi["status"], bi["len"], bi["want"]), ("ok", 100, 100))
+        self.assertEqual((intr["kind"], intr["status"], intr["want"]), ("intr", "ok", 1))
+
+    def test_buffer_read_records_buffer_size_as_want(self):
+        rec = trace.TraceRecorder(str(self.path))
+        self.addCleanup(rec.close)
+        buf = bytearray(32)
+        self.assertEqual(rec.run("bulk", "in", 0x81, None, None, lambda: 20, size=buf), 20)
+        self.assertEqual((self.transfers()[0]["want"], self.transfers()[0]["status"]),
+                         (32, "short:20"))
+
+    def test_bulk_out_payload_sliced_before_copy(self):
+        class Payload:
+            def __len__(self):
+                return 1000
+            def __getitem__(self, item):
+                return bytes(range(256))[:64] if item == slice(None, trace.DATA_CAP) else None
+            def __bytes__(self):
+                raise AssertionError("whole payload copied")
+        rec = trace.TraceRecorder(str(self.path))
+        self.addCleanup(rec.close)
+        rec.run("bulk", "out", 2, None, Payload(), lambda: 1000)
+        record = self.transfers()[0]
+        self.assertEqual((record["len"], record["status"]), (1000, "ok"))
+        self.assertEqual(record["data"], bytes(range(64)).hex())
 
     def test_converter_refuses_symlink(self):
         dev, _ = self.device()

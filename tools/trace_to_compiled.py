@@ -20,7 +20,8 @@ Notes:
   truncated. These diagnostic traces are not complete captures for replay.
 - The output file is created exclusively with mode 0600; an existing file
   is refused. Failed transfers, short OUT and short control-IN transfers
-  are skipped. Bulk-IN records retain the actual returned length.
+  are skipped. Bulk-IN records retain the actual returned length and,
+  as ``want``, the requested one (a short bulk read is kept).
 
 Usage: trace_to_compiled.py TRACE.jsonl [-o OUT.trace.json[.gz]]
 """
@@ -54,7 +55,9 @@ def convert(records: list[dict]) -> tuple[list[dict], int]:
     skipped = 0
     prev = 0.0
     for r in records:
-        if r.get("status") != "ok" or r["kind"] not in ("ctrl", "bulk"):
+        status = r.get("status")
+        short_in = r["kind"] == "bulk" and r["dir"] == "in" and str(status).startswith("short:")
+        if (status != "ok" and not short_in) or r["kind"] not in ("ctrl", "bulk"):
             skipped += 1
             continue
         start, dur = float(r["t"]), float(r.get("dur", 0.0))
@@ -75,6 +78,8 @@ def convert(records: list[dict]) -> tuple[list[dict], int]:
             op = {"t": "bo", "data": data.hex()}
         else:
             op = {"t": "bi", "len": r["len"]}
+            if "want" in r:
+                op["want"] = r["want"]
         op["dt"] = round(dt, 6)
         ops.append(op)
     return ops, skipped
