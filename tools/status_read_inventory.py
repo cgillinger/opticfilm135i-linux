@@ -90,11 +90,6 @@ for mn in MODS:
                                  strict=strict, wi=wi_, tags=tags, summ=summary, between=between, bulk=bulk, polled=polled, nxt=nxt, wrop=op))
         counts[(mn, pn)] = (len(p.ops), c)
 
-def f(r):
-    return (f"| {r['ph']} | {r['i']} | {r['kind']} | {r['reg']:#x} | {r['resp']} | "
-            f"{'' if r['dur'] is None else f'{r[chr(100)+chr(117)+chr(114)]:.4g}'} | {r['strict']} | {r['wi']} | {','.join(r['tags'])} | `{r['summ']}` | "
-            f"{r['between']} | {r['bulk']} | {r['nxt']} |")
-
 out = ["# Status register (0x100/0x101) read inventory\n"]
 out.append("""## 1. Method and verified assumptions
 
@@ -113,8 +108,7 @@ for mn in MODS:
     out.append("| phase | idx | kind | reg | resp | dur s | strict? | prev cw83 idx | prev tags | prev pairs | ops between | bulk between | next op |")
     out.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in rs:
-        r2 = dict(r); 
-        d = "" if r["dur"] is None else f"{r['dur']:.4g}"
+        d ="" if r["dur"] is None else f"{r['dur']:.4g}"
         s = "strict-if-run-with-rule" if r["strict"] == "strict" else r["strict"]
         out.append(f"| {r['ph']} | {r['i']} | {r['kind']} | {r['reg']:#x} | {r['resp']} | {d} | {s} | {r['wi']} | {','.join(r['tags'])} | `{r['summ']}` | {r['between']} | {r['bulk']} | {r['nxt']} |")
     out.append("")

@@ -91,6 +91,23 @@ the vendor read once.
 
 ## 4. Judgement, place by place
 
+The count of 142 is under one stated rule: a `cr` read of 0x100/0x101
+whose nearest preceding 0x0083 write in the same phase carries a stop
+(reg 0x01 bit 0 clear) or an execute pulse (0x0f=0x01), with no `poll`
+of the same register in between. A wider rule (any earlier stop or pulse
+in the phase, not only the nearest preceding batch) would add reads that
+this list leaves out: the verbatim PARK's polling reads, which E judges,
+and a few state reads in AFE_BASE (G).
+
+"Polled" is also not the same as "waited". Only JOG, LOAD and POSITION
+pass `strict_polls`; in every other phase a poll that times out is
+counted in `poll_timeouts`, logged as a warning, and the phase continues
+(`_poll_one`, non-strict branch). A non-strict poll can also be satisfied
+by a state-class match rather than the captured value. So a `poll` in
+a table outside those three phases is a bounded look at the scanner, not
+a guarantee that the engine reached the state; the judgements below say
+where that matters.
+
 **A. Calibration acquisitions (111).** Each of the seven phases ends an
 exposure with a SCAN stop and reads 0x100 then 0x101 once. This is the
 issue #35 failure. Covered by the stop gate, opt-in until the reporters'
@@ -98,7 +115,9 @@ runs confirm it (docs/cal-scanstop-gate.md). The transitions between
 these phases, and into CAL_SHADING_UPLOAD, are the gate's seven firing
 points. The gate arms only on a stop that closes an execute pulse in
 the same phase; CAL_SHADING_VERIFY's second stop has no pulse before it,
-so nothing is pending when POSITION starts. That is correct, not a gap.
+so nothing is pending when POSITION starts. Our reading of the tables is
+that this is intended rather than a gap: no acquisition is open at that
+point.
 
 **B. Image pass start (27).** After the execute pulse the vendor read
 0x101 every few ms and saw the status byte climb (c5 → e5 → a5 at 3600;
@@ -106,8 +125,10 @@ cd → ed → ad at the other resolutions) while the engine came up, then
 began bulk reads. Our replayer reads each once, logs the mismatches,
 and issues the bulk reads, which block in the kernel until the scanner
 has data (60 s timeout). A host that gets here early waits in the bulk
-read; a host that gets here late finds the data buffered. No assumption
-is load-bearing. Leave as is. (The `_exec_ops` note stands: an idle
+read; a host that gets here late finds the data buffered. In our reading
+of the tables none of the 27 single reads is load-bearing, because the
+bulk read does the waiting; this is a reading, not a measurement. Leave
+as is. (The `_exec_ops` note stands: an idle
 wait during the image pass overflows the scanner buffer; it must not be
 added here.)
 
@@ -129,7 +150,8 @@ them strictly (1.0 s floor, `StrictPollTimeoutError`, fail closed).
 OPEN's one poll is non-strict; OPEN has no execute pulse, so it waits on
 a state, not a move. The semantic PARK (default since 2026-09-17) waits
 on 0x35 then on the PARK_COMPLETE class of 0x101 with a 30 s deadline
-(docs/park-completion-analysis.md). None of these assume.
+(docs/park-completion-analysis.md). None of these is a lone read; we have
+not looked for other places that assume, beyond the ones listed here.
 
 **E. Verbatim PARK (`--park verbatim`).** The table holds the vendor's
 polling of 0x100 as 63–67 single `cr` reads at 600–7200 dpi, spaced by
