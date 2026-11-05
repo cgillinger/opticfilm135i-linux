@@ -6,6 +6,16 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **Removed: `digitize --film 110 --strips 2`.** The mode let two short 110
+  strips share one load of the six-aperture holder (slot 1 = apertures 1-3
+  as roll N, slot 2 = apertures 4-6 as roll N+1; docs/film-110.md §12). It
+  ran on hardware in Tests 103 and 104; one strip per load is the routine,
+  so the option, the per-slot code and its tests are gone. A one-strip run
+  behaves exactly as before (offline-tested against the previous code, no
+  hardware run). A roll whose manifest records `"strips": 2` is still
+  refused by `--from-frames`, with a message that no longer names the
+  removed option.
+
 - **CI runs the whole offline gate; version string corrected.** The
   GitHub Actions workflow now calls `tools/release_check.py --no-backend`
   instead of its own list of suites, which had fallen behind: ten core

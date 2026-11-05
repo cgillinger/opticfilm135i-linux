@@ -519,10 +519,7 @@ nothing is missing; frame files are `p1-f1.tiff`, `p2-f1.tiff`, …, each
 photograph is written once as `image<N>.tiff` by the best copy seen, and
 from the second pass the numbering recognises the earlier images instead
 of trusting the seating (`docs/film-110.md` §11, §13; hardware-verified in
-Test 104, 2026-10-22, slides and a turned strip included). `--strips 2` carries
-two strips of up to four images in one load (strip 1 against the holder's
-left end, strip 2 against its right end) and writes them as two rolls, N
-and N+1 (first hardware pass Test 103, `docs/film-110.md` §12).
+Test 104, 2026-10-22, slides and a turned strip included).
 `digitize --film 110 --roll N --from-frames` rebuilds a roll offline from
 its stored `p<k>-f<N>.tiff` frames (renumbered, photographs rewritten, the
 old `image*.tiff` moved to `superseded-<UTC>/`, no scanner touched) after a

@@ -293,7 +293,7 @@ apertures; photograph identity by content is the 110 problem and stays in
 ## 6. CLI: `digitize --sweep`
 
 - `--sweep` on `digitize`: 135 only (`--film 110` → error),
-  `--strips 2` → error, `--frames` must be a contiguous range `a-b`
+  `--frames` must be a contiguous range `a-b`
   (default `1-4`). All validated before any hardware step (exit 2).
 - `--no-ir` with `--dpi 3600` (black-and-white film) runs the plain 3600
   sweep (`dual = args.ir or args.dpi != 3600`, the per-frame rule), limited
@@ -422,7 +422,7 @@ apertures; photograph identity by content is the 110 problem and stays in
    `sweep.raw` kept, exit 4; `--from-sweep` rebuild reproduces the
    products byte for byte and appends a record with `rebuilt_from_sweep`.
 7. CLI validation: `--sweep` with `--film 110`, with `--no-ir --dpi 3600
-   --frames 1-6` (the anchoring gate), with `--strips 2`, with `--frames
+   --frames 1-6` (the anchoring gate), with `--frames
    1,3` → exit 2 before any hardware; `--no-ir --dpi 3600` over 1-4 is
    accepted.
 8. `test_release_check` keeps passing (SUITES changed → whatever pins it
