@@ -2189,6 +2189,38 @@ def test_watch_unexpected_exception_exits_75_with_traceback():
     assert code == 75 and "Traceback" not in se, se
 
 
+def test_watch_interrupt_during_magazine_presence_check_exits_130():
+    """The presence check is a read-only query outside the eject try: Ctrl+C
+    there is the generic 130 (nothing in progress, no power cycle), not 75."""
+    fake = FakeUsbDevice(reg01=0x22)
+    fake.regs[0x31] = 0xFE
+    fake.button_events.extend([0x48, None])
+
+    def present(self):
+        raise KeyboardInterrupt()
+    with cli_over(fake), patched(Scanner, "is_magazine_present", present):
+        code, so, se = _cli(["watch"])
+    assert code == 130 and "interrupted" in se, (code, se)
+    assert fake.out_count == 0 and fake.pulses == 0 and "exit 75" not in se, se
+
+
+def _norm(text):
+    return " ".join(text.split())
+
+
+def test_watch_exit_codes_readme_matches_help_epilog():
+    """One text, two homes: the README block must equal the argparse epilog."""
+    assert "Exit codes:" in cli.WATCH_EXIT_CODES_HELP
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+    assert _norm(cli.WATCH_EXIT_CODES_HELP) in _norm(readme), \
+        "README watch exit-code text drifted from cli.WATCH_EXIT_CODES_HELP"
+    watch = cli.build_parser()._subparsers._group_actions[0].choices["watch"]
+    assert _norm(cli.WATCH_EXIT_CODES_HELP) in _norm(watch.format_help())
+    # The wording distinguishes the three interrupt outcomes and the break.
+    for needle in ("130", "EX_TEMPFAIL", "previously", "RestartPreventExitStatus=75"):
+        assert needle in cli.WATCH_EXIT_CODES_HELP, needle
+
+
 def test_watch_idle_interrupt_exit_0():
     fake = FakeUsbDevice(reg01=0x22)
     fake.regs[0x31] = 0xFE
@@ -2890,6 +2922,8 @@ def main() -> int:
         test_watch_session_failed_refusal_decision_follows_writes_sent,
         test_watch_eject_failure_text_printed_once,
         test_watch_unexpected_exception_exits_75_with_traceback,
+        test_watch_interrupt_during_magazine_presence_check_exits_130,
+        test_watch_exit_codes_readme_matches_help_epilog,
         test_watch_idle_interrupt_exit_0,
         test_watch_unsafe_start_exit_1,
         test_watch_failed_eject_leaves_second_press_unread_and_no_further_writes,

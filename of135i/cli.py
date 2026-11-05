@@ -51,6 +51,22 @@ log = logging.getLogger("of135i")
 #: Watch eject raised or was interrupted; supervisor policy must prevent restart.
 EXIT_WATCH_EJECT_FAILED = 75
 
+#: Single source of the `watch` exit-code text: the argparse epilog; README.md
+#: repeats it verbatim and tests/test_safety.py fails if the two drift.
+WATCH_EXIT_CODES_HELP = (
+    "Exit codes: 0 = Ctrl+C while idle (including during the button poll); "
+    "1 = error, refusal (an eject refused before any write also exits 1) or "
+    "absent device; 3 = scanner busy (another process holds the lock); "
+    "75 = eject raised, or Ctrl+C arrived during the eject itself: "
+    "power-cycle the scanner before restarting. 75 is EX_TEMPFAIL ('retry "
+    "later') but here it means the opposite, do NOT restart automatically: "
+    "set RestartPreventExitStatus=75 for systemd. A failed eject previously "
+    "exited 1, so supervisors and wrappers need updating; "
+    "130 = Ctrl+C anywhere else (startup, the read-only magazine-presence "
+    "check): nothing was in progress. Eject completion timeouts only warn "
+    "and still return success; exit 75 does not detect them."
+)
+
 #: Sanity ceiling on --overscan (mm). The real per-frame bound is the
 #: transport ceiling, checked by holder.overscan_geometry frame by frame;
 #: this only rejects absurd input early.
@@ -3985,12 +4001,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_status.set_defaults(func=_cmd_status)
 
     p_watch = sub.add_parser("watch", help="poll buttons; eject on the eject button",
-        epilog="Exit codes: 0 = stopped while idle; 1 = error/refused/absent; "
-               "3 = scanner busy (another process holds the lock); "
-               "75 = eject raised or was interrupted (power-cycle before restart). "
-               "For systemd, configure RestartPreventExitStatus=75. "
-               "Existing eject completion timeouts only warn and still return success; "
-               "exit 75 does not detect those timeouts.")
+        epilog=WATCH_EXIT_CODES_HELP)
     p_watch.set_defaults(func=_cmd_watch)
 
     p_buttons = sub.add_parser(
