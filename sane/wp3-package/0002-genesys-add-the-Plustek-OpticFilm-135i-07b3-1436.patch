@@ -1,7 +1,7 @@
 From 787f0371851deee74449750466a172bae2dade76 Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
 Date: Mon, 28 Sep 2026 19:07:54 +0200
-Subject: [PATCH 2/5] genesys: add the Plustek OpticFilm 135i (07b3:1436)
+Subject: [PATCH 2/6] genesys: add the Plustek OpticFilm 135i (07b3:1436)
 
 The model and sensor entries, the USB id in genesys.conf.in and the
 .desc entry. The GL126 command set drives the chip from generated
@@ -231,5 +231,5 @@ index 4f2f8050b..2e8e33196 100644
  :interface "USB"
  :usbid "0x07b3" "0x0807"
 -- 
-2.55.0
+2.56.0
 

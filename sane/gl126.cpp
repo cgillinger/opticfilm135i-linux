@@ -224,7 +224,7 @@ const OpProgram& find_program(const Profile& profile, const char* name)
 }
 
 /** True if op `idx` of `prog` is one of the calibration stop gate's two
-    polls (docs/cal-scanstop-gate.md): a PollMasked read of reg 0x100 or
+    polls: a PollMasked read of reg 0x100 or
     0x101 that waits for bit 0 clear, generated after the SCAN-clear that
     ends each calibration acquisition. Decided from the op itself, not
     from the phase name, and by the gate's two exact mask/want pairs:

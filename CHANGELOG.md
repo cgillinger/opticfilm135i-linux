@@ -23,7 +23,10 @@ one exists; "offline" means implemented and tested without the scanner.
   (Test 118): frame 1 at 600 dpi and at plain 3600 dpi completed; at
   plain 3600 three of the fourteen polls waited 11-18 ms for reg 0x100,
   where earlier builds went on. Not run on a unit that shows the failure
-  and not in the submitted series. The wait was designed by bearyjd for the Python
+  yet. Exported as revision v9 of the SANE submission series
+  (`sane/wp3-package/`: v8 plus one commit, base unchanged; standalone
+  gcc build and a clang 17 `-Werror` build of the genesys backend without
+  warnings), not pushed to the merge request. The wait was designed by bearyjd for the Python
   driver; the failure was reported by Krustenviech (#35).
 
 - **Removed: `digitize --film 110 --strips 2`.** The mode let two short 110
