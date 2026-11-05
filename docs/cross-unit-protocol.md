@@ -20,8 +20,12 @@ packs the evidence.
   scanner can be opened without root.
 - The scanner on a fresh power cycle: switched off, then on, and no
   other command sent to it since.
-- A film strip in the magazine, or an empty holder; both are fine.
-  The magazine must be inserted to the stop.
+- The film-strip holder, with a film strip in it or empty; both are
+  fine. The image check at the end of each scan looks for the edges of
+  the holder's aperture and was built on the film-strip holder. If it
+  does not find them (reported once so far, probably with the slide
+  holder), the scan exits 4; the tool records that and goes on
+  (section 5). The magazine must be inserted to the stop.
 - Nothing else holding the device (no other scanning application, no
   virtual machine with USB passthrough).
 - A real terminal window. The `load` step asks you to do something with
@@ -233,9 +237,9 @@ sent and the session is failed). It adds no write and no motor move
 ## 6. What to send
 
 Attach `results/xu-01.tar.gz` (the tool prints its path and size) to
-issue #35, and say in the comment whether a film strip or an empty
-holder was in the scanner, and whether the run completed or where it
-stopped.
+issue #35, and say in the comment which holder was in the scanner (the
+film-strip holder or the slide holder), whether there was film in it,
+and whether the run completed or where it stopped.
 
 The archive holds:
 

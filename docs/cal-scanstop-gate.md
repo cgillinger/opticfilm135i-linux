@@ -1,10 +1,12 @@
 # Calibration stop gate (`--cal-wait-scanstop`)
 
-Status 2026-11-02: **ported, offline-tested, and run on the owner's
-unit (Test 114, docs/test-log.md): harmless there, every wait ≤ 8 ms
-against the 0.3 s budget, but the residual dark_b did not occur in any
-of 18 frames, so the gate's effect is unproven. Opt-in, default `off`.**
-Making it the default waits for the Steam Deck reporter's `enforce` run.
+Status 2026-11-05: **ported, offline-tested, run on the owner's unit
+(Test 114: harmless there, every wait ≤ 8 ms against the 0.3 s budget,
+no residual dark_b with or without the gate) and on a second unit on
+master (bearyjd, 2026-11-04: gate off 0 of 3 scans completed, gate on 3
+of 3 plus four warm-up scans, longest wait 24 ms). Opt-in, default
+`off`.** Whether `enforce` becomes the default is the owner's decision
+and has not been made. The Steam Deck reporter has not run it yet.
 
 Credit: bearyjd designed and wrote the gate and its tests; Krustenviech
 reported the failure and supplied the Steam Deck logs.
@@ -103,9 +105,11 @@ existed (plain 3600, dual 600, IR 3600, frame 1).
   clean 3/3. One clean 3600 dpi four-slide run with the gate on. The
   fork's own CHANGELOG for its default-on branch says the hardware
   evidence is pending and must not merge before it is complete.
-- No gate-off comparison at 3600 dpi; no film-strip run; nobody has
-  measured how long the bits take to clear (that is what `wait_s` is
-  for), so the 0.3 s budget is a guess inherited from the poll floor.
+- No gate-off comparison at 3600 dpi on an affected unit; no film-strip
+  run on one. How long the bits take to clear was unmeasured when the
+  gate was ported; it has since been measured on two units (Test 114
+  and "Second unit, on master" below). The 0.3 s budget was inherited
+  from the poll floor; the longest wait seen so far is 24 ms.
 - The reporter's other symptoms are **not** explained by the gate, and
   Test 114 showed both on the owner's unit as well: the `prep` phase's
   0x0122 polls time out at the floor reading `d855`/`dc55` where the
@@ -135,6 +139,86 @@ read of each register (`wait_s` ≤ 0.008 s, `since_clear_s` 0.020–0.042 s,
 `cr_mismatches` did not drop with the gate. Full table in
 docs/test-log.md. The gate is safe on this unit; whether it fixes #35
 only the reporter's Deck run can show.
+
+## Second unit, on master (bearyjd, 2026-11-04)
+
+Reported on issue #35 with the `.diag.json` sidecars and `doctor`
+reports in a gist; full entry in docs/test-log.md. One unit, one
+operator, upstream master 6270867, 600 dpi, frame 4, order as asked
+(off, on, on, off, off, on), a gated warm-up scan after every load.
+
+| gate | scans | result |
+|---|---|---|
+| off | 3 | all three failed in `cal_dark_b` after about 2 s (`dark_b is residual and no healthy dark_b has been measured this session`); register 0x01 left at 0x02, power cycle needed each time |
+| enforce | 3 + 4 warm-ups | all seven completed; `dark_b_substituted` false, `poll_timeouts` 0, 7 gate waits per scan, all `clear` |
+
+Three failures are consistent, not a rate. Every completed scan exited
+4 (aperture coverage not verified, "no aperture found in profile"); that
+is the image check and is unexplained here (the report says "slide frame
+4"; which holder was in the unit has not been confirmed).
+
+### What the two units' numbers say
+
+Measured, from the sidecars (`cal_scanstop_waits`; 49 waits on the
+second unit, 70 on the owner's in Test 114). The gate sleeps 4 ms
+between reads that find the bit set, so the time of one control read is
+`(wait_s − 4 ms × (reads_100 − 1)) / (reads_100 + 1)`.
+
+| | second unit and its host | owner's unit and host |
+|---|---|---|
+| one control read | 0.30–0.67 ms, median 0.39 | 3.5–4.0 ms, median 3.9 |
+| gate starts after the scan-clear (dark/white/gain phases) | median 1.5–1.8 ms | median 12.3 ms |
+| reads of register 0x100 until bit 0 is clear | 2–6 (never the first) | 1 (always the first) |
+| `wait_s` | 5.0–24.4 ms, median 14.0 | 7.0–8.0 ms (two reads, no wait) |
+| bit 0 seen clear after the scan-clear, dark/white/gain phases | 14–18 ms in scans later in a session; 15–26 ms in the first scan after a load | by the first read, sampled about 16 ms after the clear |
+| the same, shading phases | 24–32 ms | by the first read, about 16–38 ms after the clear (later in the IR run: host time between phases) |
+| calibration result | offsets 266/265/266, gains 42/32–33/38–39 | offsets 266/265/266, gains 44/32/39 (600 dpi run) |
+
+On the second unit the last read that still found the engine running
+came about 9–13 ms after the scan-clear in the later scans and about
+20 ms after it in the first scan after a load.
+
+What follows from that, as a reading of two units and not a proof:
+
+- **The difference that matters is the host's pace, not the
+  calibration.** The two units calibrate to nearly the same offsets and
+  gains. The second unit's host completes a control transfer about ten
+  times faster, so without the gate it reaches the next acquisition's
+  writes within a few milliseconds of the scan-clear, while the engine
+  is still running; the owner's host gets there after about 12 ms or
+  more, when it has usually stopped. This is the mechanism section's
+  "a faster host makes it worse", now with numbers.
+- **The owner's unit is not shown to be immune; its host hides the
+  window.** On the owner's unit the engine was only ever seen stopped,
+  at about 16 ms; when it actually stops is not known. The second unit
+  stops at roughly 10–15 ms in later scans, which leaves the owner's
+  host a margin of a few milliseconds at best if the units are alike.
+  The residual dark_b that the owner's unit has shown on later batch
+  frames since Test 32 would fit a host on that margin; that link is a
+  hypothesis.
+- **A difference between the units is not excluded.** The second unit
+  needs 15–26 ms in the first scan after a load. Test 114 had no gated
+  scan directly after a load, so that case is unmeasured on the owner's
+  unit.
+- **The capture's own pace is close to the owner's host.** The vendor
+  capture shows about 4 ms between transfers and both bits clear at the
+  single read. A replay at that pace never meets the window, which is
+  probably why it went unseen on the developer unit for so long.
+- **"Works on the developer unit" is weak evidence for timing.** Any
+  place where the tables read a status once after a stop or a start
+  (docs/status-read-inventory.md) can be fine on a slow host and wrong
+  on a fast one. Timing claims need a run on a fast host or a gate that
+  waits for the state.
+
+Open questions:
+
+- Why a control read takes about 3.9 ms on the owner's host. The scanner
+  is on a high-speed (480 Mbit/s) root port there, with no hub in
+  between, so the link speed is not the reason.
+- Whether the first scan after a load is slower to stop on the owner's
+  unit too (the cross-unit protocol's default order, gated run first,
+  measures it).
+- The exit 4 on the second unit.
 
 ## Hardware plan: Test 114 (owner's unit) — as run
 
@@ -176,7 +260,10 @@ incomplete.
 
 - The SANE backend (`sane/gl126.cpp`) has its own calibration runner
   and its own residual-dark_b check (it fails without substitution). It
-  has **no** stop gate. Porting is a separate step after Test 114.
+  has **no** stop gate. Porting is a separate step. Given the second
+  unit's result (0 of 3 without the gate in the Python driver), the
+  backend as submitted should be expected to fail calibration on a host
+  as fast as that one; this has not been run.
 - `--cal-data <file.npz>` (reusing a calibration across sessions, the
   reporter's request) is a feature request, not part of this change.
 - `--diag-readback-regs` (the reporter's "PR #12") exists only in the

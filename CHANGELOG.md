@@ -6,6 +6,18 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **Stop gate confirmed on a second unit (external report, issue #35).**
+  bearyjd ran the A/B asked for on master: gate off 0 of 3 scans completed
+  (all fail at `cal_dark_b`), `--cal-wait-scanstop enforce` 3 of 3 plus four
+  warm-up scans, longest wait 24 ms against the 0.3 s budget. His sidecars
+  compared with Test 114's: the two units calibrate to nearly the same offsets
+  and gains; his host completes a control read about ten times faster (0.39 ms
+  against 3.9 ms), which is why it reaches the next acquisition while the
+  engine still runs. Reading, not proof: the failure follows the host's pace,
+  and the developer unit is hidden by its slower host rather than immune.
+  docs/cal-scanstop-gate.md ("Second unit, on master"), docs/test-log.md.
+  The gate stays opt-in until the owner decides on the default.
+
 - **Diag: cr mismatches are now locatable.** Each control-read reply that
   differs from the capture is recorded in the `.diag.json` as
   `cr_mismatch_details` (phase, op index, wv/wi, got/want; first 20 per

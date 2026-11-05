@@ -8045,3 +8045,89 @@ Side note from the run: `tests/test_cal_wait_scanstop.py` as first
 written needed pytest, which the owner's venv does not have and
 `tools/release_check.py` does not use (it runs `python tests/<suite>.py`);
 fixed in the follow-up commit so the suite runs both ways.
+
+## 2026-11-04 — External report (issue #35): the stop gate A/B on a second unit, on master — gate off 0 of 3, gate on 3 of 3; the two units calibrate alike and differ in host pace
+
+Not run by the owner. Reported by bearyjd on issue #35 (comment of
+2026-11-05) with seven `.diag.json` sidecars and three `doctor` reports
+in a gist; this entry is the owner's side reading those files
+(2026-11-05). Hardware: bearyjd's unit and host (Linux 7.2.11, Python
+3.14.8, pyusb 1.3.1), upstream master 6270867 (the gate as merged in PR
+#46), 600 dpi, frame 4, holder loaded with `of135i load`, supervised;
+the motor never stalled. What was in the holder is not confirmed (the
+report says "slide frame 4"). The order asked for was off, on, on, off,
+off, on after a warm-up scan. Every gate-off failure needed a power
+cycle, so the sequence ran over several sessions, each with a power
+cycle, a load and a gated warm-up scan.
+
+| # | gate | result |
+|---|---|---|
+| warm-up | enforce | completed |
+| 1 | off | failed in `cal_dark_b` after about 2 s, `dark_b is residual and no healthy dark_b has been measured this session`; reg 0x01 = 0x02 afterwards |
+| warm-up | enforce | completed |
+| 2 | enforce | completed, `dark_b_substituted` false, 7 waits |
+| 3 | enforce | completed, same |
+| 4 | off | failed, same error and state |
+| warm-up | enforce | completed |
+| 5 | off | failed, same error and state |
+| warm-up | enforce | completed |
+| 6 | enforce | completed, `dark_b_substituted` false, 7 waits |
+
+Gate off 0 of 3, gate on 3 of 3 plus all four warm-ups. One unit, one
+operator: consistent, not a rate. The three `doctor` reports after the
+failures read reg 0x01 = 0x02 and status word `0xec55`.
+
+**From the seven sidecars** (49 gate waits, all `clear`; compared with
+the 70 waits of Test 114):
+
+| | this unit and host | owner's (Test 114) |
+|---|---|---|
+| reads of reg 0x100 per wait | 2–6, never 1 | always 1 |
+| `wait_s` | 5.0–24.4 ms, median 14.0 | 7.0–8.0 ms |
+| `since_clear_s` | 14.2–32.2 ms, median 23.6 | 20–42 ms (148/184 ms in the IR run) |
+| one control read (the gate sleeps 4 ms between busy reads) | 0.30–0.67 ms, median 0.39 | 3.5–4.0 ms, median 3.9 |
+| gate start after the scan-clear, dark/white/gain phases | median 1.5–1.8 ms | median 12.3 ms |
+| offsets / gains | 266/265/266, 42/32–33/38–39 | 266/265/266, 44/32/39 (run e, 600 dpi) |
+| dark_a / dark_b means | 21 200–24 300 / 23 700–26 800 | 21 700–24 500 / 24 100–27 000 (run e) |
+| `cr_mismatches` | 47–51 | 41 (run e) |
+| calibration phases, seconds (dark_a / dark_b / white) | 0.04 / 0.05 / 0.07 | 0.11 / 0.12 / 0.28 (run e) |
+
+In the dark/white/gain phases bit 0 of reg 0x100 was seen clear 14–18 ms
+after the scan-clear in the three scans later in a session (last busy
+read at about 9–13 ms) and 15–26 ms after it in the four warm-up scans,
+the first scan after a load (last busy read at about 20 ms). In the
+shading phases it was 24–32 ms.
+
+**Conclusions.**
+
+- The gate on master does on this unit what it did in the fork: without
+  it the scan fails at `cal_dark_b` every time, with it every scan
+  completes and no substitution is needed. This is the confirmation
+  Test 114 could not give.
+- The two units calibrate to nearly the same values. The host is what
+  differs: a control read is about ten times faster here, so the next
+  acquisition is reached within a few milliseconds of the scan-clear,
+  while the engine still runs; the owner's host reaches it after about
+  12 ms. Reading, not proof (two units): the failure follows the host's
+  pace rather than a fault in a unit, and the owner's host sits just
+  outside the window rather than the owner's unit being immune.
+- A difference between the units is not excluded: the first scan after
+  a load needs up to 26 ms here, and Test 114 had no gated scan directly
+  after a load.
+- Longest wait 24 ms against the 0.3 s budget: a 12× margin on the
+  slowest stop seen so far.
+
+**Not explained.** Every completed scan exited 4 (`aperture coverage NOT
+verified`, "no aperture found in profile" for IR and visible). The scan,
+calibration, park and sidecar were complete. Why a control read takes
+about 3.9 ms on the owner's host (the scanner is on a high-speed root
+port) is open too.
+
+**Own misreading, corrected the same day.** The first comparison of the
+two hosts gave "about 3.5 ms against 7.5 ms per control read". Both
+figures were wrong: the 4 ms sleep between busy reads had not been
+subtracted on this unit, and the owner's `wait_s` covers two reads, not
+one. The table above has the corrected figures.
+
+Details and what follows for the gate's default:
+docs/cal-scanstop-gate.md, "Second unit, on master".
