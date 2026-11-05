@@ -12,6 +12,8 @@ Notes:
 - A truncated final line (interrupted run) is ignored. Any other damaged
   or malformed line is reported on stderr; the conversion is refused
   (exit 1) unless ``--skip-damaged`` is given, which skips those lines.
+  A record whose hex ``data`` is not strict (pairs of hex digits, no
+  whitespace) or not exactly ``min(len, 64)`` bytes counts as damaged.
 - Failed transfers and the interrupt endpoint are skipped (the compiled
   format has no place for them); the count is printed.
 - The recorder keeps only the first 64 bytes of control and bulk-OUT
@@ -36,12 +38,15 @@ import gzip
 import json
 import math
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
 
 
 FORMAT = "of135i-trace/1"           # of135i.trace.FORMAT (no pyusb import)
+DATA_CAP = 64                       # of135i.trace.DATA_CAP
+HEX = re.compile(r"(?:[0-9a-fA-F]{2})*")
 KINDS = ("ctrl", "bulk", "intr")
 SETUP = ("bm", "br", "wv", "wi", "wlen")
 
@@ -59,11 +64,8 @@ def _is_time(v) -> bool:
 
 
 def _is_hex(v) -> bool:
-    try:
-        bytes.fromhex(v)
-    except (TypeError, ValueError):
-        return False
-    return True
+    """Strict hex: pairs of hex digits only, no whitespace ("" is valid)."""
+    return isinstance(v, str) and HEX.fullmatch(v) is not None
 
 
 def record_problem(r) -> str | None:
@@ -85,8 +87,11 @@ def record_problem(r) -> str | None:
     if not all(_is_int(r.get(k)) and r[k] >= 0 for k in need):
         return "missing or invalid " + "/".join(need)
     has_data = r["kind"] == "ctrl" or (r["kind"] == "bulk" and r["dir"] == "out")
-    if has_data and not _is_hex(r.get("data")):
-        return "missing or invalid hex data"
+    if has_data:
+        if not _is_hex(r.get("data")):
+            return "missing or invalid hex data"
+        if len(r["data"]) // 2 != min(r["len"], DATA_CAP):
+            return f"data length does not match len (recorder keeps {DATA_CAP} bytes)"
     return None
 
 

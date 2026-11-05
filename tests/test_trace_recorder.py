@@ -565,6 +565,7 @@ class TraceTests(unittest.TestCase):
 
     def test_converter_format_matches_recorder(self):
         self.assertEqual(converter.FORMAT, trace.FORMAT)
+        self.assertEqual(converter.DATA_CAP, trace.DATA_CAP)
 
     def test_converter_reads_past_damaged_middle_line(self):
         text = HEADER + bo_line() + "garbage\n" + bo_line("6364") + '{"kind":"bu'
@@ -604,6 +605,20 @@ class TraceTests(unittest.TestCase):
                 self.assertEqual(self.convert_file(text, name="o.json")[0], 1)
                 (self.root / "o.json").unlink(missing_ok=True)
 
+    def test_converter_requires_data_matching_recorded_length(self):
+        long = bytes(range(100))
+        bad = [bo_line("aabbccdd", len=2), bo_line("aa", len=2), bo_line(" 6162", len=2),
+               bo_line("61 62", len=2), bo_line("6162\n", len=2),
+               bo_line(long[:65].hex(), len=100), bo_line(long[:63].hex(), len=100),
+               bo_line("", len=1)]
+        for line in bad:
+            with self.subTest(line=line):
+                records, problems, _ = converter.scan_records(HEADER + bo_line() + line + bo_line())
+                self.assertEqual((len(records), len(problems)), (2, 1))
+        good = [bo_line("", len=0), bo_line(long[:64].hex(), len=100), bo_line("6162", len=2)]
+        records, problems, _ = converter.scan_records(HEADER + "".join(good) + bo_line())
+        self.assertEqual((len(records), problems), (4, []))
+
     def test_converter_counts_undecodable_line(self):
         data = HEADER.encode() + bo_line().encode() + b"\xff\xfe\n" + bo_line().encode()
         records, problems, _ = converter.scan_records(data)
@@ -642,7 +657,9 @@ class TraceTests(unittest.TestCase):
 
     def test_replay_refuses_writes_without_real_data(self):
         for op in ({"t": "cw", "bm": 0x40, "br": 4, "wv": 0x83, "wi": 0, "data": None},
-                   {"t": "bo"}, {"t": "bo", "data": "zz"}, "cw"):
+                   {"t": "bo"}, {"t": "bo", "data": "zz"}, {"t": "bo", "data": " 0102"},
+                   {"t": "bo", "data": "01 02"}, {"t": "bo", "data": "0102\n"},
+                   {"t": "bo", "data": "012"}, {"t": "bo", "data": 12}, "cw"):
             with self.subTest(op=op):
                 self.assertIn("refused", self.replay([dict(t="bi", len=8, dt=0.0), op]))
         self.assertIn("refused", self.replay({"ops": []}))

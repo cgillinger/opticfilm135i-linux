@@ -25,6 +25,7 @@ import argparse
 import gzip
 import json
 import logging
+import re
 import struct
 import sys
 import time
@@ -35,6 +36,9 @@ sys.path.insert(0, str(_REPO))
 
 from of135i import safety  # noqa: E402
 from of135i.usbio import EP_BULK_IN, EP_BULK_OUT, Of135iError, UsbIo  # noqa: E402
+
+
+HEX = re.compile(r"(?:[0-9a-fA-F]{2})*")
 
 
 def replay_problem(ops):
@@ -49,10 +53,9 @@ def replay_problem(ops):
         if op.get("partial"):
             return f"op{i} ({op.get('t')}) has a partial payload (diagnostic recording)"
         if op.get("t") in ("cw", "bo"):
-            try:
-                bytes.fromhex(op.get("data"))
-            except (TypeError, ValueError):
-                return f"op{i} ({op['t']}) has no complete write data"
+            data = op.get("data")
+            if not isinstance(data, str) or HEX.fullmatch(data) is None:
+                return f"op{i} ({op['t']}) has no complete write data (strict hex)"
     return None
 
 
