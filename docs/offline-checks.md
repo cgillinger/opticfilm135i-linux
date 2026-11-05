@@ -74,7 +74,7 @@ Each is a standalone script that prints `N tests passed` and exits 0:
 ```
 for t in test_safety test_calibrate test_hwblock test_park test_offline \
          test_diag test_dpi test_ir test_image_probe test_aperture_crop \
-         test_overscan test_dual_overscan; do
+         test_overscan test_dual_overscan test_trace_recorder; do
     .venv/bin/python tests/$t.py || exit 1
 done
 ```
@@ -83,6 +83,84 @@ These cover the safety model, calibration maths, the park state machine,
 the image path, the DPI and IR logic, the overscan/coverage geometry and
 the bulk-digitisation workflow — the driver's own logic, all without
 hardware.
+
+`test_trace_recorder` uses fake USB devices and the upstream scan wire
+digests, exercising recording on/off, private exclusive files, short and
+failed transfers, recording failures and the converter. It needs no pytest.
+The suite is also mandatory in `tools/release_check.py` and included in
+the provided workflow.
+
+For an explicitly requested hardware session, setting
+`OF135I_TRACE=/new/path/run.jsonl` enables the diagnostic recorder; unset
+or empty leaves it off. It observes transfers through `GuardedDevice`,
+including interrupt reads, without adding commands, retries or sleeps.
+Synchronous file writes do add host overhead, so recorded timing includes
+that overhead and has not been hardware-validated. Files are created
+exclusively as 0600; existing files and symlinks are refused. One warning
+disables recording after an error while USB I/O continues; Ctrl-C while
+recording disables it too and never replaces a failed transfer's error.
+If Ctrl-C lands while a failed transfer is being recorded, it survives only
+as a note on that USB exception: code that catches and retries the USB
+error loses the Ctrl-C.
+Bulk-IN and interrupt reads record the requested size (`want`) and mark
+short reads `short:N`. One recorder is opened per `UsbIo`, so a process
+that opens the device more than once records only the first session
+(later opens warn); the recorder is not thread-safe.
+
+A traced run is slower between transfers, so it can hide timing problems.
+Use the trace to compare what was sent, not to show that timing is
+unchanged. The control-read pace is the example: 0.4 ms per read on one
+host against 3.9 ms on another made issue #35 invisible on the slower one
+(docs/cal-scanstop-gate.md). Note also that the default
+`--cal-wait-scanstop enforce` adds its status reads to a trace; compare
+against `off` only when you want the vendor-capture wire.
+
+If the same `OF135I_TRACE` value reaches several processes, only the first
+records, because the file then exists and later opens warn and do not record (for
+example under `tools/cross_unit_check.py` only the first `doctor` is
+recorded). A per-process file name could come later.
+
+Convert an existing recording entirely offline:
+
+```
+.venv/bin/python tools/trace_to_compiled.py run.jsonl -o run.trace.json.gz
+```
+
+The converter requires the recorder's `{"format": ...}` header and
+validates every record. It ignores a damaged final line (interrupted
+write); any other damaged or malformed line is reported on stderr and the
+conversion is refused unless `--skip-damaged` is given. It skips
+failed transfers, short OUT/control-IN transfers and interrupt records;
+bulk-IN keeps the actual returned length plus `want`. Timestamps follow
+`compile_trace.py` (cw/cr/bo at submission, bi at completion). The output
+is written to a private temp file and hard-linked into place, which is
+atomic: the output appears complete or not at all. On filesystems without
+hard links (such as exFAT or some FUSE/SMB mounts) it is copied to an
+exclusively created 0600 file instead; a failed copy removes that file,
+but a hard kill or power loss mid-copy can leave a truncated one. An
+existing output or symlink is refused.
+
+Exit codes: 0 converted; 1 conversion refused or output not written
+(damaged lines without `--skip-damaged`, existing output or symlink,
+write error); 2 input unreadable or not an OF135I_TRACE recording
+(missing or wrong `{"format": ...}` header), or a command-line usage error.
+
+Only the first 64 bytes of control and bulk-OUT payloads are recorded;
+bulk-IN image data is never recorded. A longer payload is never padded or
+cut: its op gets `data`/`resp` `null`, the full `len` and
+`"partial": true`. A record whose `data` is not strict hex or not exactly
+`min(len, 64)` bytes counts as damaged.
+
+Converter output is diagnostic only: transfers are dropped (failed, short
+OUT/control-IN, interrupt reads, damaged lines), so every converted op
+carries `"src": "of135i-trace/1"`, and the file is wrapped as
+`{"format": "of135i-trace-converted/1", "ops": [...]}` (a dict, not a bare
+list), so deleting every `src` key still leaves a file replay refuses.
+`tools/replay_trace.py` refuses,
+before opening the device, any trace containing an op with `src`, a
+partial op, or a control/bulk write whose data is not strict hex (pairs
+of hex digits, no whitespace). Committed captures in `traces/` carry no
+`src` key and still pass; loaders that read ops by key ignore it.
 
 ### 4. Compiler-based suites (need `g++`, no backend)
 

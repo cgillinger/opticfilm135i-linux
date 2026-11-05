@@ -25,6 +25,7 @@ import argparse
 import gzip
 import json
 import logging
+import re
 import struct
 import sys
 import time
@@ -35,6 +36,31 @@ sys.path.insert(0, str(_REPO))
 
 from of135i import safety  # noqa: E402
 from of135i.usbio import EP_BULK_IN, EP_BULK_OUT, Of135iError, UsbIo  # noqa: E402
+
+
+HEX = re.compile(r"(?:[0-9a-fA-F]{2})*")
+
+
+def replay_problem(ops):
+    """Why ``ops`` must not be replayed, or None. Checked before the
+    device is opened: an OF135I_TRACE conversion marks every op with
+    ``src`` (diagnostic only) and ops whose payload was not fully recorded
+    as partial, and a write must carry strict hex."""
+    if not isinstance(ops, list):
+        return "trace is not a list of ops"
+    for i, op in enumerate(ops):
+        if not isinstance(op, dict):
+            return f"op{i} is not an object"
+        if op.get("partial"):
+            return f"op{i} ({op.get('t')}) has a partial payload (diagnostic recording)"
+        if "src" in op:
+            return (f"op{i} ({op.get('t')}) comes from {op['src']!r}, a converted "
+                    f"OF135I_TRACE recording (diagnostic only, transfers may be missing)")
+        if op.get("t") in ("cw", "bo"):
+            data = op.get("data")
+            if not isinstance(data, str) or HEX.fullmatch(data) is None:
+                return f"op{i} ({op['t']}) has no complete write data (strict hex)"
+    return None
 
 
 class Replayer:
@@ -104,6 +130,9 @@ def main():
     args = ap.parse_args()
 
     ops = json.load(gzip.open(args.trace, "rt"))
+    problem = replay_problem(ops)
+    if problem:
+        sys.exit(f"refused: {problem}; nothing was sent and no device was opened.")
     outdir = Path(args.out)
     outdir.mkdir(parents=True, exist_ok=True)
 

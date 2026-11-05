@@ -575,25 +575,40 @@ class GuardedDevice:
         "attach_kernel_driver", "detach_kernel_driver",
     })
 
-    def __init__(self, raw, session: HardwareSession):
+    def __init__(self, raw, session: HardwareSession, recorder=None):
         object.__setattr__(self, "_GuardedDevice__raw", raw)
         object.__setattr__(self, "_session", session)
+        # Opt-in observer (trace.TraceRecorder) or None: records transfers
+        # after the fact, never alters them.
+        object.__setattr__(self, "_recorder", recorder)
+
+    def _traced(self, kind, direction, ep, setup, out_data, call, size=None):
+        rec = self._recorder
+        if rec is None:
+            return call()
+        return rec.run(kind, direction, ep, setup, out_data, call, size)
 
     # pyusb signature, kept positional-compatible with every call site.
     def ctrl_transfer(self, bmRequestType, bRequest, wValue=0, wIndex=0,
                       data_or_wLength=None, timeout=None):
         extra = {} if timeout is None else {"timeout": timeout}
         if bmRequestType & 0x80:
-            return self.__raw.ctrl_transfer(bmRequestType, bRequest, wValue, wIndex,
-                                            data_or_wLength, **extra)
+            return self._traced(
+                "ctrl", "in", None,
+                (bmRequestType, bRequest, wValue, wIndex, data_or_wLength), None,
+                lambda: self.__raw.ctrl_transfer(bmRequestType, bRequest, wValue, wIndex,
+                                                 data_or_wLength, **extra))
         session = self._session
         session.write_allowed()
         data = bytes(data_or_wLength) if data_or_wLength is not None else b""
         pulse = session.note_write_attempt("ctrl", wValue, data)
         where = f"control OUT wValue={wValue:#06x} wIndex={wIndex:#06x}"
         try:
-            n = self.__raw.ctrl_transfer(bmRequestType, bRequest, wValue, wIndex,
-                                         data_or_wLength, **extra)
+            n = self._traced(
+                "ctrl", "out", None,
+                (bmRequestType, bRequest, wValue, wIndex, len(data)), data,
+                lambda: self.__raw.ctrl_transfer(bmRequestType, bRequest, wValue, wIndex,
+                                                 data_or_wLength, **extra))
         except BaseException as e:
             session.fail(e, where=where)
             raise
@@ -609,7 +624,8 @@ class GuardedDevice:
         extra = {} if timeout is None else {"timeout": timeout}
         where = f"bulk OUT ep={endpoint:#04x}"
         try:
-            n = self.__raw.write(endpoint, data, **extra)
+            n = self._traced("bulk", "out", endpoint, None, data,
+                             lambda: self.__raw.write(endpoint, data, **extra))
         except BaseException as e:
             session.fail(e, where=where)
             raise
@@ -647,12 +663,17 @@ class GuardedDevice:
 
     def read(self, endpoint, size_or_buffer, timeout=None):
         extra = {} if timeout is None else {"timeout": timeout}
-        return self.__raw.read(endpoint, size_or_buffer, **extra)
+        from .usbio import EP_BULK_IN   # usbio imports this module first
+        return self._traced("bulk" if endpoint == EP_BULK_IN else "intr", "in", endpoint,
+                            None, None, lambda: self.__raw.read(endpoint, size_or_buffer, **extra),
+                            size_or_buffer)
 
     def dispose(self) -> None:
         """Release the pyusb handle (usb.util.dispose_resources): a
         handle release, never a transfer or a standard request."""
         import usb.util
+        if self._recorder is not None:
+            self._recorder.close()
         usb.util.dispose_resources(self.__raw)
 
     def __getattr__(self, name):

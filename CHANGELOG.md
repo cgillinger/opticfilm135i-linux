@@ -109,6 +109,42 @@ one exists; "offline" means implemented and tested without the scanner.
   stated under its counting rule, "polled" is distinguished from "waited"
   (non-strict polls outside JOG/LOAD/POSITION only log on timeout), and
   categorical phrasings are hedged as our reading of the tables.
+- **Opt-in transfer recorder** (`OF135I_TRACE=/new/path/run.jsonl`):
+  records transfers passing through the guarded USB layer, with bounded
+  control/OUT payloads and bulk-IN lengths only. Unset or empty leaves
+  recording off; no command, retry or sleep is added. Files are created
+  exclusively with mode 0600; recording failures warn once and disable
+  recording without changing USB results. Trace files close before warning;
+  recorder warnings remain best effort even if a logging handler fails.
+  `tools/trace_to_compiled.py`
+  converts the diagnostic JSONL to compiled traces for offline comparison
+  (payloads beyond 64 bytes are incomplete; not a replay capture).
+  Offline only: standalone tests cover failure handling, conversion and
+  the upstream wire digests with recording on/off; no hardware run.
+  Credit: adapted from bearyjd (https://github.com/bearyjd),
+  commits a02b4b6 and 6c2be93 in bearyjd/opticfilm135i-linux.
+  Review fixes (offline): Ctrl-C while recording disables the recorder
+  and never replaces a failed transfer's exception; reads record the
+  requested size and mark short reads; the converter validates the header
+  and records, reports damaged lines (refusing unless `--skip-damaged`),
+  emits `null` + `"partial": true` instead of padded/truncated payloads,
+  follows compile_trace.py timestamps and writes atomically; and
+  `tools/replay_trace.py` refuses partial or data-less write ops before
+  opening the device. Round 2 (offline): record data must be strict hex
+  of exactly `min(len, 64)` bytes (converter) and strict hex (replay);
+  every converted op carries `"src": "of135i-trace/1"` and replay refuses
+  it (converter output is diagnostic only; committed captures unaffected);
+  the converter copies into place where hard links are unsupported;
+  `gen_tables.py` refuses partial or null-data write ops; documented the
+  converter exit codes 0/1/2 and that a Ctrl-C during recording of a
+  failed transfer is only a note on the USB exception.
+  Round 3 (offline): converter output is a dict
+  `{"format": "of135i-trace-converted/1", "ops": [...]}`, which replay
+  refuses as not a list (stripping `src` cannot undo it; committed bare-list
+  captures unchanged); the failed-copy cleanup unlinks only the file it
+  created (device/inode check) and cannot mask the original error; docs
+  qualify atomicity (hard-link path atomic, copy fallback not under a hard
+  kill).
 - **Docs: the driver is no longer single-unit.** README, CONTRIBUTING and
   the ROADMAP now say what is true as of 2026-11-03: the driver has
   scanned on two units besides the maintainer's (a Steam Deck and a fork's

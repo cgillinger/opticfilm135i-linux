@@ -104,11 +104,15 @@ OFFSET_INJECT = {"offset_r": 0x05, "offset_g": 0x06, "offset_b": 0x07}
 def make_op(o: dict) -> dict:
     """Normalize one raw trace op dict into the fields tables.Op needs."""
     kind = o["t"]
+    if o.get("partial"):
+        raise ValueError(f"{kind} op has a partial payload (diagnostic recording)")
+    if kind in ("cw", "bo") and o.get("data") is None:
+        raise ValueError(f"{kind} op has no data")
     out = dict(kind=kind, dt=o.get("dt", 0.0), bm=0, br=0, wv=0, wi=0,
                data=b"", length=0, resp=b"", dur=0.0)
     if kind == "cw":
         out.update(bm=o["bm"], br=o["br"], wv=o["wv"], wi=o["wi"],
-                    data=bytes.fromhex(o["data"]) if o["data"] else b"")
+                    data=bytes.fromhex(o["data"]))
     elif kind == "cr":
         out.update(bm=o["bm"], br=o["br"], wv=o["wv"], wi=o["wi"],
                     length=o["len"], resp=bytes.fromhex(o["resp"]))
