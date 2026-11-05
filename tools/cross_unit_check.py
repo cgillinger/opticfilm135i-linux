@@ -53,7 +53,7 @@ DEFAULT_SEQUENCE = "on,off,off,on"
 TOKENS = {"off": "off", "on": "enforce"}
 LIFTED = ("calibration", "dark_b_substituted", "poll_timeouts", "cr_mismatches",
           "cr_mismatch_details", "cal_scanstop_waits", "phase_seconds")
-PRECONDITION = ("scanner freshly power-cycled, magazine inserted to the stop, "
+PRECONDITION = ("scanner freshly power-cycled, magazine in the slot, "
                 "nothing else holding the device")
 
 

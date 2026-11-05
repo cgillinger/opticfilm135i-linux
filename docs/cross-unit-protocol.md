@@ -25,7 +25,16 @@ packs the evidence.
   the holder's aperture and was built on the film-strip holder. If it
   does not find them (reported once so far, probably with the slide
   holder), the scan exits 4; the tool records that and goes on
-  (section 5). The magazine must be inserted to the stop.
+  (section 5).
+- The magazine in the slot, as for any `of135i load` (README, "Usage").
+  You push it to the stop later, when `load` asks for it. One case to
+  know: if the scanner was switched off while the magazine was still
+  loaded from an earlier session (which is the situation after a failed
+  scan and its power cycle), the README says the first plain `load` may
+  stop at the feed, and describes the way out (`of135i load --release`,
+  power-cycle again, then `load`). That was seen on the developer unit
+  (docs/test-log.md Test 49); the tool does not run it for you. If the
+  `load` step fails that way, do it by hand and start a new run.
 - Nothing else holding the device (no other scanning application, no
   virtual machine with USB passthrough).
 - A real terminal window. The `load` step asks you to do something with
@@ -54,7 +63,7 @@ python3 tools/cross_unit_check.py --out results/xu-01
 plan to `results/xu-01/plan.txt`.
 
 The tool prints the plan and asks one question: is the scanner freshly
-power-cycled, the magazine inserted to the stop and nothing else
+power-cycled, the magazine in the slot and nothing else
 holding the device. Answer `y` to go on. The `load` step then asks you
 a second thing, mid-run (section 4). The steps, in this order:
 
