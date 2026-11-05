@@ -6,8 +6,9 @@ The upstream calibration suite supplies pre-existing wire digests.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr
 import gzip
+import io
 import json
 import logging
 import os
@@ -50,6 +51,16 @@ def broken_logging():
         logger.setLevel(saved[1])
 
 
+HEADER = json.dumps({"format": trace.FORMAT}) + "\n"
+
+
+def bo_line(data="6162", **extra) -> str:
+    rec = dict(seq=1, t=0.5, dur=0.01, kind="bulk", dir="out", status="ok", ep=2,
+               len=len(data) // 2, data=data)
+    rec.update(extra)
+    return json.dumps(rec) + "\n"
+
+
 class TraceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -72,6 +83,15 @@ class TraceTests(unittest.TestCase):
 
     def transfers(self):
         return [r for r in self.records() if "kind" in r]
+
+    def convert_file(self, content, *args, name="out.trace.json"):
+        """Run the converter CLI on ``content``: (exit code, stderr, out path)."""
+        src, out = self.root / "in.jsonl", self.root / name
+        src.write_bytes(content if isinstance(content, bytes) else content.encode())
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = converter.main([str(src), "-o", str(out), *args])
+        return code, err.getvalue(), out
 
     def test_records_scripted_transfers(self):
         dev, fake = self.device()
@@ -511,6 +531,61 @@ class TraceTests(unittest.TestCase):
             starts.append(cumulative - op.get("dur", 0.))
         self.assertEqual(starts, [0., 1., 2.])
         self.assertEqual(skipped, 0)
+
+    def test_converter_format_matches_recorder(self):
+        self.assertEqual(converter.FORMAT, trace.FORMAT)
+
+    def test_converter_reads_past_damaged_middle_line(self):
+        text = HEADER + bo_line() + "garbage\n" + bo_line("6364") + '{"kind":"bu'
+        records, problems, partial = converter.scan_records(text)
+        self.assertEqual([r["data"] for r in records], ["6162", "6364"])
+        self.assertEqual((len(problems), partial), (1, True))
+        self.assertIn("line 3", problems[0])
+
+    def test_converter_cli_refuses_damaged_middle_line_unless_asked(self):
+        text = HEADER + bo_line() + "garbage\n" + bo_line("6364")
+        code, err, out = self.convert_file(text)
+        self.assertEqual(code, 1)
+        self.assertIn("1 damaged", err)
+        self.assertFalse(out.exists())
+        code, err, out = self.convert_file(text, "--skip-damaged")
+        self.assertEqual(code, 0)
+        self.assertIn("1 damaged", err)
+        self.assertEqual(len(json.loads(out.read_text())), 2)
+
+    def test_converter_cli_accepts_partial_final_line(self):
+        code, _, out = self.convert_file(HEADER + bo_line() + '{"seq":2,"ki')
+        self.assertEqual(code, 0)
+        self.assertEqual(len(json.loads(out.read_text())), 1)
+
+    def test_converter_skips_and_counts_malformed_records(self):
+        bad = [bo_line(t="x"), bo_line(t=float("nan")), bo_line(len=True),
+               bo_line(data="zz"), bo_line(kind="usb"), bo_line(dir="up"),
+               json.dumps({"seq": 3, "t": 1.0, "kind": "ctrl", "dir": "in",
+                           "status": "ok", "len": 2, "data": "2255"}) + "\n",
+               '[1, 2]\n', bo_line(status=7)]
+        for line in bad:
+            with self.subTest(line=line):
+                text = HEADER + bo_line() + line + bo_line("6364")
+                records, problems, partial = converter.scan_records(text)
+                self.assertEqual(len(records), 2)
+                self.assertEqual((len(problems), partial), (1, False))
+                self.assertEqual(self.convert_file(text, name="o.json")[0], 1)
+                (self.root / "o.json").unlink(missing_ok=True)
+
+    def test_converter_counts_undecodable_line(self):
+        data = HEADER.encode() + bo_line().encode() + b"\xff\xfe\n" + bo_line().encode()
+        records, problems, _ = converter.scan_records(data)
+        self.assertEqual((len(records), len(problems)), (2, 1))
+
+    def test_converter_requires_format_header(self):
+        for content in ("", bo_line(), '{"format":"other/9"}\n' + bo_line(),
+                        b"\xff\n", "not json\n"):
+            with self.subTest(content=content):
+                code, err, out = self.convert_file(content)
+                self.assertEqual(code, 2)
+                self.assertIn("OF135I_TRACE", err)
+                self.assertFalse(out.exists())
 
 
 if __name__ == "__main__":
