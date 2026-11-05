@@ -1,16 +1,48 @@
 # WP-3 package — the exact SANE submission series, exported
 
-**Status: revision v8 prepared offline 2026-10-15, PUSHED to the merge
-request 2026-10-16 by the owner, NOT run on hardware.** The merge request
+**Status: revision v9 prepared 2026-11-05, NOT pushed.** The merge request
 (!1032, <https://gitlab.com/sane-project/backends/-/merge_requests/1032>)
-now holds v8 (fork source branch `wp3-gl126-submission-v5`, tip
-`94628f3f2`, replacing v7's `cf21d4327`; pipeline green, no conflicts). v8
-is v7 on current upstream plus the changes below. The series is exactly the repository's `sane/` (the nine
-`gl126_*` files and `gl126-integration.patch`) with the two exposure-time
-edits described under v7, as five commits in two forms that recreate it
-without manual reconstruction.
+still holds v8 (fork source branch `wp3-gl126-submission-v5`, tip
+`94628f3f2`; open, no conflicts, checked 2026-11-05). v9 is v8 with one
+commit added on top; the five v8 commits keep their ids and the base is
+unchanged, so nothing is rebased. The series is exactly the repository's
+`sane/` (the nine `gl126_*` files and `gl126-integration.patch`) with the
+two exposure-time edits described under v7, as six commits in two forms
+that recreate it without manual reconstruction.
 
-## Why v8 exists
+## Why v9 exists
+
+On a fast host the backend, like the companion driver before it, armed
+the next calibration acquisition while the previous one was still
+running, and the second dark measurement came back as residual data,
+which the backend detects and refuses. Two other units showed this in the
+companion driver on every scan (this repository's issue #35); the
+backend had never been run there. Commit 6:
+
+- **The two reads after each calibration SCAN-clear are masked polls.**
+  Bit 0 of reg 0x100 clear, then bit 0 of reg 0x101 clear, 300 ms each,
+  4 ms apart, in the seven acquisition programs of every profile (42
+  sites). The one site the vendor polls (plain 3600 dpi, after the
+  shading measurement) keeps its class-F match and its 5 s and also
+  requires bit 0 clear. 84 ops in `gl126_tables.cpp` differ, in kind,
+  mask, want and timeout only; with a scanner that has already stopped
+  the transfers are v8's.
+- **A timeout has its own text**, "the previous acquisition did not
+  stop", and ends the scan with nothing further written (`gl126.cpp`).
+- **A masked poll's reply buffer starts at a value that cannot match**
+  (`gl126_ops.cpp`), so a control read that returns no data is never
+  taken for the awaited state.
+
+Every GL126 file in the v9 tree is byte-identical to this repository's
+`sane/` except `gl126.cpp`, which keeps the v7 divergence (the
+`exposure_lperiod` assignment exists only in `sane/`).
+
+## History: why v8 existed (v8 is the series before this one)
+
+Status then: prepared offline 2026-10-15, pushed to the merge request
+2026-10-16 by the owner, replacing v7's `cf21d4327`; v8 is v7 on then
+current upstream plus the changes below.
+
 
 The SANE maintainer asked why the backend takes a process lock shared with
 an external (out-of-tree) driver. Decision (the owner's): drop the lock from
@@ -43,12 +75,16 @@ clone is based on the older upstream).
 
 | file | what |
 |---|---|
-| `wp3-gl126-submission.bundle` | `git bundle` of the series, `59d255866..wp3-gl126-submission-v8`. Preserves the exact commit ids. |
+| `wp3-gl126-submission.bundle` | `git bundle` of the series, `59d255866..wp3-gl126-submission-v9`. Preserves the exact commit ids. |
 | `0001-genesys-add-support-for-the-GL126-ASIC.patch` | commit 1 |
 | `0002-genesys-add-the-Plustek-OpticFilm-135i-07b3-1436.patch` | commit 2 |
 | `0003-genesys-frame-selection-and-magazine-handling-for-th.patch` | commit 3 |
 | `0004-genesys-document-the-GL126-and-the-OpticFilm-135i.patch` | commit 4 |
 | `0005-genesys-GL126-cold-start-restore-the-reg-0x32-write-.patch` | commit 5 |
+| `0006-genesys-GL126-wait-for-the-scanner-to-stop-after-eac.patch` | commit 6 (new in v9) |
+
+Patches 1 to 5 differ from the v8 export only in their numbering
+(`n/6`) and the git version line.
 
 ## Revisions
 
@@ -63,22 +99,30 @@ branch 'various_fix_warnings' into 'master'", `origin/master` as fetched
 | 3 | `506f5898ee03ecc8dd254c28a1a15f6830c06303` | `fbf1a80ae26fd519d6d92175894cae75be7676b7` | genesys: frame selection and magazine handling for the OpticFilm 135i |
 | 4 | `cfb390a6d9922d0b39fa7eb498b2ceef01497264` | `caef408a84ad66d95005275b83aac4aa5afd1795` | genesys: document the GL126 and the OpticFilm 135i |
 | 5 | `94628f3f2f538b7bc215d90d65ef1f92ff5dae6a` | `ab97f45fcb35d812262216f815423f3716a0159a` | genesys: GL126 cold start, restore the reg 0x32 write between moves 2 and 3 |
+| 6 | `f58f405ef041704068d3a5c73d2a05edcc94738a` | `43df73bdcf2e1449699fa07b13badf43ad7514ae` | genesys: GL126, wait for the scanner to stop after each calibration acquisition |
 
-The tip tree `ab97f45f…` is the identity of the package: any route below
-that ends on that tree has recreated it exactly. v7 was tip
+The tip tree `43df73bd…` is the identity of the package: any route below
+that ends on that tree has recreated it exactly. v8 was tip
+`94628f3f2f53…`, tree `ab97f45fcb35…`; v7 was tip
 `cf21d4327b86…`, tree `f2a530c170b9…`; v6 tip `ec21b712f1c1…`, tree
 `83568e8e8eaf…`.
 
 ### Hardware evidence, and whether it applies
 
-**The v8 build has not been run on hardware.** The hardware tests
-(`docs/test-log.md`, Tests 62 to 92, 98) and the `tstbackend -l 1` run
-(Tests 93, 94) were made on earlier builds of the same GL126 sources. v8
-removes the process lock, which sent nothing to the scanner, renames a mark
-file path and a test-only environment variable, and changes documentation
-metadata; no byte sent to the scanner differs from v7, so no new hardware
-run is needed for these changes. Upstream's shared code merged since v7 was
-not run against the scanner.
+**The v9 sources have run on hardware once, on the developer's unit**
+(`docs/test-log.md`, Test 118, 2026-11-05): a cold load, frame 1 at
+600 dpi and at plain 3600 dpi, and an eject, through the backend built
+from this repository's `sane/` in the development clone and installed.
+Both scans completed. All fourteen gate polls of the 600 dpi scan
+settled at the first read; at plain 3600 dpi three of the fourteen found
+bit 0 of reg 0x100 still set and waited 11 to 18 ms. That build is the
+development clone's (older upstream base, the `exposure_lperiod` line
+present), not the v9 tree itself; the GL126 files are otherwise
+byte-identical. **Not run:** the v9 tree's own build on the scanner; a
+unit that shows the failure; 1200, 2400, 7200 dpi and the infrared
+source with the gate; a timeout on hardware. The earlier hardware tests
+(Tests 62 to 92, 98) and the `tstbackend -l 1` runs (Tests 93, 94) were
+made on earlier builds of the same GL126 sources.
 
 ## History: why v7 existed (v7 is the series before this one)
 
@@ -128,10 +172,10 @@ Either route needs a clone of sane-backends containing the base commit.
 ```
 git clone https://gitlab.com/sane-project/backends.git sane-backends
 cd sane-backends
-git fetch /path/to/wp3-gl126-submission.bundle wp3-gl126-submission-v8
+git fetch /path/to/wp3-gl126-submission.bundle wp3-gl126-submission-v9
 git checkout -b wp3-gl126-submission FETCH_HEAD
-git rev-parse HEAD            # 94628f3f2f538b7bc215d90d65ef1f92ff5dae6a
-git rev-parse HEAD^{tree}     # ab97f45fcb35d812262216f815423f3716a0159a
+git rev-parse HEAD            # f58f405ef041704068d3a5c73d2a05edcc94738a
+git rev-parse HEAD^{tree}     # 43df73bdcf2e1449699fa07b13badf43ad7514ae
 ```
 
 **Route B — the patches (same trees, new commit ids):**
@@ -140,8 +184,8 @@ git rev-parse HEAD^{tree}     # ab97f45fcb35d812262216f815423f3716a0159a
 git clone https://gitlab.com/sane-project/backends.git sane-backends
 cd sane-backends
 git checkout -b wp3-gl126-submission 59d255866
-git am /path/to/000[1-5]-*.patch
-git rev-parse HEAD^{tree}     # ab97f45fcb35d812262216f815423f3716a0159a
+git am /path/to/000[1-6]-*.patch
+git rev-parse HEAD^{tree}     # 43df73bdcf2e1449699fa07b13badf43ad7514ae
 ```
 
 The bundle's one prerequisite is `59d255866…` (`git bundle verify`, run
@@ -162,7 +206,7 @@ nm -D backend/.libs/libsane-genesys.so | grep -c gl126     # 105
 
 Note on the SONAME: sane-backends' `autogen.sh` patches libtool
 (`patches/ltmain.sh.patch`) so that every backend plugin carries the
-SONAME `libsane.so.1`; the v7 and v8 builds have it. The v6 and development
+SONAME `libsane.so.1`; the v7, v8 and v9 builds have it. The v6 and development
 builds carry `libsane-genesys.so.1` (the patch had not taken there), as
 does Fedora's packaged plugin. The installed backend is loaded by absolute
 path, so the SONAME does not matter to the dll; it did matter to this
@@ -172,30 +216,34 @@ put a shim directory (`libsane.so.1` -> the built plugin) first on the
 probe's rpath, so they test the build they were pointed at under either
 SONAME.
 
-## Verification of this export (v8, 2026-10-15)
+## Verification of this export (v9, 2026-11-05)
 
-Done offline, with no scanner contact. Results apply to the v8 build.
+Offline, with no scanner contact, in the worktree `sane-wp3-v9`.
 
 | check | result |
 |---|---|
-| Standalone build in a worktree on `59d255866` (`autogen`, `configure --sysconfdir=/etc`, `lib`, `sanei`, `backend/libsane-genesys.la`, `-j8`) | exit 0, **0 compiler warnings** |
-| exported symbols | **105** mentioning `gl126` (v7: 111; the six removed are the process-lock functions) |
-| `tests/test_sane_open_params.py` against that build | PASS, 7 passed |
-| `tests/test_sane_calibration_cache.py` against that build | PASS, 6 passed |
-| `tests/test_sane_magazine.py` against that build | PASS, 42 passed |
-| `tests/test_sane_mark.py` (standalone build of `gl126_mark.cpp`; replaces `test_sane_lock.py`) | PASS, 7 passed, includes: mark readable/writable while the Python driver's `ProcessLock` is held |
-| upstream `genesys_unit_tests` (`make -C testsuite/backend/genesys check`) | PASS (1/1) |
-| `tools/release_check.py`, development build in `~/Dokument/Github/sane-backends` | FULL VERIFICATION PASSED, 393 tests, 0 skipped |
-| Route A: fetch from the bundle in a clean clone | tip `94628f3f…`, tree `ab97f45f…`, identical |
-| Route B: `git am` of the five patches onto `59d255866` in a clean clone | tree `ab97f45f…`, identical (tip `86a3af75…`) |
-| upstream `.gitlab-ci.yml`; local replay of its jobs (podman, the project CI images) on a clean clone of the tip | `make-dist` replay exit 0; `fedora-39-clang` replay (clang 17.0.1, `-Werror`) `BUILD_EXIT=0`, `genesys_unit_tests` PASS, after which `make check` stops at `testsuite/backend/escl_test` (`escl.h: requires libcurl, libavahi and libxml2`, `CHECK_EXIT=2`) — the same stop as on v6 and v7, which is the local environment's, not the series' |
-| symlinks in the recreated trees | 0, both routes |
-| skipped | none |
+| Standalone build on `59d255866` + the six commits (`autogen`, `configure --sysconfdir=/etc`, `lib`, `sanei`, `backend/libsane-genesys.la`, `-j8`), gcc | exit 0, **0 compiler warnings** |
+| exported symbols | **105** mentioning `gl126` (as v8) |
+| `tools/release_check.py` with `SANE_BACKENDS_DIR` pointing at that build (all offline suites, including the three backend suites linked against it) | FULL VERIFICATION PASSED, 733 tests, 0 skipped (backend suites 7 + 6 + 42) |
+| clang build of the genesys backend in the project's CI image (`registry.gitlab.com/sane-project/ci-envs:fedora-39-clang`, clang 17.0.1, `CXXFLAGS=-Werror`; `lib`, `sanei`, `backend/libsane-genesys.la`) | exit 0, 0 warnings |
+| upstream `genesys_unit_tests` in the same container (`make -C testsuite/backend/genesys check`) | PASS (1/1) |
+| upstream `tools/style-check.sh` on the four changed files | exit 0 |
+| Route A: fetch from the bundle in a clean clone | tip `f58f405e…`, tree `43df73bd…`, identical |
+| Route B: `git am` of the six patches onto `59d255866` in a clean clone | tree `43df73bd…`, identical |
+| symlinks in the recreated tree | 0 |
+| the GL126 files against this repository's `sane/` | byte-identical except `gl126.cpp` (the v7 divergence only) |
 
-Not run: `tstbackend` (any level), `scanimage`, and anything that touches
-the scanner.
+Not run for v9: the full replay of the upstream `make-dist` and compile
+jobs (only the genesys backend was built with clang), `make distcheck`,
+`tstbackend` (any level), and `scanimage` against the v9 tree's own
+build. The fork's pipeline will run them when the branch is pushed.
 
 ## What was pushed, and from where
+
+**v9 has not been pushed.** It exists as the local branch
+`wp3-gl126-submission-v9` (worktree `sane-wp3-v9`) and as this package.
+Pushing it to the fork's branch `wp3-gl126-submission-v5` is the owner's
+step, as for every revision.
 
 v8 was pushed on 2026-10-16 by the owner, by hand, from the
 `sane-wp3-v8` worktree to his fork's branch `wp3-gl126-submission-v5`

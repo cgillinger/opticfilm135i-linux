@@ -1,7 +1,7 @@
 From 94628f3f2f538b7bc215d90d65ef1f92ff5dae6a Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
 Date: Tue, 13 Oct 2026 19:50:12 +0200
-Subject: [PATCH 5/5] genesys: GL126 cold start, restore the reg 0x32 write
+Subject: [PATCH 5/6] genesys: GL126 cold start, restore the reg 0x32 write
  between moves 2 and 3
 
 The hand-written cold homing round dropped one register write that the
@@ -69,5 +69,5 @@ index 0d9230ab7..e3f28baac 100644
      {"jog", MAGAZINE_JOG_OPS, 86, nullptr, 0, nullptr, 0},
      {"load", MAGAZINE_LOAD_OPS, 71, nullptr, 0, nullptr, 0},
 -- 
-2.55.0
+2.56.0
 

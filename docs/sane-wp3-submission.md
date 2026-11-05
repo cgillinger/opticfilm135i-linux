@@ -14,6 +14,19 @@ list. Submitted is not accepted: whether and when anything is merged is
 the maintainers' decision. The completion of B2 is recorded in
 `docs/ROADMAP.md`.
 
+**Revision v9 (prepared 2026-11-05) is NOT pushed.** It is v8 with one
+commit on top, "genesys: GL126, wait for the scanner to stop after each
+calibration acquisition": the two status reads after each calibration
+SCAN-clear become masked polls for bit 0 clear (300 ms each), a timeout
+gets its own text, and a masked poll no longer takes an empty reply for a
+match (`docs/cal-scanstop-gate.md`, "The SANE backend"). The base and the
+five v8 commits are unchanged, so nothing is rebased; the merge request
+was open and without conflicts on 2026-11-05. Hardware: Test 118 on the
+developer's unit, with the development clone's build of the same GL126
+sources. Export and its verification: `sane/wp3-package/README.md`. The
+sections below describe the series as submitted (v8) unless they say
+otherwise.
+
 **Revision v8 (prepared offline 2026-10-15) was pushed to the merge request
 on 2026-10-16** by the owner from the `sane-wp3-v8` worktree
 (`git push fork wp3-gl126-submission-v8:wp3-gl126-submission-v5
@@ -104,6 +117,7 @@ has not started and nothing is merged. §1 has the details.
 | | |
 |---|---|
 | v7 (pushed 2026-10-13) | branch `wp3-gl126-submission-v7`, worktree `~/Dokument/Github/sane-wp3-v7`, base `a8676a6f7d21adf5137936a3b406fbde70795220`, 5 commits, tip `cf21d4327b86ec768c1dbfda25451052c994ee47`, tree `f2a530c170b91065c7b5f8b60b71e4aa73af4257` |
+| v9 (prepared 2026-11-05, NOT pushed) | branch `wp3-gl126-submission-v9`, worktree `~/Dokument/Github/sane-wp3-v9`, base `59d255866046e5909208b3da3a6911dd2896a7ec` (unchanged), 6 commits (the five of v8 with their ids, plus `f58f405ef`), tip `f58f405ef041704068d3a5c73d2a05edcc94738a`, tree `43df73bdcf2e1449699fa07b13badf43ad7514ae` |
 | v8 (pushed 2026-10-16) | branch `wp3-gl126-submission-v8`, worktree `~/Dokument/Github/sane-wp3-v8`, base `59d255866046e5909208b3da3a6911dd2896a7ec`, 5 commits (`ac80e0a82`, `787f03718`, `506f5898e`, `cfb390a6d`, `94628f3f2`), tip `94628f3f2f538b7bc215d90d65ef1f92ff5dae6a`, tree `ab97f45fcb35d812262216f815423f3716a0159a` |
 | Branch | `wp3-gl126-submission-v6` (local name; pushed 2026-10-02 to the merge request, whose source branch in the fork is still named `wp3-gl126-submission-v5` but holds these v6 commits) |
 | Worktree | `~/Dokument/Github/sane-wp3-v6` (a `git worktree` of the sane-backends clone) |

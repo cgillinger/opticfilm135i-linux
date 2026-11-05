@@ -1,7 +1,7 @@
 From ac80e0a8263284c2ce97620b2bd1bd53ef420ef6 Mon Sep 17 00:00:00 2001
 From: Christian Gillinger <christian.gillinger@gmail.com>
 Date: Mon, 28 Sep 2026 19:07:54 +0200
-Subject: [PATCH 1/5] genesys: add support for the GL126 ASIC
+Subject: [PATCH 1/6] genesys: add support for the GL126 ASIC
 
 The Genesys GL126 as its own command set. It is close enough to the
 GL124 for the framework to fit, but its scan flow is the vendor's, so it
@@ -31266,5 +31266,5 @@ index ae8d4a228..aa599bce2 100644
  
  } // namespace genesys
 -- 
-2.55.0
+2.56.0
 
