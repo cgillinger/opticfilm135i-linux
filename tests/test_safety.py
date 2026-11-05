@@ -2215,7 +2215,9 @@ def test_watch_exit_codes_readme_matches_help_epilog():
     assert _norm(cli.WATCH_EXIT_CODES_HELP) in _norm(readme), \
         "README watch exit-code text drifted from cli.WATCH_EXIT_CODES_HELP"
     watch = cli.build_parser()._subparsers._group_actions[0].choices["watch"]
-    assert _norm(cli.WATCH_EXIT_CODES_HELP) in _norm(watch.format_help())
+    # Compare the attribute, not format_help(): argparse wraps help at $COLUMNS,
+    # which can split hyphenated words and make a text comparison width-dependent.
+    assert watch.epilog == cli.WATCH_EXIT_CODES_HELP
     # The wording distinguishes the three interrupt outcomes and the break.
     for needle in ("130", "EX_TEMPFAIL", "previously", "RestartPreventExitStatus=75"):
         assert needle in cli.WATCH_EXIT_CODES_HELP, needle
@@ -2287,8 +2289,9 @@ def test_watch_absent_device_remains_error_and_help_explains_supervisor():
     assert "exit 75" not in se
     parser = cli.build_parser()
     watch = parser._subparsers._group_actions[0].choices["watch"]
-    help_text = watch.format_help()
-    assert "RestartPreventExitStatus=75" in help_text
+    # The epilog attribute, not format_help(): argparse wraps at $COLUMNS and
+    # would split these phrases on a narrow terminal.
+    help_text = watch.epilog
     assert "3 = scanner busy" in help_text
     assert "timeouts only warn" in help_text
 
