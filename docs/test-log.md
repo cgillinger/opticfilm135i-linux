@@ -8464,3 +8464,79 @@ cross-unit protocol cannot be run there with a film-strip holder; with the
 slide holder the tool records each exit 4 as
 `completed-coverage-unverified` and goes on (docs/cross-unit-protocol.md,
 section 5). That path has not been run yet.
+
+## 2026-11-05 — Test 118: the SANE backend's calibration stop gate on hardware (owner's unit) — 600 dpi and plain 3600 dpi completed; 25 of 28 gate polls settled at the first read, three at plain 3600 waited 11–18 ms; earlier backend logs show the same reads were passed over before
+
+Hardware, owner's unit and host, master 1cb6575 (PR #58: the two reads
+after each calibration SCAN-clear are masked polls for bit 0 clear).
+Backend built in the sane-backends clone without warnings and installed
+with `sudo tools/sane_install.sh install` (status: identical to the
+build). Run by the owner in a terminal window, `SANE_DEBUG_GENESYS=4`,
+device `genesys:libusb:001:012`. A power cycle first, magazine loose in
+the slot, film strip in the film-strip holder. Times are local.
+
+**Course.**
+
+1. `scanimage -n --load-film`, cold. Cold start as in Test 98 (nine
+   completions ending 0xf8; the three settle reads 0xbb / 0x1f on the
+   first poll), open, jog, `unknown -> released`, edge wait started
+   18:27:45. The magazine was reseated late: edge seen after 1181 polls
+   (118.1 s of the 120 s budget). Feed 0xf4 on the first poll, traverse
+   0xdd -> 0xdc in 25 ms, `released -> loaded`.
+2. Scan, frame 1, 600 dpi Color (profile dpi600), 18:31:25–18:31:42.
+3. Scan, frame 1, 3600 dpi Color (profile plain3600), 18:38:33–18:39:02.
+4. `scanimage -n --eject-film`: 0xc9 -> 0xe8 after 937 ms, ejected.
+
+No abnormal sound reported.
+
+| | 600 dpi (dpi600) | 3600 dpi (plain3600) |
+|---|---|---|
+| exit | 0 | 0 |
+| gate polls | 14, all settled at the first read (4 ms) | 14; 11 at the first read, 3 waited |
+| reg 0x100 after `cal_white` | 0xf0, 1 read | 0xf1 -> 0xf0, 2 reads, 11 ms |
+| reg 0x100 after `cal_shading_measure` | 0xf0, 1 read | 0xf1 -> 0xf0, 2 reads, 11 ms (the 0xf1/0xf0 site) |
+| reg 0x100 after `cal_shading_verify` | 0xf0, 1 read | 0xf1 -> 0xf0, 3 reads, 18 ms |
+| reg 0x101 at all seven sites | 0xdc (0xd8 after the shading measurement), 1 read | the same |
+| offset codes | 266 / 265 / 266 | 266 / 266 / 266 |
+| gain codes | 44 / 33 / 39 | 45 / 32 / 39 |
+| POSITION (FEEDL) | 1433 ms (6519) | 1439 ms (6562) |
+| PARK | 3840 ms | 3770 ms |
+| delivered | 876 x 927, 16-bit RGB | 3762 x 5335, 16-bit RGB |
+| `low_byte_nonzero` | 0.996 | 0.996 |
+
+Reduced previews of both images were looked at during the analysis:
+the whole frame, no banding or fringing visible at that scale. Not the
+owner's eye check, which this run does not need (no image-path change).
+
+**The gate waited on this unit.** At plain 3600 dpi the first read of
+reg 0x100 after three of the seven acquisitions still had bit 0 set.
+The backend read again 4 ms later (twice after `cal_shading_verify`) and
+went on when the bit was clear. Before PR #58 these were logged-only
+reads, and the one captured poll among them accepted 0xf1 as class F, so
+the backend continued with the previous acquisition still reported as
+running. This is the first run in which the backend waited.
+
+**The earlier backend did pass these reads over.** The private archive
+holds 44 calibrations logged by earlier builds of the backend on this
+unit (26 plain3600, 8 dpi600, 4 ir3600, 4 dpi2400, 1 dpi1200,
+1 dpi7200). In them the read of reg 0x100 after the SCAN-clear returned
+0xf1 46 times after a shading measurement or verification and 38 times
+after a dark, white or gain-check acquisition (7 of them after
+`cal_dark_a`), and reg 0x101 had bit 0 set 56 times; the plain-3600
+`cal_shading_measure` poll settled on 0xf1 in 19 of 23 runs. No log of
+this unit contains a residual dark_b, so on this host going on early was
+harmless as far as these runs show. On a fast host it is the failure of
+issue #35.
+
+**What this does not cover.** One frame at two profiles on the unit and
+host where the Python driver never needed the gate. ir3600, 1200, 2400
+and 7200 dpi were not run. No gate timeout occurred, so the fail-closed
+path and its error text ran offline only. A host as fast as the other
+two units has not run this backend at all; that is the next step, on
+the second unit.
+
+**Operator note.** The load's 120 s reseat window is silent. The
+magazine went in 2 s before it closed.
+
+Logs and images are in the owner's local `test118-sane-v9/` (the images
+are not in the repository).

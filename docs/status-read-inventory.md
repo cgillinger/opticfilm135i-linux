@@ -201,7 +201,7 @@ the vendor see. Not a stop wait. Leave; it is logged.
    driver: both reporters' sidecars show it (waits up to 24 and 29 ms)
    and `enforce` is the default. The SANE backend's generated programs
    now wait at the same sites (docs/cal-scanstop-gate.md, "The SANE
-   backend"), offline-tested only, not yet run on hardware; its
+   backend"), run on the owner's unit only (Test 118); its
    residual-dark_b check fails without substitution.*
 3. **Classes B, C, F, G stay** on the evidence above. They are
    re-judged if a cross-unit `.diag.json` shows `cr_mismatches`
