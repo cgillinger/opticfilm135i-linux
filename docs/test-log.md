@@ -8360,3 +8360,80 @@ host never has to wait. The default now also applies to resolutions and
 modes that have not been run gated on any unit (docs/cal-scanstop-gate.md,
 "Decision"): 1200, 2400 and 7200 dpi, the whole-strip sweep and
 `digitize`, 110 film.
+
+## 2026-11-05 — Test 117: the opt-in transfer recorder (`OF135I_TRACE`, PR #51) on hardware, owner's unit — one scan untraced, one traced: both completed, calibration and timing alike; the trace shows a fixed ~4 ms per control transfer on this host
+
+Hardware, owner's unit and host, master 0cbef7a merged with PR #51 at
+368ff50 (bearyjd's recorder; the merge is 32b634e), run by the owner in
+a terminal window before the merge. A power cycle first, magazine loose
+in the slot, film strip in the film-strip holder. The question: does a
+scan with the recorder on behave like one with it off, and is the
+recorded file what the docs say it is.
+
+**Course.**
+
+1. `of135i status`, then `of135i load`, recorder off. Cold start as in
+   Tests 114–116: "no re-seating", cold status word `0x4855`,
+   final `0xdc55`.
+2. Scan A, recorder off:
+   `of135i -v scan --frames 1 --dpi 600 --recalibrate -o ...`
+   (14:18:47–14:19:05 UTC).
+3. Scan B, the same command with `OF135I_TRACE` set to a new file
+   (14:21:01–14:21:19 UTC).
+4. `of135i eject`, recorder off, from the post-park state. Normal.
+
+No abnormal sound reported. Both scans ran with the default gate
+(`enforce`).
+
+| | A, recorder off | B, recorder on |
+|---|---|---|
+| exit | 0 | 0 |
+| coverage | verified (IR) | verified (IR) |
+| `dark_b_substituted` | no | no |
+| offsets | 266/265/266 | 266/265/266 |
+| gains | 45/33/39 | 45/34/39 |
+| `cr_mismatches` | 30 | 36 |
+| `poll_timeouts` | 0 | 0 |
+| gate waits | 7, all `clear`, one read each | 7, all `clear`, one read each |
+| `wait_s` | 7.6–8.0 ms | 7.0–8.0 ms |
+| total | 17.66 s | 17.65 s |
+| position / scan / park | 1.805 / 8.237 / 3.916 s | 1.805 / 8.235 / 3.927 s |
+
+Lines, width and raw byte count are identical (1862 × 876, 9 786 672
+bytes in 19 chunks). Every calibration phase agrees within 6 ms except
+`cal_shading_verify`, 1.333 s against 1.290 s (the traced run was the
+shorter one). `cr_mismatches` 30 and 36 lie in the range of Tests 115
+and 116 (29–39).
+
+**The trace file.** Mode 0600, 304 kB: the header line and 2336
+records, `seq` contiguous, every status `ok`. 902 control-IN, 261
+control-OUT, 1160 bulk-IN, 13 bulk-OUT. No record carries more than
+64 bytes of payload and no bulk-IN record carries data (lengths only),
+as documented. `tools/trace_to_compiled.py` converted it to 2336 ops in
+the dict envelope, 13 of them marked partial (the bulk-OUT payloads,
+which exceed 64 bytes); `tools/replay_trace.py`'s check refuses both the
+converted file and its bare op list.
+
+**Side finding: a fixed ~4 ms per control transfer on this host.** The
+`dur` field gives the pace directly:
+
+| transfer | n | median | p95 | max |
+|---|---|---|---|---|
+| control-IN | 902 | 3.956 ms | 3.974 ms | 4.114 ms |
+| control-OUT | 261 | 3.953 ms | 3.966 ms | 4.018 ms |
+| bulk-OUT | 13 | 0.065 ms | 1.480 ms | 1.480 ms |
+
+So the ~3.9 ms per control read seen in Tests 114–116 holds for control
+transfers in both directions, is nearly constant, and does not apply to
+bulk-OUT on the same device. That looks like a fixed cadence for control
+transfers on this host or port and not a generally slow host. Not
+explained. A trace from one of the two faster hosts would give their
+figure the same way.
+
+**What this does not cover.** One pair of scans, 600 dpi dual, frame 1,
+on the unit whose host is slow enough to hide issue #35. One pair says
+the recorder did not disturb this scan; it is not a timing validation
+(docs/offline-checks.md: a traced run can hide timing problems). The
+recorder's failure paths (unwritable file, Ctrl-C while recording) ran
+offline only. `status`, `load` and `eject` were not traced. The
+converter and the replay refusal were exercised on this one file.
