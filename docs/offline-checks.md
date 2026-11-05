@@ -95,7 +95,10 @@ For an explicitly requested hardware session, setting
 or empty leaves it off. It observes transfers through `GuardedDevice`,
 including interrupt reads, without adding commands, retries or sleeps.
 Synchronous file writes do add host overhead, so recorded timing includes
-that overhead and has not been hardware-validated. Files are created
+that overhead. It has run on hardware once (Test 117 in
+docs/test-log.md: one 600 dpi scan traced, one not, alike in calibration
+and timing on a slow-paced host), which is not a timing validation. Files
+are created
 exclusively as 0600; existing files and symlinks are refused. One warning
 disables recording after an error while USB I/O continues; Ctrl-C while
 recording disables it too and never replaces a failed transfer's error.

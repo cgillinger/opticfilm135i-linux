@@ -119,8 +119,12 @@ one exists; "offline" means implemented and tested without the scanner.
   `tools/trace_to_compiled.py`
   converts the diagnostic JSONL to compiled traces for offline comparison
   (payloads beyond 64 bytes are incomplete; not a replay capture).
-  Offline only: standalone tests cover failure handling, conversion and
-  the upstream wire digests with recording on/off; no hardware run.
+  Standalone tests cover failure handling, conversion and the upstream
+  wire digests with recording on/off (offline). One hardware pair on the
+  developer unit (Test 117): a 600 dpi scan with the recorder on matched
+  the same scan with it off in calibration, timing and output size, and
+  the 2336-record file was as documented; the failure paths ran offline
+  only.
   Credit: adapted from bearyjd (https://github.com/bearyjd),
   commits a02b4b6 and 6c2be93 in bearyjd/opticfilm135i-linux.
   Review fixes (offline): Ctrl-C while recording disables the recorder

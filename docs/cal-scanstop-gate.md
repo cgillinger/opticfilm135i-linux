@@ -230,7 +230,10 @@ Open questions:
 
 - Why a control read takes about 3.9 ms on the owner's host. The scanner
   is on a high-speed (480 Mbit/s) root port there, with no hub in
-  between, so the link speed is not the reason.
+  between, so the link speed is not the reason. A recorded scan (Test
+  117) narrows it: control transfers take 3.95 ms median in both
+  directions with almost no spread, bulk-OUT 0.07 ms, so it is a fixed
+  cadence for control transfers on that host, not a slow host.
 - Why the second unit is still running at about 20 ms in its first scan
   after a load when the owner's has stopped by about 16 ms (Test 115).
 - The exit 4 on the second unit.
