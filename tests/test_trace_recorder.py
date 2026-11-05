@@ -31,6 +31,7 @@ from test_safety import FakeUsbDevice, _cal_buffers, fast_time, make_scanner
 from test_cal_wait_scanstop import BASELINE, _baseline_run, _digest
 import trace_to_compiled as converter
 import replay_trace
+import gen_tables
 
 
 @contextmanager
@@ -725,6 +726,17 @@ class TraceTests(unittest.TestCase):
                 patch.object(converter.shutil, "copyfileobj", side_effect=OSError(errno.ENOSPC, "full")):
             self.assertEqual(self.convert_file(HEADER + bo_line(), name="o.json")[0], 1)
         self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["in.jsonl"])
+
+    def test_gen_tables_refuses_partial_or_null_write_data(self):
+        cw = dict(t="cw", bm=0x40, br=4, wv=0x83, wi=0, dt=0.0)
+        self.assertEqual(gen_tables.make_op(dict(cw, data=""))["data"], b"")
+        self.assertEqual(gen_tables.make_op(dict(cw, data="0330"))["data"], b"\x03\x30")
+        for op in (dict(cw, data=None), dict(t="bo", data=None, dt=0.0),
+                   dict(cw, data=None, len=128, partial=True),
+                   dict(t="cr", bm=0xc0, br=4, wv=0x8e, wi=0, len=200, resp=None,
+                        partial=True, dt=0.0)):
+            with self.subTest(op=op), self.assertRaisesRegex(ValueError, "partial|no data"):
+                gen_tables.make_op(op)
 
     def test_converter_failed_write_leaves_nothing_and_retry_works(self):
         for error in (OSError("disk full"), KeyboardInterrupt()):
