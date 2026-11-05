@@ -117,8 +117,10 @@ conversion is refused (exit 1) unless `--skip-damaged` is given. It skips
 failed transfers, short OUT/control-IN transfers and interrupt records;
 bulk-IN keeps the actual returned length plus `want`. Timestamps follow
 `compile_trace.py` (cw/cr/bo at submission, bi at completion). The output
-is written to a private temp file and linked into place, so a failure
-leaves no partial file; an existing output is refused.
+is written to a private temp file and linked into place (on filesystems
+without hard links, such as exFAT or some FUSE/SMB mounts, it is copied to
+an exclusively created 0600 file instead), so a failure leaves no partial
+file; an existing output or symlink is refused.
 
 Only the first 64 bytes of control and bulk-OUT payloads are recorded;
 bulk-IN image data is never recorded. A longer payload is never padded or

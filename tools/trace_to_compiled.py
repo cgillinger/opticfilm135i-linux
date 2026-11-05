@@ -27,8 +27,9 @@ Notes:
   partial op, or a write without strict hex data). Loaders that read
   ops by key ignore the extra key.
 - The output is written to a 0600 temp file in the same directory and
-  hard-linked into place, so a failed run leaves no partial output; an
-  existing file or symlink is refused. Failed transfers, short OUT and short control-IN transfers
+  hard-linked into place (on filesystems without hard links it is copied
+  to an exclusively created 0600 file instead), so a failed run leaves no
+  partial output; an existing file or symlink is refused. Failed transfers, short OUT and short control-IN transfers
   are skipped. Bulk-IN records retain the actual returned length and,
   as ``want``, the requested one (a short bulk read is kept).
 
@@ -38,11 +39,13 @@ Usage: trace_to_compiled.py TRACE.jsonl [-o OUT.trace.json[.gz]] [--skip-damaged
 from __future__ import annotations
 
 import argparse
+import errno
 import gzip
 import json
 import math
 import os
 import re
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -53,6 +56,10 @@ DATA_CAP = 64                       # of135i.trace.DATA_CAP
 HEX = re.compile(r"(?:[0-9a-fA-F]{2})*")
 KINDS = ("ctrl", "bulk", "intr")
 SETUP = ("bm", "br", "wv", "wi", "wlen")
+
+
+# os.link errors meaning "no hard links here" (exFAT, some FUSE/SMB mounts)
+NO_LINKS = {errno.EPERM, errno.EXDEV, errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOSYS}
 
 
 class TraceFormatError(ValueError):
@@ -184,10 +191,25 @@ def convert(records: list[dict]) -> tuple[list[dict], int]:
     return ops, skipped
 
 
+def _copy_exclusive(tmp: str, out: Path) -> None:
+    """Copy finished ``tmp`` to a new 0600 ``out`` (O_EXCL, no symlink
+    follow); a failed copy removes the ``out`` it created."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(out, flags, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as dst, open(tmp, "rb") as src:
+            shutil.copyfileobj(src, dst)
+    except BaseException:
+        os.unlink(out)
+        raise
+
+
 def write_exclusive(out: Path, payload: bytes) -> None:
     """Write a private (0600) temp file beside ``out``, then hard-link it
     into place: ``out`` appears complete or not at all, an existing file
-    or symlink is never replaced, and the temp file is always removed."""
+    or symlink is never replaced, and the temp file is always removed.
+    Where hard links are unsupported, the finished temp file is copied to
+    an exclusively created ``out`` instead (removed again if the copy fails)."""
     fd, tmp = tempfile.mkstemp(dir=out.parent, prefix=f".{out.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as raw:
@@ -196,7 +218,12 @@ def write_exclusive(out: Path, payload: bytes) -> None:
                     gz.write(payload)
             else:
                 raw.write(payload)
-        os.link(tmp, out)
+        try:
+            os.link(tmp, out)
+        except OSError as e:
+            if e.errno not in NO_LINKS:     # EEXIST: existing output refused
+                raise
+            _copy_exclusive(tmp, out)
     finally:
         os.unlink(tmp)
 

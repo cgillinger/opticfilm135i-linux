@@ -7,6 +7,7 @@ The upstream calibration suite supplies pre-existing wire digests.
 from __future__ import annotations
 
 from contextlib import contextmanager, redirect_stderr
+import errno
 import gzip
 import io
 import json
@@ -688,6 +689,42 @@ class TraceTests(unittest.TestCase):
         ops = [dict(t="cw", bm=0x40, br=4, wv=0x83, wi=0, data="", dt=0.0),
                dict(t="bo", data="0102", dt=0.1), dict(t="bi", len=8, dt=0.1)]
         self.assertEqual(self.replay(ops, "--dry-run"), 0)
+
+    def test_converter_falls_back_without_hard_links(self):
+        for code in (errno.EXDEV, errno.EPERM, errno.ENOTSUP):
+            with self.subTest(errno=errno.errorcode[code]), \
+                    patch.object(converter.os, "link", side_effect=OSError(code, "no links")):
+                old = os.umask(0)
+                try:
+                    status, _, out = self.convert_file(HEADER + bo_line(), name="o.json")
+                finally:
+                    os.umask(old)
+                self.assertEqual(status, 0)
+                self.assertEqual(stat.S_IMODE(out.stat().st_mode), 0o600)
+                self.assertEqual(json.loads(out.read_text())[0]["data"], "6162")
+                self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["in.jsonl", "o.json"])
+                before = out.read_bytes()
+                self.assertEqual(self.convert_file(HEADER + bo_line("6364"), name="o.json")[0], 1)
+                self.assertEqual(out.read_bytes(), before)
+                out.unlink()
+
+    def test_converter_fallback_refuses_symlink(self):
+        victim = self.root / "victim"
+        victim.write_bytes(b"keep")
+        (self.root / "o.json").symlink_to(victim)
+        with patch.object(converter.os, "link", side_effect=OSError(errno.EXDEV, "no links")):
+            self.assertEqual(self.convert_file(HEADER + bo_line(), name="o.json")[0], 1)
+        self.assertEqual(victim.read_bytes(), b"keep")
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["in.jsonl", "o.json", "victim"])
+
+    def test_converter_link_errors_leave_nothing(self):
+        with patch.object(converter.os, "link", side_effect=OSError(errno.EIO, "io")):
+            self.assertEqual(self.convert_file(HEADER + bo_line(), name="o.json")[0], 1)
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["in.jsonl"])
+        with patch.object(converter.os, "link", side_effect=OSError(errno.EXDEV, "no links")), \
+                patch.object(converter.shutil, "copyfileobj", side_effect=OSError(errno.ENOSPC, "full")):
+            self.assertEqual(self.convert_file(HEADER + bo_line(), name="o.json")[0], 1)
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["in.jsonl"])
 
     def test_converter_failed_write_leaves_nothing_and_retry_works(self):
         for error in (OSError("disk full"), KeyboardInterrupt()):
