@@ -633,6 +633,24 @@ class TraceTests(unittest.TestCase):
                dict(t="bo", data="0102", dt=0.1), dict(t="bi", len=8, dt=0.1)]
         self.assertEqual(self.replay(ops, "--dry-run"), 0)
 
+    def test_converter_failed_write_leaves_nothing_and_retry_works(self):
+        for error in (OSError("disk full"), KeyboardInterrupt()):
+            with self.subTest(error=type(error).__name__):
+                with patch.object(converter.gzip.GzipFile, "write", side_effect=error):
+                    if isinstance(error, OSError):
+                        code, err, out = self.convert_file(HEADER + bo_line(), name="o.json.gz")
+                        self.assertEqual(code, 1)
+                        self.assertIn("disk full", err)
+                    else:
+                        with self.assertRaises(KeyboardInterrupt):
+                            self.convert_file(HEADER + bo_line(), name="o.json.gz")
+                        out = self.root / "o.json.gz"
+                self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["in.jsonl"])
+                self.assertEqual(self.convert_file(HEADER + bo_line(), name="o.json.gz")[0], 0)
+                with gzip.open(out, "rt") as handle:
+                    self.assertEqual(json.load(handle)[0]["t"], "bo")
+                out.unlink()
+
 
 if __name__ == "__main__":
     result = unittest.TextTestRunner(stream=sys.stdout, verbosity=1).run(

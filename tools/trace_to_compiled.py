@@ -20,8 +20,9 @@ Notes:
   are ever emitted, and tools/replay_trace.py refuses any trace carrying
   a partial op or a write without data. These diagnostic traces are not
   complete captures for replay.
-- The output file is created exclusively with mode 0600; an existing file
-  is refused. Failed transfers, short OUT and short control-IN transfers
+- The output is written to a 0600 temp file in the same directory and
+  hard-linked into place, so a failed run leaves no partial output; an
+  existing file or symlink is refused. Failed transfers, short OUT and short control-IN transfers
   are skipped. Bulk-IN records retain the actual returned length and,
   as ``want``, the requested one (a short bulk read is kept).
 
@@ -36,6 +37,7 @@ import json
 import math
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -171,6 +173,23 @@ def convert(records: list[dict]) -> tuple[list[dict], int]:
     return ops, skipped
 
 
+def write_exclusive(out: Path, payload: bytes) -> None:
+    """Write a private (0600) temp file beside ``out``, then hard-link it
+    into place: ``out`` appears complete or not at all, an existing file
+    or symlink is never replaced, and the temp file is always removed."""
+    fd, tmp = tempfile.mkstemp(dir=out.parent, prefix=f".{out.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as raw:
+            if out.suffix == ".gz":
+                with gzip.GzipFile(fileobj=raw, mode="wb") as gz:
+                    gz.write(payload)
+            else:
+                raw.write(payload)
+        os.link(tmp, out)
+    finally:
+        os.unlink(tmp)
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("trace")
@@ -195,16 +214,13 @@ def main(argv: list[str]) -> int:
             return 1
     ops, skipped = convert(records)
     try:
-        fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        write_exclusive(out, json.dumps(ops).encode())
     except FileExistsError:
         print(f"refusing to overwrite {out}", file=sys.stderr)
         return 1
-    with os.fdopen(fd, "wb") as raw:
-        if out.suffix == ".gz":
-            with gzip.GzipFile(fileobj=raw, mode="wb") as gz:
-                gz.write(json.dumps(ops).encode())
-        else:
-            raw.write(json.dumps(ops).encode())
+    except OSError as e:
+        print(f"error: cannot write {out}: {e}", file=sys.stderr)
+        return 1
     print(f"{out}: {len(ops)} ops ({skipped} records skipped)")
     return 0
 
