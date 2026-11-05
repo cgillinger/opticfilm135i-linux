@@ -8131,3 +8131,100 @@ one. The table above has the corrected figures.
 
 Details and what follows for the gate's default:
 docs/cal-scanstop-gate.md, "Second unit, on master".
+
+## 2026-11-05 — Test 115: the cross-unit protocol (`tools/cross_unit_check.py`), first hardware run, owner's unit — 4 of 4 scans completed, the first gated scan after a cold load cleared at the first read; the tool missed the sidecars and packed the images (found here, fixed)
+
+Hardware, owner's unit and host, the PR #48 branch at 945dfd4, run by
+the owner in a terminal window with the default sequence (`on,off,off,on`,
+600 dpi, frame 1). Film strip in the film-strip holder. The scanner had
+been switched on with the workstation and nothing had been sent to it;
+the magazine sat loose in the slot. The first attempt sent nothing: the
+command line given to the owner broke in two at the paste and the tool
+stopped on its argument error.
+
+**Course**, from `log.txt` (the stamp is taken when a step ends): doctor
+10:38:04, load 10:38:35, scans 10:38:55 / 10:39:15 / 10:39:34 / 10:39:54,
+doctor 10:39:56. About two minutes from the first command to the last,
+the operator's reinsert included.
+
+- `doctor` before: reg 0x01 = 0x00 (cold, never homed), status word
+  `0x4855`, magazine present. This is the second time `0x4855` is read
+  on a cold scanner with a magazine in the slot (Test 114 was the
+  first), which supports the reading there: the ordinary cold status
+  word with the loader bit set.
+- `load`: the cold start's `poll_status_word` gave up at `0x4855` after
+  1.5 s and went on, as in Test 114. Homing round 1 logged "loader
+  sensor set (status 0xd855) -- no re-seating", the normal-load branch
+  of the re-seating check (PR #44), for the second time. Jog complete
+  at `f855`; after the reinsert the feed settled at `f455` and the
+  traverse at `dc55`. The prompt was visible and answered.
+- `doctor` after: reg 0x01 = 0x22 (idle, homed), status word `f855`.
+- The owner ejected with `of135i eject` afterwards.
+
+| run | gate | exit | seconds | dark_b_substituted | cr_mismatches | gate waits | `wait_s` | `since_clear_s` |
+|---|---|---|---|---|---|---|---|---|
+| 1 | enforce | 0 | 17.6 | no | 21 | 7, all `clear`, one read each | 6.9–8.0 ms | 20–33 ms |
+| 2 | off | 0 | 17.6 | no | 39 | – | – | – |
+| 3 | off | 0 | 17.6 | no | 37 | – | – | – |
+| 4 | enforce | 0 | 17.6 | no | 38 | 7, all `clear`, one read each | 7.0–8.0 ms | 20–31 ms |
+
+Gains 44/32/39 and offsets 266/265/266 in all four; `poll_timeouts` 0;
+aperture coverage verified in all four. The prep phase's two 0x0122
+poll warnings (`d855`/`dc55` against `e855`/`ec55`) appeared in every
+scan, as before.
+
+**The first gated scan directly after a cold load** (run 1) is the case
+Test 114 did not have. All seven waits ended at the first read of each
+register, sampled about 16 ms after the scan-clear. On the second unit
+(external report of 2026-11-04 above) the engine was still running at
+about 20 ms in the same situation. So in this situation the two differ
+by more than the host's pace. Whether that is the units or something in
+the conditions (the reports do not say what was in that unit's holder)
+cannot be told from two runs.
+
+**First hardware data from `cr_mismatch_details`** (first 20 per scan,
+so the list is cut in the scan phase):
+
+- Runs 2, 3 and 4: the table's own single read of reg 0x100 straight
+  after the scan-clear returned `f155` (bit 0 set) where the capture has
+  `f055`, in `cal_gain_check_a`, `cal_gain_check_b`,
+  `cal_shading_measure` and `cal_shading_verify` (run 2) and in
+  `cal_white`, `cal_shading_measure` and `cal_shading_verify` (runs 3
+  and 4); reg 0x101 returned `d955`/`dd55` for `d855`/`dc55` in the
+  shading phases. So the engine is seen running after the scan-clear on
+  this unit too, at the table's read a few milliseconds after the clear;
+  by the gate's read at about 16 ms it has stopped. In the ungated runs
+  2 and 3 the driver went straight on, and both scans completed with no
+  residual dark_b. This is the same window as on the second unit, seen
+  from the slow side.
+- Run 1 (the first scan after the cold load) has no mismatch at all in
+  the dark, white and gain phases; its 21 are in the shading phases and
+  the image pass. In runs 2–4 the reads with wIndex 0x0422 and 0x0522
+  (by the pattern of 0x0022 = reg 0x100 and 0x0122 = reg 0x101, regs
+  0x104 and 0x105) differ from the capture in every calibration phase
+  (`0055` for `0155`, `0055`/`e455` for `e055`, and so on). The capture
+  agrees with a first scan after a load and not with the scans that
+  follow it; what those two registers hold has not been worked out.
+
+**Defects in the tool, found by this run:**
+
+1. `of135i scan --frames 1 -o run-01-enforce.tiff` writes
+   `run-01-enforce-f1.tiff` (the multi-frame naming) with its
+   `.overscan.tiff`, `.cal.npz` and `.diag.json` beside it. The tool
+   looked for `run-01-enforce.diag.json`: `sidecar_present` was false for
+   all four runs and `summary.json` and `report.md` carry none of the
+   sidecar values. The table above was read from the sidecars directly.
+2. For the same reason the images were not deleted and went into the
+   tarball: twelve image and calibration files, 43.8 MB. The tarball was
+   not sent anywhere. The offline tests had not caught either defect
+   because the fake scan wrote the names the tool expected. Fixed in the
+   follow-up commit: sidecars are found by what is on disk, the archive
+   is built from an allowlist and checked after packing, and the tests
+   name their files with the CLI's own rule.
+3. Cosmetic: the child's standard output is block-buffered when piped,
+   so in `log.txt` some of `load`'s lines appear after later log lines.
+
+**Status after the test.** The protocol's command sequence has run once
+on one scanner, on the developer unit, where no failure is expected; its
+stop-on-failure, exit-4 and interrupt paths have only been run offline.
+The fixed tool has not been run on hardware.

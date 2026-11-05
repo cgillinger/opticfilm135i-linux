@@ -2,7 +2,8 @@
 
 Status 2026-11-05: **ported, offline-tested, run on the owner's unit
 (Test 114: harmless there, every wait ≤ 8 ms against the 0.3 s budget,
-no residual dark_b with or without the gate) and on a second unit on
+no residual dark_b with or without the gate; Test 115: the same in a
+gated scan directly after a cold load) and on a second unit on
 master (bearyjd, 2026-11-04: gate off 0 of 3 scans completed, gate on 3
 of 3 plus four warm-up scans, longest wait 24 ms). Opt-in, default
 `off`.** Whether `enforce` becomes the default is the owner's decision
@@ -196,10 +197,19 @@ What follows from that, as a reading of two units and not a proof:
   The residual dark_b that the owner's unit has shown on later batch
   frames since Test 32 would fit a host on that margin; that link is a
   hypothesis.
-- **A difference between the units is not excluded.** The second unit
-  needs 15–26 ms in the first scan after a load. Test 114 had no gated
-  scan directly after a load, so that case is unmeasured on the owner's
-  unit.
+- **The units, or their conditions, also differ.** The second unit
+  needs 15–26 ms in the first scan after a load. Test 115 measured that
+  case on the owner's unit (a gated scan directly after a cold load):
+  stopped at the first read, about 16 ms after the clear, where the
+  second unit was still running at about 20 ms. Two runs cannot say
+  whether that is the units or the conditions.
+- **The window is visible on the owner's unit as well.** In Test 115 the
+  table's own single read of register 0x100, a few milliseconds after
+  the scan-clear, returned `f155` (bit 0 still set) in several
+  calibration phases of three scans, two of them ungated
+  (`cr_mismatch_details`). The driver went on and those scans were
+  fine: the next acquisition's writes came late enough. This is direct
+  evidence that the owner's unit is not different in kind.
 - **The capture's own pace is close to the owner's host.** The vendor
   capture shows about 4 ms between transfers and both bits clear at the
   single read. A replay at that pace never meets the window, which is
@@ -215,9 +225,8 @@ Open questions:
 - Why a control read takes about 3.9 ms on the owner's host. The scanner
   is on a high-speed (480 Mbit/s) root port there, with no hub in
   between, so the link speed is not the reason.
-- Whether the first scan after a load is slower to stop on the owner's
-  unit too (the cross-unit protocol's default order, gated run first,
-  measures it).
+- Why the second unit is still running at about 20 ms in its first scan
+  after a load when the owner's has stopped by about 16 ms (Test 115).
 - The exit 4 on the second unit.
 
 ## Hardware plan: Test 114 (owner's unit) — as run
