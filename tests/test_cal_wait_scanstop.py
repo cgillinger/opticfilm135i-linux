@@ -1,10 +1,13 @@
-"""Opt-in stop gate after a calibration SCAN-clear (Scanner.cal_wait_scanstop).
+"""Stop gate after a calibration SCAN-clear (Scanner.cal_wait_scanstop).
 
 Ported from bearyjd/opticfilm135i-linux, branch feat/cal-wait-scanstop
 (f462b0b), onto this driver (issue #35; docs/cal-scanstop-gate.md).
 
-EXPERIMENTAL, not hardware-verified on the owner's unit, motor-adjacent
-(it delays the next calibration execute pulse). In the fork's hardware
+Default "enforce" since the change that made it the default
+(docs/cal-scanstop-gate.md, "Decision"). Motor-adjacent: it delays the
+next calibration execute pulse. make_scanner() in test_safety sets "off"
+for the suites that compare the wire with the captures; this suite asks
+for the library default with ``gate=None``. In the fork's hardware
 logs, calibration reads that returned stale data were re-armed a few
 milliseconds after the previous acquisition's SCAN-clear while that
 acquisition was still running: the data-enable bit (register 0x100 bit 0)
@@ -13,10 +16,10 @@ captured vendor stream reads both once after every calibration clear and
 saw them clear (f055, dc55/d855).
 
 Scanner.cal_wait_scanstop:
-  "off"     -- (default) today's behaviour; the transfer sequence is
+  "off"     -- the behaviour before the gate existed; the transfer sequence is
                byte-identical (no extra read, sleep or clock call). Pinned
                here against wire digests taken on the unmodified driver.
-  "enforce" -- after the SCAN-clear (register 0x01 written with bit 0
+  "enforce" -- (default) after the SCAN-clear (register 0x01 written with bit 0
                clear) that closes an execute pulse in a calibration
                acquisition phase, and before the next OUT transfer of any
                kind (the next phase's register writes, SCAN-set, execute
@@ -226,7 +229,7 @@ def _run(arm_phase, r100, r101, mode="enforce", ir=False, step=0.01, **kw):
     exc = None
     with sim_time(step) as clock:
         fake = GateFake(arm_phase, r100, r101, clock=clock, **kw)
-        s = make_scanner(fake)
+        s = make_scanner(fake, gate=None)
         fake.scanner = s
         if mode is not None:
             s.cal_wait_scanstop = mode
@@ -362,7 +365,7 @@ def test_a_failed_gate_read_is_refused_or_propagated(late):
     with raises((_Stall, safety.CalibrationError)) as ei:
         with sim_time(0.01) as clock:
             fake = GateFake("cal_dark_a", [0xF0], [0xDC], clock=clock, read_hook=hook)
-            s = make_scanner(fake)
+            s = make_scanner(fake, gate=None)
             fake.scanner = s
             s.cal_wait_scanstop = "enforce"
             s.initialize()
@@ -445,7 +448,7 @@ def _ops_run(phase, mode, last=None):
             return b"\xf1\x55"
         return real(bm, br, wv, wi, data_or_wLength, timeout)
     fake.ctrl_transfer = ct
-    s = make_scanner(fake)
+    s = make_scanner(fake, gate=None)
     s.cal_wait_scanstop = mode
     ops = [device.Op("cw", 0.0, bm=0x40, br=0x04, wv=0x0083, wi=0, data=bytes([0x0F, 0x01])),
            device.Op("cw", 0.0, bm=0x40, br=0x04, wv=0x0083, wi=0, data=bytes([0x01, 0x02])),
@@ -487,7 +490,7 @@ def test_bulk_out_directly_after_the_clear_is_gated():
 
 def test_clear_without_a_preceding_execute_pulse_does_not_arm():
     fake = FakeUsbDevice(reg01=0x22)
-    s = make_scanner(fake)
+    s = make_scanner(fake, gate=None)
     s.cal_wait_scanstop = "enforce"
     ops = [device.Op("cw", 0.0, bm=0x40, br=0x04, wv=0x0083, wi=0, data=bytes([0x01, 0x02])),
            device.Op("cw", 0.0, bm=0x40, br=0x04, wv=0x0083, wi=0, data=bytes([0x10, 0x00]))]
@@ -508,7 +511,7 @@ def _frame1(mode, *, ir=False, dpi=3600, scripted=False):
             fake = GateFake("cal_dark_a", [0xF1], [0xDD], clock=clock)
         else:
             fake = FakeUsbDevice(reg01=0x22, cal_buffers=_cal_buffers())
-        s = make_scanner(fake)
+        s = make_scanner(fake, gate=None)
         if scripted:
             fake.scanner = s
         if mode is not None:
@@ -523,29 +526,28 @@ def _baseline_run(name, mode):
     ir, dpi = {"plain_3600_frame1": (False, 3600), "dual_600_frame1": (False, 600),
                "ir_3600_frame1": (True, 3600)}[name]
     fake = FakeUsbDevice(reg01=0x22, cal_buffers=_cal_buffers())
-    s = make_scanner(fake)
-    if mode is not None:
-        s.cal_wait_scanstop = mode
+    s = make_scanner(fake, gate=None)
+    s.cal_wait_scanstop = mode
     with fast_time():
         s.initialize(ir=ir)
         s.scan(frame=1, ir=ir, dpi=dpi)
     return fake, s
 
 
-@parametrize("mode", [None, "off"], ids=["default", "off"])
 @parametrize("name", sorted(BASELINE))
-def test_default_and_off_match_the_pre_gate_wire_digest(name, mode):
-    fake, s = _baseline_run(name, mode)
+def test_off_matches_the_pre_gate_wire_digest(name):
+    # The pre-gate digests are the vendor-capture wire; they carry no gate
+    # reads, so "off" is stated explicitly (the default is "enforce").
+    fake, s = _baseline_run(name, "off")
     assert s.cal_wait_scanstop == "off"
     assert (_digest(fake.wire_log), len(fake.wire_log)) == BASELINE[name], name
     assert s.last_diag["cal_scanstop_waits"] == []
 
 
 def test_off_mode_is_identical_even_while_the_engine_reads_running():
-    f_default, _ = _frame1(None, scripted=True)
     f_off, s_off = _frame1("off", scripted=True)
-    f_plain, _ = _frame1(None, scripted=False)
-    assert f_default.wire_log == f_off.wire_log == f_plain.wire_log
+    f_plain, _ = _frame1("off", scripted=False)
+    assert f_off.wire_log == f_plain.wire_log
     assert s_off.last_diag["cal_scanstop_waits"] == []
 
 
@@ -556,7 +558,7 @@ def _is_status_read(e):
 @parametrize("ir,dpi", [(False, 3600), (False, 600), (True, 3600)],
                          ids=["plain3600", "dual600", "ir3600"])
 def test_enforce_on_an_idle_engine_adds_only_status_reads(ir, dpi):
-    f_base, _ = _frame1(None, ir=ir, dpi=dpi)
+    f_base, _ = _frame1("off", ir=ir, dpi=dpi)
     f_enf, s = _frame1("enforce", ir=ir, dpi=dpi)
     strip = [e for e in f_enf.wire_log if not _is_status_read(e)]
     assert strip == [e for e in f_base.wire_log if not _is_status_read(e)]
@@ -572,12 +574,40 @@ def test_enforce_on_an_idle_engine_adds_only_status_reads(ir, dpi):
         "cal_gain_check_b", "cal_shading_measure", "cal_shading_verify"]
 
 
+@parametrize("ir,dpi", [(False, 3600), (False, 600), (True, 3600)],
+                         ids=["plain3600", "dual600", "ir3600"])
+def test_a_default_scan_is_gated_and_the_sidecar_records_the_waits(ir, dpi):
+    # No mode set at all: the library default. FakeUsbDevice answers the
+    # gate's two reads with 0xF8 (bit 0 clear); the captured clear values
+    # (f055, dc55/d855) are what the scripted GateFake tests use.
+    f_default, s = _frame1(None, ir=ir, dpi=dpi)
+    assert s.cal_wait_scanstop == "enforce"
+    f_enf, _ = _frame1("enforce", ir=ir, dpi=dpi)
+    assert f_default.wire_log == f_enf.wire_log
+    waits = s.last_diag["cal_scanstop_waits"]
+    assert len(waits) == 7 and all(w["outcome"] == "clear" for w in waits)
+
+
+def test_default_gate_accepts_the_captured_clear_values():
+    # Scripted with the vendor capture's replies: f055 (reg 0x100) and
+    # dc55 (reg 0x101), no mode set.
+    exc = None
+    with sim_time(0.01) as clock:
+        fake = GateFake("cal_dark_a", [0xF0], [0xDC], clock=clock)
+        s = make_scanner(fake, gate=None)
+        fake.scanner = s
+        s.initialize()
+        s.scan(frame=1)
+    w = s.last_diag["cal_scanstop_waits"][0]
+    assert (w["last_100"], w["last_101"], w["outcome"]) == ("f055", "dc55", "clear")
+
+
 def test_cached_calibration_frame_is_not_gated():
     # Frame 2 of a plain-3600 session reuses the cached calibration
     # (cal_rewrite): no acquisition, no gate, an empty wait list.
     with sim_time(0.01):
         fake = FakeUsbDevice(reg01=0x22, cal_buffers=_cal_buffers())
-        s = make_scanner(fake)
+        s = make_scanner(fake, gate=None)
         s.cal_wait_scanstop = "enforce"
         s.initialize()
         s.scan(frame=1)
@@ -599,37 +629,85 @@ def test_diag_records_the_wait():
     assert w["since_clear_s"] >= w["wait_s"]
 
 
+# ------------------------------------------------------------ residual dark_b message
+
+
+def _residual_dark_b():
+    import numpy as np
+    return np.tile(np.arange(8, dtype=np.uint16), (48, 3)).reshape(-1, 3)[:384]
+
+
+def test_residual_dark_b_message_points_to_the_gate_when_it_is_off():
+    s = make_scanner(FakeUsbDevice(reg01=0x22), gate="off")
+    with raises(safety.CalibrationError) as ei:
+        s._healthy_dark_b(_residual_dark_b())
+    msg = str(ei.value)
+    assert "dark_b is residual" in msg      # tools/cross_unit_check.py matches this
+    assert "--cal-wait-scanstop enforce (the default)" in msg
+    assert "docs/cal-scanstop-gate.md" in msg
+
+
+def test_residual_dark_b_message_has_no_gate_hint_when_it_is_on():
+    s = make_scanner(FakeUsbDevice(reg01=0x22), gate="enforce")
+    with raises(safety.CalibrationError) as ei:
+        s._healthy_dark_b(_residual_dark_b())
+    msg = str(ei.value)
+    assert "dark_b is residual" in msg
+    assert "--cal-wait-scanstop" not in msg
+
+
 # ------------------------------------------------------------ property and CLI
 
 
 def test_default_and_validation():
-    s = make_scanner(FakeUsbDevice(reg01=0x22))
-    assert s.cal_wait_scanstop == "off"
-    s.cal_wait_scanstop = "enforce"
+    s = make_scanner(FakeUsbDevice(reg01=0x22), gate=None)
     assert s.cal_wait_scanstop == "enforce"
+    s.cal_wait_scanstop = "off"
+    assert s.cal_wait_scanstop == "off"
     for bad in ("observe", "on", True, None, ""):
         with raises(ValueError):
             s.cal_wait_scanstop = bad
 
 
 @parametrize("cmd", [["digitize", "-o", "x"], ["scan", "--frame", "1", "-o", "f.tiff"]])
-def test_parsers_default_off_and_accept_enforce(cmd):
+def test_parsers_default_enforce_and_accept_off(cmd):
     parser = cli.build_parser()
-    assert parser.parse_args(cmd).cal_wait_scanstop == "off"
-    assert parser.parse_args(cmd + ["--cal-wait-scanstop", "enforce"]).cal_wait_scanstop == "enforce"
+    assert parser.parse_args(cmd).cal_wait_scanstop == "enforce"
+    assert parser.parse_args(cmd + ["--cal-wait-scanstop", "off"]).cal_wait_scanstop == "off"
     with raises(SystemExit):
         parser.parse_args(cmd + ["--cal-wait-scanstop", "observe"])
 
 
-def test_help_text_says_experimental():
+def _subparsers_with_the_option():
     parser = cli.build_parser()
-    for sub in ("scan", "digitize"):
-        sp = parser._subparsers._group_actions[0].choices[sub]
+    choices = parser._subparsers._group_actions[0].choices
+    return {name: sp for name, sp in choices.items()
+            if any("--cal-wait-scanstop" in a.option_strings for a in sp._actions)}
+
+
+def test_every_subcommand_with_the_option_defaults_to_enforce():
+    subs = _subparsers_with_the_option()
+    assert {"scan", "digitize"} <= set(subs), sorted(subs)
+    for name, sp in subs.items():
         act = next(a for a in sp._actions if "--cal-wait-scanstop" in a.option_strings)
-        assert "experimental" in act.help.lower() and "not hardware-verified" in act.help.lower()
+        assert act.default == "enforce", name
+    # Any other subcommand that can calibrate would have to carry the option.
+    parser = cli.build_parser()
+    choices = parser._subparsers._group_actions[0].choices
+    for name, sp in choices.items():
+        if any("--recalibrate" in a.option_strings for a in sp._actions):
+            assert name in subs, f"{name} calibrates but has no --cal-wait-scanstop"
 
 
-@parametrize("argv_mode,expected", [(None, "off"), ("off", "off"),
+def test_help_text_says_default_and_off():
+    for name, sp in _subparsers_with_the_option().items():
+        act = next(a for a in sp._actions if "--cal-wait-scanstop" in a.option_strings)
+        h = " ".join(act.help.lower().split())
+        assert "default: enforce" in h and "'off'" in h, name
+        assert "experimental" not in h, name
+
+
+@parametrize("argv_mode,expected", [(None, "enforce"), ("off", "off"),
                                                 ("enforce", "enforce")])
 def test_scan_cli_flag_reaches_the_scanner(tmp_path, argv_mode, expected):
     fake = FakeUsbDevice(reg01=0x22, cal_buffers=_cal_buffers())

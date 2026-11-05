@@ -1,16 +1,19 @@
 # Calibration stop gate (`--cal-wait-scanstop`)
 
-Status 2026-11-05: **ported, offline-tested, run on the owner's unit
-(Test 114: harmless there, every wait ≤ 8 ms against the 0.3 s budget,
-no residual dark_b with or without the gate; Test 115: the same in a
-gated scan directly after a cold load) and on a second unit on
-master (bearyjd, 2026-11-04: gate off 0 of 3 scans completed, gate on 3
-of 3 plus four warm-up scans, longest wait 24 ms). Opt-in, default
-`off`.** Whether `enforce` becomes the default is the owner's decision
-and has not been made. The Steam Deck reporter has not run it yet.
+Status 2026-11-05: **`enforce` is the default** (this change; section
+"Decision" below). `--cal-wait-scanstop off` is the way back and sends
+exactly the transfers of a driver without the gate. Run on hardware on
+three units: the owner's (Test 114: harmless there, every wait <= 8 ms
+against the 0.3 s budget, no residual dark_b with or without the gate;
+Test 115: the same in a gated scan directly after a cold load), a second
+unit on master (bearyjd, 2026-11-04: gate off 0 of 3 scans completed,
+gate on 3 of 3 plus four warm-up scans, longest wait 24 ms) and a third,
+a Steam Deck (Krustenviech, 2026-11-05: gate on 6 runs / 7 frames
+completed, two ungated runs failed, longest wait 29 ms).
 
-Credit: bearyjd designed and wrote the gate and its tests; Krustenviech
-reported the failure and supplied the Steam Deck logs.
+Credit: bearyjd designed and wrote the gate and its tests and ran the
+first A/B; Krustenviech reported the failure, supplied the Steam Deck
+logs and ran the A/B on the Deck that shows the gate removes it there.
 
 Origin: issue #35 (Krustenviech, Steam Deck) and bearyjd's fork
 `feat/cal-wait-scanstop`, commit f462b0b, ported onto master with the
@@ -108,9 +111,9 @@ existed (plain 3600, dual 600, IR 3600, frame 1).
   evidence is pending and must not merge before it is complete.
 - No gate-off comparison at 3600 dpi on an affected unit; no film-strip
   run on one. How long the bits take to clear was unmeasured when the
-  gate was ported; it has since been measured on two units (Test 114
-  and "Second unit, on master" below). The 0.3 s budget was inherited
-  from the poll floor; the longest wait seen so far is 24 ms.
+  gate was ported; it has since been measured on three units (Test 114,
+  "Second unit, on master" and "Third unit" below). The 0.3 s budget was
+  inherited from the poll floor; the longest wait seen so far is 29 ms.
 - The reporter's other symptoms are **not** explained by the gate, and
   Test 114 showed both on the owner's unit as well: the `prep` phase's
   0x0122 polls time out at the floor reading `d855`/`dc55` where the
@@ -120,15 +123,18 @@ existed (plain 3600, dual 600, IR 3600, frame 1).
   `poll_status_word` gave up at `0x4855` once here too, followed by a
   normal cold start. Neither singles out the Deck; neither explains the
   dark_b failure.
-- The reporter's three `.diag.json` attachments need a logged-in GitHub
-  session to fetch and have not been analysed.
+- The reporter's first three `.diag.json` attachments needed a
+  logged-in GitHub session and were not analysed; the seven sidecars of
+  the gated A/B on the Deck are ("Third unit" below).
 
 ## Behaviour risk
 
-Today a residual dark_b on frame ≥ 2 is recovered by substitution and
-the scan completes. With `enforce`, a bit that takes longer than 0.3 s
-to clear becomes a hard failure that needs a power cycle. Until
-`wait_s` has been measured on the owner's unit the gate stays opt-in.
+Before the gate, a residual dark_b on frame >= 2 was recovered by
+substitution and the scan completed. With `enforce`, a bit that takes
+longer than 0.3 s to clear becomes a hard failure (`CalibrationError`)
+that needs a power cycle. The longest wait seen on any unit is 29 ms. A
+unit or condition that has not been seen could still exceed the budget;
+`--cal-wait-scanstop off` is the way back.
 
 ## Test 114 result (owner's unit, 2026-11-02)
 
@@ -229,6 +235,100 @@ Open questions:
   after a load when the owner's has stopped by about 16 ms (Test 115).
 - The exit 4 on the second unit.
 
+## Third unit: Steam Deck (Krustenviech, 2026-11-05)
+
+Reported on issue #35 on 2026-11-05 with seven `.diag.json` sidecars in
+a gist; full entry in docs/test-log.md. The original reporter of the
+issue, on the Steam Deck. One unit, one operator. Master with PR #46 (the
+gate), 600 dpi (dual), film strip, frame 1 (one run `--frames 1-2`, so
+seven frames from six gated runs).
+
+| gate | runs | result |
+|---|---|---|
+| enforce | 6 (7 frames) | all completed: `dark_b_substituted` false, `poll_timeouts` 0, aperture coverage verified, `cr_mismatches` 45-49, 15.5-15.7 s per frame-1 scan |
+| off | 2 ("in between") | both failed in `cal_dark_b`: `dark_b is residual and no healthy dark_b has been measured this session`; session start state 0x22 (idle, homed); failure after 83 writes and 2 execute pulses |
+
+49 gate waits, all `clear`. Reads of register 0x100 per wait: 1 (3
+waits), 2 (6), 3 (3), 4 (16), 5 (12), 6 (3), 7 (6); register 0x101 always
+one read. `wait_s` 0.9-29.0 ms, `since_clear_s` 13.7-30.6 ms. One control
+read takes about 0.5-0.7 ms on that host (the gate sleeps 4 ms between
+busy reads). The slowest waits (28-29 ms, 7 reads) are in the first scan
+after each load; later scans 14-20 ms. Calibration: offsets 266/265/266
+(identical to the other two units), gains 49/36-37/42, dark_a means about
+18 600-21 400, dark_b about 21 000-23 900.
+
+This is the confirmation on the unit that reported the failure: without
+the gate it fails at the first calibration, with it every scan completes.
+
+### Three units side by side
+
+| | owner's unit | bearyjd's unit | Steam Deck (Krustenviech) |
+|---|---|---|---|
+| one control read | 3.5-4.0 ms (median 3.9) | 0.30-0.67 ms (median 0.39) | about 0.5-0.7 ms |
+| reads of 0x100 until clear | 1 (always) | 2-6 | 1-7 |
+| `wait_s` | 7.0-8.0 ms | 5.0-24.4 ms (median 14.0) | 0.9-29.0 ms |
+| longest wait in the first scan after a load | about 8 ms (Test 115, one read each) | about 24 ms | 28-29 ms |
+| ungated scans completed | 12 of 12 (Tests 114-115) | 0 of 3 | 0 of 2 |
+| gated scans completed | 14 of 14 frames (Tests 114-115) | 7 of 7 | 6 runs / 7 frames, all |
+| offsets | 266/265/266 | 266/265/266 | 266/265/266 |
+| gains (600 dpi) | 44/32/39 | 42/32-33/38-39 | 49/36-37/42 |
+
+Across the three units: ungated scans failed 5 of 5 on the two fast hosts
+and 0 of 12 on the owner's; gated scans completed on all three; the
+longest wait seen is 29 ms against the 0.3 s budget. Reading, not proof:
+the units calibrate alike (offsets identical, gains within a few codes)
+and the failure follows the host's pace, as in the second-unit analysis
+above. The Deck's wait times are of the same order as bearyjd's, with a
+longer tail (29 ms against 24 ms).
+
+## Decision: default since this change (2026-11-05)
+
+The owner decided that `enforce` is the default, for the library
+(`Scanner.cal_wait_scanstop`) and for every subcommand that has the option
+(`scan`, `digitize`). Reason: gated scans completed on all three units,
+including the two where the ungated scan fails (5 of 5), and the longest
+wait is 29 ms against a 0.3 s budget. Reading the log and the two
+external reports, this is what has and has not been run **with the gate**:
+
+Run gated (with the gate on):
+
+- Owner's unit, Test 114: plain 3600 dpi, film strip, frames 1-4 with
+  `--recalibrate`, twice (28 waits each); 600 dpi dual, frame 1; IR 3600
+  dpi, frame 1. Test 115: 600 dpi, frame 1, four gated scans in two runs
+  (the cross-unit tool). Test 116, with this change: four more through
+  the tool's default sequence, and one scan with no gate option at all,
+  which ran gated (7 waits, all cleared at the first read): the default
+  itself, on hardware.
+- bearyjd's unit (external report, 2026-11-04): 600 dpi, frame 4, seven
+  scans; which holder was in the unit is not confirmed.
+- Steam Deck (external report, 2026-11-05): 600 dpi, film strip, frame 1,
+  six runs / seven frames.
+- Earlier, with the fork's version of the gate and not master: one clean
+  3600 dpi four-slide run (slide holder).
+
+Not run with the gate, as far as docs/test-log.md and the two external
+reports show:
+
+- 1200, 2400 and 7200 dpi on any unit.
+- Plain 3600 dpi and IR 3600 dpi on the two external units (the owner's
+  unit ran them).
+- The whole-strip sweep (`digitize --sweep`) and `digitize` in general.
+- 110 film.
+- The slide holder with master's gate (bearyjd's holder is unconfirmed).
+- The SANE backend, which has no gate.
+
+Callers of those paths are gated from this change on without a hardware
+run of that combination. The mechanism is the same executor change in
+every table (docs/cal-scanstop-gate.md, "The mechanism"), but "the same
+code" is not "run on hardware". All gated hardware runs above used the
+driver's own 7-acquisition calibration; the cached-calibration path is
+not gated by design (offline test).
+
+A gate timeout is a fail-closed `CalibrationError`: nothing further is
+sent, the session is FAILED and a power cycle is required
+(docs/hardware-safety.md). `--cal-wait-scanstop off` is the way back. The
+error text of a residual dark_b with the gate off now names the gate.
+
 ## Hardware plan: Test 114 (owner's unit) — as run
 
 Purpose: does the gate remove the residual dark_b on frames 2–4, and
@@ -259,11 +359,12 @@ cycle, and the run is logged as such; do not retry without reading the
 diag first. Any new register value or any poll that times out where the
 baseline run did not is logged, not worked around.
 
-Decision after Test 114: if the gate removes the substitutions and the
-largest `wait_s` is well inside 0.3 s, `enforce` becomes the default and
-the "frame 1 is always healthy" assumption in `_healthy_dark_b` is
-revisited; if not, the gate stays opt-in and the mechanism is wrong or
-incomplete.
+Decision after Test 114 (as planned): if the gate removes the
+substitutions and the largest `wait_s` is well inside 0.3 s, `enforce`
+becomes the default and the "frame 1 is always healthy" assumption in
+`_healthy_dark_b` is revisited. Test 114 could not show the removal (no
+residual dark_b occurred on the owner's unit); the two external units
+did, and the decision was taken on that evidence ("Decision" below).
 
 ## Out of scope here
 
@@ -272,7 +373,8 @@ incomplete.
   has **no** stop gate. Porting is a separate step. Given the second
   unit's result (0 of 3 without the gate in the Python driver), the
   backend as submitted should be expected to fail calibration on a host
-  as fast as that one; this has not been run.
+  as fast as that one; this has not been run. The default change here
+  does not touch the backend.
 - `--cal-data <file.npz>` (reusing a calibration across sessions, the
   reporter's request) is a feature request, not part of this change.
 - `--diag-readback-regs` (the reporter's "PR #12") exists only in the

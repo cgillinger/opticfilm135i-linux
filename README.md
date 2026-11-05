@@ -17,11 +17,12 @@ development**. On that unit it scans without Windows, a virtual machine, or the
 manufacturer's driver. It was developed and hardware-tested by one person on a
 **single scanner unit** in a limited Linux environment. As of November 2026 it
 has also scanned on **two other units** reported by users (one on a Steam
-Deck, one through a fork), but on both of them calibration fails
-intermittently at a step the developer's unit has never failed
+Deck, one through a fork). On both, calibration failed at a step the
+developer's unit has never failed
 ([issue #35](https://github.com/cgillinger/opticfilm135i-linux/issues/35));
-a fix contributed by one of those users is on master as an opt-in flag until
-it has been confirmed on their hardware. So compatibility with other
+a fix contributed by one of those users, the calibration stop gate
+(`--cal-wait-scanstop`), is now the default and both units completed every
+gated scan (docs/cal-scanstop-gate.md). So compatibility with other
 OpticFilm 135i units and other Linux setups is **not yet verified** —
 additional hardware testing is welcome (see
 [Acknowledgements](#acknowledgements)).
@@ -218,9 +219,10 @@ backend is a separate effort with its own status** — working locally, submitte
 upstream 2026-09-29 and not merged (see Project status above and
 [docs/ROADMAP.md](docs/ROADMAP.md)); do not read the CLI driver's hardware
 verification as the backend's. This is early software,
-verified on the developer's unit and run on two others with a known
-calibration failure (issue #35), and these are the rough edges you
-should know about:
+verified on the developer's unit and run on two others where an
+ungated scan failed in calibration (issue #35; the stop gate, now the
+default, fixed it on both), and these are the rough edges you should
+know about:
 
 - **Eject depends on how the magazine was loaded.** Load with
   `tools/load_magazine.py` (the vendor's insert flow) and `eject` /
@@ -449,6 +451,10 @@ visible registration.)
 `--park semantic` on `scan` selects an experimental park phase (see
 docs/replay-analysis.md); it is off by default and not hardware-verified.
 `--warmup-budget SECONDS` bounds how long a scan waits for the lamp.
+`--cal-wait-scanstop {enforce,off}` (default `enforce`) makes calibration
+wait, by reading two status registers, until the scanner has stopped
+between acquisitions; `off` sends exactly the transfers of a driver
+without it (docs/cal-scanstop-gate.md).
 
 ### Bulk digitisation (a box of film, strip by strip)
 
@@ -639,6 +645,14 @@ Every error message ends with the next safe action. The rules behind them:
   start again with `load`.
 - The scanner leaves the USB bus about five minutes after a session
   ends and does not come back by itself; a power cycle wakes it.
+- `dark_b is residual and no healthy dark_b has been measured this
+  session` (issue #35) means calibration started the next acquisition
+  before the scanner had stopped. The default `--cal-wait-scanstop
+  enforce` waits for that; the message only appears with `off`. If
+  `enforce` itself reports that the previous acquisition is still running
+  after 0.3 s, power-cycle and report it on the issue with the
+  `.diag.json`; `--cal-wait-scanstop off` is the way back
+  (docs/cal-scanstop-gate.md).
 
 Exit codes: `0` success, `1` refused or failed (details on stderr),
 `2` usage error, `3` scanner busy (another of135i process holds the lock;
@@ -737,14 +751,17 @@ users have since run the driver on their own units and reported back
 
 - **[Krustenviech](https://github.com/Krustenviech)** ran it on a Steam
   Deck, the second unit it has scanned on, and reported the calibration
-  failure with the logs and register dumps needed to work on it.
+  failure with the logs and register dumps needed to work on it. Their
+  later A/B on the Deck (two ungated runs failed in calibration, six gated
+  runs completed) showed that the stop gate removes the failure there, and
+  is the evidence the gate being the default rests on, together with
+  bearyjd's.
 - **[bearyjd](https://github.com/bearyjd)** saw the same failure on a
   third unit, proposed a cause (the host re-arms the next calibration
   acquisition before the scanner's engine has stopped), wrote the
   calibration stop gate (`--cal-wait-scanstop`) with its offline tests in
-  a fork, and ran an A/B on their unit. The code on master is a port of
-  that work, with bearyjd as co-author. Whether it fixes the failure is
-  still to be confirmed on their hardware.
+  a fork, and ran an A/B on their unit (gate off 0 of 3, gate on 3 of 3).
+  The code on master is a port of that work, with bearyjd as co-author.
 
 If you got the driver working, or failing, on another unit, an issue
 saying so is genuinely useful.

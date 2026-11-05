@@ -87,13 +87,13 @@ def test_default_sequence_argv(tmp_path, monkeypatch):
     assert rc == 0
     py = [sys.executable, "-m", "of135i"]
     exp = [py + ["doctor", "--json", str(out / "doctor-before.json")], py + ["load"]]
-    for i, x in enumerate(["enforce", "off", "off", "enforce"], 1):
+    for i, x in enumerate(["enforce"] * 4, 1):
         exp.append(py + ["-v", "scan", "--frames", "1", "--dpi", "600", "--recalibrate",
                          "--cal-wait-scanstop", x, "-o", str(out / f"run-{i:02d}-{x}.tiff")])
     exp.append(py + ["doctor", "--json", str(out / "doctor-after.json")])
     assert fake.calls == exp
     s = json.loads((out / "summary.json").read_text())
-    assert s["sequence"] == ["on", "off", "off", "on"] and "stopped_at" not in s
+    assert s["sequence"] == ["on", "on", "on", "on"] and "stopped_at" not in s
     assert s["result"] == "ok" and [r["outcome"] for r in s["runs"]] == ["completed"] * 4
     assert s["runs"][0]["sidecar"]["output"] == "run-01-enforce-f1.tiff"   # relative, no personal path
     assert s["runs"][0]["sidecar"]["cal_scanstop_waits"] == [{"ms": 3}]
@@ -315,8 +315,9 @@ def test_refuses_without_a_terminal(tmp_path, monkeypatch):
 
 def test_plan_states_what_every_step_sends(tmp_path, monkeypatch):
     out = tmp_path / "xu"
-    plan = xu.build_plan(out, xu.parse_sequence(xu.DEFAULT_SEQUENCE), 600, 1)
-    text = xu.render_plan(plan, xu.parse_sequence(xu.DEFAULT_SEQUENCE), out, False)
+    seq = xu.parse_sequence("on,off,off,on")     # a mixed sequence shows both gate texts
+    plan = xu.build_plan(out, seq, 600, 1)
+    text = xu.render_plan(plan, seq, out, False)
     steps = re.split(r"\n(?=\d+\. )", text.split("Steps, in order:\n", 1)[1].split("\nScan phases")[0].strip())
     steps = [" ".join(st.split()) for st in steps]
     text = " ".join(text.split())
@@ -343,6 +344,59 @@ def test_plan_states_what_every_step_sends(tmp_path, monkeypatch):
     assert "may move the motor" in text and "[MOTOR]: moves the film holder" in text
     assert "carriage" in text and "power switch" in text
     assert "STOP RULE" in text and "new --out directory" in text
+
+
+def test_default_sequence_is_gated_only():
+    assert xu.DEFAULT_SEQUENCE == "on,on,on,on"
+    assert xu.parse_sequence(xu.DEFAULT_SEQUENCE) == ["on"] * 4
+
+
+def _plan_text(tmp_path, seq):
+    seq = xu.parse_sequence(seq)
+    out = tmp_path / "xu"
+    return xu.render_plan(xu.build_plan(out, seq, 600, 1), seq, out, False)
+
+
+def test_note_about_ungated_scans_appears_iff_the_sequence_has_off(tmp_path):
+    with_off = " ".join(_plan_text(tmp_path, "on,off").split())
+    without = " ".join(_plan_text(tmp_path, xu.DEFAULT_SEQUENCE).split())
+    assert "NOTE: this sequence contains a scan with the gate off" in with_off
+    assert "expected to fail" in with_off and "harms nothing" in with_off
+    assert "power cycle with the magazine still loaded" in with_off
+    assert "NOTE: this sequence contains" not in without
+    assert "WARNING" not in with_off and "WARNING" not in without
+
+
+def test_plan_has_after_the_run_and_the_hardware_pointer(tmp_path):
+    text = " ".join(_plan_text(tmp_path, xu.DEFAULT_SEQUENCE).split())
+    assert "AFTER THE RUN" in text and "python3 -m of135i eject" in text
+    assert "do NOT run eject or any other command" in text or "Do NOT run eject" in text
+    assert "load --release" in text and "does not come out freely" in text
+    assert "section 9A" in text and "switch the scanner off at once" in text
+    assert "re-seating traverse before the jog" in text
+
+
+def test_final_printout_depends_on_the_result(tmp_path, monkeypatch):
+    (rc, out), ok = _quiet(lambda: _run(tmp_path / "a", monkeypatch, Fake()))
+    ok = " ".join(ok.split())
+    assert rc == 0 and "Eject it now with: python3 -m of135i eject" in ok and "[MOTOR" in ok
+    assert "about five minutes" in ok and "Do NOT" not in ok.split("AFTER THE RUN: the magazine")[1]
+    for label, fake in (("failed", Fake(fail={2: 1})),
+                        ("interrupted", Fake(raises={2: KeyboardInterrupt()})),
+                        ("error", Fake(raises={1: RuntimeError("boom")}))):
+        (rc, out), printed = _quiet(lambda: _run(tmp_path / label, monkeypatch, fake))
+        t = " ".join(printed.split())
+        tail = t.split("AFTER THE RUN", 1)[1]
+        assert f"(result: {label})" in tail and "Do NOT run eject or any other command" in tail, label
+        assert "Eject it now" not in t and "load --release" in tail, label
+        assert "motor command from a state the driver does not know" in tail, label
+
+
+def test_tool_still_runs_only_doctor_load_scan(tmp_path, monkeypatch):
+    for fake in (Fake(), Fake(fail={2: 1}), Fake(raises={1: KeyboardInterrupt()})):
+        _quiet(lambda: _run(tmp_path / str(id(fake)), monkeypatch, fake))
+        assert set(_subs(fake)) <= {"doctor", "load", "scan"}
+        assert not any("eject" in a for c in fake.calls for a in c)
 
 
 def test_plan_file_carries_the_same_statements(tmp_path, monkeypatch):

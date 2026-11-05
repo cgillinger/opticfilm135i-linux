@@ -264,6 +264,7 @@ def _run_sequence(dpi):
 
     mock = MockUsbIo([t.PREP, t.AFE_BASE] + order, cal_buffers)
     scanner = Scanner(mock)
+    scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
     # This fake replays PARK's captured op queue verbatim (see
     # test_calibrate.py's same note); semantic (default since
     # 2026-09-17) has no scripted register state here.

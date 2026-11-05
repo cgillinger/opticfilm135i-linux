@@ -50,7 +50,10 @@ EXIT_COVERAGE_UNVERIFIED = 4
 #: The driver's own text for the failure issue #35 is about
 #: (of135i/device.py, Scanner._healthy_dark_b).
 DARK_B_RESIDUAL_TEXT = "dark_b is residual"
-DEFAULT_SEQUENCE = "on,off,off,on"
+#: Gated scans only: the ungated failure is already established on the
+#: affected units (docs/cal-scanstop-gate.md); repeating it only costs a
+#: power cycle.
+DEFAULT_SEQUENCE = "on,on,on,on"
 TOKENS = {"off": "off", "on": "enforce"}
 LIFTED = ("calibration", "dark_b_substituted", "poll_timeouts", "cr_mismatches",
           "cr_mismatch_details", "cal_scanstop_waits", "phase_seconds")
@@ -61,8 +64,91 @@ PRECONDITION = ("scanner freshly power-cycled, magazine in the slot, "
 def parse_sequence(text: str) -> list:
     toks = [t.strip().lower() for t in text.split(",") if t.strip()]
     if not toks or any(t not in TOKENS for t in toks):
-        raise argparse.ArgumentTypeError("--sequence takes a comma list of off|on, e.g. on,off,off,on")
+        raise argparse.ArgumentTypeError("--sequence takes a comma list of off|on, e.g. on,on,on,on")
     return toks
+
+
+# ---------------------------------------------------------------------------
+# Note for a sequence with an ungated scan, and what to do after the run.
+# Sources: docs/cal-scanstop-gate.md (two units failed 5 of 5 ungated),
+# docs/hardware-safety.md ("What fail closed means", "Recovery after an
+# interrupted scan"), README "Usage" (steps 1 and 4, the `load --release`
+# note) and "When something goes wrong"; the full list of what has gone wrong
+# on the developer unit is in docs/cross-unit-protocol.md, section 9 ("Risks").
+# ---------------------------------------------------------------------------
+
+RISKS_POINTER = (
+    "What can damage the scanner (docs/cross-unit-protocol.md, section 9A): if the holder grinds, "
+    "scrapes or stops, switch the scanner off at once; send no command after a failure or "
+    "interrupt, power-cycle instead; never pull a magazine that does not come out freely; and if "
+    "`load` logs 're-seating traverse before the jog' you are on a path that has never run on "
+    "hardware, so watch the scanner.")
+
+OFF_NOTE = [
+    "NOTE: this sequence contains a scan with the gate off. Run it only if you were asked to.",
+    "On a unit affected by issue #35 an ungated scan is expected to fail in calibration "
+    "('dark_b is residual'); both other units that ran it failed 5 of 5 (docs/cal-scanstop-gate.md). "
+    "That harms nothing, but the tool stops there, register 0x01 reads 0x02 (not an accepted "
+    "start state) and the scanner needs a power cycle with the magazine still loaded; the "
+    "README's `load --release` note may then apply (Usage step 1; docs/test-log.md Test 49).",
+]
+
+EJECT_COMMAND = "python3 -m of135i eject"
+
+NO_COMMAND_REASON = (
+    "Do NOT run eject or any other command after a failure or interrupt: that would send a motor "
+    "command from a state the driver does not know, which is how the developer unit's documented "
+    "stalls began (docs/cross-unit-protocol.md, section 9A; docs/hardware-safety.md).")
+
+AFTER_RUN_PLAN = [
+    "AFTER THE RUN. The tool never ejects: the magazine is still loaded when it ends.",
+    "If every scan completed: run `" + EJECT_COMMAND + "` yourself [MOTOR: the scanner ejects "
+    "the magazine]. A completed scan leaves the scanner idle and homed (the state the README's "
+    "normal workflow ejects from, Usage step 4); the owner ran this eject after the four scans "
+    "of Test 115. The scanner leaves the USB bus about five minutes after a session and only a "
+    "power cycle brings it back (README), so eject soon.",
+    "If a scan failed, the run was interrupted or the tool hit an error: " + NO_COMMAND_REASON +
+    " Power-cycle the scanner (off, wait until its lights are out, on). The magazine is then "
+    "still loaded: if the next `load` stops at the feed, follow the README's `load --release` "
+    "procedure (Usage, step 1). Never pull a magazine out that does not come out freely.",
+    RISKS_POINTER,
+]
+
+
+def off_note_lines(sequence: list) -> list:
+    """The NOTE, only when the sequence contains an ungated scan."""
+    return list(OFF_NOTE) if "off" in sequence else []
+
+
+def after_run_text(result: str) -> list:
+    """What to do with the scanner when the tool ends, by result. Only a
+    fully completed run gets the eject advice; every other result, including
+    'busy' (nothing was sent, but another program has the scanner), says not
+    to send anything."""
+    if result == "ok":
+        return [
+            "AFTER THE RUN: the magazine is still loaded; the tool does not eject.",
+            f"Eject it now with:  {EJECT_COMMAND}   [MOTOR: the scanner ejects the magazine]",
+            "A completed scan leaves the scanner idle and homed, the state the README's normal "
+            "workflow ejects from (Usage, step 4); the owner ran this eject after the four scans "
+            "of Test 115. The scanner leaves the USB bus about five minutes after a session and "
+            "only a power cycle brings it back (README), so eject soon. If the eject reports an "
+            "error, send nothing more and follow the driver's message (a power cycle).",
+        ]
+    if result == "busy":
+        return [
+            "AFTER THE RUN: nothing was sent. Do not run eject or any other command until the "
+            "other program that holds the scanner has ended (two programs driving the "
+            "scanner at once is itself a hazard, docs/hardware-safety.md).",
+        ]
+    return [
+        f"AFTER THE RUN (result: {result}): " + NO_COMMAND_REASON,
+        "Power-cycle the scanner now: switch it off, wait until its lights are out, switch it on. "
+        "The magazine is still loaded. If the next `load` stops at the feed, follow the README's "
+        "`load --release` procedure (Usage, step 1). Never pull a magazine out that does not come "
+        "out freely.",
+        RISKS_POINTER,
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +278,13 @@ def _wrap(prefix: str, text: str, width: int = 100) -> list:
 def render_plan(plan: list, sequence: list, out: Path, scrubbed: bool) -> str:
     """The printed plan and plan.txt: for every step the command, what it
     sends (reads only / register writes / MOTOR), what you do, and why."""
-    L = [f"Precondition: {PRECONDITION}.", HOLDER_NOTE, "", "Steps, in order:"]
+    L = [f"Precondition: {PRECONDITION}.", HOLDER_NOTE]
+    warn = off_note_lines(sequence)
+    if warn:
+        L.append("")
+        for para in warn:
+            L += _wrap("", para)
+    L += ["", "Steps, in order:"]
     scan_tokens = iter(sequence)
     for i, (name, argv) in enumerate(plan, 1):
         info = step_info(name, next(scan_tokens) if name.startswith("run-") else None)
@@ -215,6 +307,9 @@ def render_plan(plan: list, sequence: list, out: Path, scrubbed: bool) -> str:
                  "frame.",
                  ABORT_RULE,
                  "The tool runs nothing else (no eject, home, initialize or park)."):
+        L += _wrap("", para)
+    L.append("")
+    for para in AFTER_RUN_PLAN:
         L += _wrap("", para)
     return "\n".join(L)
 
@@ -497,7 +592,10 @@ def main(argv: list | None = None) -> int:
     ap.add_argument("--out", required=True, metavar="DIR", help="result directory; must not exist or be empty")
     ap.add_argument("--sequence", type=parse_sequence, default=parse_sequence(DEFAULT_SEQUENCE),
                     help="comma list of off|on (on = --cal-wait-scanstop enforce); default "
-                         f"{DEFAULT_SEQUENCE} (a gated run first: see docs/cross-unit-protocol.md)")
+                         f"{DEFAULT_SEQUENCE}: gated scans only. NOTE: a sequence containing 'off' "
+                         "is expected to fail a scan on an affected unit; that harms nothing, "
+                         "but the tool stops there and the scanner needs a power cycle with the "
+                         "magazine still loaded; run it only when asked (docs/cross-unit-protocol.md, sections 3 and 9)")
     ap.add_argument("--dpi", type=int, default=600, help="scan resolution (default 600)")
     ap.add_argument("--frame", type=int, default=1, help="frame NUMBER (1-based), passed as --frames N (default 1)")
     ap.add_argument("--include-images", action="store_true",
@@ -655,6 +753,9 @@ def main(argv: list | None = None) -> int:
         print(f"\n{n}")
     print(f"\nEvidence: {tar} ({tar.stat().st_size} bytes)"
           + (" - images ARE included (--include-images)" if args.include_images else ", no images"))
+    print()
+    for para in after_run_text(result):
+        print("\n".join(textwrap.wrap(para, width=100)))
     return exit_code
 
 

@@ -233,6 +233,7 @@ def test_programs_match_python_replayer():
 
     fake = FakeUsbDevice(reg01=0x22, cal_buffers=_build_cal_buffers())
     scanner = Scanner(UsbIo(fake))
+    scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
 
     # Wrap _run_phase (not _exec_ops -- this goes through the same
     # guarded public methods every other test uses, per test_calibrate.py's
@@ -509,6 +510,7 @@ def test_gain_programs_match_python_replayer():
 
     fake = FakeUsbDevice(reg01=0x22, cal_buffers=_build_cal_buffers())
     scanner = Scanner(UsbIo(fake))
+    scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
 
     slices: dict[str, list[tuple[int, int]]] = {}
     gain_kwargs: dict[str, bytes] = {}
@@ -824,6 +826,7 @@ def test_shading_programs_match_python_replayer():
 
     fake = FakeUsbDevice(reg01=0x22, cal_buffers=_build_cal_buffers())
     scanner = Scanner(UsbIo(fake))
+    scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
 
     calls: list[tuple[str, int, int, list]] = []
     orig_exec_ops = scanner._exec_ops
@@ -1186,6 +1189,7 @@ def test_position_and_scan_setup_match_python_replayer():
     for frame in (1, 3, 6):
         fake = FakeUsbDevice(reg01=0x22, cal_buffers=_build_cal_buffers())
         scanner = Scanner(UsbIo(fake))
+        scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
 
         slices: dict[str, list[tuple[int, int]]] = {}
         orig_run_phase = scanner._run_phase
@@ -1394,6 +1398,7 @@ def test_park_program_matches_park_semantic():
     dev = _ParkWireDev(reg15=reg15, reg32_seq=reg32_seq, reg35=reg35, status_seq=status_seq)
     io = _ParkWireIo(dev)
     scanner = Scanner(io)
+    scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
     with fast_time():
         scanner.park_semantic(ir=False)
     # Scanner._operation("park")'s own start-state guard reads reg 0x01
@@ -1561,6 +1566,7 @@ def test_position_frames_2_to_6_match_python_replayer():
     for frame in (2, 3, 4, 5, 6):
         fake = FakeUsbDevice(reg01=0x22, cal_buffers=_build_cal_buffers())
         scanner = Scanner(UsbIo(fake))
+        scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
         slices: dict[str, list[tuple[int, int]]] = {}
         orig_run_phase = scanner._run_phase
 
@@ -1851,6 +1857,7 @@ def _run_dual_python(t, dpi, n_chunks=2):
     FakeUsbDevice, every _exec_ops call sliced out of the wire log."""
     fake = FakeUsbDevice(reg01=0x22, cal_buffers=_dual_cal_buffers(t))
     scanner = Scanner(UsbIo(fake))
+    scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
     calls: list[tuple[str, int, int, list]] = []
     orig_exec_ops = scanner._exec_ops
 
@@ -1980,6 +1987,7 @@ def test_dual_park_programs_match_park_semantic():
         t = _dual_module(dpi)
         dev = _ParkWireDev(reg15=reg15, reg32_seq=reg32_seq, reg35=reg35, status_seq=status_seq)
         scanner = Scanner(_ParkWireIo(dev))
+        scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
         with fast_time():
             scanner.park_semantic(t=t, ir=True)
         py_transfers = dev.transfers
@@ -2226,6 +2234,7 @@ def test_magazine_open_jog_load_match_python_replayer():
     fake = FakeUsbDevice(reg01=0x22)
     vendor_like_load_status(fake, jog=True)
     scanner = Scanner(UsbIo(fake))
+    scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
 
     slices: dict[str, tuple[int, int]] = {}
     orig_run_phase = scanner._run_phase
@@ -2314,6 +2323,7 @@ def test_cold_init_program_matches_the_driver():
     regs = {0x01: 0x00, 0x31: 0x77, 0x32: 0x1F, 0x35: 0xBB}
     dev = _MagWireDev(regs, status_word=0xF855)
     scanner = Scanner(UsbIo(dev))
+    scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
     with fast_time():
         # Inside the driver's own guarded operation (the safety model
         # refuses a write before the start state is read), then the log
@@ -2342,6 +2352,7 @@ def test_cold_init_program_matches_the_driver():
     # And the guards cold_init() wraps the body in, which the hook keeps.
     dev2 = _MagWireDev({0x01: 0x00}, status_word=0xF855)
     scanner2 = Scanner(UsbIo(dev2))
+    scanner2.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
     with fast_time():
         assert scanner2.check_start_state() is not None
     assert dev2.transfers == [("R", 0x04, 0x008E, 0x0122, 2)], dev2.transfers
@@ -2362,6 +2373,7 @@ def test_eject_program_matches_the_driver():
     regs = {0x01: 0x22, 0x32: 0x95, 0x3B: 0x00, 0x3C: 0x00}
     dev = _MagWireDev(regs, status_word=0xF855)
     scanner = Scanner(UsbIo(dev))
+    scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
     # NOT under fast_time(): _eject_body()'s completion wait is a
     # `while time.monotonic() < deadline` loop, and a clock that jumps
     # 1000 s per call skips its body entirely -- the driver would issue
