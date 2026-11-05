@@ -401,6 +401,24 @@ already stopped the transfers are unchanged. **Offline-tested only
 series (`sane/wp3-package/`).** The wait was designed by bearyjd for the
 Python driver and ported here.
 
+Where the backend's wait differs from the Python gate:
+
+- Each register has its own 300 ms; the Python gate shares one 0.3 s
+  deadline between the two. The condition is the same.
+- No extra reads: the two captured reads themselves become the polls, so
+  a scanner that has already stopped sees the transfers of the series
+  without the gate. The Python gate adds its own reads after the
+  captured ones.
+- The plain-3600 `cal_shading_measure` reg 0x100 site waits up to 5 s
+  for class F and bit 0 clear in the same read; the Python driver polls
+  that site non-strictly for 0.3 s and the gate then refuses.
+- The acknowledge byte (0x55) is not checked, as nowhere in the
+  backend's op runner. A reply with no data never matches (the reply
+  buffer starts at a value that cannot), which covers the case that
+  matters for a wait on a clear bit; a transfer error ends the program.
+- The wait is logged as a poll record (first and last value, number of
+  reads, milliseconds) at debug level; there is no `.diag.json`.
+
 ## Out of scope here
 
 - The SANE backend: see the next section. The default change in the

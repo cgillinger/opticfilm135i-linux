@@ -223,10 +223,14 @@ struct RunPolicy {
                        recorded, never fails on a mismatch.
       PollMasked    -> loop: control_read(op's own request/value/index,
                        ..., 2); (reply[0] & op.mask) == op.want -> done,
-                       recorded (a PollRecord); else timeout
+                       recorded (a PollRecord); a read that returns no
+                       data never matches (the buffer starts at a value
+                       that cannot); else timeout
                        (policy.masked_timeout_ms) -> OpsError{PollTimeout}
                        (message carries first/last), nothing further
-                       sent; else sleep_ms(...). Its two real uses:
+                       sent; else sleep_ms(...). Its real uses: the
+                       calibration stop gate (bit 0 of reg 0x100 and of
+                       reg 0x101 clear after each acquisition),
                        POSITION's W3 (class F on reg 0x101) and PARK's
                        Wait A (reg 0x35 bit 0x40)/Wait B (the
                        PARK_COMPLETE status word).

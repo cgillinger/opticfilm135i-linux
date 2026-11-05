@@ -49,7 +49,7 @@ with nothing to re-sync. The eventual merge request takes copies.
   (`cal_dark_a`, `cal_dark_b`, `cal_white`, `cal_gain_check_a`,
   `cal_gain_check_b`, `cal_shading_measure` and the measuring half of
   `cal_shading_verify`) ends with a SCAN-clear followed by one read of
-  reg 0x100 and one of reg 0x101. These four-ms-apart reads were logged
+  reg 0x100 and one of reg 0x101. These two reads were logged
   only, so on a fast host the next acquisition was armed while the
   previous one was still running (issue #35; the Python driver's fix is
   docs/cal-scanstop-gate.md). `tools/gen_sane_tables.py` now emits the
