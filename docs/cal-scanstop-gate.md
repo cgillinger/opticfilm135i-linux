@@ -327,7 +327,8 @@ reports show:
   unit ran them).
 - The whole-strip sweep (`digitize --sweep`) and `digitize` in general.
 - 110 film.
-- The SANE backend, which has no gate.
+- The SANE backend: its generated op programs now wait at the same
+  sites ("The SANE backend" below), offline-tested only.
 
 Callers of those paths are gated from this change on without a hardware
 run of that combination. The mechanism is the same executor change in
@@ -378,15 +379,50 @@ becomes the default and the "frame 1 is always healthy" assumption in
 residual dark_b occurred on the owner's unit); the two external units
 did, and the decision was taken on that evidence ("Decision" below).
 
+## The SANE backend
+
+The backend (`sane/gl126.cpp`) has its own calibration runner and its own
+residual-dark_b check (it fails without substitution). Its generated op
+programs carried the two reads after each SCAN-clear as logged-only
+`Read` ops, so on a host as fast as the second unit it would have been
+expected to fail calibration; this was never run. The generator
+(`tools/gen_sane_tables.py`) now emits those two reads in the seven
+acquisition programs as `PollMasked`: bit 0 of reg 0x100 clear, then bit 0
+of reg 0x101 clear, 300 ms each (the plain-3600 `cal_shading_measure`
+reg 0x100 site, a captured poll, keeps its class-F match, mask 0xf1 /
+want 0xf0, and the runner's 5 s). The sites are found from the op
+stream's structure with the rule `_scanstop_note_write` uses; generation
+fails if a read is missing. A timeout is a fail-closed `PollTimeout`
+(nothing further is written, power cycle) reported as "the previous
+acquisition did not stop". `position`, `scan`, `park`, the upload
+programs and the magazine programs have no gate. With a scanner that has
+already stopped the transfers are unchanged. **Offline-tested only
+(tests/test_sane_ops.py); not run on hardware, not in the submitted
+series (`sane/wp3-package/`).** The wait was designed by bearyjd for the
+Python driver and ported here.
+
+Where the backend's wait differs from the Python gate:
+
+- Each register has its own 300 ms; the Python gate shares one 0.3 s
+  deadline between the two. The condition is the same.
+- No extra reads: the two captured reads themselves become the polls, so
+  a scanner that has already stopped sees the transfers of the series
+  without the gate. The Python gate adds its own reads after the
+  captured ones.
+- The plain-3600 `cal_shading_measure` reg 0x100 site waits up to 5 s
+  for class F and bit 0 clear in the same read; the Python driver polls
+  that site non-strictly for 0.3 s and the gate then refuses.
+- The acknowledge byte (0x55) is not checked, as nowhere in the
+  backend's op runner. A reply with no data never matches (the reply
+  buffer starts at a value that cannot), which covers the case that
+  matters for a wait on a clear bit; a transfer error ends the program.
+- The wait is logged as a poll record (first and last value, number of
+  reads, milliseconds) at debug level; there is no `.diag.json`.
+
 ## Out of scope here
 
-- The SANE backend (`sane/gl126.cpp`) has its own calibration runner
-  and its own residual-dark_b check (it fails without substitution). It
-  has **no** stop gate. Porting is a separate step. Given the second
-  unit's result (0 of 3 without the gate in the Python driver), the
-  backend as submitted should be expected to fail calibration on a host
-  as fast as that one; this has not been run. The default change here
-  does not touch the backend.
+- The SANE backend: see the next section. The default change in the
+  Python driver does not touch the backend.
 - `--cal-data <file.npz>` (reusing a calibration across sessions, the
   reporter's request) is a feature request, not part of this change.
 - `--diag-readback-regs` (the reporter's "PR #12") exists only in the

@@ -199,8 +199,10 @@ the vendor see. Not a stop wait. Leave; it is logged.
    At that point the SANE backend gets the same wait, and residual
    detection, which it lacks today. *Done 2026-11-05 for the Python
    driver: both reporters' sidecars show it (waits up to 24 and 29 ms)
-   and `enforce` is the default. The SANE backend does not have the wait
-   or the residual detection yet.*
+   and `enforce` is the default. The SANE backend's generated programs
+   now wait at the same sites (docs/cal-scanstop-gate.md, "The SANE
+   backend"), offline-tested only, not yet run on hardware; its
+   residual-dark_b check fails without substitution.*
 3. **Classes B, C, F, G stay** on the evidence above. They are
    re-judged if a cross-unit `.diag.json` shows `cr_mismatches`
    concentrated in one of them, which is the next item.

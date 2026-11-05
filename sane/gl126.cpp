@@ -223,6 +223,26 @@ const OpProgram& find_program(const Profile& profile, const char* name)
                         profile.name, name);
 }
 
+/** True if op `idx` of `prog` is one of the calibration stop gate's two
+    polls (docs/cal-scanstop-gate.md): a PollMasked read of reg 0x100 or
+    0x101 that waits for bit 0 clear, generated after the SCAN-clear that
+    ends each calibration acquisition. Decided from the op itself, not
+    from the phase name, and by the gate's two exact mask/want pairs:
+    PARK's completion wait reads reg 0x101 too (mask 0xe3) and is not a
+    gate op. */
+bool is_scanstop_gate_op(const OpProgram& prog, std::size_t idx)
+{
+    if (idx >= prog.count) {
+        return false;
+    }
+    const Op& op = prog.ops[idx];
+    const bool bit0_clear = op.mask == 0x01 && op.want == 0x00;
+    const bool class_f_and_bit0_clear = op.mask == 0xf1 && op.want == 0xf0;
+    return op.kind == OpKind::PollMasked && op.value == 0x018e &&
+           (op.index == 0x0022 || op.index == 0x0122) &&
+           (bit0_clear || class_f_and_bit0_clear);
+}
+
 /** Run one captured phase as its op program: the captured transfers in
     the captured order, the one real wait (data-ready) as an explicit
     poll with a timeout, and every failure ending the hook with zero
@@ -245,7 +265,10 @@ void run_phase_program(Genesys_Device* dev, const Profile& profile, const char* 
             case OpsFailure::BadAck: what = "register write not acknowledged"; break;
             case OpsFailure::PollTimeout:
                 status = SANE_STATUS_DEVICE_BUSY;
-                what = "data-ready never set";
+                what = is_scanstop_gate_op(prog, e.op_index)
+                    ? "the previous acquisition did not stop (bit 0 of reg 0x100/0x101 "
+                      "still set)"
+                    : "data-ready never set";
                 break;
             case OpsFailure::ShortBulk: what = "short bulk read"; break;
             case OpsFailure::MissingInjection:

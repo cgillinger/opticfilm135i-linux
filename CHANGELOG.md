@@ -6,6 +6,23 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **SANE backend: calibration stop gate in the generated op programs.**
+  After the SCAN-clear that ends each calibration acquisition, the
+  backend's programs read reg 0x100 and reg 0x101 once and did not wait,
+  so on a fast host the next acquisition could be armed while the
+  previous one was still running; the backend would be expected to fail
+  calibration there as the Python driver did (issue #35), though it was
+  never run on such a host. The
+  generator now emits those two reads in the seven acquisition programs
+  as polls for bit 0 clear (300 ms each; the plain-3600
+  `cal_shading_measure` site keeps its class-F match and 5 s), and a
+  timeout reports "the previous acquisition did not stop". A control read
+  that returns no data no longer counts as a match in any masked poll.
+  Transfers are unchanged when the scanner has already stopped. Offline only
+  (`tests/test_sane_ops.py`); not run on hardware and not in the
+  submitted series. The wait was designed by bearyjd for the Python
+  driver; the failure was reported by Krustenviech (#35).
+
 - **Removed: `digitize --film 110 --strips 2`.** The mode let two short 110
   strips share one load of the six-aperture holder (slot 1 = apertures 1-3
   as roll N, slot 2 = apertures 4-6 as roll N+1; docs/film-110.md §12). It
