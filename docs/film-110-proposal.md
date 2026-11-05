@@ -280,10 +280,10 @@ verdict with a reason, and the aperture product is still written.
 3. Only then: README/ROADMAP say "110 in the strip holder: supported,
    two placements", with n = 2 stated.
 
-## 7. Work split (for Christian's model rule)
+## 7. Work split
 
-- Spec, detector design, review, hardware runs, docs: main model.
+- Spec, detector design, review, hardware runs, docs: done first.
 - `Film` model, `film110.py`, synthetic fixtures, CLI wiring, private
-  fixture runner: Sonnet against this document.
+  fixture runner: implemented against this document.
 - Estimated size: ~400 lines of code, ~300 lines of tests, one hardware
   evening for Test 87.

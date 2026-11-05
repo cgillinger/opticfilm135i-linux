@@ -118,8 +118,8 @@ the analysis predicts.
 
 **On deviation.** Power cycle. Then `of135i load --double-jog`, then
 `of135i eject`. Fallback if the magazine stays latched: `load
---release`, power cycle, `load`, `eject`. Send me the JSON reports and
-the control images; do not repeat the run before we have read them.
+--release`, power cycle, `load`, `eject`. Keep the JSON reports and
+the control images; do not repeat the run before they have been read.
 
 ### N2. The holder with nothing in it, three separate loads
 

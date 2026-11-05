@@ -315,7 +315,9 @@ pass) is acceptable. The unengaged loads are analysed in Tests 14 and 15 of
 standalone load, and the load is preceded by the vendor's app-start
 jog (`Scanner.jog_magazine()`, `tables_load.JOG`, same strict masked
 polls), which every engaging vendor load had and none of ours did. The
-jog + reinsert + load flow is **not yet hardware-verified**. Background in
+jog + reinsert + load flow has run on hardware since 2026-09-05 (it
+latched the magazine three times out of three that day) and has been
+the load flow since. Background in
 [`load-analysis.md`](load-analysis.md).
 
 `--assume-locked` (in `tools/hwblock.py`) is for controlled development
@@ -342,7 +344,10 @@ errors, timeouts and Ctrl-C during the wait propagate untouched.
 A warm lamp takes the same single-measurement path every verified scan
 has taken. Offline-verified (fault injection for a dark lamp, gradual
 warmup, a never-stable lamp, saturation, malformed data, Ctrl-C and USB
-errors); the bounded wait itself has not yet been seen on hardware.
+errors). On hardware the bound has been reached and raised as designed:
+Test 22 (51 measurements over 295 s, then `LampWarmupError`, no motor
+command) and once more during the whole-strip sweep bring-up (after
+58 s).
 
 ## A cold-started session loads before it scans
 
@@ -378,7 +383,7 @@ program is not recovery.
 
 ## Verification status
 
-- **Offline verified** (`tests/test_safety.py`, 38 tests, run with the
+- **Offline verified** (`tests/test_safety.py`, run with the
   full existing offline suite): the start-state matrix (0x22 / 0x00 /
   0x02 / 0x23 / unknown / read timeout / USB error / malformed reply)
   for every public writing entry point, counted at the pyusb boundary

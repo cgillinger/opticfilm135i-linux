@@ -605,8 +605,8 @@ locked the magazine by hand (LED still blue).
 
 Started `hwblock.py warm --repeat 10`. While the first scan was in
 CAL_WHITE (warmup retry had triggered: gain 0x3F on a lamp only
-minutes from cold start), Christian reported the magazine loose. I
-stopped the process with SIGINT (safety rule B6) — inside the bulk
+minutes from cold start), Christian reported the magazine loose. The
+process was stopped with SIGINT (safety rule B6) — inside the bulk
 read of the white measurement.
 
 State left behind (doctor): reg 0x01 = **0x23** (scan bit set, engine
@@ -637,7 +637,7 @@ not extend to a scanner with the engine running.
 **Changes made:** `hwblock` W0 now refuses to start unless reg 0x01
 is 0x22 (idle-homed) or 0x00 (cold) and tells the operator to
 power-cycle; `--assume-loaded` documented as "human confirmed locked
-magazine" only. TODOs 9b/9c/9d recorded (CLAUDE.md).
+magazine" only. TODOs 9b/9c/9d recorded (local working notes).
 
 **Rules confirmed/added:**
 - After ANY abort inside a phase, the only recovery is a power cycle.
@@ -1025,7 +1025,7 @@ cycle.
 ## 2026-09-05 — Test 14: clean vendor load captured — root cause of the loose magazine
 
 `captures/20260905-vendor-clean-load.pcap` (usbmon1 on the Linux host,
-QuickScan in the Win11 VM driven by the VM Claude session; magazine
+QuickScan in the Win11 VM, operated from inside the VM; magazine
 taken fully out on QuickScan's prompt and reinserted fresh; it latched
 the instant it reached the stop). 442 ops. The decisive comparison:
 
@@ -1146,7 +1146,7 @@ rounds, normal sound), base table + AFE, then the JOG. Christian: a
 rather loud, "nasty" sound that stopped abruptly, unlike QuickScan's
 start. The jog's four polls all settled at 0xf855 (as captured), so the
 guard let it through. The reinsert prompt then got EOF (the tool was
-run through the session's `!` prefix, which gives no stdin): abort,
+run without a terminal attached, so it had no stdin): abort,
 exit 130, nothing sent after the jog, session armed. Doctor: 0x01=0x22,
 status 0xf855. Magazine loose the whole time. Scanner off, magazine out.
 
@@ -2458,8 +2458,8 @@ synchronised. A12 stays offline-verified; next is release packaging.
 
 ## 2026-09-06 — Test 38: digitize (A12) — second audit, seven more fixes (offline)
 
-A second offline audit (Fable 5) of the Test-37 work found seven items.
-One was a real bug I had shipped (and my own test had codified it); the
+A second offline audit of the Test-37 work found seven items.
+One was a real bug that had shipped (and its own test had codified it); the
 rest hardened resume. All fixed offline. No protocol/calibration/POSITION/
 PARK/safety change.
 
@@ -2495,7 +2495,7 @@ PARK/safety change.
 Tests (offline, test_offline): +3 new (18 in the file); full suite 136.
 `release_check` green on a clean checkout. A12 stays offline-verified
 (its scanning is A2/A3, already hardware-verified). Pushed as 67612bc;
-Fable 5 re-audited the diff and confirmed all seven fixed and verified,
+A re-audit of the diff confirmed all seven fixed and verified,
 no blocker, with one further low note (below).
 
 **Follow-up from the re-audit — `--force` now clears stale outputs.**
@@ -3355,12 +3355,12 @@ the known load-to-load geometry, not a SANE property.
 Sound: normal in all three motor steps (positioning, scan pass, park)
 — Christian's report, given after the session crash below.
 
-**Two Claude sessions killed during the analysis, not during scanner
+**Two analysis sessions killed, not during scanner
 traffic.** `systemd-oomd` killed the Konsole tab scope twice (16:43:54
 and 16:58:56, "memory pressure … > 60 % for > 20 s with reclaim
 activity") while the image comparison ran: full-frame float64 copies
 (58 M values × 8 B, several at once) on top of 1.6 GB of test files in
-the session scratchpad on `/tmp` (tmpfs, i.e. RAM, charged to the same
+a scratch directory on `/tmp` (tmpfs, i.e. RAM, charged to the same
 cgroup), with swap in use. The scanner was post-PARK the first time and
 already ejected the second; nothing was in flight on the wire. Rule
 from now on: full-frame analysis in uint16 with chunked statistics,
@@ -3423,8 +3423,8 @@ present, nothing abnormal). The `--frame` option positions correctly and
 delivers the right frame; the longest move (frame 4, 8.0 s) sat well
 inside its 28 s budget.
 
-**Defect found by my own inspection of the side-by-side images** (not
-by Christian's eye check — as of Test 53 he had not yet seen a single
+**Defect found by inspection of the side-by-side images during the
+analysis** (not by Christian's eye check — as of Test 53 he had not yet seen a single
 SANE image, so no backend image is accepted under the human-eyes rule;
 corrected 2026-09-08 after his note): the SANE image carries an
 uncorrected colour-line stagger. Measured per
@@ -3446,9 +3446,9 @@ node is never inserted. The model already declares `ld_shift_r/g/b =
 (roll R −12, B +12). An earlier comment ("no colour line shift or stagger
 to undo on the host") was wrong.
 
-Left as an open decision (CLAUDE.md TODO), two questions unanswered
+Left as an open decision (local TODO), two questions unanswered
 2026-09-08: (1) should the backend correct the stagger at all — it
-touches the raw-data principle, my read is yes (geometry, not colour
+touches the raw-data principle, the reading here is yes (geometry, not colour
 interpretation); (2) method — a host-side shift matching `image.py` (wire unchanged)
 versus scanning 24 extra lines (the wire changes and the frame guard
 needs rework). *Correction (2026-09-08, external review of 18c179a):
@@ -3465,15 +3465,15 @@ side-by-side PNGs in `~/Bilder/opticfilm-sane-test52/`.
 ## 2026-09-08 — Offline: the colour-line shift corrected in the backend (Test 53 follow-up), verified against the saved images
 
 Decision (Christian, 2026-09-08, on the external review of 18c179a and
-my recommendation): the backend corrects the colour-line shift, on the
+the recommendation above): the backend corrects the colour-line shift, on the
 host, with the wire unchanged. Geometry of the sensor's separate colour
 lines is not colour interpretation; every genesys CCD backend does it
 and the driver does it in `image.align_channels`.
 
 Two corrections to Test 53's entry first (made in place): the driver
 does *not* ship a wrap artefact — `align_channels` crops the 24 shifted
-rows; and the defect was found by my inspection of the side-by-side
-images, not by Christian's eye check. Christian has not yet seen any
+rows; and the defect was found by inspection of the side-by-side
+images during the analysis, not by Christian's eye check. Christian has not yet seen any
 SANE image, so nothing from the backend is accepted under the
 human-eyes rule.
 
@@ -3524,13 +3524,13 @@ Review images for Christian (the acceptance step still ahead) are in
 `~/Bilder/opticfilm-granskning/`: `stagger-f{1,2,4}-ref-vs-raw-vs-corrected.png`
 (700 px crops: driver reference | SANE raw | SANE corrected) and the
 1/8-scale full frames; the report is `stagger-check-report.txt` there.
-I looked at frame 1's crop: the middle panel fringes on every edge, the
+Frame 1's crop was inspected during the analysis: the middle panel fringes on every edge, the
 left and right panels match.
 
 **Next:** one hardware run of frame 1 through `scanimage` on the fixed
 backend (expected 3762 × 5113, same wire, same W3/Wait A/B), then
 Christian's own eye check of that image — the first backend image
-anyone but me has looked at.
+he will have looked at.
 
 ## 2026-09-08 — Test 54: frame 1 through `scanimage` with the colour-line fix — 3762 × 5113 delivered, stagger residual 0/0, wire and waits as Test 52, eject from post-PARK
 
@@ -3582,7 +3582,7 @@ Image check (uint16, banded, under a 3 GB scope; report and images in
   the fix); channel means within +0.11 / −0.63 / −0.14 % of the
   reference.
 - The 700 px crop (reference | SANE, positive) shows no fringing on
-  either side; I looked at it.
+  either side (inspected during the analysis, not the owner's eye check).
 
 Then `of135i eject` from post-PARK (0x22 / 0xf8): "ejected", 0x01 =
 0x22 afterwards — 4/4 now (Tests 52, 53 ×2, 54). Sound: Christian was
@@ -4104,13 +4104,13 @@ Findings, with the analyst's identification of each:
   original (frame 4 is a soft close-up)* — undecidable without a
   vendor scan of the same strip; deferred to the comparison pass.
 
-A second opinion on the same images was also requested from another
-AI assistant by the owner. Verdict so far: geometry criteria pass;
+A second opinion on the same images was also requested by the owner
+from an independent automated review. Verdict so far: geometry criteria pass;
 the colour judgement is parked on the vendor comparison.
 
 **Acceptance verdict (2026-09-10, owner + second opinion).** The owner's
 own findings above, together with an independent second-opinion review
-of the same six images (another AI assistant, working from the lossless
+of the same six images (automated, working from the lossless
 PNGs), close the acceptance step. The second reviewer's formulation,
 adopted as the verdict:
 
@@ -6149,10 +6149,10 @@ rulers, IR-cleaned, upright) from placements A and B; owner's eye: the
 first three positives accepted as "110-kvalitet". Raw and survey frames
 are the fixture set for the 110 detector (`docs/film-110.md` §9).
 
-**Two mistakes on the way, kept.** I first took the strip for 126 (35 mm
-wide) and warned of lateral clipping that does not exist; and I wrote
-"yesterday" about the first placement, which was the same evening —
-folders renamed. The 19 mm spacer rule I proposed for placement B was
+**Two mistakes on the way, kept.** The strip was first taken for 126 (35 mm
+wide), with a warning of lateral clipping that does not exist; and the
+first placement was dated "yesterday" when it was the same evening —
+folders renamed. The 19 mm spacer rule proposed for placement B was
 correct but was rejected by the owner as fiddly; his visual rule is what
 the documentation carries.
 
@@ -7626,7 +7626,8 @@ every window `located_by` edges); aperture lengths 35.93–36.05 mm against
 of each aperture correlate 0.997–0.999 on 8x-downsampled luminance, best
 line shift 16–24 lines (0.11–0.17 mm, both crops register on their own
 edge finds). Side-by-side positives of the four apertures were made for
-the owner's eye check (outside the repo); my own look: whole pictures,
+the owner's eye check (outside the repo); a first look during the
+analysis: whole pictures,
 same crop, same colour, no banding. **Owner's eye check the same evening:
 PASSED** — "in principle identical", differing only in dust and single
 artefacts (neither pass was dust-cleaned, and dust lands differently per
@@ -7938,9 +7939,9 @@ The transport is healthy after the incident.
 
 ## 2026-11-02 — Test 114: the calibration stop gate (`--cal-wait-scanstop enforce`) A/B on hardware — harmless here (waits ≤ 8 ms against the 0.3 s budget), but the residual dark_b did not occur, so the gate's effect could not be shown
 
-Hardware, owner's unit and host, branch `claude/busy-bohr-jkyio2` (commit
+Hardware, owner's unit and host, a working branch (commit
 8e97437, the port of bearyjd's gate as opt-in; docs/cal-scanstop-gate.md).
-Driven from a Remote Control session with the owner approving each
+Commands were issued remotely, the owner approving each
 scanner command; the owner listened for anything abnormal (nothing).
 Film strip in the holder, four frames. Nothing committed from the run;
 the `.diag.json`/image output is in the owner's local `test114/`

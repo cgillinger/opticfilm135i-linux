@@ -390,8 +390,8 @@ hardware.**
 
       cold_init: loader sensor set (status 0x....) -- no re-seating
 
-  and has been seen on the developer unit three times (Test 114 once,
-  Test 115 twice, from the `log.txt` of each run). The path that has never
+  and has been seen on the developer unit five times (Test 114 once,
+  Test 115 twice, Tests 116 and 117 once each). The path that has never
   run on hardware logs
 
       cold_init: loader sensor clear (status 0x....) with a magazine present -- re-seating traverse before the jog (vendor recovery, Test 112; NOT hardware-verified)

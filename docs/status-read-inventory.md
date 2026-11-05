@@ -110,8 +110,9 @@ where that matters.
 
 **A. Calibration acquisitions (111).** Each of the seven phases ends an
 exposure with a SCAN stop and reads 0x100 then 0x101 once. This is the
-issue #35 failure. Covered by the stop gate, opt-in until the reporters'
-runs confirm it (docs/cal-scanstop-gate.md). The transitions between
+issue #35 failure. Covered by the stop gate, the default since
+2026-11-05 after both reporters' runs confirmed it
+(docs/cal-scanstop-gate.md, "Decision"). The transitions between
 these phases, and into CAL_SHADING_UPLOAD, are the gate's seven firing
 points. The gate arms only on a stop that closes an execute pulse in
 the same phase; CAL_SHADING_VERIFY's second stop has no pulse before it,
@@ -196,7 +197,10 @@ the vendor see. Not a stop wait. Leave; it is logged.
    shows the gate clearing a real wait (`cal_scanstop_waits` with
    `wait_s` well above a single read) and a scan that then completes.
    At that point the SANE backend gets the same wait, and residual
-   detection, which it lacks today.
+   detection, which it lacks today. *Done 2026-11-05 for the Python
+   driver: both reporters' sidecars show it (waits up to 24 and 29 ms)
+   and `enforce` is the default. The SANE backend does not have the wait
+   or the residual detection yet.*
 3. **Classes B, C, F, G stay** on the evidence above. They are
    re-judged if a cross-unit `.diag.json` shows `cr_mismatches`
    concentrated in one of them, which is the next item.
@@ -204,13 +208,15 @@ the vendor see. Not a stop wait. Leave; it is logged.
    scan. Record each mismatch as (phase, register, got, want), capped,
    in the `.diag.json`, so the next report from another unit says
    *which* assumption failed without a debug log. Offline change,
-   no wire difference. Not done in this commit.
+   no wire difference. *Done since: `cr_mismatch_details` in the
+   `.diag.json`.*
 5. **Verbatim PARK stays non-default** and is not extended.
 
 ## 7. What this does not show
 
 Timing. The inventory says where the driver assumes; only
 `cal_scanstop_waits` from a unit that shows the failure says how long
-the scanner actually takes. Two reporters have been asked for that
-(issue #35). Until it is in, class A's gate stays opt-in and the
-judgements in B and C rest on the owner's unit and the vendor captures.
+the scanner actually takes. Two reporters were asked for that
+(issue #35) and both have answered (docs/cal-scanstop-gate.md), so
+class A's gate is now the default. The judgements in B and C still rest
+on the owner's unit and the vendor captures.

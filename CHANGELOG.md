@@ -174,7 +174,8 @@ one exists; "offline" means implemented and tested without the scanner.
   IR frame-1 runs: harmless (every wait ≤ 8 ms against 0.3 s) but the
   residual dark_b did not occur in any frame, so its effect is unproven;
   stays opt-in until the issue's reporter runs it. The SANE backend has no
-  gate.
+  gate. (Superseded by the entry above on the default: the reporter and a
+  second user have run it, and `enforce` is now the default.)
   Credit: the mechanism, the code and the offline tests are by bearyjd
   (https://github.com/bearyjd); the report and the Steam Deck logs are by
   Krustenviech (https://github.com/Krustenviech), issue #35.
