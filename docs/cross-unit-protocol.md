@@ -105,8 +105,18 @@ scanner off at its power switch (docs/hardware-safety.md, "Recovery after
 an interrupted scan"). Do not send any recovery command (no eject, home
 or park), and do not treat restarting the program as a recovery.
 
-The `.tiff` images are deleted at the end. Add `--include-images` to
-keep them; do that only if asked.
+`--frame N` (default 1) is the frame number handed to `--frames`, not a
+count. Because that is the multi-frame form of the option, the driver
+names its outputs `run-NN-<gate>-f<N>.tiff` (plus `.overscan.tiff`,
+`.cal.npz` and `.diag.json`), and the tool finds the sidecars by that
+pattern on disk.
+
+The archive is built from an allowlist: only `summary.json`, `report.md`,
+`log.txt`, `plan.txt`, `doctor-*.json` and `*.diag.json` are kept. Every
+other file in the result directory (images, `.cal.npz`) is deleted
+before packing, and the finished tarball is re-read and refused if it
+holds anything else. Add `--include-images` to keep and pack everything;
+do that only if asked.
 
 ## 4. What each step sends to the scanner
 
@@ -261,10 +271,10 @@ The archive holds:
 - `report.md`: the same as a table, with a plain statement of any exit 4,
   `dark_b is residual` or interrupted run.
 - `log.txt`: the combined output of every command, with timestamps.
-- `run-NN-*.diag.json`: the sidecar of each scan.
+- `run-NN-<gate>-f<N>.diag.json`: the sidecar of each scan.
 - `doctor-before.json`, `doctor-after.json`, `plan.txt`.
 
-There are no images unless `--include-images` was given. Paths are
+There are no images and no `.cal.npz` unless `--include-images` was given. Paths are
 relative to the result directory, and your home directory is replaced by
 `~`. The doctor reports contain the USB ids, the kernel version and the
 Python version; look through them if that matters to you.

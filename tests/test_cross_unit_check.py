@@ -17,6 +17,9 @@ import threading
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 import cross_unit_check as xu  # noqa: E402
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from of135i import cli, diag  # noqa: E402
+
 
 class Fake:
     """Replacement for xu.run_command. Records argv; `fail` maps the 1-based
@@ -37,15 +40,20 @@ class Fake:
         sub = [a for a in argv[3:] if not a.startswith("-")][0]
         if sub == "scan":
             self.scans += 1
-            img = pathlib.Path(argv[argv.index("-o") + 1])
+            # Name the outputs exactly as the driver does for `--frames N`
+            # (cli._cmd_scan: multi=True -> _frame_output; diag.sidecar_path).
+            frames = argv[argv.index("--frames") + 1]
+            img = pathlib.Path(cli._frame_output(argv[argv.index("-o") + 1], int(frames)))
             if self.scans in self.raises:
                 exc = self.raises[self.scans]
                 exc.partial_output = "partial scan output\n"
                 raise exc
             rc = self.fail.get(self.scans, 0)
             img.write_bytes(b"II*\x00")
+            img.with_suffix(".overscan.tiff").write_bytes(b"II*\x00")
+            pathlib.Path(diag.cal_data_path(str(img))).write_bytes(b"npz")
             if self.scans not in self.no_sidecar:
-                img.with_suffix(".diag.json").write_text(json.dumps({
+                pathlib.Path(diag.sidecar_path(str(img))).write_text(json.dumps({
                     "output": str(img), "calibration": {"ok": True}, "dark_b_substituted": False,
                     "poll_timeouts": 0, "cr_mismatches": 0, "cal_scanstop_waits": [{"ms": 3}],
                     "phase_seconds": {"cal": 1.0}, "unrelated": 1}))
@@ -87,7 +95,7 @@ def test_default_sequence_argv(tmp_path, monkeypatch):
     s = json.loads((out / "summary.json").read_text())
     assert s["sequence"] == ["on", "off", "off", "on"] and "stopped_at" not in s
     assert s["result"] == "ok" and [r["outcome"] for r in s["runs"]] == ["completed"] * 4
-    assert s["runs"][0]["sidecar"]["output"] == "run-01-enforce.tiff"   # relative, no personal path
+    assert s["runs"][0]["sidecar"]["output"] == "run-01-enforce-f1.tiff"   # relative, no personal path
     assert s["runs"][0]["sidecar"]["cal_scanstop_waits"] == [{"ms": 3}]
     assert "unrelated" not in s["runs"][0]["sidecar"]
     assert (out / "report.md").is_file() and (out / "log.txt").is_file()
@@ -189,14 +197,75 @@ def test_unexpected_error_keeps_evidence(tmp_path, monkeypatch):
 
 def test_images_deleted_unless_included(tmp_path, monkeypatch):
     rc, out = _run(tmp_path, monkeypatch, Fake())
-    assert not list(out.glob("*.tiff")) and len(list(out.glob("*.diag.json"))) == 4
+    assert len(list(out.glob("*.diag.json"))) == 4
+    assert all(xu.is_allowed(p.name) for p in out.iterdir())
+    assert not list(out.glob("*.tiff")) and not list(out.glob("*.npz"))
     with tarfile.open(out.parent / "xu.tar.gz") as t:
-        assert not [n for n in t.getnames() if n.endswith(".tiff")]
+        names = [n.split("/", 1)[-1] for n in t.getnames() if n != "xu"]
+        assert names and all(xu.is_allowed(n) for n in names)
+        assert sum(n.endswith(".diag.json") for n in names) == 4
+        assert "run-01-enforce-f1.diag.json" in names
     with tempfile.TemporaryDirectory() as d:
         monkeypatch.setattr(xu, "run_command", Fake())
         out2 = pathlib.Path(d) / "xu2"
         assert xu.main(["--out", str(out2), "--yes", "--include-images"]) == 0
-        assert len(list(out2.glob("*.tiff"))) == 4
+        assert len(list(out2.glob("*.tiff"))) == 8 and len(list(out2.glob("*.npz"))) == 4
+        with tarfile.open(out2.parent / "xu2.tar.gz") as t:
+            assert len([n for n in t.getnames() if n.endswith(".npz")]) == 4
+
+
+def test_sidecars_are_found_and_lifted(tmp_path, monkeypatch):
+    (rc, out), printed = _quiet(lambda: _run(tmp_path, monkeypatch, Fake()))
+    s = json.loads((out / "summary.json").read_text())
+    for r in s["runs"]:
+        assert r["sidecar_present"] and r["sidecar"]["cal_scanstop_waits"] == [{"ms": 3}]
+        assert len(r["sidecars"]) == 1
+    report = (out / "report.md").read_text()
+    assert "| yes |" in report and "| no |" not in report
+    assert "no images" in printed
+
+
+def test_post_pack_check_fails_closed(tmp_path, monkeypatch):
+    # A stray image survives the delete step and the add filter (both bypassed
+    # here); the post-pack verification must still catch it, delete the tarball
+    # and make the tool exit 1.
+    monkeypatch.setattr(xu, "remove_unlisted", lambda out: None)
+    monkeypatch.setattr(xu, "_packable", lambda p: p.is_file())
+    monkeypatch.setattr(xu, "run_command", Fake())
+    rc, _ = _quiet(xu.main, ["--out", str(tmp_path / "xu"), "--yes"])
+    assert rc == 1 and not (tmp_path / "xu.tar.gz").exists()
+
+
+def test_verify_tar_rejects_images(tmp_path, monkeypatch):
+    d = tmp_path / "res"
+    d.mkdir()
+    (d / "summary.json").write_text("{}")
+    (d / "x.tiff").write_bytes(b"x")
+    (d / "x.cal.npz").write_bytes(b"x")
+    tar = xu.pack(d)                                  # normal pack skips them
+    with tarfile.open(tar) as t:
+        assert t.getnames() == ["res/summary.json"]
+    with tarfile.open(tar, "w:gz") as t:
+        t.add(d, arcname="res")
+    try:
+        xu.verify_tar(tar, "res")
+    except SystemExit:
+        assert not tar.exists()
+    else:
+        raise AssertionError("expected SystemExit")
+
+
+def test_remove_unlisted_keeps_allowlist_and_symlink_targets(tmp_path, monkeypatch):
+    outside = tmp_path / "outside.tiff"
+    outside.write_bytes(b"x")
+    d = tmp_path / "res"
+    d.mkdir()
+    for n in ("summary.json", "doctor-before.json", "run-01-on-f1.diag.json", "a.tiff", "a.cal.npz"):
+        (d / n).write_text("x")
+    (d / "link.tiff").symlink_to(outside)
+    xu.remove_unlisted(d)
+    assert sorted(p.name for p in d.iterdir()) == ["doctor-before.json", "run-01-on-f1.diag.json", "summary.json"]
+    assert outside.exists()
 
 
 def test_dry_run_writes_nothing(tmp_path, monkeypatch):

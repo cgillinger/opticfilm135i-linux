@@ -44,7 +44,10 @@ one exists; "offline" means implemented and tested without the scanner.
   contains `dark_b is residual` gets `failure_class: dark_b_residual` and is
   reported as the issue #35 failure. Ctrl-C or an unexpected error still writes
   `summary.json`, `report.md` and the tarball, and sends nothing more to the
-  scanner.
+  scanner. The first hardware run found that the tool missed the sidecars
+  (`--frames` makes the driver name outputs `-f<N>`) and packed the scanned
+  images into the tarball; sidecars are now found by what is on disk, and the
+  archive is built from an allowlist and verified after packing.
 - **Status-read inventory (offline).** `tools/status_read_inventory.py`
   lists every read of reg 0x100/0x101 in the op tables with the
   engine command before it; docs/status-read-inventory.md judges the

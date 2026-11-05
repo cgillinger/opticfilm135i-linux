@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import fnmatch
 import json
 import os
 import platform
@@ -325,10 +326,16 @@ def _relativize(obj, out: Path):
     return obj
 
 
-def read_sidecar(image: Path, out: Path):
-    """Return the lifted sidecar fields (or None). Also rewrites the sidecar
-    file in place so that it carries no absolute paths."""
-    sc = image.with_suffix(".diag.json")  # same rule as of135i.diag.sidecar_path
+def sidecar_files(out: Path, index: int) -> list:
+    """The sidecars run `index` left, found by what is on disk: `scan --frames N`
+    appends -f<N> to the -o name (of135i/cli.py, _frame_output), so the name is
+    not predictable from the argv."""
+    return sorted(out.glob(f"run-{index:02d}-*.diag.json"))
+
+
+def read_sidecar(sc: Path, out: Path):
+    """Return the lifted fields of one sidecar (or None). Also rewrites the
+    sidecar file in place so that it carries no absolute paths."""
     if not sc.is_file():
         return None
     try:
@@ -344,6 +351,31 @@ def read_sidecar(image: Path, out: Path):
     if "output" in data:
         lifted["output"] = data["output"]
     return lifted
+
+
+def run_sidecars(out: Path, index: int) -> dict:
+    """Run-record fields for the sidecars of run `index`."""
+    found = sidecar_files(out, index)
+    lifted = [read_sidecar(sc, out) for sc in found]
+    return {"sidecar_present": bool(found), "sidecar": lifted[0] if lifted else None,
+            "sidecars": lifted}
+
+
+ALLOWED_FILES = ("summary.json", "report.md", "log.txt", "plan.txt")
+ALLOWED_PATTERNS = ("doctor-*.json", "*.diag.json")
+
+
+def is_allowed(name: str) -> bool:
+    """The archive allowlist: no images, no .cal.npz."""
+    return name in ALLOWED_FILES or any(fnmatch.fnmatch(name, p) for p in ALLOWED_PATTERNS)
+
+
+def remove_unlisted(out: Path) -> None:
+    """Delete every file (or symlink, not its target) in `out` that is not on
+    the allowlist. `out` was empty at the start, so all of it is this run's."""
+    for p in out.iterdir():
+        if (p.is_symlink() or p.is_file()) and not is_allowed(p.name):
+            p.unlink()
 
 
 def classify_run(rc: int, sidecar_present: bool, text: str) -> tuple:
@@ -424,11 +456,36 @@ def check_out_dir(out: Path) -> None:
         raise SystemExit(f"error: --out {out} exists and is not empty")
 
 
-def pack(out: Path) -> Path:
+def pack(out: Path, include_all: bool = False) -> Path:
+    """Tarball next to `out`. Without include_all only allowlisted regular
+    files are added; the result is then re-read and every member checked, and
+    on any stray member the tarball is deleted and SystemExit raised."""
     tar = out.parent / (out.name + ".tar.gz")
     with tarfile.open(tar, "w:gz") as t:
-        t.add(out, arcname=out.name)
+        if include_all:
+            t.add(out, arcname=out.name)
+        else:
+            for p in sorted(out.iterdir()):
+                if _packable(p):
+                    t.add(p, arcname=f"{out.name}/{p.name}")
+    if not include_all:
+        verify_tar(tar, out.name)
     return tar
+
+
+def _packable(p: Path) -> bool:
+    return p.is_file() and not p.is_symlink() and is_allowed(p.name)
+
+
+def verify_tar(tar: Path, root: str) -> None:
+    """Fail closed: every member must be an allowlisted regular file, else the
+    tarball is deleted and SystemExit raised."""
+    with tarfile.open(tar) as t:
+        bad = [m.name for m in t.getmembers()
+               if m.name != root and not (m.isfile() and is_allowed(m.name.split("/", 1)[-1]))]
+    if bad:
+        tar.unlink()
+        raise SystemExit(f"error: unexpected file(s) in the archive, tarball deleted: {', '.join(bad)}")
 
 
 def main(argv: list | None = None) -> int:
@@ -439,7 +496,7 @@ def main(argv: list | None = None) -> int:
                     help="comma list of off|on (on = --cal-wait-scanstop enforce); default "
                          f"{DEFAULT_SEQUENCE} (a gated run first: see docs/cross-unit-protocol.md)")
     ap.add_argument("--dpi", type=int, default=600, help="scan resolution (default 600)")
-    ap.add_argument("--frame", type=int, default=1, help="frames per scan, passed as --frames (default 1)")
+    ap.add_argument("--frame", type=int, default=1, help="frame NUMBER (1-based), passed as --frames N (default 1)")
     ap.add_argument("--include-images", action="store_true",
                     help="keep the scanned .tiff images in the result (default: images are deleted "
                          "after the run and only the .diag.json sidecars are kept)")
@@ -532,11 +589,10 @@ def main(argv: list | None = None) -> int:
                 state["current_run"] = {"index": i, "token": args.sequence[i - 1], "image": image}
                 rc, secs, text = step(argv)
                 state["current_run"] = None
-                sidecar_present = image.with_suffix(".diag.json").is_file()
-                outcome, fclass = classify_run(rc, sidecar_present, text)
+                sc = run_sidecars(out, i)
+                outcome, fclass = classify_run(rc, sc["sidecar_present"], text)
                 run = {"index": i, "token": args.sequence[i - 1], "outcome": outcome,
-                       "exit_code": rc, "seconds": secs, "sidecar_present": sidecar_present,
-                       "sidecar": read_sidecar(image, out), "_image": image}
+                       "exit_code": rc, "seconds": secs, **sc}
                 if fclass:
                     run["failure_class"] = fclass
                 runs.append(run)
@@ -559,8 +615,7 @@ def main(argv: list | None = None) -> int:
         if cur is not None:
             runs.append({"index": cur["index"], "token": cur["token"], "outcome": "interrupted",
                          "exit_code": None, "seconds": None,
-                         "sidecar_present": cur["image"].with_suffix(".diag.json").is_file(),
-                         "sidecar": read_sidecar(cur["image"], out), "_image": cur["image"]})
+                         **run_sidecars(out, cur["index"])})
         exit_code = EXIT_INTERRUPTED if interrupted == "interrupted" else 1
         result = interrupted
     elif state["busy"]:
@@ -572,7 +627,7 @@ def main(argv: list | None = None) -> int:
 
     summary = {"host": host_facts(), "sequence": args.sequence, "dpi": args.dpi, "frame": args.frame,
                "result": result, "failed_step": state["failed"], "doctor_after_exit": doctor_after,
-               "runs": [{k: v for k, v in r.items() if k != "_image"} for r in runs],
+               "runs": runs,
                "tarball": out.name + ".tar.gz"}
     if state["stopped_at"] is not None:
         summary["stopped_at"] = state["stopped_at"]
@@ -584,17 +639,19 @@ def main(argv: list | None = None) -> int:
     (out / "report.md").write_text(render_report(summary))
 
     if not args.include_images:
-        for r in runs:
-            for p in out.glob(r["_image"].stem + ".*"):
-                if not p.name.endswith(".diag.json"):
-                    p.unlink()
-    tar = pack(out)
+        remove_unlisted(out)
+    try:
+        tar = pack(out, include_all=args.include_images)
+    except SystemExit as e:
+        print(e, file=sys.stderr)
+        return 1
     print("\nRuns:")
     for r in summary["runs"]:
         print(f"  run {r['index']} (gate {TOKENS[r['token']]}): {r['outcome']}, exit {r['exit_code']}")
     for n in findings(summary):
         print(f"\n{n}")
-    print(f"\nEvidence: {tar} ({tar.stat().st_size} bytes)")
+    print(f"\nEvidence: {tar} ({tar.stat().st_size} bytes)"
+          + (" - images ARE included (--include-images)" if args.include_images else ", no images"))
     return exit_code
 
 
