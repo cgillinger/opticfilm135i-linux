@@ -34,6 +34,7 @@ import re
 import shutil
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Callable
 
@@ -46,6 +47,27 @@ from .usbio import InterruptOverflowError, Of135iError, UsbIo
 EXIT_BUSY = safety.EXIT_BUSY   # another of135i process holds the scanner lock
 
 log = logging.getLogger("of135i")
+
+#: Watch eject raised or was interrupted; supervisor policy must prevent restart.
+EXIT_WATCH_EJECT_FAILED = 75
+
+#: Single source of the `watch` exit-code text: the argparse epilog; README.md
+#: repeats it verbatim and tests/test_safety.py fails if the two drift.
+WATCH_EXIT_CODES_HELP = (
+    "Exit codes: 0 = Ctrl+C while idle (including during the button poll); "
+    "1 = error, refusal (an eject refused before any write also exits 1) or "
+    "absent device; 3 = scanner busy (another process holds the lock); "
+    "75 = eject raised, or Ctrl+C arrived during the eject itself: "
+    "power-cycle the scanner before restarting. 75 is EX_TEMPFAIL ('retry "
+    "later') but here it means the opposite, do NOT restart automatically: "
+    "set RestartPreventExitStatus=75 for systemd. A failed eject previously "
+    "exited 1, so supervisors and wrappers need updating; "
+    "130 = Ctrl+C anywhere else (startup, the read-only magazine-presence "
+    "check): nothing was in progress. Eject completion timeouts only warn "
+    "and still return success; exit 75 does not detect them. "
+    "writes_attempted counts for the whole watch session, so after one "
+    "successful eject a later refusal that sends nothing also exits 75."
+)
 
 #: Sanity ceiling on --overscan (mm). The real per-frame bound is the
 #: transport ceiling, checked by holder.overscan_geometry frame by frame;
@@ -3792,7 +3814,25 @@ def _cmd_watch(args: argparse.Namespace) -> int:
                 elif name == "eject":
                     print("eject button pressed", flush=True)
                     if scanner.is_magazine_present():
-                        scanner.eject()
+                        try:
+                            scanner.eject()
+                        except (Exception, KeyboardInterrupt) as e:
+                            if (isinstance(e, safety.SafetyError)
+                                    and not scanner.session.writes_attempted):
+                                # A refusal with no write ever attempted
+                                # (nothing reached the hardware): the outer
+                                # handler's `refused:` + exit 1, restartable.
+                                raise
+                            if not (scanner.session.failure or scanner.session.refusal):
+                                # No session record repeats the exception text.
+                                print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
+                            if not isinstance(e, (OSError, Of135iError, KeyboardInterrupt)):
+                                traceback.print_exc()  # a bug in eject(), not a device fault
+                            _print_session_failure(scanner)
+                            print("eject failed or was interrupted; power-cycle the scanner. "
+                                  "Configure the supervisor to prevent restart on exit 75.",
+                                  file=sys.stderr)
+                            return EXIT_WATCH_EJECT_FAILED
                         print("ejected", flush=True)
                     else:
                         print("magazine not detected, ignoring", flush=True)
@@ -3962,7 +4002,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_status = sub.add_parser("status", help="read and print status registers")
     p_status.set_defaults(func=_cmd_status)
 
-    p_watch = sub.add_parser("watch", help="poll buttons; eject on the eject button")
+    p_watch = sub.add_parser("watch", help="poll buttons; eject on the eject button",
+        epilog=WATCH_EXIT_CODES_HELP)
     p_watch.set_defaults(func=_cmd_watch)
 
     p_buttons = sub.add_parser(

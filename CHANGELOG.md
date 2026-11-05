@@ -6,6 +6,22 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **Watch eject failures exit 75** (breaking for wrappers: a failed watch
+  eject used to exit 1): a raised exception or Ctrl+C inside `eject()` ends
+  the watcher immediately with the session diagnostics. 75 is `EX_TEMPFAIL`
+  ("retry later") but here means the opposite: power-cycle, do NOT restart
+  automatically. Supervisor config is required (systemd:
+  `RestartPreventExitStatus=75`). Idle Ctrl+C still exits 0; Ctrl+C in the
+  read-only magazine-presence check exits 130; startup errors and eject
+  refusals that sent nothing (`refused: ...`, e.g. the unejectable-state
+  guard) still exit 1. Unexpected exception types also print a traceback;
+  the error text is printed once. The README and `watch --help` carry the
+  same exit-code text (test-enforced). CLI-only, offline-tested: no motor
+  sequence, wait, or device API changes. Existing eject completion timeouts
+  still warn and return success, so they do not produce 75. Adapted from
+  bearyjd (https://github.com/bearyjd), commit 22c955b in
+  bearyjd/opticfilm135i-linux.
+
 - **`--cal-wait-scanstop enforce` is now the default** (`scan`, `digitize`,
   `Scanner.cal_wait_scanstop`). Evidence: Krustenviech's A/B on the Steam
   Deck, the unit that reported issue #35 (two ungated runs failed in
