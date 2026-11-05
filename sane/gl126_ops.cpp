@@ -383,7 +383,11 @@ void do_poll_masked(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
     unsigned polls = 0;
 
     for (;;) {
-        std::uint8_t reply[2] = {0, 0};
+        // The buffer starts as a value that cannot match, so a transfer
+        // that returns no data is never taken for the awaited state. With
+        // zeros a wait for a CLEAR bit (the calibration stop gate, want
+        // 0x00) would have passed on an empty reply.
+        std::uint8_t reply[2] = {static_cast<std::uint8_t>(~op.want), 0};
         wire.control_read(op.request, op.value, op.index, reply, 2);
         ++polls;
         if (polls == 1) {

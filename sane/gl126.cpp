@@ -227,15 +227,20 @@ const OpProgram& find_program(const Profile& profile, const char* name)
     polls (docs/cal-scanstop-gate.md): a PollMasked read of reg 0x100 or
     0x101 that waits for bit 0 clear, generated after the SCAN-clear that
     ends each calibration acquisition. Decided from the op itself, not
-    from the phase name. */
+    from the phase name, and by the gate's two exact mask/want pairs:
+    PARK's completion wait reads reg 0x101 too (mask 0xe3) and is not a
+    gate op. */
 bool is_scanstop_gate_op(const OpProgram& prog, std::size_t idx)
 {
     if (idx >= prog.count) {
         return false;
     }
     const Op& op = prog.ops[idx];
+    const bool bit0_clear = op.mask == 0x01 && op.want == 0x00;
+    const bool class_f_and_bit0_clear = op.mask == 0xf1 && op.want == 0xf0;
     return op.kind == OpKind::PollMasked && op.value == 0x018e &&
-           (op.index == 0x0022 || op.index == 0x0122) && (op.mask & 0x01) != 0;
+           (op.index == 0x0022 || op.index == 0x0122) &&
+           (bit0_clear || class_f_and_bit0_clear);
 }
 
 /** Run one captured phase as its op program: the captured transfers in

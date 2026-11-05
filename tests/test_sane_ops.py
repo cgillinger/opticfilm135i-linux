@@ -2897,6 +2897,43 @@ def test_scanstop_gate_never_clear_fails_closed():
           f"300 ms mock time at the gate sites, 5 s at the plain3600 W2 site)")
 
 
+def test_scanstop_gate_empty_reply_is_not_a_stop():
+    """A control read that returns no data must not count as "stopped".
+    sanei_usb reports a short control reply as success, and the gate waits
+    for a CLEAR bit, so a zeroed reply buffer would have passed. The
+    runner starts the buffer at a value that cannot match: an empty reply
+    at either gate site ends in PollTimeout, nothing sent after it. The
+    same holds for a wait on a SET pattern (POSITION's completion)."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_scanstop_gate_empty_reply_is_not_a_stop SKIPPED (no g++)")
+        return "skipped"
+    runs = 0
+    for profile, phase_name, _clear, i100, i101, _w2 in _gate_sites():
+        if profile not in ("plain3600", "dpi600") or phase_name not in (
+                "cal_dark_a", "cal_shading_measure"):
+            continue
+        rc0, base, _ = _gate_run(probe, profile, phase_name, [])
+        assert rc0 == 0
+        for occ, op in ((0, i100), (1, i101)):
+            rc, got, _ = _gate_run(probe, profile, phase_name,
+                                   [f"masked_poll_empty_at {occ}"])
+            assert rc == 1, (profile, phase_name, occ, got[-2:])
+            assert got[-1].startswith(f"FAIL PollTimeout op={op} "), got[-1]
+            body = [ln for ln in got[:-1] if not ln.startswith("PS ")]
+            assert body[:op] == base[:op], (profile, phase_name, occ)
+            assert set(body[op:]) == {base[op]}, (profile, phase_name, occ)
+            runs += 1
+    assert runs == 8, runs
+    # POSITION waits for class F (a SET pattern): an empty reply must not
+    # match there either.
+    rc0, base, _ = _gate_run(probe, "plain3600", "position", [])
+    assert rc0 == 0
+    rc, got, _ = _gate_run(probe, "plain3600", "position", ["masked_poll_empty_at 0"])
+    assert rc == 1 and got[-1].startswith("FAIL PollTimeout op="), got[-1]
+    print(f"test_scanstop_gate_empty_reply_is_not_a_stop OK ({runs} gate runs + position)")
+
+
 def main() -> int:
     tests = [
         test_programs_match_python_replayer,
@@ -2950,6 +2987,7 @@ def main() -> int:
         test_scanstop_gate_generation_fails_on_missing_reads,
         test_scanstop_gate_delayed_stop_waits,
         test_scanstop_gate_never_clear_fails_closed,
+        test_scanstop_gate_empty_reply_is_not_a_stop,
     ]
     passed = 0
     skipped = 0
