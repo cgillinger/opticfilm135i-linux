@@ -44,6 +44,29 @@ with nothing to re-sync. The eventual merge request takes copies.
 > `SANE_STATUS_UNSUPPORTED` or is pending, that was true on the date of
 > the entry.
 
+- **2026-11-05 — calibration stop gate in the generated op programs
+  (offline only).** Each of the seven calibration acquisition programs
+  (`cal_dark_a`, `cal_dark_b`, `cal_white`, `cal_gain_check_a`,
+  `cal_gain_check_b`, `cal_shading_measure` and the measuring half of
+  `cal_shading_verify`) ends with a SCAN-clear followed by one read of
+  reg 0x100 and one of reg 0x101. These four-ms-apart reads were logged
+  only, so on a fast host the next acquisition was armed while the
+  previous one was still running (issue #35; the Python driver's fix is
+  docs/cal-scanstop-gate.md). `tools/gen_sane_tables.py` now emits the
+  two reads as `PollMasked` (bit 0 clear, 300 ms each; the plain-3600
+  `cal_shading_measure` reg 0x100 site, a captured poll, keeps its
+  class-F match as mask 0xf1 / want 0xf0 and its 5 s), found from the
+  op stream's structure by the rule the Python driver uses, and fails at
+  generation time if a read is missing. `run_phase_program` names a
+  timeout at one of these sites ("the previous acquisition did not
+  stop"). Nothing else in the generated programs changed: with a scanner
+  that has already stopped the transfer sequence of every program is the
+  same as before (84 op lines differ, in kind / mask / want / timeout
+  only). Verified offline with the op-program probe (a late stop is
+  waited for, a stop that never comes fails closed with no transfer
+  after the last read). **Not run on hardware**, and not in the
+  submitted series: `sane/wp3-package/` still carries the previous
+  tables.
 - **Stage 2 — done (offline).** `tools/gen_sane_tables.py` emits
   `sane/gl126_tables.{h,cpp}` from `of135i/tables*.py`: the base, AFE,
   cold-init and loader-speed tables, the deduplicated motor slope tables,
