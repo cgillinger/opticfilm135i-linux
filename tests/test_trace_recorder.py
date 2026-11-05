@@ -164,6 +164,41 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(records[-1]["status"], "error:KeyboardInterrupt")
         self.assertTrue(self.path.read_bytes().endswith(b"\n"))
 
+    def interrupting_write(self):
+        """os.write that lands 5 bytes of a record, then raises Ctrl-C."""
+        real_write, calls = os.write, []
+        def write(fd, data):
+            calls.append(len(data))
+            if len(calls) == 1:
+                return real_write(fd, bytes(data[:5]))
+            raise KeyboardInterrupt()
+        return write
+
+    def test_interrupt_in_trace_write_keeps_original_usb_error(self):
+        original = usb.core.USBTimeoutError("original", -7, 110)
+        dev, _ = self.device(FakeUsbDevice(
+            fault=lambda ev: original if ev["kind"] == "ctrl_in" else None))
+        header = self.path.read_bytes()
+        with patch.object(trace.os, "write", side_effect=self.interrupting_write()):
+            with self.assertRaises(usb.core.USBTimeoutError) as caught:
+                dev.ctrl_transfer(0xc0, 4, 0x8e, 0x122, 2)
+        self.assertIs(caught.exception, original)
+        self.assertFalse(dev._recorder.active)
+        dev.write(2, b"later")
+        text = self.path.read_bytes()
+        self.assertEqual(text[:len(header)], header)
+        self.assertEqual(len(text), len(header) + 5)
+        self.assertEqual(converter.read_records(text.decode()), [])
+
+    def test_interrupt_in_trace_write_after_success_propagates(self):
+        dev, fake = self.device()
+        with patch.object(trace.os, "write", side_effect=self.interrupting_write()):
+            with self.assertRaises(KeyboardInterrupt):
+                dev.write(2, b"abc")
+        self.assertEqual(len(fake.wire_log), 1)
+        self.assertFalse(dev._recorder.active)
+        self.assertEqual(dev._session.state, safety.SessionState.FAILED)
+
     def test_file_is_private_with_open_umask(self):
         old = os.umask(0)
         try:

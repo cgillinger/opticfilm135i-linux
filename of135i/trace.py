@@ -81,8 +81,14 @@ class TraceRecorder:
         try:
             result = call()
         except BaseException as e:
-            self._record(kind, direction, ep, setup, out_data, None, t0,
-                         f"error:{type(e).__name__}")
+            try:
+                self._record(kind, direction, ep, setup, out_data, None, t0,
+                             f"error:{type(e).__name__}")
+            except BaseException as secondary:  # never replaces the USB outcome
+                try:
+                    e.add_note(f"transfer trace: {type(secondary).__name__} while recording")
+                except BaseException:
+                    pass
             raise
         self._record(kind, direction, ep, setup, out_data, result, t0, "ok")
         return result
@@ -117,8 +123,10 @@ class TraceRecorder:
             if kind == "ctrl" or (kind == "bulk" and direction == "out"):
                 rec["data"] = payload[:DATA_CAP].hex()
             self._emit(rec)
-        except Exception as e:      # recording must never reach scanner I/O
+        except BaseException as e:  # recording must never reach scanner I/O
             self._disable(e)
+            if not isinstance(e, Exception):
+                raise               # Ctrl-C / exit still propagate
 
     def _emit(self, rec: dict) -> None:
         line = (json.dumps(rec, separators=(",", ":")) + "\n").encode()
@@ -132,18 +140,22 @@ class TraceRecorder:
                 if n <= 0:
                     raise OSError("trace write made no progress")
                 view = view[n:]
-        except Exception as e:
+        except BaseException as e:
+            # Stop after a partial line so it stays the (ignored) last line.
             self._disable(e)
+            if not isinstance(e, Exception):
+                raise
             return
         self._seq = rec.get("seq", self._seq)
 
     def _disable(self, err: BaseException) -> None:
         fd, self._fd = self._fd, None
-        if fd is not None:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+        if fd is None:
+            return                  # already disabled: warned once
+        try:
+            os.close(fd)
+        except OSError:
+            pass
         _warn("transfer trace disabled (%s: %s); scanning continues unrecorded",
               type(err).__name__, err)
 
