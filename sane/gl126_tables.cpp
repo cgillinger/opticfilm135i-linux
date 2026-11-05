@@ -1023,8 +1023,8 @@ static const Op PLAIN3600_CAL_DARK_A_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, PLAIN3600_CAL_DARK_A_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_DARK_A_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_DARK_A_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_DARK_A_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_DARK_A_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_DARK_A_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_DARK_A_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t PLAIN3600_CAL_DARK_B_OPS_DATA[63] = {
@@ -1065,8 +1065,8 @@ static const Op PLAIN3600_CAL_DARK_B_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, PLAIN3600_CAL_DARK_B_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_DARK_B_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_DARK_B_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_DARK_B_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_DARK_B_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_DARK_B_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_DARK_B_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t PLAIN3600_CAL_WHITE_OPS_DATA[227] = {
@@ -1163,8 +1163,8 @@ static const Op PLAIN3600_CAL_WHITE_OPS[72] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, PLAIN3600_CAL_WHITE_OPS_DATA + 219, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_WHITE_OPS_DATA + 220, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_WHITE_OPS_DATA + 222, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_WHITE_OPS_DATA + 223, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_WHITE_OPS_DATA + 225, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_WHITE_OPS_DATA + 223, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_WHITE_OPS_DATA + 225, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA[97] = {
@@ -1216,8 +1216,8 @@ static const Op PLAIN3600_CAL_GAIN_CHECK_A_OPS[37] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 89, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 90, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 92, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0, 0x01, 0x00, 300},
 };
 
 /* Computed values patched into PLAIN3600_CAL_GAIN_CHECK_A_OPS at run time. */
@@ -1265,8 +1265,8 @@ static const Op PLAIN3600_CAL_GAIN_CHECK_B_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t PLAIN3600_CAL_SHADING_MEASURE_OPS_DATA[226] = {
@@ -1741,8 +1741,8 @@ static const Op PLAIN3600_CAL_SHADING_MEASURE_OPS[450] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, PLAIN3600_CAL_SHADING_MEASURE_OPS_DATA + 218, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_SHADING_MEASURE_OPS_DATA + 219, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_SHADING_MEASURE_OPS_DATA + 221, 1, 0, 0x00, 0x00, 0},
-    {OpKind::PollClass, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_SHADING_MEASURE_OPS_DATA + 222, 2, 15, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_SHADING_MEASURE_OPS_DATA + 224, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_SHADING_MEASURE_OPS_DATA + 222, 2, 15, 0xf1, 0xf0, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_SHADING_MEASURE_OPS_DATA + 224, 2, 0, 0x01, 0x00, 300},
 };
 
 /* Computed values patched into PLAIN3600_CAL_SHADING_MEASURE_OPS at run time. */
@@ -2240,8 +2240,8 @@ static const Op PLAIN3600_CAL_SHADING_VERIFY_OPS[445] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, PLAIN3600_CAL_SHADING_VERIFY_OPS_DATA + 204, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, PLAIN3600_CAL_SHADING_VERIFY_OPS_DATA + 205, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, PLAIN3600_CAL_SHADING_VERIFY_OPS_DATA + 207, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_SHADING_VERIFY_OPS_DATA + 208, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_SHADING_VERIFY_OPS_DATA + 210, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, PLAIN3600_CAL_SHADING_VERIFY_OPS_DATA + 208, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, PLAIN3600_CAL_SHADING_VERIFY_OPS_DATA + 210, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t PLAIN3600_CAL_SHADING_VERIFY_UPLOAD_OPS_DATA[16] = {
@@ -4270,8 +4270,8 @@ static const Op IR3600_CAL_DARK_A_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, IR3600_CAL_DARK_A_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_DARK_A_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_DARK_A_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, IR3600_CAL_DARK_A_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, IR3600_CAL_DARK_A_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, IR3600_CAL_DARK_A_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, IR3600_CAL_DARK_A_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t IR3600_CAL_DARK_B_OPS_DATA[63] = {
@@ -4312,8 +4312,8 @@ static const Op IR3600_CAL_DARK_B_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, IR3600_CAL_DARK_B_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_DARK_B_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_DARK_B_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, IR3600_CAL_DARK_B_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, IR3600_CAL_DARK_B_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, IR3600_CAL_DARK_B_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, IR3600_CAL_DARK_B_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t IR3600_CAL_WHITE_OPS_DATA[224] = {
@@ -4410,8 +4410,8 @@ static const Op IR3600_CAL_WHITE_OPS[72] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, IR3600_CAL_WHITE_OPS_DATA + 216, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_WHITE_OPS_DATA + 217, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_WHITE_OPS_DATA + 219, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, IR3600_CAL_WHITE_OPS_DATA + 220, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, IR3600_CAL_WHITE_OPS_DATA + 222, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, IR3600_CAL_WHITE_OPS_DATA + 220, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, IR3600_CAL_WHITE_OPS_DATA + 222, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t IR3600_CAL_GAIN_CHECK_A_OPS_DATA[97] = {
@@ -4463,8 +4463,8 @@ static const Op IR3600_CAL_GAIN_CHECK_A_OPS[37] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 89, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 90, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 92, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, IR3600_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0, 0x01, 0x00, 300},
 };
 
 /* Computed values patched into IR3600_CAL_GAIN_CHECK_A_OPS at run time. */
@@ -4512,8 +4512,8 @@ static const Op IR3600_CAL_GAIN_CHECK_B_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, IR3600_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t IR3600_CAL_SHADING_MEASURE_OPS_DATA[231] = {
@@ -5185,8 +5185,8 @@ static const Op IR3600_CAL_SHADING_MEASURE_OPS[646] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, IR3600_CAL_SHADING_MEASURE_OPS_DATA + 223, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_SHADING_MEASURE_OPS_DATA + 224, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_SHADING_MEASURE_OPS_DATA + 226, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, IR3600_CAL_SHADING_MEASURE_OPS_DATA + 227, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, IR3600_CAL_SHADING_MEASURE_OPS_DATA + 229, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, IR3600_CAL_SHADING_MEASURE_OPS_DATA + 227, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, IR3600_CAL_SHADING_MEASURE_OPS_DATA + 229, 2, 0, 0x01, 0x00, 300},
 };
 
 /* Computed values patched into IR3600_CAL_SHADING_MEASURE_OPS at run time. */
@@ -5894,8 +5894,8 @@ static const Op IR3600_CAL_SHADING_VERIFY_OPS[641] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, IR3600_CAL_SHADING_VERIFY_OPS_DATA + 209, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, IR3600_CAL_SHADING_VERIFY_OPS_DATA + 210, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, IR3600_CAL_SHADING_VERIFY_OPS_DATA + 212, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, IR3600_CAL_SHADING_VERIFY_OPS_DATA + 213, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, IR3600_CAL_SHADING_VERIFY_OPS_DATA + 215, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, IR3600_CAL_SHADING_VERIFY_OPS_DATA + 213, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, IR3600_CAL_SHADING_VERIFY_OPS_DATA + 215, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t IR3600_CAL_SHADING_VERIFY_UPLOAD_OPS_DATA[30] = {
@@ -7298,8 +7298,8 @@ static const Op DPI600_CAL_DARK_A_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI600_CAL_DARK_A_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_DARK_A_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_DARK_A_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI600_CAL_DARK_A_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI600_CAL_DARK_A_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI600_CAL_DARK_A_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI600_CAL_DARK_A_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI600_CAL_DARK_B_OPS_DATA[63] = {
@@ -7340,8 +7340,8 @@ static const Op DPI600_CAL_DARK_B_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI600_CAL_DARK_B_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_DARK_B_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_DARK_B_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI600_CAL_DARK_B_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI600_CAL_DARK_B_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI600_CAL_DARK_B_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI600_CAL_DARK_B_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI600_CAL_WHITE_OPS_DATA[224] = {
@@ -7439,8 +7439,8 @@ static const Op DPI600_CAL_WHITE_OPS[73] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI600_CAL_WHITE_OPS_DATA + 216, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_WHITE_OPS_DATA + 217, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_WHITE_OPS_DATA + 219, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI600_CAL_WHITE_OPS_DATA + 220, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI600_CAL_WHITE_OPS_DATA + 222, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI600_CAL_WHITE_OPS_DATA + 220, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI600_CAL_WHITE_OPS_DATA + 222, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI600_CAL_GAIN_CHECK_A_OPS_DATA[97] = {
@@ -7492,8 +7492,8 @@ static const Op DPI600_CAL_GAIN_CHECK_A_OPS[37] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 89, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 90, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 92, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI600_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0, 0x01, 0x00, 300},
 };
 
 /* Computed values patched into DPI600_CAL_GAIN_CHECK_A_OPS at run time. */
@@ -7541,8 +7541,8 @@ static const Op DPI600_CAL_GAIN_CHECK_B_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI600_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI600_CAL_SHADING_MEASURE_OPS_DATA[231] = {
@@ -7890,8 +7890,8 @@ static const Op DPI600_CAL_SHADING_MEASURE_OPS[322] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI600_CAL_SHADING_MEASURE_OPS_DATA + 223, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_SHADING_MEASURE_OPS_DATA + 224, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_SHADING_MEASURE_OPS_DATA + 226, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI600_CAL_SHADING_MEASURE_OPS_DATA + 227, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI600_CAL_SHADING_MEASURE_OPS_DATA + 229, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI600_CAL_SHADING_MEASURE_OPS_DATA + 227, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI600_CAL_SHADING_MEASURE_OPS_DATA + 229, 2, 0, 0x01, 0x00, 300},
 };
 
 /* Computed values patched into DPI600_CAL_SHADING_MEASURE_OPS at run time. */
@@ -8269,8 +8269,8 @@ static const Op DPI600_CAL_SHADING_VERIFY_OPS[317] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI600_CAL_SHADING_VERIFY_OPS_DATA + 209, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI600_CAL_SHADING_VERIFY_OPS_DATA + 210, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI600_CAL_SHADING_VERIFY_OPS_DATA + 212, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI600_CAL_SHADING_VERIFY_OPS_DATA + 213, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI600_CAL_SHADING_VERIFY_OPS_DATA + 215, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI600_CAL_SHADING_VERIFY_OPS_DATA + 213, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI600_CAL_SHADING_VERIFY_OPS_DATA + 215, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI600_CAL_SHADING_VERIFY_UPLOAD_OPS_DATA[30] = {
@@ -9693,8 +9693,8 @@ static const Op DPI1200_CAL_DARK_A_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI1200_CAL_DARK_A_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_DARK_A_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_DARK_A_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI1200_CAL_DARK_A_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI1200_CAL_DARK_A_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI1200_CAL_DARK_A_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI1200_CAL_DARK_A_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI1200_CAL_DARK_B_OPS_DATA[63] = {
@@ -9735,8 +9735,8 @@ static const Op DPI1200_CAL_DARK_B_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI1200_CAL_DARK_B_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_DARK_B_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_DARK_B_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI1200_CAL_DARK_B_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI1200_CAL_DARK_B_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI1200_CAL_DARK_B_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI1200_CAL_DARK_B_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI1200_CAL_WHITE_OPS_DATA[224] = {
@@ -9834,8 +9834,8 @@ static const Op DPI1200_CAL_WHITE_OPS[73] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI1200_CAL_WHITE_OPS_DATA + 216, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_WHITE_OPS_DATA + 217, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_WHITE_OPS_DATA + 219, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI1200_CAL_WHITE_OPS_DATA + 220, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI1200_CAL_WHITE_OPS_DATA + 222, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI1200_CAL_WHITE_OPS_DATA + 220, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI1200_CAL_WHITE_OPS_DATA + 222, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI1200_CAL_GAIN_CHECK_A_OPS_DATA[97] = {
@@ -9887,8 +9887,8 @@ static const Op DPI1200_CAL_GAIN_CHECK_A_OPS[37] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 89, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 90, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 92, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI1200_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0, 0x01, 0x00, 300},
 };
 
 /* Computed values patched into DPI1200_CAL_GAIN_CHECK_A_OPS at run time. */
@@ -9936,8 +9936,8 @@ static const Op DPI1200_CAL_GAIN_CHECK_B_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI1200_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI1200_CAL_SHADING_MEASURE_OPS_DATA[231] = {
@@ -10537,8 +10537,8 @@ static const Op DPI1200_CAL_SHADING_MEASURE_OPS[574] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI1200_CAL_SHADING_MEASURE_OPS_DATA + 223, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_SHADING_MEASURE_OPS_DATA + 224, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_SHADING_MEASURE_OPS_DATA + 226, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI1200_CAL_SHADING_MEASURE_OPS_DATA + 227, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI1200_CAL_SHADING_MEASURE_OPS_DATA + 229, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI1200_CAL_SHADING_MEASURE_OPS_DATA + 227, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI1200_CAL_SHADING_MEASURE_OPS_DATA + 229, 2, 0, 0x01, 0x00, 300},
 };
 
 /* Computed values patched into DPI1200_CAL_SHADING_MEASURE_OPS at run time. */
@@ -11172,8 +11172,8 @@ static const Op DPI1200_CAL_SHADING_VERIFY_OPS[569] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI1200_CAL_SHADING_VERIFY_OPS_DATA + 209, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI1200_CAL_SHADING_VERIFY_OPS_DATA + 210, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI1200_CAL_SHADING_VERIFY_OPS_DATA + 212, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI1200_CAL_SHADING_VERIFY_OPS_DATA + 213, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI1200_CAL_SHADING_VERIFY_OPS_DATA + 215, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI1200_CAL_SHADING_VERIFY_OPS_DATA + 213, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI1200_CAL_SHADING_VERIFY_OPS_DATA + 215, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI1200_CAL_SHADING_VERIFY_UPLOAD_OPS_DATA[30] = {
@@ -13010,8 +13010,8 @@ static const Op DPI2400_CAL_DARK_A_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI2400_CAL_DARK_A_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_DARK_A_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_DARK_A_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI2400_CAL_DARK_A_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI2400_CAL_DARK_A_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI2400_CAL_DARK_A_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI2400_CAL_DARK_A_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI2400_CAL_DARK_B_OPS_DATA[63] = {
@@ -13052,8 +13052,8 @@ static const Op DPI2400_CAL_DARK_B_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI2400_CAL_DARK_B_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_DARK_B_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_DARK_B_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI2400_CAL_DARK_B_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI2400_CAL_DARK_B_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI2400_CAL_DARK_B_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI2400_CAL_DARK_B_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI2400_CAL_WHITE_OPS_DATA[224] = {
@@ -13151,8 +13151,8 @@ static const Op DPI2400_CAL_WHITE_OPS[73] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI2400_CAL_WHITE_OPS_DATA + 216, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_WHITE_OPS_DATA + 217, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_WHITE_OPS_DATA + 219, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI2400_CAL_WHITE_OPS_DATA + 220, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI2400_CAL_WHITE_OPS_DATA + 222, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI2400_CAL_WHITE_OPS_DATA + 220, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI2400_CAL_WHITE_OPS_DATA + 222, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI2400_CAL_GAIN_CHECK_A_OPS_DATA[97] = {
@@ -13204,8 +13204,8 @@ static const Op DPI2400_CAL_GAIN_CHECK_A_OPS[37] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 89, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 90, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 92, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI2400_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0, 0x01, 0x00, 300},
 };
 
 /* Computed values patched into DPI2400_CAL_GAIN_CHECK_A_OPS at run time. */
@@ -13253,8 +13253,8 @@ static const Op DPI2400_CAL_GAIN_CHECK_B_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI2400_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI2400_CAL_SHADING_MEASURE_OPS_DATA[231] = {
@@ -14110,8 +14110,8 @@ static const Op DPI2400_CAL_SHADING_MEASURE_OPS[830] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI2400_CAL_SHADING_MEASURE_OPS_DATA + 223, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_SHADING_MEASURE_OPS_DATA + 224, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_SHADING_MEASURE_OPS_DATA + 226, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI2400_CAL_SHADING_MEASURE_OPS_DATA + 227, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI2400_CAL_SHADING_MEASURE_OPS_DATA + 229, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI2400_CAL_SHADING_MEASURE_OPS_DATA + 227, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI2400_CAL_SHADING_MEASURE_OPS_DATA + 229, 2, 0, 0x01, 0x00, 300},
 };
 
 /* Computed values patched into DPI2400_CAL_SHADING_MEASURE_OPS at run time. */
@@ -15005,8 +15005,8 @@ static const Op DPI2400_CAL_SHADING_VERIFY_OPS[825] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI2400_CAL_SHADING_VERIFY_OPS_DATA + 209, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI2400_CAL_SHADING_VERIFY_OPS_DATA + 210, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI2400_CAL_SHADING_VERIFY_OPS_DATA + 212, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI2400_CAL_SHADING_VERIFY_OPS_DATA + 213, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI2400_CAL_SHADING_VERIFY_OPS_DATA + 215, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI2400_CAL_SHADING_VERIFY_OPS_DATA + 213, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI2400_CAL_SHADING_VERIFY_OPS_DATA + 215, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI2400_CAL_SHADING_VERIFY_UPLOAD_OPS_DATA[30] = {
@@ -19005,8 +19005,8 @@ static const Op DPI7200_CAL_DARK_A_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI7200_CAL_DARK_A_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_DARK_A_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_DARK_A_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI7200_CAL_DARK_A_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI7200_CAL_DARK_A_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI7200_CAL_DARK_A_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI7200_CAL_DARK_A_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI7200_CAL_DARK_B_OPS_DATA[63] = {
@@ -19047,8 +19047,8 @@ static const Op DPI7200_CAL_DARK_B_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI7200_CAL_DARK_B_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_DARK_B_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_DARK_B_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI7200_CAL_DARK_B_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI7200_CAL_DARK_B_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI7200_CAL_DARK_B_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI7200_CAL_DARK_B_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI7200_CAL_WHITE_OPS_DATA[224] = {
@@ -19148,8 +19148,8 @@ static const Op DPI7200_CAL_WHITE_OPS[75] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI7200_CAL_WHITE_OPS_DATA + 216, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_WHITE_OPS_DATA + 217, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_WHITE_OPS_DATA + 219, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI7200_CAL_WHITE_OPS_DATA + 220, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI7200_CAL_WHITE_OPS_DATA + 222, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI7200_CAL_WHITE_OPS_DATA + 220, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI7200_CAL_WHITE_OPS_DATA + 222, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI7200_CAL_GAIN_CHECK_A_OPS_DATA[97] = {
@@ -19201,8 +19201,8 @@ static const Op DPI7200_CAL_GAIN_CHECK_A_OPS[37] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 89, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 90, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 92, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 93, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI7200_CAL_GAIN_CHECK_A_OPS_DATA + 95, 2, 0, 0x01, 0x00, 300},
 };
 
 /* Computed values patched into DPI7200_CAL_GAIN_CHECK_A_OPS at run time. */
@@ -19250,8 +19250,8 @@ static const Op DPI7200_CAL_GAIN_CHECK_B_OPS[29] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 55, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 56, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 58, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 59, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI7200_CAL_GAIN_CHECK_B_OPS_DATA + 61, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI7200_CAL_SHADING_MEASURE_OPS_DATA[231] = {
@@ -20659,8 +20659,8 @@ static const Op DPI7200_CAL_SHADING_MEASURE_OPS[1382] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI7200_CAL_SHADING_MEASURE_OPS_DATA + 223, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_SHADING_MEASURE_OPS_DATA + 224, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_SHADING_MEASURE_OPS_DATA + 226, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI7200_CAL_SHADING_MEASURE_OPS_DATA + 227, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI7200_CAL_SHADING_MEASURE_OPS_DATA + 229, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI7200_CAL_SHADING_MEASURE_OPS_DATA + 227, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI7200_CAL_SHADING_MEASURE_OPS_DATA + 229, 2, 0, 0x01, 0x00, 300},
 };
 
 /* Computed values patched into DPI7200_CAL_SHADING_MEASURE_OPS at run time. */
@@ -22114,8 +22114,8 @@ static const Op DPI7200_CAL_SHADING_VERIFY_OPS[1377] = {
     {OpKind::BulkDone, 0x0c, 0x008e, 0x0018, DPI7200_CAL_SHADING_VERIFY_OPS_DATA + 209, 1, 0, 0x00, 0x00, 0},
     {OpKind::Write, 0x04, 0x0083, 0x0000, DPI7200_CAL_SHADING_VERIFY_OPS_DATA + 210, 2, 0, 0x00, 0x00, 0},
     {OpKind::AckRead, 0x0c, 0x008e, 0x0020, DPI7200_CAL_SHADING_VERIFY_OPS_DATA + 212, 1, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0022, DPI7200_CAL_SHADING_VERIFY_OPS_DATA + 213, 2, 0, 0x00, 0x00, 0},
-    {OpKind::Read, 0x04, 0x018e, 0x0122, DPI7200_CAL_SHADING_VERIFY_OPS_DATA + 215, 2, 0, 0x00, 0x00, 0},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0022, DPI7200_CAL_SHADING_VERIFY_OPS_DATA + 213, 2, 0, 0x01, 0x00, 300},
+    {OpKind::PollMasked, 0x04, 0x018e, 0x0122, DPI7200_CAL_SHADING_VERIFY_OPS_DATA + 215, 2, 0, 0x01, 0x00, 300},
 };
 
 static const std::uint8_t DPI7200_CAL_SHADING_VERIFY_UPLOAD_OPS_DATA[30] = {

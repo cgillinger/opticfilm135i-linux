@@ -950,7 +950,7 @@ def test_poll_class_waits_then_continues():
     }
     rc, out, err = _run_probe_program(
         probe, "plain3600", "cal_shading_measure",
-        ["class_poll d055,d055,f055"], injects=injects)
+        ["masked_poll_at 0 d055,d055,f055"], injects=injects)
     assert rc == 0, (out, err)
     lines = _lines(out)
     assert lines[-1] == "DONE ops=450", lines[-1]
@@ -973,7 +973,7 @@ def test_poll_class_timeout_fails_closed():
     }
     rc, out, err = _run_probe_program(
         probe, "plain3600", "cal_shading_measure",
-        ["class_poll d055"], injects=injects)
+        ["masked_poll_at 0 d055"], injects=injects)
     assert rc == 1, (out, err)
     lines = _lines(out)
     assert lines[-1].startswith("FAIL PollTimeout op=448 "), lines[-1]
@@ -2620,6 +2620,283 @@ def test_magazine_programs_are_structurally_sound():
     print("test_magazine_programs_are_structurally_sound OK "
           "(5 programs; the load's feed and traverse completions distinguishable)")
 
+
+# ------------------------------------------- calibration stop gate
+#
+# docs/cal-scanstop-gate.md: after the SCAN-clear that closes each
+# calibration acquisition, the generated programs poll reg 0x100 and then
+# reg 0x101 until bit 0 is clear (PollMasked, 300 ms each; the plain3600
+# W2 site keeps its class-F match and 5 s) before the next write. The
+# wire-equality tests above show that a scanner that has already stopped
+# sees the old transfer sequence; these tests cover the structure of the
+# 42 sites and the two other outcomes (a late stop waits, no stop fails
+# closed).
+
+GATE_ACQUISITION_PHASES = frozenset({
+    "cal_dark_a", "cal_dark_b", "cal_white", "cal_gain_check_a",
+    "cal_gain_check_b", "cal_shading_measure", "cal_shading_verify",
+})
+GATE_BUDGET_MS = 300
+W2_BUDGET_MS = 5000
+POLL_INTERVAL_MS = 4     # RunPolicy::poll_interval_ms (gl126_ops.h)
+
+
+def _gate_sites():
+    """(profile, phase, clear_op, reg100_op, reg101_op, w2) for every
+    acquisition phase of every profile, from the generator's own site
+    finder; `w2` is True where the captured reg 0x100 read is a `poll`."""
+    import gen_sane_tables as gen
+    out = []
+    for key, mod, _dpi, _desc in gen.PROFILES:
+        for phase in mod.PHASES:
+            for clear, i100, i101 in gen.find_scanstop_sites(phase):
+                out.append((key, phase.name, clear, i100, i101,
+                            phase.ops[i100].kind == "poll"))
+    return out
+
+
+def _gate_injects(profile: str, phase_name: str) -> dict[str, int]:
+    """Zero values for every register injection the program declares, so
+    the program runs without the caller knowing its injection names."""
+    import gen_sane_tables as gen
+    mod = dict((k, m) for k, m, _d, _s in gen.PROFILES)[profile]
+    phase = [p for p in mod.PHASES if p.name == phase_name][0]
+    entries = gen.decode_ops(phase)
+    if phase.split_at is not None:
+        entries = entries[:phase.split_at]
+    return {name: 0 for name, _i, _o in gen.op_injections_for(phase, entries)}
+
+
+def _gate_run(probe, profile, phase_name, script):
+    rc, out, err = _run_probe_program(
+        probe, profile, phase_name, ["log_poll_sleeps"] + script,
+        injects=_gate_injects(profile, phase_name))
+    return rc, _lines(out), err
+
+
+def test_scanstop_gate_sites_in_generated_programs():
+    """The generated op programs carry exactly the two gate polls per
+    acquisition program, at the sites the op stream's structure gives, and
+    none anywhere else."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_scanstop_gate_sites_in_generated_programs SKIPPED (no g++)")
+        return "skipped"
+    import gen_sane_tables as gen
+    from of135i import device
+
+    # The generator takes the driver's own set; pin its members here.
+    assert set(device.CAL_ACQUISITION_PHASES) == GATE_ACQUISITION_PHASES
+
+    sites = _gate_sites()
+    assert len(sites) == 42, len(sites)     # 6 profiles x 7 phases
+    by_program = {(p, ph): (c, a, b, w2) for p, ph, c, a, b, w2 in sites}
+    assert len(by_program) == 42
+
+    gate_ops = 0
+    for key, _mod, _dpi, _desc in gen.PROFILES:
+        for prog in sorted(GATE_ACQUISITION_PHASES):
+            info = _probe_program_info(probe, key, prog)
+            masked = [o for o in info if o["kind"] == "PollMasked"]
+            clear, i100, i101, w2 = by_program[(key, prog)]
+            assert [o["index"] for o in masked] == [i100, i101], (key, prog)
+            assert i100 == clear + 2 and i101 == clear + 3, (key, prog)
+            assert info[clear]["kind"] == "Write", (key, prog)
+            assert info[clear + 1]["kind"] == "AckRead", (key, prog)
+            assert (masked[0]["val"], masked[0]["idx"]) == ("018e", "0022")
+            assert (masked[1]["val"], masked[1]["idx"]) == ("018e", "0122")
+            if w2:
+                assert (key, prog) == ("plain3600", "cal_shading_measure")
+                assert (masked[0]["mask"], masked[0]["want"],
+                        masked[0]["timeout_ms"]) == ("f1", "f0", "0")
+            else:
+                assert (masked[0]["mask"], masked[0]["want"],
+                        masked[0]["timeout_ms"]) == ("01", "00", str(GATE_BUDGET_MS))
+            assert (masked[1]["mask"], masked[1]["want"],
+                    masked[1]["timeout_ms"]) == ("01", "00", str(GATE_BUDGET_MS))
+            assert not [o for o in info if o["kind"] == "PollClass"], (key, prog)
+            gate_ops += 2
+            if prog == "cal_shading_verify":
+                # The re-upload's descriptor write is the first op of the
+                # next program; this one ends on the gate.
+                assert i101 == len(info) - 1
+        # No gate anywhere else: the upload programs and prep/afe_base
+        # have no PollMasked at all; position and park keep their own.
+        for prog in ("prep", "afe_base", "cal_shading_upload",
+                     "cal_shading_verify_upload"):
+            info = _probe_program_info(probe, key, prog)
+            assert not [o for o in info if o["kind"] == "PollMasked"], (key, prog)
+        for prog, want in (("position", 1), ("park", 2)):
+            info = _probe_program_info(probe, key, prog)
+            assert len([o for o in info if o["kind"] == "PollMasked"]) == want, (key, prog)
+        info = _probe_program_info(probe, key, "cal_shading_verify_upload")
+        assert info[0]["kind"] == "Write" and info[0]["val"] == "0082"
+    assert gate_ops == 84
+    src = (SANE_DIR / "gl126.cpp").read_text()
+    assert "the previous acquisition did not stop" in src
+    print(f"test_scanstop_gate_sites_in_generated_programs OK "
+          f"(42 sites, {gate_ops} gate polls, no other program gated)")
+
+
+def test_scanstop_gate_generation_fails_on_missing_reads():
+    """find_scanstop_sites raises when a read is missing, finds nothing
+    without an execute pulse, and ignores phases outside the set."""
+    import gen_sane_tables as gen
+    from types import SimpleNamespace as NS
+
+    def cw(*pairs):
+        return NS(kind="cw", br=4, wv=0x83, wi=0, data=bytes(pairs), resp=b"",
+                  length=0, dt=0.0, dur=0.0)
+
+    def cr(wv, wi, resp):
+        return NS(kind="cr", br=4 if wv == 0x18e else 0x0c, wv=wv, wi=wi,
+                  data=b"", resp=resp, length=len(resp), dt=0.0, dur=0.0)
+
+    ack = cr(0x8e, 0x20, b"\x55")
+    r100 = cr(0x18e, 0x22, b"\xf0\x55")
+    r101 = cr(0x18e, 0x122, b"\xdc\x55")
+    pulse = cw(0x0f, 0x01)
+    clear = cw(0x01, 0x02)
+
+    def phase(name, *ops):
+        return NS(name=name, ops=list(ops))
+
+    ok = phase("cal_dark_a", pulse, clear, ack, r100, r101)
+    assert gen.find_scanstop_sites(ok) == [(1, 3, 4)]
+    # both reads, then a write: fine
+    assert gen.find_scanstop_sites(phase("cal_dark_a", pulse, clear, ack, r100,
+                                         r101, cw(0x01, 0x03))) == [(1, 3, 4)]
+    for bad in (
+        phase("cal_dark_a", pulse, clear, ack, r100),               # 0x101 missing, phase ends
+        phase("cal_dark_a", pulse, clear, ack, r101),               # 0x100 missing, phase ends
+        phase("cal_dark_a", pulse, clear, ack),                     # both missing
+        phase("cal_dark_a", pulse, clear, ack, r100, cw(0x01, 3), r101),   # write first
+        phase("cal_dark_a", pulse, clear, ack, NS(kind="bo", data=b"x", resp=b"")),
+    ):
+        try:
+            gen.find_scanstop_sites(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("expected a ValueError for " + repr(bad))
+    # no execute pulse: a bit-0-clear write is not a gate site
+    assert gen.find_scanstop_sites(phase("cal_dark_a", clear, ack)) == []
+    # outside the set: ignored
+    assert gen.find_scanstop_sites(phase("position", pulse, clear, ack)) == []
+    print("test_scanstop_gate_generation_fails_on_missing_reads OK")
+
+
+def _expected_with_site_repeated(base: list[str], site_op: int, k: int) -> list[str]:
+    """The already-stopped run's log with the site's read repeated k more
+    times, each repeat preceded by one poll-interval sleep line."""
+    line = base[site_op]
+    out = base[:site_op + 1]
+    t = 0
+    for _ in range(k):
+        t += POLL_INTERVAL_MS
+        out.append(f"PS ms={POLL_INTERVAL_MS} t={t}")
+        out.append(line)
+    return out + base[site_op + 1:]
+
+
+def _delayed_case(probe, profile, phase_name, reg, site_op, k):
+    occ = 0 if reg == 100 else 1
+    set_reply = "f155" if reg == 100 else "dd55"
+    clear_reply = "f055" if reg == 100 else "dc55"
+    rc0, base, _ = _gate_run(probe, profile, phase_name, [])
+    assert rc0 == 0 and base[-1].startswith("DONE"), (profile, phase_name, base[-3:])
+    body = base[:-1]
+    # transfers are one-to-one with ops in these programs
+    assert body[site_op].startswith("R req=04 val=018e"), (profile, phase_name)
+    rc, got, _ = _gate_run(
+        probe, profile, phase_name,
+        [f"masked_poll_at {occ} " + ",".join([set_reply] * k + [clear_reply])])
+    assert rc == 0, (profile, phase_name, reg, k, got[-3:])
+    assert got[-1] == base[-1], (got[-1], base[-1])
+    # Same transfers as the already-stopped run plus exactly k more reads
+    # of the site, one poll-interval sleep before each; nothing else (in
+    # particular no Write and no BulkOut) between the first read of the
+    # site and the read that finds bit 0 clear.
+    assert got[:-1] == _expected_with_site_repeated(body, site_op, k), (
+        profile, phase_name, reg, k)
+    return got
+
+
+def test_scanstop_gate_delayed_stop_waits():
+    """A stop that arrives late is waited for: bit 0 reads set k times,
+    then clear -> k+1 reads of the site, a 4 ms sleep before each repeat,
+    and the log is otherwise the already-stopped run's. Named cases with
+    k = 1 and 5 on both registers (cal_dark_a: the dark_a -> dark_b
+    transition of issue #35; the plain3600 W2 0xF1/0xF0 site; a dual
+    profile; cal_shading_verify, which ends on the gate so the re-upload
+    descriptor, the first op of the next program, cannot be sent before
+    it); then every one of the 42 sites, both registers, k = 3."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_scanstop_gate_delayed_stop_waits SKIPPED (no g++)")
+        return "skipped"
+    sites = {(p, ph): (c, a, b) for p, ph, c, a, b, _w in _gate_sites()}
+    named = [("plain3600", "cal_dark_a"), ("plain3600", "cal_shading_measure"),
+             ("dpi600", "cal_shading_measure"), ("ir3600", "cal_shading_measure"),
+             ("plain3600", "cal_shading_verify"), ("dpi2400", "cal_shading_verify")]
+    runs = 0
+    for profile, phase_name in named:
+        _clear, i100, i101 = sites[(profile, phase_name)]
+        for k in (1, 5):
+            for reg, op in ((100, i100), (101, i101)):
+                got = _delayed_case(probe, profile, phase_name, reg, op, k)
+                assert len([ln for ln in got if ln.startswith("PS ")]) == k
+                runs += 1
+                if phase_name == "cal_shading_verify" and reg == 101:
+                    # the program ends on the late clear read
+                    assert got[-2].startswith("R req=04 val=018e idx=0122"), got[-3:]
+                    assert not any(ln.startswith(("W ", "BO ")) for ln in got[-(2 * k + 2):])
+    for (profile, phase_name), (_c, i100, i101) in sorted(sites.items()):
+        for reg, op in ((100, i100), (101, i101)):
+            _delayed_case(probe, profile, phase_name, reg, op, 3)
+            runs += 1
+    print(f"test_scanstop_gate_delayed_stop_waits OK ({runs} scripted runs, "
+          f"4 ms before each repeat, wire otherwise identical)")
+
+
+def test_scanstop_gate_never_clear_fails_closed():
+    """A bit 0 that never clears ends the program with PollTimeout at the
+    gate op itself after the site's budget of mock time (300 ms; 5 s for
+    the plain3600 W2 site), and no transfer follows the last poll read.
+    The mock clock only moves in the runner's sleeps: no real waiting."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_scanstop_gate_never_clear_fails_closed SKIPPED (no g++)")
+        return "skipped"
+    runs = 0
+    for profile, phase_name, _clear, i100, i101, w2 in _gate_sites():
+        rc0, base, _ = _gate_run(probe, profile, phase_name, [])
+        assert rc0 == 0
+        for reg, op, stuck in ((100, i100, "f155"), (101, i101, "dd55")):
+            occ = 0 if reg == 100 else 1
+            rc, got, _ = _gate_run(probe, profile, phase_name,
+                                   [f"masked_poll_at {occ} {stuck}"])
+            assert rc == 1, (profile, phase_name, reg, got[-2:])
+            assert got[-1].startswith(f"FAIL PollTimeout op={op} "), got[-1]
+            site_line = base[op]
+            body = [ln for ln in got[:-1] if not ln.startswith("PS ")]
+            # the baseline up to the site, then only repeats of the
+            # site's own read: nothing is sent after the last poll
+            assert body[:op] == base[:op], (profile, phase_name, reg)
+            assert set(body[op:]) == {site_line}, (profile, phase_name, reg)
+            assert got[-2] == site_line
+            budget = W2_BUDGET_MS if (w2 and reg == 100) else GATE_BUDGET_MS
+            ps = [ln for ln in got if ln.startswith("PS ")]
+            t_last = int(ps[-1].split("t=")[1])
+            # the first read is at t=0; the program fails at the first
+            # read whose elapsed mock time exceeds the budget
+            assert budget < t_last <= budget + POLL_INTERVAL_MS, (budget, t_last)
+            assert len(body) - op == len(ps) + 1
+            runs += 1
+    print(f"test_scanstop_gate_never_clear_fails_closed OK ({runs} runs; "
+          f"300 ms mock time at the gate sites, 5 s at the plain3600 W2 site)")
+
+
 def main() -> int:
     tests = [
         test_programs_match_python_replayer,
@@ -2669,6 +2946,10 @@ def main() -> int:
         test_poll_best_effort_continues_on_timeout,
         test_cold_init_motor_completion_timeout_is_fatal,
         test_magazine_programs_are_structurally_sound,
+        test_scanstop_gate_sites_in_generated_programs,
+        test_scanstop_gate_generation_fails_on_missing_reads,
+        test_scanstop_gate_delayed_stop_waits,
+        test_scanstop_gate_never_clear_fails_closed,
     ]
     passed = 0
     skipped = 0

@@ -160,6 +160,14 @@
                                          op kind is NOT a failure -- the
                                          program continues (docs/sane-wp4-
                                          magazine.md section 3).
+     log_poll_sleeps                  -- also print "PS ms=<n> t=<clock>" for
+                                         every sleep a poll makes between two
+                                         reads (the runner's poll interval;
+                                         t is the mock clock after it). Off
+                                         by default, so no other test sees
+                                         these lines. The calibration stop
+                                         gate tests use it (docs/cal-scanstop-
+                                         gate.md).
      rmw_read_at <occurrence> <hex-byte> -- the register value the Nth
                                          ReadModifyWrite op's read
                                          returns (0-indexed occurrence).
@@ -383,6 +391,7 @@ struct Script {
     // by occurrence (0-based, in the order the program executes them).
     std::map<std::size_t, std::vector<std::array<std::uint8_t, 2>>> masked_poll_at;
     std::map<std::size_t, std::uint8_t> rmw_read_at;
+    bool log_poll_sleeps = false;   // "log_poll_sleeps": print PS lines
     // docs/sane-wp4-magazine.md section 3: the magazine programs carry
     // many PollBestEffort sites (10 in cold_init alone, next to its nine PollMasked completions), so these are
     // occurrence-indexed like the PollMasked ones.
@@ -480,6 +489,8 @@ Script parse_script(const std::string& path)
             std::string rest;
             iss >> occurrence >> rest;
             s.best_effort_at[occurrence] = parse_poll_list(rest);
+        } else if (cmd == "log_poll_sleeps") {
+            s.log_poll_sleeps = true;
         } else if (cmd == "rmw_read_at") {
             std::size_t occurrence = 0;
             std::string hex;
@@ -750,6 +761,8 @@ public:
         if (cursor_ < prog_.count && current().kind == OpKind::Sleep) {
             std::cout << "S ms=" << ms << "\n";
             advance();
+        } else if (script_.log_poll_sleeps) {
+            std::cout << "PS ms=" << ms << " t=" << clock_ms_ << "\n";
         }
     }
     unsigned now_ms() override { return clock_ms_; }

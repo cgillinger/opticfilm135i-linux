@@ -69,6 +69,23 @@ on a bad `AckRead`, a short `BulkIn`, or a short `BulkOut`; see
 docs/sane-hook2-offset.md section 3 and docs/sane-hook4-shading.md
 section 3.
 
+Calibration stop gate (docs/cal-scanstop-gate.md)
+-------------------------------------------------
+In a calibration acquisition phase (`of135i.device.CAL_ACQUISITION_PHASES`)
+the SCAN-clear that closes an execute pulse is followed by one read of reg
+0x100 and one read of reg 0x101. The captures read each once; on a fast
+host the scanner is still running at that moment and the next acquisition
+is armed too early. `decode_ops` therefore emits those two reads as
+`PollMasked` (bit 0 clear, 300 ms each; the plain3600 W2 site keeps its
+5 s and its class-F match: mask 0xF1, want 0xF0) so the runner waits for
+the engine to stop before the next write. The sites are found from the op
+stream's structure, the rule the Python driver uses
+(`Scanner._scanstop_note_write`): reg 0x0F written 0x01, then a later
+write of reg 0x01 with bit 0 clear, in a phase of the set; if either read
+is missing before the next write/bulk OUT or the end of the phase,
+generation fails. Other programs get no gate op. The wait was designed by
+bearyjd for the Python driver (issue #35, reported by Krustenviech).
+
 Split programs (docs/sane-hook4-shading.md section 6)
 -------------------------------------------------------
 `cal_shading_verify` genuinely re-measures then re-uploads a table
@@ -366,6 +383,83 @@ def _magazine_poll(phase, op, dur_ms: int) -> OpEntry:
                    dur_ms, mask=mask, want=settled & mask, timeout_ms=timeout)
 
 
+#: Calibration stop gate (module docstring): budget of one gate poll, the
+#: Python gate's NONSTRICT_POLL_FLOOR_S (docs/cal-scanstop-gate.md).
+GATE_TIMEOUT_MS = 300
+
+
+def find_scanstop_sites(phase) -> list[tuple[int, int, int]]:
+    """The calibration stop gate's sites in one acquisition phase, as
+    (clear_op, reg100_read_op, reg101_read_op) op indices, found from the
+    op stream's structure only -- the rule of Scanner._scanstop_note_write:
+    an execute pulse (reg 0x0F written 0x01 in a 0x0083 batch), then a
+    later write of reg 0x01 with bit 0 clear (the SCAN-clear), whose next
+    read of reg 0x100 and next read of reg 0x101 are the two gate reads.
+    Raises ValueError if either read is missing before the next write or
+    bulk OUT, or before the end of the phase. Returns [] for a phase
+    outside CAL_ACQUISITION_PHASES."""
+    if phase.name not in _device.CAL_ACQUISITION_PHASES:
+        return []
+    sites: list[tuple[int, int, int]] = []
+    pulse = False
+    pending: list[int] | None = None   # [clear, reg100 op or -1, reg101 op or -1]
+
+    def missing(reason: str) -> ValueError:
+        return ValueError(
+            f"{phase.name}: SCAN-clear at op {pending[0]} is not followed by "
+            f"a read of reg 0x100 and of reg 0x101 ({reason})")
+
+    for i, op in enumerate(phase.ops):
+        if pending is not None:
+            if op.kind in ("cw", "bo"):
+                raise missing(f"op {i} is a {op.kind} first")
+            if op.kind in ("cr", "poll") and op.wv == WV_EXT_STATUS:
+                if op.wi == WI_REG100 and pending[1] < 0:
+                    pending[1] = i
+                elif op.wi == WI_DATAENB and pending[2] < 0:
+                    pending[2] = i
+                if pending[1] >= 0 and pending[2] >= 0:
+                    sites.append((pending[0], pending[1], pending[2]))
+                    pending = None
+            continue
+        if op.kind == "cw" and op.wv == WV_REGS:
+            for k in range(0, len(op.data) - 1, 2):
+                reg, val = op.data[k], op.data[k + 1]
+                if reg == 0x0F and val == 0x01:
+                    pulse = True
+                elif reg == 0x01 and not val & 0x01 and pulse:
+                    pulse = False
+                    pending = [i, -1, -1]
+    if pending is not None:
+        raise missing("the phase ends first")
+    return sites
+
+
+def apply_scanstop_gate(phase, entries: list[OpEntry]) -> None:
+    """Turn the two reads of every gate site (find_scanstop_sites) into
+    `PollMasked` ops, in place. `entries` is one-to-one with `phase.ops`.
+    A captured `poll` of reg 0x100 (plain3600 cal_shading_measure, W2)
+    keeps its class-F match and the policy's budget (timeout_ms 0): mask
+    0xF1, want 0xF0. Every other gate read waits for bit 0 clear for
+    GATE_TIMEOUT_MS."""
+    for _clear, i100, i101 in find_scanstop_sites(phase):
+        for idx in (i100, i101):
+            e, op = entries[idx], phase.ops[idx]
+            if e.kind not in ("Read", "PollClass"):
+                raise ValueError(
+                    f"{phase.name}: gate read at op {idx} was decoded as {e.kind}")
+            if op.kind == "poll" and idx == i100:
+                if not op.resp or (op.resp[0] & 0xF1) != 0xF0:
+                    raise ValueError(
+                        f"{phase.name}: the polled reg 0x100 at op {idx} did not "
+                        f"settle on class F with bit 0 clear")
+                entries[idx] = dc_replace(e, kind="PollMasked", mask=0xF1,
+                                          want=0xF0, timeout_ms=0)
+            else:
+                entries[idx] = dc_replace(e, kind="PollMasked", mask=0x01,
+                                          want=0x00, timeout_ms=GATE_TIMEOUT_MS)
+
+
 def decode_ops(phase, magazine: bool = False) -> list[OpEntry]:
     """Reduce one `Phase` op stream to an ordered op-program, one `OpEntry`
     per captured transfer -- see the module docstring's "Op programs"
@@ -445,6 +539,8 @@ def decode_ops(phase, magazine: bool = False) -> list[OpEntry]:
             entries.append(OpEntry("BulkOut", 0, 0, 0, op.data, len(op.data), 0))
         else:
             raise ValueError(f"{phase.name}: op {i} has unknown kind {op.kind!r}")
+    if not magazine:
+        apply_scanstop_gate(phase, entries)
     return entries
 
 
@@ -453,6 +549,38 @@ _KNOWN_OP_KINDS = frozenset((
     "BulkIn", "BulkOut", "BulkDone", "PollMasked", "ReadModifyWrite",
     "Sleep", "PollBestEffort",
 ))
+
+
+#: The seven acquisition programs that carry the stop gate: every phase
+#: of `of135i.device.CAL_ACQUISITION_PHASES`; for the split verify only
+#: its re-measurement half (the re-upload half is a pure bulk-OUT program).
+_GATED_PROGRAMS = tuple(sorted(_device.CAL_ACQUISITION_PHASES))
+
+
+def _validate_scanstop_gate(phase_name: str, entries: list[OpEntry]) -> None:
+    """An acquisition program carries exactly the two gate polls
+    (docs/cal-scanstop-gate.md): consecutive PollMasked ops on reg 0x100
+    then reg 0x101, either bit 0 clear with a 300 ms budget, or (the
+    plain3600 W2 site, reg 0x100 only) class F and bit 0 clear, mask 0xF1
+    / want 0xF0, with no per-op budget."""
+    polls = [(i, e) for i, e in enumerate(entries) if e.kind == "PollMasked"]
+    if len(polls) != 2:
+        raise ValueError(
+            f"{phase_name}: expected exactly two stop-gate PollMasked ops, "
+            f"got {len(polls)}")
+    (i0, a), (i1, b) = polls
+    if i1 != i0 + 1:
+        raise ValueError(f"{phase_name}: the stop-gate polls are not adjacent")
+    for e, wi in ((a, WI_REG100), (b, WI_DATAENB)):
+        if e.value != WV_EXT_STATUS or e.index != wi:
+            raise ValueError(
+                f"{phase_name}: a stop-gate poll reads wValue 0x{e.value:04x} "
+                f"wIndex 0x{e.index:04x}, expected 0x{WV_EXT_STATUS:04x}/0x{wi:04x}")
+    if (b.mask, b.want, b.timeout_ms) != (0x01, 0x00, GATE_TIMEOUT_MS):
+        raise ValueError(f"{phase_name}: the reg 0x101 gate poll is not bit-0-clear/300 ms")
+    if (a.mask, a.want, a.timeout_ms) not in (
+            (0x01, 0x00, GATE_TIMEOUT_MS), (0xF1, 0xF0, 0)):
+        raise ValueError(f"{phase_name}: the reg 0x100 gate poll has an unexpected mask/want/budget")
 
 
 def validate_op_program(phase_name: str, entries: list[OpEntry]) -> None:
@@ -480,6 +608,9 @@ def validate_op_program(phase_name: str, entries: list[OpEntry]) -> None:
 
     def count(kind: str) -> int:
         return sum(1 for e in entries if e.kind == kind)
+
+    if phase_name in _GATED_PROGRAMS:
+        _validate_scanstop_gate(phase_name, entries)
 
     if phase_name in _DARK_PHASES:
         for kind in ("PollDataReady", "BulkIn", "BulkDone"):
@@ -510,24 +641,21 @@ def validate_op_program(phase_name: str, entries: list[OpEntry]) -> None:
         if n_bulk_out != 0:
             raise ValueError(
                 f"{phase_name}: expected no BulkOut op, got {n_bulk_out}")
-        if phase_name == "cal_shading_measure":
-            # W2 (reg 0x100 polled, not merely read) is captured on the
-            # plain3600 profile only -- every dual-light profile's own
-            # capture reads that register once as a plain `cr` (already
-            # "Read"), never a coalesced `poll` (docs/sane-hook4-
-            # shading.md section 3: "the only place the vendor polls
-            # that register").  So the invariant that holds across every
-            # profile is "at most one", not "exactly one".
-            n_class = count("PollClass")
-            if n_class > 1:
-                raise ValueError(
-                    f"{phase_name}: expected at most one PollClass op, got {n_class}")
+        # The vendor polls reg 0x100 in one capture only (plain3600
+        # cal_shading_measure, W2); the stop gate turns that poll into a
+        # PollMasked as well (see _validate_scanstop_gate), so no program
+        # carries a PollClass any more.
+        n_class = count("PollClass")
+        if n_class != 0:
+            raise ValueError(
+                f"{phase_name}: expected no PollClass op (the stop gate "
+                f"replaced it), got {n_class}")
     elif phase_name in _SHADING_UPLOAD_PHASES:
         n_bulk_out = count("BulkOut")
         if n_bulk_out < 1:
             raise ValueError(
                 f"{phase_name}: expected at least one BulkOut op, got {n_bulk_out}")
-        for kind in ("BulkIn", "PollDataReady", "PollClass"):
+        for kind in ("BulkIn", "PollDataReady", "PollClass", "PollMasked"):
             n = count(kind)
             if n != 0:
                 raise ValueError(
