@@ -8224,7 +8224,52 @@ so the list is cut in the scan phase):
 3. Cosmetic: the child's standard output is block-buffered when piped,
    so in `log.txt` some of `load`'s lines appear after later log lines.
 
-**Status after the test.** The protocol's command sequence has run once
-on one scanner, on the developer unit, where no failure is expected; its
-stop-on-failure, exit-4 and interrupt paths have only been run offline.
-The fixed tool has not been run on hardware.
+**Second run, with the fixed tool** (the same day, 6b5274b, the version
+that was pushed to PR #48; a power cycle before it, magazine loose in
+the slot, same film strip). The owner asked for it: the version handed
+to other units should be the one that has run here.
+
+Course from `log.txt`: doctor 12:00:28, load 12:01:06, scans 12:01:26 /
+12:01:46 / 12:02:06 / 12:02:26, doctor 12:02:27. Cold status word
+`0x4855` and the 1.5 s poll timeout again, "no re-seating" again, feed
+`f455`, traverse `dc55`. The owner ejected afterwards.
+
+| run | gate | exit | seconds | dark_b_substituted | cr_mismatches | gate waits | `wait_s` | `since_clear_s` |
+|---|---|---|---|---|---|---|---|---|
+| 1 | enforce | 0 | 17.7 | no | 29 | 7, all `clear`, one read each | 7.0–8.0 ms | 20–33 ms |
+| 2 | off | 0 | 17.6 | no | 39 | – | – | – |
+| 3 | off | 0 | 17.6 | no | 39 | – | – | – |
+| 4 | enforce | 0 | 17.6 | no | 38 | 7, all `clear`, one read each | 7.3–8.0 ms | 20–33 ms |
+
+Gains 44–45/33/39, offsets 266/265–266/266; `poll_timeouts` 0; coverage
+verified in all four.
+
+- The tool: all four sidecars found and lifted into `summary.json` and
+  `report.md`; the result directory and the tarball hold the ten
+  allowlisted files and nothing else (15.8 kB, no image, no `.cal.npz`,
+  no home path); the final line says "no images". With the child's
+  output unbuffered the `load` lines come in the order they were
+  written, and the reinsert prompt appeared after the jog and before the
+  operator did anything.
+- The first gated scan after the cold load cleared at the first read
+  again (two of two on this unit).
+- `f155` at the table's own read of reg 0x100 again: in
+  `cal_gain_check_a`, `cal_gain_check_b`, `cal_shading_measure` and
+  `cal_shading_verify` in runs 2 and 3, and in `cal_dark_a`,
+  `cal_dark_b`, `cal_gain_check_a` and `cal_shading_measure` in the gated
+  run 4. That includes the two dark phases issue #35 is about, on the
+  developer unit.
+
+**Own misreading, corrected by the second run.** From the first run
+this entry concluded that the capture agrees with a first scan after a
+load, because run 1 there had no mismatch in the dark, white and gain
+phases. In the second run the first scan after the cold load has them
+too (wIndex 0x0422 and 0x0522 in `cal_dark_a` and `cal_dark_b`, 0x0422
+in the white and gain phases), 29 in all against 21. One run was not
+enough to say that; what decides whether those two registers read as in
+the capture is not known.
+
+**Status after the test.** The protocol's command sequence has run twice
+on the developer unit, the second time with the tool as published. No
+failure is expected on this unit, so the stop-on-failure, exit-4 and
+interrupt paths have only been run offline.

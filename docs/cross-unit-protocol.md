@@ -1,11 +1,11 @@
 # Cross-unit protocol
 
-Status: run once on the developer unit (Test 115, docs/test-log.md),
-where it completed. That run found that the tool missed the sidecars and
-packed the images; both are fixed, and the fix was checked offline against
-that run's real file names. Not yet run on a second unit; the
-stop-on-failure, exit-4 and interrupt paths have only been run offline
-(`tests/test_cross_unit_check.py`).
+Status: run twice on the developer unit (Test 115, docs/test-log.md).
+The first run found that the tool missed the sidecars and packed the
+images; the second run was made with the fixed tool, as published here,
+and produced a complete report and an archive without images. Not yet
+run on a second unit; the stop-on-failure, exit-4 and interrupt paths
+have only been run offline (`tests/test_cross_unit_check.py`).
 
 ## 1. Why
 

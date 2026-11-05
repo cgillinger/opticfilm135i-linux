@@ -24,7 +24,7 @@ one exists; "offline" means implemented and tested without the scanner.
   scan; `cr_mismatches` still counts all). Reason: docs/status-read-inventory.md
   section 6 item 4. Offline, no wire change.
 
-- **Cross-unit protocol (offline).** `tools/cross_unit_check.py` runs a fixed
+- **Cross-unit protocol (run on the developer unit, Test 115).** `tools/cross_unit_check.py` runs a fixed
   doctor / load / four-scan sequence (`--cal-wait-scanstop enforce,off,off,enforce`),
   stops on the first failure without sending any recovery command, and packs the
   sidecars, doctor reports and log into a tarball without images or personal paths.
@@ -47,7 +47,8 @@ one exists; "offline" means implemented and tested without the scanner.
   scanner. The first hardware run found that the tool missed the sidecars
   (`--frames` makes the driver name outputs `-f<N>`) and packed the scanned
   images into the tarball; sidecars are now found by what is on disk, and the
-  archive is built from an allowlist and verified after packing.
+  archive is built from an allowlist and verified after packing. A second
+  hardware run with the fixed tool confirmed both (Test 115, developer unit).
 - **Status-read inventory (offline).** `tools/status_read_inventory.py`
   lists every read of reg 0x100/0x101 in the op tables with the
   engine command before it; docs/status-read-inventory.md judges the
