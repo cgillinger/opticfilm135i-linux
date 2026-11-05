@@ -186,16 +186,18 @@ CAL_ACQUISITION_PHASES = frozenset({
     "cal_shading_measure", "cal_shading_verify",
 })
 
-# Calibration stop gate (Scanner.cal_wait_scanstop). EXPERIMENTAL, opt-in,
-# NOT hardware-verified on the owner's unit (docs/cal-scanstop-gate.md;
-# issue #35). Ported from bearyjd's fork, branch feat/cal-wait-scanstop,
-# commit f462b0b. Motor-adjacent: it delays the next calibration execute
-# pulse. Evidence so far: Test 32 showed a residual dark_b (the frame's
-# own dark_a tail, read back 3-4x too fast: no exposure happened); the
+# Calibration stop gate (Scanner.cal_wait_scanstop). Default "enforce"
+# (docs/cal-scanstop-gate.md, "Decision"; issue #35). Ported from
+# bearyjd's fork, branch feat/cal-wait-scanstop, commit f462b0b.
+# Motor-adjacent: it delays the next calibration execute pulse by reads
+# only. Evidence: Test 32 showed a residual dark_b (the frame's own
+# dark_a tail, read back 3-4x too fast: no exposure happened); the
 # fork's logs showed the next acquisition re-armed 5.7-11.9 ms after the
 # previous SCAN-clear while register 0x100 bit 0 (data enable) and 0x101
-# bit 0 (motor enable) still read set, and on a fast host (Steam Deck)
-# this hits frame 1, which _healthy_dark_b cannot substitute.
+# bit 0 (motor enable) still read set, and on fast hosts (a Steam Deck,
+# a second unit) this hits frame 1, which _healthy_dark_b cannot
+# substitute. Gated scans completed on three units; the longest wait
+# seen is 29 ms against the 0.3 s budget.
 # "enforce": after the SCAN-clear that closes an execute pulse in a
 # CAL_ACQUISITION_PHASES phase, and before the next OUT transfer of any
 # kind (control write or bulk OUT), poll register 0x100 until bit 0 is
@@ -204,9 +206,9 @@ CAL_ACQUISITION_PHASES = frozenset({
 # NONSTRICT_POLL_FLOOR_S less the time the phase's own post-clear 0x100
 # poll already spent (no new or longer budget); at that deadline
 # CalibrationError is raised before any further write (fail closed, power
-# cycle). "off" (default): no read, sleep or clock call is added and the
-# wire is byte-identical to before (tests/test_cal_wait_scanstop.py pins
-# the wire digest).
+# cycle). "off": no read, sleep or clock call is added and the wire is
+# byte-identical to a driver without the gate (tests/test_cal_wait_scanstop.py
+# pins the wire digest).
 CAL_WAIT_SCANSTOP_MODES = ("off", "enforce")
 
 # Semantic PARK (see park_semantic() and docs/replay-analysis.md's
@@ -627,7 +629,7 @@ class Scanner:
         # clear's host time, the seconds the phase's own post-clear 0x100
         # poll already spent, and the waits recorded for the diag
         # ("cal_scanstop_waits"). The state is only ever set in "enforce".
-        self._cal_wait_scanstop: str = "off"
+        self._cal_wait_scanstop: str = "enforce"  # the default; "off" = no gate
         self._scanstop_go_phase: str | None = None
         self._scanstop_armed: str | None = None
         self._scanstop_t_clear: float = 0.0
@@ -761,8 +763,8 @@ class Scanner:
 
     @property
     def cal_wait_scanstop(self) -> str:
-        """"off" (default) or "enforce": see CAL_WAIT_SCANSTOP_MODES.
-        EXPERIMENTAL, not hardware-verified on the owner's unit."""
+        """"enforce" (default) or "off": see CAL_WAIT_SCANSTOP_MODES and
+        docs/cal-scanstop-gate.md."""
         return self._cal_wait_scanstop
 
     @cal_wait_scanstop.setter
@@ -2326,18 +2328,28 @@ class Scanner:
         this is a proven correction, not a cover-up. A healthy dark_b is
         remembered for later frames. Fails closed (CalibrationError, scan
         FAILED, no motor command) if dark_b is residual and none healthy
-        has been seen this session (frame 1 is empirically always healthy,
-        so this is a defensive branch)."""
+        has been seen this session. Frame 1 has no earlier dark_b to fall
+        back on. On the developer unit the first one has always been healthy,
+        but not everywhere: two other units failed here at the first
+        calibration of a session without the stop gate
+        (docs/cal-scanstop-gate.md), which is why the gate is the
+        default."""
         if not calibrate.dark_is_residual(dark_b):
             self._last_good_dark_b = dark_b
             return dark_b, False
         log.warning("dark_b is residual (Test 32: repeated block, not a "
                     "measurement); substituting this session's healthy dark_b")
         if self._last_good_dark_b is None:
+            hint = ""
+            if self._cal_wait_scanstop == "off":
+                hint = (" --cal-wait-scanstop enforce (the default) waits for "
+                        "the scanner to stop between calibration acquisitions "
+                        "and has prevented this failure on the units that "
+                        "showed it (docs/cal-scanstop-gate.md).")
             raise safety.CalibrationError(
                 "dark_b is residual and no healthy dark_b has been measured "
                 "this session; cannot compute AFE offset. The scan stops "
-                f"here. {safety.NO_RECOVERY_ATTEMPTED} "
+                f"here.{hint} {safety.NO_RECOVERY_ATTEMPTED} "
                 f"{safety.POWER_CYCLE_INSTRUCTION}",
                 session=self.session.snapshot())
         return self._last_good_dark_b, True

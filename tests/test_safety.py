@@ -466,8 +466,16 @@ def _find_table(out_log, pairs):
     return None
 
 
-def make_scanner(fake: FakeUsbDevice) -> Scanner:
-    return Scanner(UsbIo(fake))
+def make_scanner(fake: FakeUsbDevice, gate: str | None = "off") -> Scanner:
+    """A Scanner over the fake. The calibration stop gate is set to "off"
+    here: these suites compare the wire with the vendor captures and run
+    under fast_time(), whose clock jumps would fail any gate read, and
+    the captures have no gate reads. The library default is "enforce"
+    (tests/test_cal_wait_scanstop.py pins that); gate=None keeps it."""
+    s = Scanner(UsbIo(fake))
+    if gate is not None:
+        s.cal_wait_scanstop = gate
+    return s
 
 
 def expect(exc_type, fn, *a, **k):
@@ -1903,7 +1911,7 @@ def cli_over(fake: FakeUsbDevice):
     opened = []
 
     def fake_scanner_open():
-        s = Scanner(UsbIo(fake))
+        s = make_scanner(fake)
         opened.append(s)
         return s
 
@@ -1994,12 +2002,15 @@ def test_cli_scan_eject_watch_refuse_unsafe_states_with_zero_writes():
 
 
 def test_cli_scan_normal_path_and_failure_reporting():
+    # --cal-wait-scanstop off throughout: the fake runs under fast_time()
+    # (a clock that jumps past any gate deadline); the gate has its own
+    # suite (tests/test_cal_wait_scanstop.py).
     with tempfile.TemporaryDirectory() as td:
         out = str(Path(td) / "x.tiff")
         # Normal path: idle scanner, one frame, with diag sidecar.
         fake = FakeUsbDevice(reg01=0x22, cal_buffers=_cal_buffers())
         with cli_over(fake) as opened:
-            code, so, se = _cli(["scan", "--frame", "1", "-o", out])
+            code, so, se = _cli(["scan", "--frame", "1", "-o", out, "--cal-wait-scanstop", "off"])
         assert code == 0, (code, se)
         assert fake.pulses >= 8 and opened[0].session.state is SessionState.ARMED
         sidecar = Path(diag.sidecar_path(out))
@@ -2011,7 +2022,7 @@ def test_cli_scan_normal_path_and_failure_reporting():
         # No magazine: refused before initialize (zero writes).
         fake = FakeUsbDevice(reg01=0x22, magazine=False, cal_buffers=_cal_buffers())
         with cli_over(fake):
-            code, so, se = _cli(["scan", "--frame", "1", "-o", out, "--no-diag"])
+            code, so, se = _cli(["scan", "--frame", "1", "-o", out, "--cal-wait-scanstop", "off", "--no-diag"])
         assert code == 1 and fake.out_count == 0 and "no magazine" in se
 
         # Failure mid-scan: exit 1, failure record printed, no eject
@@ -2019,7 +2030,7 @@ def test_cli_scan_normal_path_and_failure_reporting():
         fake = FakeUsbDevice(reg01=0x22, cal_buffers=_cal_buffers())
         with cli_over(fake) as opened:
             fake.fault = lambda ev: _usb_timeout() if ev["kind"] == "bulk_in" and opened and opened[-1].session.phase == "scan" else None
-            code, so, se = _cli(["scan", "--frames", "1-2", "--eject", "-o", out, "--no-diag"])
+            code, so, se = _cli(["scan", "--frames", "1-2", "--eject", "-o", out, "--cal-wait-scanstop", "off", "--no-diag"])
         assert code == 1, (code, se)
         assert opened[0].session.state is SessionState.FAILED
         assert "failed in phase scan" in se and "No recovery commands" in se, se
@@ -2032,7 +2043,7 @@ def test_cli_scan_normal_path_and_failure_reporting():
         fake = FakeUsbDevice(reg01=0x22, cal_buffers=_cal_buffers())
         with cli_over(fake) as opened:
             fake.fault = lambda ev: KeyboardInterrupt() if ev["kind"] == "bulk_in" and opened and opened[-1].session.phase == "scan" else None
-            code, so, se = _cli(["scan", "--frame", "1", "-o", out, "--no-diag"])
+            code, so, se = _cli(["scan", "--frame", "1", "-o", out, "--cal-wait-scanstop", "off", "--no-diag"])
         assert code == 130, (code, se)
         assert opened[0].session.state is SessionState.FAILED
         assert "interrupted" in se and "KeyboardInterrupt" in se
@@ -2041,7 +2052,7 @@ def test_cli_scan_normal_path_and_failure_reporting():
         # A new process on top of it (0x23): refused with zero writes.
         fake.fault = None
         with cli_over(fake):
-            code, so, se = _cli(["scan", "--frame", "1", "-o", out, "--no-diag"])
+            code, so, se = _cli(["scan", "--frame", "1", "-o", out, "--cal-wait-scanstop", "off", "--no-diag"])
         assert code == 1 and fake.out_count == n and "0x23" in se, (code, se)
     print("test_cli_scan_normal_path_and_failure_reporting OK")
 

@@ -142,7 +142,8 @@ Each is outside the promised function or has a verified safe handling:
   run-time calibration and honestly labelled. Since 2026-10 two other
   units have reported (issue #35): both scan, both fail calibration
   intermittently on a step this unit never fails; the contributed fix
-  (`--cal-wait-scanstop`) is opt-in pending their confirmation.
+  (`--cal-wait-scanstop`, now the default) removed the failure on both
+  (docs/cal-scanstop-gate.md).
   (Out of scope for A; tracked in the issue.)
 - **Colour interpretation:** the driver delivers correct raw data; colour
   is the application's job. (Out of scope by design.)

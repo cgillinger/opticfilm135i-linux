@@ -510,6 +510,7 @@ class _WarmupHarness:
         self.runs = 0
         self.sleeps: list[float] = []
         self.scanner = Scanner(MockUsbIo({}))
+        self.scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
         self.scanner._run_phase = self._fake_run_phase  # type: ignore[method-assign]
 
     def _fake_run_phase(self, phase, **inject):
@@ -682,6 +683,7 @@ def test_warmup_ctrl_c_and_usb_errors_propagate():
 def test_scan_sequence_matches_trace():
     mock = MockUsbIo(_build_cal_buffers())
     scanner = Scanner(mock)
+    scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
     # Verbatim: _expected_stream() below is PARK's own captured op list,
     # byte for byte; semantic (default since 2026-09-17) would emit real
     # read-modify-write bytes instead and is covered by test_park.py.
@@ -742,6 +744,7 @@ def _plain_scan(env_dir, read_hook=None):
         mock = MockUsbIo(_build_cal_buffers())
         fake = mock.dev  # the _FakeDev, before Scanner wraps it in GuardedDevice
         scanner = Scanner(mock)
+        scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
         # This fake replays PARK's captured op queue verbatim; it has no
         # scripted register state for semantic PARK's live condition
         # waits (that is test_park.py's own fake). Pin verbatim so this
@@ -911,6 +914,7 @@ def test_cal_capture_no_disk_io_during_scan():
         try:
             mock = MockUsbIo(_build_cal_buffers())
             with Scanner(mock) as scanner:
+                scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
                 scanner.park_mode = "verbatim"  # see test_scan_sequence_matches_trace
                 scanner.initialize()
                 scanner.scan(frame=1)
@@ -950,6 +954,7 @@ def test_healthy_dark_b_substitute_and_fail_closed():
     with CalibrationError."""
     from of135i import safety
     scanner = Scanner(MockUsbIo(_build_cal_buffers()))
+    scanner.cal_wait_scanstop = "off"  # the captures have no gate reads; the default is "enforce" (test_cal_wait_scanstop.py)
     healthy = np.random.default_rng(1).integers(20000, 26000, (1024, 3),
                                                 dtype=np.uint16)
     residual = np.tile(np.array([[10, 20, 30], [40, 50, 60]], dtype=np.uint16),

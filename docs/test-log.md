@@ -8273,3 +8273,47 @@ the capture is not known.
 on the developer unit, the second time with the tool as published. No
 failure is expected on this unit, so the stop-on-failure, exit-4 and
 interrupt paths have only been run offline.
+
+## 2026-11-05 — External report (issue #35): the stop gate on a third unit (Steam Deck, the original reporter) — gated 6 runs / 7 frames completed, ungated 0 of 2
+
+Not run by the owner. Reported by Krustenviech on issue #35 (comment of
+2026-11-05) with seven `.diag.json` sidecars in a gist; this entry is the
+owner's side reading those files. Hardware: the reporter's Steam Deck
+(the unit and host of the original report), master with PR #46 (the
+gate), 600 dpi (dual), film strip, frame 1 (one run with `--frames 1-2`,
+so seven frames from six gated runs). One unit, one operator: consistent,
+not a rate.
+
+| gate | runs | result |
+|---|---|---|
+| enforce | 6 (7 frames) | all completed: `dark_b_substituted` false, `poll_timeouts` 0, aperture coverage verified, `cr_mismatches` 45-49, 15.5-15.7 s per frame-1 scan |
+| off | 2, run "in between" the gated ones | both failed in `cal_dark_b`: `dark_b is residual and no healthy dark_b has been measured this session`; session start state 0x22 (idle, homed); failure after 83 writes and 2 execute pulses |
+
+**From the seven sidecars** (49 gate waits, all `clear`):
+
+- Reads of reg 0x100 per wait: 1 (3 waits), 2 (6), 3 (3), 4 (16), 5 (12),
+  6 (3), 7 (6); reg 0x101 always one read.
+- `wait_s` 0.9-29.0 ms; `since_clear_s` 13.7-30.6 ms.
+- One control read about 0.5-0.7 ms on this host (the gate sleeps 4 ms
+  between busy reads).
+- The slowest waits (28-29 ms, 7 reads) are in the first scan after each
+  load; later scans 14-20 ms.
+- Calibration: offsets 266/265/266 (identical to the other two units),
+  gains 49/36-37/42 (owner 44/32/39, bearyjd 42/32-33/38-39), dark_a means
+  about 18 600-21 400, dark_b about 21 000-23 900.
+
+**Across the three units** (Tests 114-115, the 2026-11-04 report and this
+one): ungated scans failed 5 of 5 on the two fast hosts and 0 of 12 on
+the owner's; gated scans completed on all three (bearyjd 7, the Deck 6
+runs / 7 frames, the owner 14 frames); the longest wait seen is 29 ms
+against the 0.3 s budget.
+
+**Conclusions.** The gate removes the failure on the unit that reported
+it, as it did on the second unit; the units calibrate alike and the
+failure follows the host's pace. This is the confirmation the opt-in
+status of Test 114 waited for; `enforce` became the default on the owner's
+decision (docs/cal-scanstop-gate.md, "Decision"). The gated runs were all
+600 dpi frame 1 on film strip; nothing beyond that was run gated on this
+unit.
+
+Details: docs/cal-scanstop-gate.md, "Third unit".

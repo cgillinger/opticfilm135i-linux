@@ -231,21 +231,24 @@ vendor's recovery capture; its hardware test waits for the owner's go. If
 the traverse itself does not complete in 30 s the driver stops with
 nothing further written: power-cycle and do not retry blindly.
 
-## Calibration stop gate (opt-in)
+## Calibration stop gate (the default)
 
-`--cal-wait-scanstop enforce` (docs/cal-scanstop-gate.md, issue #35)
-adds one wait condition inside calibration: after each acquisition's
+`--cal-wait-scanstop enforce` (docs/cal-scanstop-gate.md, issue #35) is
+the default for `scan`, `digitize` and the library (`Scanner`). It adds
+one wait condition inside calibration: after each acquisition's
 SCAN-clear it polls reg 0x100 bit 0 and then reg 0x101 bit 0 clear
 before the next OUT transfer, within the existing 0.3 s non-strict poll
 floor. Reads only; at the deadline it raises `CalibrationError` before
 any write, the session is FAILED, no recovery is sent, power cycle. It
 never arms outside the seven calibration acquisition phases, so POSITION,
-the image pass and PARK are not delayed. Default `off` is byte-identical
-on the wire (pinned by `tests/test_cal_wait_scanstop.py`). Run on
-hardware on two units: Tests 114 and 115 on the developer unit (every
-wait cleared at the first read, at most 8 ms) and an external report on
-a second unit (longest wait 24 ms against the 0.3 s); see
-docs/cal-scanstop-gate.md.
+the image pass and PARK are not delayed. `--cal-wait-scanstop off` is
+byte-identical on the wire to a driver without the gate (pinned by
+`tests/test_cal_wait_scanstop.py`). Run on hardware on three units: Tests
+114 and 115 on the developer unit (every wait cleared at the first read,
+at most 8 ms), a second unit (longest wait 24 ms) and a Steam Deck
+(longest wait 29 ms), all against the 0.3 s budget. Which resolutions and
+modes have not been run with the gate is listed in
+docs/cal-scanstop-gate.md, "Decision".
 
 ## Cross-process exclusion
 

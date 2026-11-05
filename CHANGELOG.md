@@ -6,6 +6,23 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **`--cal-wait-scanstop enforce` is now the default** (`scan`, `digitize`,
+  `Scanner.cal_wait_scanstop`). Evidence: Krustenviech's A/B on the Steam
+  Deck, the unit that reported issue #35 (two ungated runs failed in
+  `cal_dark_b`; six gated runs / seven frames completed, longest wait 29 ms),
+  and bearyjd's A/B on a second unit (ungated 0 of 3, gated 7 of 7, longest
+  wait 24 ms); the developer unit completed all 14 gated frames of Tests
+  114-115. Across the three units ungated scans failed 5 of 5 on the two fast
+  hosts; gated scans completed on all. `--cal-wait-scanstop off` stays and
+  sends exactly the transfers of a driver without the gate. Not run with the
+  gate on hardware: 1200/2400/7200 dpi, the whole-strip sweep, 110 film, the
+  slide holder with master's gate (docs/cal-scanstop-gate.md, "Decision"). A
+  gate timeout is a fail-closed `CalibrationError` needing a power cycle. The
+  residual-dark_b error now names the gate when it is off; the
+  `_healthy_dark_b` docstring no longer claims frame 1 is always healthy.
+  Tests that compare the wire with the vendor captures state `off`
+  explicitly. Thanks to Krustenviech (reported the failure, ran the Deck A/B)
+  and bearyjd (designed and wrote the gate, ran the first A/B).
 - **Stop gate confirmed on a second unit (external report, issue #35).**
   bearyjd ran the A/B asked for on master: gate off 0 of 3 scans completed
   (all fail at `cal_dark_b`), `--cal-wait-scanstop enforce` 3 of 3 plus four
@@ -16,7 +33,7 @@ one exists; "offline" means implemented and tested without the scanner.
   engine still runs. Reading, not proof: the failure follows the host's pace,
   and the developer unit is hidden by its slower host rather than immune.
   docs/cal-scanstop-gate.md ("Second unit, on master"), docs/test-log.md.
-  The gate stays opt-in until the owner decides on the default.
+  (Superseded by the entry above on the default.)
 
 - **Diag: cr mismatches are now locatable.** Each control-read reply that
   differs from the capture is recorded in the `.diag.json` as
@@ -37,7 +54,7 @@ one exists; "offline" means implemented and tested without the scanner.
   for, with the scan broken down by phase and the code or doc each claim rests
   on; calibration acquisitions are listed as "may move the motor" because the
   repo does not establish otherwise. `--dry-run` now writes nothing, not even
-  `plan.txt`. The default sequence is `on,off,off,on` (a gated run first, still
+  `plan.txt`. The default sequence was `on,off,off,on` here (changed to `on,on,on,on`, see above) (a gated run first, still
   symmetric). A scan that exits 4 but left its sidecar (the image check, not
   the transport or calibration) is recorded as `completed-coverage-unverified`
   and the run goes on; every run has an `outcome`. A failed scan whose output
