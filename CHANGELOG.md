@@ -6,6 +6,16 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **SANE backend: file headers credit the gl124 files they started from.**
+  `gl126.cpp`, `gl126.h` and `gl126_registers.h` began as copies of the
+  genesys backend's gl124 files (docs/sane-port.md, stage 1) and named
+  only this project's author. They now carry "Portions derived from"
+  lines with the original copyright holders, Stéphane Voltz and Povilas
+  Kanapickas. The banner of the generated tables no longer says that
+  reads and polls are not reproduced (the op programs carry them). Both
+  are comment changes; no code differs. A stale docstring in
+  `of135i/vendor_derived.py` is corrected.
+
 ## v0.2.10 — 2026-11-05
 
 - **Production confirmation (Test 119).** One colour strip through the

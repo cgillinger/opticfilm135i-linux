@@ -1,6 +1,8 @@
 /* sane - Scanner Access Now Easy.
 
    Copyright (C) 2026 Christian Gillinger
+   Portions derived from gl124_registers.h,
+   Copyright (C) 2019 Povilas Kanapickas <povilas@radix.lt>
 
    This file is part of the SANE package.
 

@@ -24,8 +24,9 @@
  *
  * Register values captured from the vendor driver and verified
  * byte-exact against USB traces; these are interoperability
- * facts, not vendor code. Reads and polls are not reproduced
- * here: the backend polls explicitly with timeouts.
+ * facts, not vendor code. The register tables hold the writes
+ * only; the op programs carry every transfer in order, with the
+ * waits as explicit polls with timeouts.
  *
  * Protocol notes and the reverse-engineering record:
  * https://github.com/cgillinger/opticfilm135i-linux
