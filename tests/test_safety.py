@@ -2121,6 +2121,47 @@ def test_watch_interrupt_during_eject_exit_75():
     _assert_power_cycle_message(se)
 
 
+def test_watch_unejectable_state_refusal_exits_1_not_75():
+    """A SafetyError refusal from eject() (zero writes) keeps the pre-#49
+    behaviour: exit 1 with `refused:`, so a supervisor keeps restarting."""
+    fake = FakeUsbDevice(reg01=0x22)
+    fake.regs[0x31] = 0xFE
+    fake.regs[0x3B] = fake.regs[0x3C] = 0xFF
+    fake.button_events.extend([0x48, None])
+    with cli_over(fake):
+        code, so, se = _cli(["watch"])
+    assert code == 1, (code, se)
+    assert "refused" in se and "exit 75" not in se and "power-cycle the scanner. " not in se, se
+    assert fake.out_count == 0 and fake.pulses == 0 and "ejected" not in so
+
+
+def _watch_with_eject_raising(exc_factory, writes_attempted):
+    fake = FakeUsbDevice(reg01=0x22)
+    fake.regs[0x31] = 0xFE
+    fake.button_events.extend([0x48, None])
+
+    def eject(self):
+        self.session.writes_attempted = writes_attempted
+        raise exc_factory()
+    with cli_over(fake), patched(Scanner, "eject", eject):
+        return _cli(["watch"])
+
+
+def test_watch_session_failed_refusal_decision_follows_writes_sent():
+    """SessionFailedError (an earlier operation failed): with no write ever
+    attempted nothing reached the hardware -> refusal, exit 1; after any
+    write the hardware state is unknown -> exit 75. Same for the other
+    SafetyErrors (e.g. StrictPollTimeoutError after writes)."""
+    mk = lambda: safety.SessionFailedError("session already failed")
+    code, so, se = _watch_with_eject_raising(mk, 0)
+    assert code == 1 and "refused: session already failed" in se, (code, se)
+    code, so, se = _watch_with_eject_raising(mk, 3)
+    assert code == 75, (code, se)
+    mk = lambda: safety.StrictPollTimeoutError("poll timed out", last=b"\x00", want=b"\x01")
+    code, so, se = _watch_with_eject_raising(mk, 5)
+    assert code == 75, (code, se)
+
+
 def test_watch_idle_interrupt_exit_0():
     fake = FakeUsbDevice(reg01=0x22)
     fake.regs[0x31] = 0xFE
@@ -2818,6 +2859,8 @@ def main() -> int:
         test_cli_eject_and_watch_paths,
         test_watch_eject_failure_exit_75,
         test_watch_interrupt_during_eject_exit_75,
+        test_watch_unejectable_state_refusal_exits_1_not_75,
+        test_watch_session_failed_refusal_decision_follows_writes_sent,
         test_watch_idle_interrupt_exit_0,
         test_watch_unsafe_start_exit_1,
         test_watch_failed_eject_leaves_second_press_unread_and_no_further_writes,

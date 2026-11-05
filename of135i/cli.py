@@ -3798,6 +3798,12 @@ def _cmd_watch(args: argparse.Namespace) -> int:
                         try:
                             scanner.eject()
                         except (Exception, KeyboardInterrupt) as e:
+                            if (isinstance(e, safety.SafetyError)
+                                    and not scanner.session.writes_attempted):
+                                # A refusal with no write ever attempted
+                                # (nothing reached the hardware): the outer
+                                # handler's `refused:` + exit 1, restartable.
+                                raise
                             print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
                             _print_session_failure(scanner)
                             print("eject failed or was interrupted; power-cycle the scanner. "
