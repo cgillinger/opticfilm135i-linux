@@ -325,7 +325,9 @@ reports show:
 - 1200, 2400 and 7200 dpi on any unit.
 - Plain 3600 dpi and IR 3600 dpi on the two external units (the owner's
   unit ran them).
-- The whole-strip sweep (`digitize --sweep`) and `digitize` in general.
+- The per-frame cycle of `digitize`. (The whole-strip sweep,
+  `digitize --sweep`, has run gated once on the owner's unit: Test 119,
+  seven waits cleared at the first read.)
 - 110 film.
 - The SANE backend on a fast host: its generated op programs now wait
   at the same sites ("The SANE backend" below) and ran on the owner's

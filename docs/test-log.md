@@ -8540,3 +8540,41 @@ magazine went in 2 s before it closed.
 
 Logs and images are in the owner's local `test118-sane-v9/` (the images
 are not in the repository).
+
+## 2026-11-05 — Test 119: one production strip through the calling application — the first whole-strip sweep with the gate as default and the first hardware run of `digitize` after the two-strip removal: exit ok, 4 of 4 by edges, seven gate waits cleared at the first read, device phases as Test 111
+
+Hardware, owner's unit and host, driver tree identical to master 7a78259
+(the calling application runs the driver from the development checkout).
+One colour-135 strip, four frames, film-strip holder, run by the owner
+through the application: `digitize --sweep`, apertures 1–4, 3600 dpi
+dual with IR. Transport data only, from the roll's manifest record and
+`sweep.json`, read afterwards.
+
+Two things had not run on hardware before this strip: the whole-strip
+sweep with `--cal-wait-scanstop enforce` (the default since PR #52), and
+the `digitize` path after the removal of the two-strip mode (PR #57,
+which was offline-tested by a before/after comparison only).
+
+| | this strip | Test 111, production evening 1 |
+|---|---|---|
+| status | ok | ok |
+| apertures located | 4 of 4 by edges | 4 of 4 by edges |
+| coverage verified | 4 of 4 | 4 of 4 |
+| calibration | 6.11 s | 6.0 s |
+| position | 1.80 s | 1.8 s |
+| scan | 161.44 s | 161.4 s |
+| park | 10.27 s | 10.3 s |
+| wall clock, start to manifest record | 205 s | 200–203 s |
+
+Calibration: offsets 266 / 265 / 266, gains 44 / 32 / 39,
+`dark_b_substituted` false, `poll_timeouts` 0, `cr_mismatches` 36, one
+white measurement. Gate: seven waits, all `clear` at the first read of
+each register, `wait_s` 7.1–8.0 ms; `since_clear_s` 20–25 ms for the
+five short acquisitions, 149 and 193 ms after the two shading phases.
+`sweep.raw` was deleted after the roll resolved (the default).
+
+**Result.** The sweep runs with the gate as it did without it on this
+unit (the waits are single reads here), and the one-strip `digitize`
+path behaves on hardware as it did before the two-strip code was
+removed. One strip, one profile; the per-frame cycle of `digitize` and
+110 film have not run since either change.

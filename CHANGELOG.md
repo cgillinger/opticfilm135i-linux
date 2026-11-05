@@ -6,6 +6,15 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+## v0.2.10 — 2026-11-05
+
+- **Production confirmation (Test 119).** One colour strip through the
+  calling application with `digitize --sweep`: the first whole-strip
+  sweep with the stop gate as default and the first hardware run of
+  `digitize` after the two-strip removal. Status ok, 4 of 4 apertures by
+  edges, seven gate waits cleared at the first read, device phases as in
+  Test 111 (calibration 6.1 s, position 1.8 s, scan 161.4 s, park
+  10.3 s).
 - **SANE backend: calibration stop gate in the generated op programs.**
   After the SCAN-clear that ends each calibration acquisition, the
   backend's programs read reg 0x100 and reg 0x101 once and did not wait,

@@ -2,7 +2,7 @@
 
 ![License: GPL-2.0-or-later or MIT (driver), CC BY 4.0 (docs)](https://img.shields.io/badge/License-GPL--2.0--or--later%20%7C%20MIT%20%7C%20CC--BY--4.0-blue.svg)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
-![Release: v0.2.9](https://img.shields.io/badge/Release-v0.2.9-blue.svg)
+![Release: v0.2.10](https://img.shields.io/badge/Release-v0.2.10-blue.svg)
 ![Status: CLI driver complete, SANE backend working locally](https://img.shields.io/badge/Status-CLI%20driver%20complete%2C%20SANE%20backend%20working%20locally-green.svg)
 
 **Unofficial, community-built Linux driver for the Plustek OpticFilm 135i**
@@ -29,7 +29,7 @@ additional hardware testing is welcome (see
 
 The project has two parts, at different stages:
 
-- **Python / pyusb command-line driver — released (v0.2.9), working on the
+- **Python / pyusb command-line driver — released (v0.2.10), working on the
   test unit.** Scans to raw 16-bit TIFF/PNM at all five resolutions
   (600 / 1200 / 2400 / 3600 / 7200 dpi), with an infrared dust/scratch channel,
   whole-strip batch scanning, and a resumable bulk-digitisation workflow.
@@ -180,8 +180,7 @@ installed from this repository's build.
 
 ## Development status
 
-**Status: v0.2.9 released (2026-10-30, the CLI driver; the SANE backend is
-unchanged since v0.2.3; [release notes](docs/release-notes-v0.2.9.md)).** The standalone Python/pyusb
+**Status: v0.2.10 released (2026-11-05; [release notes](docs/release-notes-v0.2.10.md)).** The standalone Python/pyusb
 command-line driver reached its defined milestone — magazine loading,
 single-frame and whole-strip batch scanning, all five resolutions, IR and dust
 removal, and eject — with scan, calibration, IR and dust removal
@@ -215,7 +214,12 @@ photographs unnumbered or undelivered; v0.2.8 (2026-10-30) adds the
 whole-strip sweep (`digitize --sweep`: one calibration, one pass and one
 park for a colour strip, Test 111); v0.2.9 (the same evening) adds
 progress lines during the sweep and exit code 3 when another of135i
-process holds the scanner. Changes on master after v0.2.9 are in
+process holds the scanner; v0.2.10 (2026-11-05) makes the calibration
+stop gate the default, the fix for a calibration failure found on two
+other users' units (issue #35), adds a transfer recorder and a
+cross-unit protocol, removes the two-strip 110 mode, and gives the SANE
+backend the same wait (submission revision v9, prepared, not yet on the
+merge request). Changes on master after v0.2.10 are in
 [CHANGELOG.md](CHANGELOG.md) under "Unreleased".
 "Complete" here means that functional milestone is met **within
 its frozen scope on the developer's unit** — it is **not** broad field testing or
