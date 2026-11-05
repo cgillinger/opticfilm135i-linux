@@ -213,17 +213,13 @@ package build (`sane/wp3-package/README.md` shows how).
 
 `.github/workflows/offline-checks.yml` runs on every push to master, on
 every pull request and on manual dispatch. It runs check 2 (the
-generator check), nineteen of the Python suites of check 3 and the four
-compiler-based suites of check 4, installing only the four Python
-packages, using the runner's `g++`, building no backend and touching no
-hardware.
+generator check) and then `tools/release_check.py --no-backend`, that
+is every suite of checks 3 and 4 from the one list in
+`tools/release_check.py`, installing only the four Python packages,
+using the runner's `g++`, building no backend and touching no hardware.
+A suite added to that list runs in CI without a change to the workflow.
 
-It is narrower than the local gate. Not run in CI: the three backend
-suites (check 5), and these ten core suites, which only
-`tools/release_check.py` or the loop above runs: `test_cold_reseat`,
-`test_sweep`, `test_calibration_cache`, `test_vendor_isolation`,
-`test_watch_events`, `test_buttons`, `test_poll`,
-`test_cal_wait_scanstop`, `test_cross_unit_check` and
-`test_cr_mismatch_details`. A green CI run therefore says less than
-FULL VERIFICATION PASSED from a local run, and neither says anything
+A green CI run is LIMITED RUN PASSED: the three backend suites
+(check 5) skip there, so it says less than FULL VERIFICATION PASSED
+from a local run against a built backend, and neither says anything
 about an installed backend or the scanner.

@@ -6,6 +6,14 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **CI runs the whole offline gate; version string corrected.** The
+  GitHub Actions workflow now calls `tools/release_check.py --no-backend`
+  instead of its own list of suites, which had fallen behind: ten core
+  suites, among them the stop gate's and the cross-unit tool's, ran only
+  locally. `of135i.__version__` said 0.2.7 while the package metadata
+  said 0.2.9, so `of135i version` and the cross-unit report printed the
+  older number; both now say 0.2.9 and a test holds them equal. Offline.
+
 - **Watch eject failures exit 75** (breaking for wrappers: a failed watch
   eject used to exit 1): a raised exception or Ctrl+C inside `eject()` ends
   the watcher immediately with the session diagnostics. 75 is `EX_TEMPFAIL`
