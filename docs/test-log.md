@@ -8637,8 +8637,10 @@ Not run by the owner. Reported by Krustenviech on issue #35 (2026-11-05
 16:54 UTC: "it always just gives me the overscan file for frame 4") and
 issue #61 with fourteen `.diag.json` sidecars from three strips of one
 colour-135 roll (`digitize --frames 1-6 --dpi 3600`, with IR, film-strip
-holder; two identical holders used in turn, the change between strips 6
-and 7); this entry is the owner's side reading those files (2026-11-06).
+holder; two identical holders used in turn). The reporter's "strip 6" is
+roll-008 and "strip 7" roll-009, with the holder change between them;
+roll-006 is an earlier strip of the same roll (its frames 4 and 5 only).
+This entry is the owner's side reading those files (2026-11-06).
 Hardware: the Steam Deck unit and host of the 2026-11-05 report above
 (v0.2.10's gate as the default: every sidecar `dark_b_substituted` false,
 `poll_timeouts` 0, seven gate waits of at most 15.3 ms).
@@ -8652,7 +8654,8 @@ floor is 0.15 mm, the window is sized for 0.75 mm):
 | roll-008 | 0.24 | 0.25 | 0.19 | no edge ✗ | 0.10 ✗ | 0.21 |
 | roll-009 | 0.29 | 0.28 | 0.18 | 0.14 ✗ | 0.16 | 0.31 (empty) |
 
-Trailing margins 1.18–1.44 mm on every frame. "No edge": the IR verdict
+Trailing margins 1.18–1.44 mm on the twelve frames with an edge. "No
+edge": the IR verdict
 was "leading margin below min_margin_mm", the visible one "no aperture
 found in profile" (the edge was located in IR, too close to the window
 start; the visible channel did not resolve it). The owner's unit at
@@ -8669,8 +8672,8 @@ with a dip of about 0.1 mm in the middle of the strip (frames 1–2 best,
 possibly the holder's own aperture spacing on that unit. Frames 4 and 5
 sit at the floor and fail on some strips, pass on others. No scan is
 wrong; the model was fitted on one scanner (docs/holder-position-
-design.md section 2.2) and this is the first measurement of a second
-one.
+design.md section 2.2) and this is the first measurement of another one
+with the film-strip holder.
 
 **What follows (this commit).** A per-unit position offset,
 `--position-offset MM` on `scan` and `digitize`, moves every window

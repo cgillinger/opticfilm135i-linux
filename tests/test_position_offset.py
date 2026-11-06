@@ -3,7 +3,7 @@
 hardware.
 
 The corrected mean mapping (holder.STRIP_FIDUCIAL) was fitted on one
-scanner. On a second unit every aperture sat about 0.5 mm earlier in
+scanner. On another unit every aperture sat about 0.5 mm earlier in
 the scan window, on all six frames and two holders (issue #61, the
 sidecars of 2026-11-05), so frames 4 and 5 fell under the 0.15 mm
 leading-margin floor. `--position-offset MM` moves every window along
@@ -224,9 +224,84 @@ def test_cli_validates_the_offset_before_hardware():
     parser = cli.build_parser()
     for cmd in (["scan", "--frame", "1", "-o", "x.tiff"],
                 ["digitize", "-o", "d"]):
-        assert parser.parse_args(cmd).position_offset == 0.0, cmd
+        assert parser.parse_args(cmd).position_offset is None, cmd
         assert parser.parse_args(cmd + ["--position-offset", "-0.5"]).position_offset == -0.5
     print("test_cli_validates_the_offset_before_hardware OK")
+
+
+def test_environment_variable_is_the_per_unit_default():
+    """OF135I_POSITION_OFFSET holds a unit's value so it is not retyped on
+    every command; the flag overrides it; a bad value is refused before
+    hardware like a bad flag."""
+    import os
+    from types import SimpleNamespace
+    from of135i import cli
+    env = cli.POSITION_OFFSET_ENV
+    saved = os.environ.get(env)
+    try:
+        os.environ.pop(env, None)
+        assert cli._position_offset(SimpleNamespace(position_offset=None)) == 0.0
+        assert cli._position_offset(SimpleNamespace()) == 0.0
+        assert cli._position_offset(SimpleNamespace(position_offset=-0.5)) == -0.5
+        os.environ[env] = " -0.5 "
+        assert cli._position_offset(SimpleNamespace(position_offset=None)) == -0.5
+        assert cli._position_offset(SimpleNamespace(position_offset=0.2)) == 0.2
+        assert cli._position_offset(SimpleNamespace(position_offset=0.0)) == 0.0   # 0 given wins
+        off, err = cli._resolve_position_offset(SimpleNamespace(position_offset=None))
+        assert (off, err) == (-0.5, None), (off, err)
+        os.environ[env] = ""
+        assert cli._position_offset(SimpleNamespace(position_offset=None)) == 0.0
+        os.environ[env] = "abc"
+        off, err = cli._resolve_position_offset(SimpleNamespace(position_offset=None))
+        assert off is None and err and env in err and "--position-offset" in err, err
+        os.environ[env] = "7"
+        off, err = cli._resolve_position_offset(SimpleNamespace(position_offset=None))
+        assert off is None and "outside" in err, err
+        # the whole command refuses before hardware on a bad environment value
+        import io
+        from contextlib import redirect_stderr
+        parser = cli.build_parser()
+        args = parser.parse_args(["scan", "--frame", "1", "-o", "/nonexistent/x.tiff"])
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            rc = args.func(args)
+        assert rc == 2 and "--position-offset" in buf.getvalue(), (rc, buf.getvalue())
+        # and the sidecar records what the environment gave
+        os.environ[env] = "-0.5"
+        import argparse, json, tempfile
+        from of135i import diag
+
+        class _Sc:
+            last_diag = {"gain_codes": [1, 2, 3], "offset_codes": [4, 5, 6]}
+            last_cal_data = None
+
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "f1.tiff")
+            a = argparse.Namespace(no_diag=False, frames="1", dpi=3600, ir=False,
+                                   positive=False, rotate=0, no_clean=False,
+                                   position_offset=None)
+            cli._write_diag_sidecar(a, _Sc(), out, 1)
+            side = json.loads(Path(diag.sidecar_path(out)).read_text())
+            assert side["cli"]["position_offset"] == -0.5, side["cli"]
+    finally:
+        if saved is None:
+            os.environ.pop(env, None)
+        else:
+            os.environ[env] = saved
+    print("test_environment_variable_is_the_per_unit_default OK")
+
+
+def test_sweep_meta_records_the_offset():
+    from of135i import cli
+    t = dual_tables(600)
+    g, _ = holder.dual_sweep_geometry(
+        1, 4, dpi=600, lines_per_chunk=t.LINES_PER_CHUNK,
+        colour_crop_lines=image.align_shift(600), default_wire_lines=t.DEFAULT_LINES,
+        offset_mm=-0.5)
+    m = cli._sweep_meta(g, 64, 600, 0.75, position_offset_mm=-0.5)
+    assert m["position_offset_mm"] == -0.5
+    assert cli._sweep_meta(g, 64, 600, 0.75)["position_offset_mm"] == 0.0
+    print("test_sweep_meta_records_the_offset OK")
 
 
 def test_cli_refuses_a_bad_offset_with_zero_hardware_activity():
@@ -258,6 +333,7 @@ def test_sidecar_records_the_offset():
         last_diag = {"gain_codes": [1, 2, 3], "offset_codes": [4, 5, 6]}
         last_cal_data = None
 
+    os.environ.pop(cli.POSITION_OFFSET_ENV, None)
     with tempfile.TemporaryDirectory() as d:
         out = os.path.join(d, "f1.tiff")
         for given, want in ((None, 0.0), (-0.5, -0.5)):
@@ -335,6 +411,72 @@ def test_failure_message_carries_the_hint():
     print("test_failure_message_carries_the_hint OK")
 
 
+def _dual_raw_with_short_lead(dpi=600):
+    """A dual-light raw buffer (alternating IR/visible lines) whose
+    opening starts about 0.10 mm into the window: 600 dpi, unbinned, so
+    the plastic run before the opening is 2-3 lines."""
+    import numpy as np
+    from of135i import image as _image
+    from of135i.device import dual_tables
+    t = dual_tables(dpi)
+    W = t.IMAGE_WIDTH
+    sh = _image.align_shift(dpi)
+    lpm = dpi / 25.4
+    lead, trail = 3, int(round(1.3 * lpm))
+    n_ap = int(round(36.0 * lpm))
+    vis_lines = sh + lead + n_ap + trail + sh
+    # whole chunks of wire lines; chunk = t.LINES_PER_CHUNK wire lines
+    chunk_vis = t.LINES_PER_CHUNK // 2
+    vis_lines = -(-vis_lines // chunk_vis) * chunk_vis
+    vis = np.full(vis_lines, 800, dtype=np.uint16)
+    s0 = sh + lead
+    vis[s0:s0 + n_ap] = 20000
+    irr = np.full(vis_lines, 800, dtype=np.uint16)
+    irr[s0:s0 + n_ap] = 60000
+    # interleave: even wire line = IR, odd = visible (image.split_ir)
+    wire = np.empty(2 * vis_lines, dtype=np.uint16)
+    wire[0::2] = irr
+    wire[1::2] = vis
+    buf = np.repeat(np.repeat(wire[:, None], W, axis=1)[:, :, None], 3, axis=2).astype("<u2")
+    return buf.tobytes(), W
+
+
+def test_failure_message_carries_the_hint_on_the_dual_and_digitize_paths():
+    """The IR/digitize path is the one the reporting unit uses (3600 dpi
+    dual): both its failure prints carry the hint."""
+    import io
+    import os
+    import tempfile
+    from contextlib import redirect_stderr, redirect_stdout
+    from types import SimpleNamespace
+    from of135i import cli
+    raw, W = _dual_raw_with_short_lead(600)
+    with tempfile.TemporaryDirectory() as d:
+        # scan's dual path
+        out = os.path.join(d, "f4.tiff")
+        args = SimpleNamespace(dpi=600, overscan=0.75, positive=False, rotate=0,
+                               no_clean=True, ir=True, output=out, frames=None)
+        err, so = io.StringIO(), io.StringIO()
+        with redirect_stderr(err), redirect_stdout(so):
+            cov = cli._finish_dual_scan(args, raw, W, out, write_ir=True)
+        assert cov is not None and not cov.verified, cov
+        assert cov.leading_margin_mm is not None, cov
+        # (600 dpi: a chunk is ~2 mm, so the trailing margin and the hint are large)
+        assert "--position-offset -" in err.getvalue(), err.getvalue()
+        assert not os.path.exists(out)
+        # digitize's per-frame writer, dual branch
+        out2 = os.path.join(d, "f5.tiff")
+        dargs = SimpleNamespace(dpi=600, positive=False, rotate=0, no_clean=True, ir=True,
+                                frames="1-6", film="135")
+        err, so = io.StringIO(), io.StringIO()
+        with redirect_stderr(err), redirect_stdout(so):
+            main, irf, prev, cleaned, cov2 = cli._finish_digitize_frame(
+                dargs, raw, W, out2, True, progress={})
+        assert main is None and not cov2.verified, (main, cov2)
+        assert "--position-offset -" in err.getvalue(), err.getvalue()
+    print("test_failure_message_carries_the_hint_on_the_dual_and_digitize_paths OK")
+
+
 def main():
     tests = [
         test_shifted_model_moves_every_aperture_by_the_offset,
@@ -347,10 +489,13 @@ def main():
         test_dual_wiring_offset_reaches_the_wire_and_the_diag,
         test_sweep_validation_uses_the_scanner_offset,
         test_cli_validates_the_offset_before_hardware,
+        test_environment_variable_is_the_per_unit_default,
+        test_sweep_meta_records_the_offset,
         test_cli_refuses_a_bad_offset_with_zero_hardware_activity,
         test_sidecar_records_the_offset,
         test_hint_from_the_second_units_margins,
         test_failure_message_carries_the_hint,
+        test_failure_message_carries_the_hint_on_the_dual_and_digitize_paths,
     ]
     for t in tests:
         t()

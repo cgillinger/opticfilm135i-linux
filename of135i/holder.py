@@ -304,7 +304,7 @@ class FiducialModel:
         """The same model with every aperture moved ``offset_mm`` along
         the strip (positive = further from the load reference, i.e. later
         in the scan). A per-unit correction: the model was fitted on one
-        scanner, and a second unit's holder sits at a slightly different
+        scanner, and another unit's holder sits at a slightly different
         distance from its load reference (issue #61: about 0.5 mm earlier
         on that unit, on every frame and both holders). Pitch and
         aperture lengths are the holder's and do not change."""

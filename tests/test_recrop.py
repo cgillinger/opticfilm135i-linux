@@ -66,7 +66,8 @@ def _frame_arrays(empty: bool = False):
 
 
 def _write_frame(d: str, stem: str, *, rotate: int = 0, ir: bool = True,
-                 empty: bool = False, sidecar: bool = True, positive: bool = False):
+                 empty: bool = False, sidecar: bool = True, positive: bool = False,
+                 command: str | None = None):
     visible, irr = _frame_arrays(empty)
     k = rotate // 90
     vis_w = np.ascontiguousarray(np.rot90(visible, k)) if k else visible
@@ -77,9 +78,10 @@ def _write_frame(d: str, stem: str, *, rotate: int = 0, ir: bool = True,
         image.write_tiff16(np.stack([ir_w, ir_w, ir_w], axis=-1), p.ir_overscan,
                            dpi=recrop.axis_dpi(DPI, rotate))
     if sidecar:
-        p.sidecar.write_text(json.dumps({"cli": {"dpi": DPI, "rotate": rotate,
-                                                 "positive": positive, "ir": ir,
-                                                 "frame": 4}}))
+        cli = {"dpi": DPI, "rotate": rotate, "positive": positive, "ir": ir, "frame": 4}
+        if command is not None:
+            cli["command"] = command
+        p.sidecar.write_text(json.dumps({"cli": cli}))
     return p, visible, irr
 
 
@@ -176,27 +178,40 @@ def test_refusals():
         res = recrop.recrop(p2.overscan, min_margin_mm=0.0, dry_run=True)
         assert not res.written and res.verified and res.main == str(p2.main), res
         assert not p2.main.exists() and not p2.record.exists()
-        # a positive rendering
-        p3, _, _ = _write_frame(d, "f1", positive=True)
-        try:
-            recrop.recrop(p3.overscan, min_margin_mm=0.0)
-        except recrop.RecropError as e:
-            assert "--positive" in str(e), e
-        else:
-            raise AssertionError("accepted a positive overscan")
-        # no sidecar: the settings must be given
+        # a positive rendering: scan's (and a sidecar without the command key)
+        for cmd in ("scan", None):
+            p3, _, _ = _write_frame(d, "f1", positive=True, command=cmd)
+            try:
+                recrop.recrop(p3.overscan, min_margin_mm=0.0)
+            except recrop.RecropError as e:
+                assert "--positive" in str(e), e
+            else:
+                raise AssertionError(f"accepted a positive overscan ({cmd})")
+        # digitize --positive only adds a preview; its overscan is the negative
+        p3d, _, _ = _write_frame(d, "f9", positive=True, command="digitize")
+        res = recrop.recrop(p3d.overscan, min_margin_mm=0.0)
+        assert res.written, res
+        # no sidecar: BOTH settings must be given (a rotated frame measured
+        # on the wrong axis would be reported as having no opening)
         p4, _, _ = _write_frame(d, "f3", rotate=90, sidecar=False)
-        try:
-            recrop.recrop(p4.overscan, min_margin_mm=0.0)
-        except recrop.RecropError as e:
-            assert "--dpi" in str(e), e
-        else:
-            raise AssertionError("ran without settings")
+        for kw in ({}, {"dpi": DPI}, {"rotate": 90}):
+            try:
+                recrop.recrop(p4.overscan, min_margin_mm=0.0, **kw)
+            except recrop.RecropError as e:
+                assert "--dpi" in str(e) and "--rotate" in str(e), e
+            else:
+                raise AssertionError(f"ran without settings {kw}")
         res = recrop.recrop(p4.overscan, min_margin_mm=0.0, dpi=DPI, rotate=90)
         assert res.written and res.settings_source == "arguments", res
+        # the run record cannot be written: the products are, and the result says so
+        p5, _, _ = _write_frame(d, "f5")
+        p5.record.mkdir()
+        res = recrop.recrop(p5.overscan, min_margin_mm=0.0)
+        assert res.written and p5.main.exists(), res
+        assert res.record_error, res
         # a missing file
         try:
-            recrop.recrop(os.path.join(d, "f9.overscan.tiff"))
+            recrop.recrop(os.path.join(d, "f99.overscan.tiff"))
         except recrop.RecropError as e:
             assert "does not exist" in str(e), e
         else:
@@ -234,6 +249,17 @@ def test_cli_exit_codes_and_messages():
         p6, _, _ = _write_frame(d, "f6", empty=True)
         rc, out, err = _run_cli(["--force", str(p6.overscan)])
         assert rc == 4 and "EMPTY" in err, (rc, out, err)
+        # a frame not processed (2) outranks a margin failure (4), in either order
+        p7, _, _ = _write_frame(d, "f7")
+        rc, out, err = _run_cli([str(p7.overscan), os.path.join(d, "nope.overscan.tiff")])
+        assert rc == 2, (rc, out, err)
+        rc, out, err = _run_cli([os.path.join(d, "nope.overscan.tiff"), str(p7.overscan)])
+        assert rc == 2, (rc, out, err)
+        # a record that cannot be written is a warning, not a failure
+        p8, _, _ = _write_frame(d, "f8")
+        p8.record.mkdir()
+        rc, out, err = _run_cli(["--force", str(p8.overscan)])
+        assert rc == 0 and "run record was not written" in err, (rc, out, err)
     print("test_cli_exit_codes_and_messages OK")
 
 

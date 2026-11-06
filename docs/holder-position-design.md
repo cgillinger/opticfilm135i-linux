@@ -801,10 +801,11 @@ against all 21 archived verified frames). IR-to-visible registration
 measured at 0.4 / 0.06 lines through the same-index crop. Test 61 in
 the test log has the full table.
 
-## 12. A second unit: the per-unit position offset (issue #61, 2026-11-06)
+## 12. Another unit: the per-unit position offset (issue #61, 2026-11-06)
 
 The mean mapping of section 2.2 was fitted on one scanner. The first
-sidecars from another unit (issue #61, fourteen frames of three strips,
+sidecars from another unit with the strip holder (the test log's third
+unit, issue #61, fourteen frames of three strips,
 3600 dpi dual, two identical strip holders; the test log's external
 report of 2026-11-06) show every aperture about 0.5 mm *earlier* in the
 window than the model puts it: leading margins 0.10–0.31 mm against the

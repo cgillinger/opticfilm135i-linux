@@ -75,6 +75,44 @@ WATCH_EXIT_CODES_HELP = (
 _MAX_OVERSCAN_MM = 5.0
 
 
+#: Environment variable holding a per-unit default for --position-offset
+#: (mm). The flag overrides it; unset or empty means 0.
+POSITION_OFFSET_ENV = "OF135I_POSITION_OFFSET"
+
+POSITION_OFFSET_HELP = (
+    "per-unit position correction, mm along the strip (default: the "
+    f"{POSITION_OFFSET_ENV} environment variable, else 0). Every scan window "
+    "is moved by this much: NEGATIVE starts the window earlier (more margin "
+    "before the opening, less after), positive later. Use it when the "
+    ".diag.json's coverage block shows the leading margin much smaller than "
+    "the trailing one on every frame, or when a frame fails with 'leading "
+    "margin below min_margin_mm' and the message suggests a value: the "
+    "geometry was fitted on one scanner, and another unit's holder can sit a "
+    "fraction of a millimetre away from it (issue #61, -0.5 on that unit). "
+    "Checked against the transport travel before anything is sent; at most "
+    "+/-3 mm. Recorded in the sidecar as cli.position_offset and "
+    "position_offset_mm")
+
+
+def _position_offset(args) -> float:
+    """The per-unit position offset for this command, in mm: the
+    --position-offset flag when given, else the OF135I_POSITION_OFFSET
+    environment variable when set and non-empty, else 0.0. Returned
+    unvalidated (a non-numeric value raises ValueError) so that
+    _validate_position_offset can report it; callers validate first."""
+    import os
+    given = getattr(args, "position_offset", None)
+    if given is not None:
+        return float(given)
+    env = os.environ.get(POSITION_OFFSET_ENV, "").strip()
+    if env:
+        try:
+            return float(env)
+        except ValueError:
+            raise ValueError(f"{POSITION_OFFSET_ENV}={env!r} is not a number of mm")
+    return 0.0
+
+
 def _validate_position_offset(offset) -> str | None:
     """Check a --position-offset value (mm, either sign) on its own:
     finite and within holder.POSITION_OFFSET_MAX_MM. Returns an error
@@ -85,6 +123,20 @@ def _validate_position_offset(offset) -> str | None:
     except ValueError as e:
         return f"--position-offset: {e}"
     return None
+
+
+def _resolve_position_offset(args) -> "tuple[float | None, str | None]":
+    """(offset, None) when the command's position offset is valid, else
+    (None, message). Reads the flag or the environment variable
+    (_position_offset) and range-checks it."""
+    try:
+        offset = _position_offset(args)
+    except ValueError as e:
+        return None, f"--position-offset: {e}"
+    err = _validate_position_offset(offset)
+    if err is not None:
+        return None, err
+    return offset, None
 
 
 def _validate_overscan(overscan: float, frames, dpi: int = 3600,
@@ -132,7 +184,9 @@ def _validate_overscan(overscan: float, frames, dpi: int = 3600,
                     else f"--overscan {overscan} mm")
             return f"{what} is out of range for frame {frame}: {e}"
         except ValueError as e:
-            return f"--position-offset: {e}"
+            if "position offset" in str(e):
+                return f"--position-offset: {e}"
+            return f"the scan window for frame {frame} is not valid: {e}"
     return None
 
 
@@ -267,9 +321,8 @@ def _axis_dpi(args, positive: bool):
     axes; the positive path adds a rot90(,3) (the horizontal mirror does
     not swap axes), --rotate adds args.rotate // 90. An even number of
     quarter-turns keeps (across, along); an odd number swaps it."""
-    across, along = image.sampling_resolution(args.dpi)
-    quarter = ((3 if positive else 0) + (getattr(args, "rotate", 0) or 0) // 90) % 2
-    return (along, across) if quarter else (across, along)
+    from .recrop import axis_dpi
+    return axis_dpi(args.dpi, (3 if positive else 0) * 90 + (getattr(args, "rotate", 0) or 0))
 
 
 def _write_image(arr, out: str, positive: bool = False, dpi=None) -> None:
@@ -380,8 +433,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # Validate --position-offset, then --overscan and its whole geometry,
     # before opening the device, so a bad value is refused with zero
     # hardware activity (Astra point 3).
-    offset = float(getattr(args, "position_offset", 0.0) or 0.0)
-    err = _validate_position_offset(offset)
+    offset, err = _resolve_position_offset(args)
     if err is not None:
         print(f"error: {err}", file=sys.stderr)
         return 2
@@ -420,7 +472,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         scanner.park_mode = args.park
         scanner.recalibrate = bool(getattr(args, 'recalibrate', False))
         scanner.cal_wait_scanstop = getattr(args, "cal_wait_scanstop", "enforce")
-        scanner.position_offset_mm = float(getattr(args, "position_offset", 0.0) or 0.0)
+        scanner.position_offset_mm = _position_offset(args)
         if getattr(args, 'warmup_budget', None) is not None:
             scanner.warmup_budget_s = float(args.warmup_budget)
         # Read-only start-state check up front, so an unsafe scanner
@@ -1515,6 +1567,7 @@ def _write_diag_sidecar(args: argparse.Namespace, scanner: Scanner, out: str,
             if not film["present"]:
                 sidecar["coverage"]["reason"] = "empty aperture"
     sidecar["cli"] = {
+        "command": getattr(args, "command", None),   # "scan" or "digitize"
         "frame": frame,
         "frames": args.frames,
         "dpi": args.dpi,
@@ -1523,7 +1576,7 @@ def _write_diag_sidecar(args: argparse.Namespace, scanner: Scanner, out: str,
         "rotate": args.rotate,
         "no_clean": args.no_clean,
         "overscan": getattr(args, "overscan", None),
-        "position_offset": float(getattr(args, "position_offset", 0.0) or 0.0),
+        "position_offset": _position_offset(args),
     }
     # Per-pixel calibration data (device.Scanner.last_cal_data): only a
     # fresh calibration has any, and --no-cal-data skips it. Decided and
@@ -2660,8 +2713,7 @@ def _sweep_validate(args: argparse.Namespace) -> "tuple[list[int] | None, str | 
     dual = bool(args.ir or args.dpi != 3600)
     if not dual:
         return None, _SWEEP_PLAIN_WITHDRAWN_MSG
-    offset = float(getattr(args, "position_offset", 0.0) or 0.0)
-    err = _validate_position_offset(offset)
+    offset, err = _resolve_position_offset(args)
     if err is not None:
         return None, err
     try:
@@ -2885,7 +2937,7 @@ def _digitize_sweep(args: argparse.Namespace) -> int:
         scanner.park_mode = args.park
         scanner.recalibrate = bool(getattr(args, "recalibrate", False))
         scanner.cal_wait_scanstop = getattr(args, "cal_wait_scanstop", "enforce")
-        scanner.position_offset_mm = float(getattr(args, "position_offset", 0.0) or 0.0)
+        scanner.position_offset_mm = _position_offset(args)
         if getattr(args, "warmup_budget", None) is not None:
             scanner.warmup_budget_s = float(args.warmup_budget)
         scanner.check_start_state()
@@ -3111,11 +3163,11 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
         return 2
     # --position-offset and every frame's window with it, before the load
     # prompt and any hardware (as `scan` validates --overscan).
-    offset = float(getattr(args, "position_offset", 0.0) or 0.0)
-    err = (_validate_position_offset(offset)
-           or _validate_overscan(holder.OVERSCAN_MM, dig_frames, dpi=args.dpi,
+    offset, err = _resolve_position_offset(args)
+    if err is None:
+        err = _validate_overscan(holder.OVERSCAN_MM, dig_frames, dpi=args.dpi,
                                  dual=bool(args.ir or args.dpi != 3600),
-                                 offset_mm=offset))
+                                 offset_mm=offset)
     if err is not None:
         print(f"error: {err}", file=sys.stderr)
         return 2
@@ -3219,7 +3271,7 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
         scanner.park_mode = args.park
         scanner.recalibrate = bool(getattr(args, "recalibrate", False))
         scanner.cal_wait_scanstop = getattr(args, "cal_wait_scanstop", "enforce")
-        scanner.position_offset_mm = float(getattr(args, "position_offset", 0.0) or 0.0)
+        scanner.position_offset_mm = _position_offset(args)
         if getattr(args, "warmup_budget", None) is not None:
             scanner.warmup_budget_s = float(args.warmup_budget)
         scanner.check_start_state()
@@ -3435,13 +3487,10 @@ def _cmd_recrop(args: argparse.Namespace) -> int:
     """`of135i recrop FILE...`: the aperture-registered products from
     preserved overscan frames (of135i.recrop), no scanner involved. Exit 0
     when every frame was written, 4 when any frame's coverage did not
-    verify at the chosen margin (or its opening was empty), 2 when a
+    verify at the chosen margin (or its opening was empty), 2 when any
     frame could not be processed at all (file missing, settings unknown,
-    a product in the way)."""
+    a product in the way; this outranks 4)."""
     from . import recrop as _recrop
-    if not args.files:
-        print("error: give at least one overscan file (fN.overscan.tiff)", file=sys.stderr)
-        return 2
     min_margin = 0.0 if args.force else float(args.min_margin)
     if not (min_margin >= 0):
         print(f"error: --min-margin must be >= 0 mm, got {args.min_margin}", file=sys.stderr)
@@ -3454,7 +3503,7 @@ def _cmd_recrop(args: argparse.Namespace) -> int:
                                  write_ir=not args.no_ir, dry_run=args.dry_run)
         except _recrop.RecropError as e:
             print(f"error: {e}", file=sys.stderr)
-            rc = 2 if rc == 0 else rc
+            rc = 2                      # a frame not processed outranks a margin failure
             continue
         margins = ("" if res.leading_margin_mm is None else
                    f" — margins lead {res.leading_margin_mm:.3f} mm, trail "
@@ -3464,6 +3513,11 @@ def _cmd_recrop(args: argparse.Namespace) -> int:
             print(f"{res.overscan}: aperture coverage VERIFIED at a {res.min_margin_mm:.2f} mm "
                   f"floor (source: {res.source}){margins}")
             print(f"  {what} {res.main}" + (f" and {res.ir}" if res.ir else ""))
+        if res.record_error:
+            print(f"warning: {res.overscan}: the run record was not written: "
+                  f"{res.record_error}", file=sys.stderr)
+        if res.verified and res.film_present:
+            pass
         elif res.verified:
             print(f"{res.overscan}: aperture EMPTY — no film in this opening; nothing written",
                   file=sys.stderr)
@@ -3627,8 +3681,8 @@ def build_parser() -> argparse.ArgumentParser:
              "overscan frame(s) to <o>.overscan.<ext> (and "
              "<stem>-ir.overscan.tiff); on a coverage failure only the "
              "overscan raw is kept and the exit status is non-zero")
-    p_scan.add_argument("--position-offset", type=float, default=0.0, metavar="MM",
-        help="per-unit position correction, mm along the strip (default 0). Every scan window is moved by this much: NEGATIVE starts the window earlier (more margin before the opening, less after), positive later. Use it when the .diag.json's coverage block shows the leading margin much smaller than the trailing one on every frame, or when a frame fails with 'leading margin below min_margin_mm' and the message suggests a value: the geometry was fitted on one scanner, and another unit's holder can sit a fraction of a millimetre away from it (issue #61, -0.5 on that unit). Checked against the transport travel before anything is sent; at most +/-3 mm. Recorded in the sidecar as cli.position_offset and position_offset_mm")
+    p_scan.add_argument("--position-offset", type=float, default=None, metavar="MM",
+        help=POSITION_OFFSET_HELP)
     p_scan.add_argument("--cal-wait-scanstop", choices=("off", "enforce"), default="enforce",
         help="calibration stop gate (docs/cal-scanstop-gate.md, issue #35). "
              "'enforce' (default) waits, after each calibration acquisition's "
@@ -3843,8 +3897,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip IR-based dust/scratch removal on the visible image")
     p_dig.add_argument("--no-diag", action="store_true",
         help="skip writing per-frame .diag.json sidecars")
-    p_dig.add_argument("--position-offset", type=float, default=0.0, metavar="MM",
-        help="per-unit position correction, mm along the strip (default 0). Every scan window is moved by this much: NEGATIVE starts the window earlier (more margin before the opening, less after), positive later. Use it when the .diag.json's coverage block shows the leading margin much smaller than the trailing one on every frame, or when a frame fails with 'leading margin below min_margin_mm' and the message suggests a value: the geometry was fitted on one scanner, and another unit's holder can sit a fraction of a millimetre away from it (issue #61, -0.5 on that unit). Checked against the transport travel before anything is sent; at most +/-3 mm. Recorded in the sidecar as cli.position_offset and position_offset_mm")
+    p_dig.add_argument("--position-offset", type=float, default=None, metavar="MM",
+        help=POSITION_OFFSET_HELP)
     p_dig.add_argument("--cal-wait-scanstop", choices=("off", "enforce"), default="enforce",
         help="calibration stop gate (docs/cal-scanstop-gate.md, issue #35). "
              "'enforce' (default) waits, after each calibration acquisition's "

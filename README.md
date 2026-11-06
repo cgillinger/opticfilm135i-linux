@@ -465,7 +465,9 @@ the unit that reported it, issue #61) fail with `leading margin below
 min_margin_mm`. The failure message then suggests the correction, and
 `--position-offset MM` (on `scan` and `digitize`) applies it: every scan
 window is moved along the strip by that much, negative for earlier
-(`--position-offset -0.5` on that unit). Read the value off a frame's
+(`--position-offset -0.5` on that unit). A unit's value can be set once
+in the environment instead of on every command, `export
+OF135I_POSITION_OFFSET=-0.5`; the flag overrides it. Read the value off a frame's
 `.diag.json`: with `coverage.leading_margin_mm` and
 `coverage.trailing_margin_mm` the offset that centres the opening is
 `(leading − trailing) / 2`; aim for the two margins to come out about
@@ -657,14 +659,18 @@ floor but whose opening was located (the usual case on a unit whose
 frames sit early or late, issue #61): `--min-margin 0.05` accepts such a
 frame, `--force` accepts any located edge. It does exactly the delivery
 step of `scan`/`digitize` on the stored files (IR first on a dual frame,
-an empty opening refused, both channels cropped to the same lines,
-rotated as the files are), reads the resolution and rotation from
-`fN.diag.json` (or `--dpi`/`--rotate`), never alters the overscan files,
-refuses to overwrite a product without `--overwrite`, writes a
-`fN.recrop.json` record, and leaves the digitize manifest as it was. A
-`scan --positive` frame cannot be recropped (its overscan file is the
-positive rendering). Exit 0 when every frame was written, 4 when one did
-not verify at the chosen floor, 2 when one could not be processed.
+an empty opening refused as `digitize` refuses it, both channels cropped
+to the same lines, rotated as the files are), reads the resolution and
+rotation from `fN.diag.json` (or both `--dpi` and `--rotate`), never
+alters the overscan files, refuses to overwrite a product without
+`--overwrite`, writes a `fN.recrop.json` record, and leaves the digitize
+manifest as it was. A `scan --positive` frame cannot be recropped (its
+overscan file is the positive rendering; `digitize --positive` frames
+are fine, their overscan is the negative). Exit 0 when every frame was
+written (or, with `--dry-run`, would be), 4 when a frame did not verify
+at the chosen floor or its opening was empty, 2 when any frame could not
+be processed at all (a missing file, unknown settings, a product in the
+way; this outranks 4).
 
 The exit codes of `watch` are also printed by `of135i watch --help`; the
 text below is the same and a test keeps the two identical.
