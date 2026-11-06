@@ -849,6 +849,8 @@ a frame's sidecar and given by hand; an automatic per-load reference
 Frames already refused are recovered without a scan by `of135i recrop`,
 which runs the section 5 delivery step on the preserved overscan files
 with a margin floor the operator chooses. Offline-verified
-(tests/test_position_offset.py, tests/test_recrop.py); the offset has
-not run on hardware, and the first hardware value is to come from the
-reporting unit's next strip.
+(tests/test_position_offset.py, tests/test_recrop.py); the offset's
+mechanism is hardware-verified on the owner's unit (Test 120: FEEDL
+moves by exactly the offset, the window does not, the measured margins
+follow to within the edge finder's step). The first value for the
+reporting unit is to come from its next strip.

@@ -8683,5 +8683,53 @@ computes the value from the frame's own margins (−0.6 for roll-006
 frame 4). `of135i recrop` makes the products from the preserved overscan
 files with a chosen margin floor, so these frames need no second scan.
 Both offline-verified (tests/test_position_offset.py, tests/
-test_recrop.py); the offset has not run on hardware. A value for this
-unit is to come from its next strip's sidecars.
+test_recrop.py); the offset's mechanism on hardware is Test 120 below.
+A value for this unit is to come from its next strip's sidecars.
+
+## 2026-11-06 — Test 120: the per-unit position offset on hardware (owner's unit) — three scans of frame 1 at 0, −0.3 and +0.3 mm: FEEDL moves by exactly the offset, the window does not, and the measured margins follow it to within the edge finder's step
+
+Hardware, owner's unit and host, branch `claude/gallant-clarke-1qm28f`
+at 0bd5825 (the three commits after master b345152; `release_check`
+without `--no-backend` against the built backend: 762 tests, 0 skipped,
+FULL VERIFICATION PASSED on this tree). Cold start, `of135i load`
+(normal: "loader sensor set (status 0xd855) -- no re-seating", jog,
+reinsert, `f455` then `dc55`), then three `scan --frame 1 --ir` at
+3600 dpi dual, one load, the film-strip holder with a colour strip,
+`OF135I_POSITION_OFFSET` unset, `--position-offset` 0, −0.3 and +0.3,
+then eject. The first hardware run of the offset anywhere; nothing else
+in the branch touches the wire.
+
+| | offset 0 | offset −0.3 | offset +0.3 |
+|---|---|---|---|
+| `position_offset_mm` (sidecar) | 0.0 | −0.3 | 0.3 |
+| FEEDL | 6538 | 6453 (−85) | 6623 (+85) |
+| wire lines / chunks | 10720 / 670 | 10720 / 670 | 10720 / 670 |
+| commanded margins (log) | 0.750 / 0.779 | 0.750 / 0.779 | 0.750 / 0.779 |
+| measured lead / trail, mm | 0.787 / 0.766 | 1.114 / 0.437 | 0.516 / 1.035 |
+| coverage | VERIFIED (ir) | VERIFIED (ir) | VERIFIED (ir) |
+| product, lines | 5117 | 5118 | 5117 |
+| gains R/G/B | 0x2c/0x20/0x26 | 0x2c/0x20/0x26 | 0x2c/0x20/0x27 |
+| offsets | 010a/0109/010a | 010a/010a/010a | 010a/010a/010a |
+| poll timeouts / cr mismatches | 0 / 23 | 0 / 25 | 0 / 22 |
+
+0.3 mm is 85.04 motor units (1/7200 in), so FEEDL moved by exactly the
+offset, in both directions, while the line count, the chunk count and
+the commanded margins (which are relative to the shifted model) stayed
+the same: the window moved, nothing else. In the images the opening
+moved the other way, as it must: the leading margin grew by 0.327 mm at
+−0.3 and shrank by 0.271 mm at +0.3, the trailing one the reverse
+(−0.329 / +0.269), their sum 1.55 mm in all three. The deviation from
+0.300 is one step of the edge finder (at 3600 dpi it bins to ~600 dpi
+before detecting, 0.042 mm per step) and is the same for both edges
+within a scan. Scans and transport otherwise as always: `poll_timeouts`
+0, the two cold-session `d855`/`dc55` warnings before the first scan as
+on every run, calibration values within the usual spread.
+
+**Result.** `--position-offset` is hardware-verified on this unit for
+the plain mechanism it is: a FEEDL move of the given size and sign with
+the window unchanged, and the sidecar records it. What it is for (a
+unit whose apertures sit 0.5 mm off the model, issue #61) is still to be
+shown on that unit; the value for it, −0.5 or −0.6 from its own
+sidecars, is predicted from this test to put its margins where this
+unit's are. The sweep paths carry the same offset through the same
+function and were not run (no change to their wire other than FEEDL).

@@ -24,7 +24,10 @@ one exists; "offline" means implemented and tested without the scanner.
   coverage failure whose two margins are known now ends with the value
   that would centre the opening (e.g. `--position-offset -0.6` for that
   unit's frame 4). Offline-verified (`tests/test_position_offset.py`,
-  17 tests); not run on hardware. Reported by Krustenviech.
+  17 tests) and hardware-verified on the owner's unit (Test 120: three
+  scans at 0, −0.3 and +0.3 mm, FEEDL moved by exactly the offset, the
+  margins followed it); not yet run on the unit it is for. Reported by
+  Krustenviech.
 - **`digitize --album NAME`: one folder per film, photographs numbered
   01–36 through the strips (issue #65).** Each strip keeps its
   `roll-NNN/` with the holder's `f1`–`f6`; the album `<out>/NAME/` holds
