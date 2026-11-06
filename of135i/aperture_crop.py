@@ -244,6 +244,32 @@ def margin_warning(coverage: ApertureCoverage,
             f"inside it; check the crop against the strip's other frames")
 
 
+def position_offset_hint(coverage: ApertureCoverage, step_mm: float = 0.1) -> dict | None:
+    """From a verdict with both margins, the per-unit --position-offset
+    that would centre the opening in the window, rounded to ``step_mm``.
+
+    The window is moved along the strip by the offset: a positive offset
+    starts it later, so the leading margin shrinks and the trailing one
+    grows by the same amount. Equal margins therefore need
+    offset = (leading - trailing) / 2. Returns {"off_centre_mm": how far
+    the opening's centre sits from the window's (positive = towards the
+    trailing end, i.e. the window started late), "offset_mm": the
+    suggested flag value}, or None when a margin is unknown (an edge was
+    not found) or the opening is already centred to within ``step_mm``.
+    A hint, not a measurement of the unit: one frame's margins also carry
+    the load-to-load spread (docs/holder-position-design.md section 2.3).
+    """
+    lead, trail = coverage.leading_margin_mm, coverage.trailing_margin_mm
+    if lead is None or trail is None:
+        return None
+    offset = (lead - trail) / 2.0
+    if step_mm > 0:
+        offset = round(round(offset / step_mm) * step_mm, 3)
+    if offset == 0:
+        return None
+    return {"off_centre_mm": (trail - lead) / 2.0, "offset_mm": offset}
+
+
 def measure_coverage_dual(visible, ir, *, dpi, min_margin_mm=0.15) -> ApertureCoverage:
     """Coverage for a dual-light (IR) pass: IR first, then visible.
 

@@ -8578,3 +8578,107 @@ unit (the waits are single reads here), and the one-strip `digitize`
 path behaves on hardware as it did before the two-strip code was
 removed. One strip, one profile; the per-frame cycle of `digitize` and
 110 film have not run since either change.
+
+## 2026-11-06 — External report (issue #35): the cross-unit check on the second unit, gated only — 4 of 4 completed, exit 0; coverage VERIFIED at frame 1 with the slide holder
+
+Not run by the owner. Reported by bearyjd on issue #35 (comment of
+2026-11-06 04:09 UTC) with the tool's evidence (report, summary, plan,
+log, both `doctor` files and four `.diag.json`; no images) in a gist;
+this entry is the owner's side reading those files. Hardware: bearyjd's
+unit and host, upstream master b345152, `tools/cross_unit_check.py
+--out results/xu-01 --sequence on,on,on,on` in a real terminal, slide
+holder with slides in it (the same holder and slides as the A/B of
+2026-11-04 above), scanner power-cycled first, magazine in the slot, the
+eject watcher stopped. The cold start logged "loader sensor set (status
+0xd855) -- no re-seating": the untested re-seating branch did not come
+up. `python3 -m of135i eject` afterwards ejected.
+
+**Result: ok, 4 of 4 completed, exit 0.**
+
+| run | gate | exit | seconds | dark_b substituted | poll timeouts | cr mismatches | gate waits |
+|---|---|---|---|---|---|---|---|
+| 1 | enforce | 0 | 17.18 | false | 0 | 46 | 7 |
+| 2 | enforce | 0 | 17.01 | false | 0 | 45 | 7 |
+| 3 | enforce | 0 | 17.01 | false | 0 | 44 | 7 |
+| 4 | enforce | 0 | 17.07 | false | 0 | 46 | 7 |
+
+Every gate wait ended `clear`; the 28 waits took 5.7–24.2 ms (2–6 reads
+of reg 0x100 and one of reg 0x101 each; `last_100` f055, `last_101`
+dc55, d855 after the shading measurement). Offsets and gains were the
+same in all four runs (gain R=0x2b G=0x21 B=0x27, offsets R=0x010a
+G=0x0109 B=0x010a). The `doctor` after the run: idle-homed (reg 0x01 =
+0x22), magazine present.
+
+**Coverage, not expected.** Every scan reported `aperture coverage:
+VERIFIED (source: ir)` and exited 0, margins lead 2.43–2.48 mm and trail
+2.40–2.44 mm, with the slide holder. The A/B of 2026-11-04 had scanned
+frame 4 and exited 4 on every scan; this run scanned frame 1 (the tool's
+default). The entry of 2026-11-05 above ("the exit 4 explained") took
+the slide holder for the cause. That reading is withdrawn: the opening
+is located on this holder too, at frame 1 at least. The margins are
+about 1.7 mm wider than a strip-holder frame's (the slide holder's
+opening is shorter than the film-strip holder's; the geometry positions
+to the strip holder's apertures). Together with the issue #61 report
+below, the exit 4 at frame 4 reads as a position difference between
+units, with the frame's own opening length on top; one frame each way,
+an observation, not a conclusion. bearyjd offers frames 2, 3 and 4 with
+the same setup; asked for.
+
+**Conclusions.** The second-unit confirmation of the cross-unit protocol:
+the gate as the default (v0.2.10) completes four gated scans in a row on
+the unit that fails every ungated scan (2026-11-04 above), with the same
+calibration values each time and the longest stop wait at 24 ms against
+the 0.3 s budget. SANE v9's first step on this unit is reported as
+"different" and is awaited on issue #50.
+
+## 2026-11-06 — External report (issue #61): a third unit's frames sit about 0.5 mm earlier than the model, on every frame and both holders — frames 4 and 5 under the 0.15 mm leading-margin floor; the per-unit position offset and `recrop`
+
+Not run by the owner. Reported by Krustenviech on issue #35 (2026-11-05
+16:54 UTC: "it always just gives me the overscan file for frame 4") and
+issue #61 with fourteen `.diag.json` sidecars from three strips of one
+colour-135 roll (`digitize --frames 1-6 --dpi 3600`, with IR, film-strip
+holder; two identical holders used in turn, the change between strips 6
+and 7); this entry is the owner's side reading those files (2026-11-06).
+Hardware: the Steam Deck unit and host of the 2026-11-05 report above
+(v0.2.10's gate as the default: every sidecar `dark_b_substituted` false,
+`poll_timeouts` 0, seven gate waits of at most 15.3 ms).
+
+Leading margin in mm, 3600 dpi dual (`coverage.leading_margin_mm`; the
+floor is 0.15 mm, the window is sized for 0.75 mm):
+
+| strip | f1 | f2 | f3 | f4 | f5 | f6 |
+|---|---|---|---|---|---|---|
+| roll-006 | | | | 0.10 ✗ | no edge ✗ | |
+| roll-008 | 0.24 | 0.25 | 0.19 | no edge ✗ | 0.10 ✗ | 0.21 |
+| roll-009 | 0.29 | 0.28 | 0.18 | 0.14 ✗ | 0.16 | 0.31 (empty) |
+
+Trailing margins 1.18–1.44 mm on every frame. "No edge": the IR verdict
+was "leading margin below min_margin_mm", the visible one "no aperture
+found in profile" (the edge was located in IR, too close to the window
+start; the visible channel did not resolve it). The owner's unit at
+3600 dpi gives lead 0.69–0.75 and trail 0.72–0.84 mm (Test 83, the
+first production strips).
+
+**Reading.** The whole picture is in every frame's `f4.overscan.tiff`
+(the opening was captured; only the margin before it is short). The
+shift is the unit's, not one holder's: both holders show it, and it is
+on every frame. It is a constant of about −0.5 mm (the lead shrinks and
+the trail grows by the same amount, their sum 1.3–1.7 mm as designed)
+with a dip of about 0.1 mm in the middle of the strip (frames 1–2 best,
+4–5 worst, 6 back up): not a growth along the strip, so not the pitch;
+possibly the holder's own aperture spacing on that unit. Frames 4 and 5
+sit at the floor and fail on some strips, pass on others. No scan is
+wrong; the model was fitted on one scanner (docs/holder-position-
+design.md section 2.2) and this is the first measurement of a second
+one.
+
+**What follows (this commit).** A per-unit position offset,
+`--position-offset MM` on `scan` and `digitize`, moves every window
+along the strip (the fiducial model shifted; −0.5 on this unit would put
+its margins where the owner's are), and the coverage-failure message
+computes the value from the frame's own margins (−0.6 for roll-006
+frame 4). `of135i recrop` makes the products from the preserved overscan
+files with a chosen margin floor, so these frames need no second scan.
+Both offline-verified (tests/test_position_offset.py, tests/
+test_recrop.py); the offset has not run on hardware. A value for this
+unit is to come from its next strip's sidecars.

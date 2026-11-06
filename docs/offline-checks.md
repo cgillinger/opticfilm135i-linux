@@ -80,7 +80,8 @@ for t in test_safety test_cold_reseat test_calibrate test_hwblock \
          test_film110_sideband test_vendor_isolation test_watch_events \
          test_buttons test_release_check test_poll test_white_blockage \
          test_cal_wait_scanstop test_cross_unit_check \
-         test_cr_mismatch_details test_trace_recorder; do
+         test_cr_mismatch_details test_trace_recorder \
+         test_position_offset test_recrop; do
     .venv/bin/python tests/$t.py || exit 1
 done
 ```

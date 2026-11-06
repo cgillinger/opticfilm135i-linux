@@ -457,6 +457,23 @@ every dust speck appeared three times in the IR image).
 five dual profiles in Test 61, including measured sub-line IR-to-
 visible registration.)
 
+**A scanner whose frames sit early or late.** The positioning model was
+fitted on one scanner. On another unit the holder can sit a fraction of
+a millimetre away from it: every frame then has a small margin on one
+side and a large one on the other, and the tightest frames (4 and 5 on
+the unit that reported it, issue #61) fail with `leading margin below
+min_margin_mm`. The failure message then suggests the correction, and
+`--position-offset MM` (on `scan` and `digitize`) applies it: every scan
+window is moved along the strip by that much, negative for earlier
+(`--position-offset -0.5` on that unit). Read the value off a frame's
+`.diag.json`: with `coverage.leading_margin_mm` and
+`coverage.trailing_margin_mm` the offset that centres the opening is
+`(leading − trailing) / 2`; aim for the two margins to come out about
+equal (0.6–0.8 mm each at the default overscan). The margins, window
+length and transport checks are otherwise unchanged, and the value is
+recorded in the sidecar. Frames already scanned and refused do not need
+scanning again: see `recrop` under "Other commands".
+
 `--park {semantic,verbatim}` selects the park phase: `semantic` (the
 default) sends the same motor sequence with real condition waits,
 `verbatim` replays the captured stream byte for byte (see
@@ -514,7 +531,10 @@ in your editor. On the plain 3600 path each frame carries the same
 aperture-registered contract as `scan`: `fN.overscan.tiff` preserves the
 full window, `fN.tiff` is the verified crop, and a frame whose coverage
 does not verify gets **no** `fN.tiff` — the roll is recorded failed with
-the reason in the manifest, and is re-run whole. `--positive` writes a **separate** `fN-preview.tiff` and
+the reason in the manifest, and is re-run whole (or, when the opening was
+located and only the margin was short, cropped from the overscan file
+with `recrop`; and `--position-offset` corrects the next strips on a unit
+whose frames sit early or late). `--positive` writes a **separate** `fN-preview.tiff` and
 leaves the negative untouched; `--roll N` targets a specific roll,
 `--no-ir` drops the IR output (non-3600 profiles still capture dual-light).
 `--film 110` digitises a 110 strip as a roll of passes: run the roll again
@@ -627,7 +647,24 @@ stdout/stderr pipe can no longer abort a scan.
 .venv/bin/python -m of135i doctor --json report.json   # full read-only health report
 .venv/bin/python -m of135i watch                   # ejects on the Eject button only; prints other buttons
 .venv/bin/python -m of135i buttons [--duration S]  # read-only: print button presses
+.venv/bin/python -m of135i recrop --min-margin 0.05 roll-006/f4.overscan.tiff   # no scanner: crop a refused frame
 ```
+
+`recrop` makes `fN.tiff` (and `fN-ir.tiff`) from a frame's preserved
+`fN.overscan.tiff` (and `fN-ir.overscan.tiff`) without scanning again.
+Use it for a frame that was refused with a margin below the 0.15 mm
+floor but whose opening was located (the usual case on a unit whose
+frames sit early or late, issue #61): `--min-margin 0.05` accepts such a
+frame, `--force` accepts any located edge. It does exactly the delivery
+step of `scan`/`digitize` on the stored files (IR first on a dual frame,
+an empty opening refused, both channels cropped to the same lines,
+rotated as the files are), reads the resolution and rotation from
+`fN.diag.json` (or `--dpi`/`--rotate`), never alters the overscan files,
+refuses to overwrite a product without `--overwrite`, writes a
+`fN.recrop.json` record, and leaves the digitize manifest as it was. A
+`scan --positive` frame cannot be recropped (its overscan file is the
+positive rendering). Exit 0 when every frame was written, 4 when one did
+not verify at the chosen floor, 2 when one could not be processed.
 
 The exit codes of `watch` are also printed by `of135i watch --help`; the
 text below is the same and a test keeps the two identical.
