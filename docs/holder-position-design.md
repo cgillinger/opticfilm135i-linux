@@ -800,3 +800,57 @@ scale next to a narrow rebate strip (of135i/aperture.py, validated
 against all 21 archived verified frames). IR-to-visible registration
 measured at 0.4 / 0.06 lines through the same-index crop. Test 61 in
 the test log has the full table.
+
+## 12. Another unit: the per-unit position offset (issue #61, 2026-11-06)
+
+The mean mapping of section 2.2 was fitted on one scanner. The first
+sidecars from another unit with the strip holder (the test log's third
+unit, issue #61, fourteen frames of three strips,
+3600 dpi dual, two identical strip holders; the test log's external
+report of 2026-11-06) show every aperture about 0.5 mm *earlier* in the
+window than the model puts it: leading margins 0.10–0.31 mm against the
+0.75 mm the window is sized for, trailing 1.18–1.44 mm, the sum as
+designed. The shift is the same on both holders and on every frame, with
+a 0.1 mm dip at frames 3–5 — a unit constant (where that unit's load
+reference leaves the holder), not a pitch error, and nothing a scan did
+wrong. Frames 4 and 5 fell under the section 5 floor (0.15 mm) and were
+refused, the picture whole in their overscan files.
+
+The ±0.5 mm design worst case of section 4 was the *load-to-load*
+spread on one unit; a unit-to-unit offset of the same size on top of it
+leaves no leading margin at all. Rather than widen the overscan for
+everyone (more lines per frame on every unit), the model is shifted
+per unit:
+
+- `holder.FiducialModel.shifted(offset_mm)` moves `base_hwdpi` by the
+  offset; pitch and aperture lengths are the holder's and stay. Every
+  geometry function (`overscan_geometry`, `dual_overscan_geometry`, the
+  two sweep geometries) takes `offset_mm` and applies it once, so the
+  window's FEEDL moves by exactly the offset while the line count,
+  chunk count and margins (relative to the shifted model) are what
+  section 4 derives. The end position is range-checked after the
+  shift; `holder.check_position_offset` bounds it at ±3 mm.
+- `Scanner.position_offset_mm` carries it to the wire on the plain,
+  dual and sweep paths and into the diag record
+  (`position_offset_mm`); the CLI's `--position-offset MM` (`scan`,
+  `digitize`) validates it and every frame's window before any
+  hardware step, and the sidecar's `cli` block and `sweep.json` record
+  it.
+- A coverage failure that found both edges now states the offset that
+  would centre the opening, `(leading − trailing) / 2`
+  (`aperture_crop.position_offset_hint`; −0.6 mm for that unit's frame
+  4). The per-scan verification of section 5 is unchanged and is what
+  tells an operator the value is right: the two margins come out about
+  equal.
+
+What this does *not* do: measure the unit itself. The value is read off
+a frame's sidecar and given by hand; an automatic per-load reference
+(option D of section 3) stays rejected for the reasons given there.
+Frames already refused are recovered without a scan by `of135i recrop`,
+which runs the section 5 delivery step on the preserved overscan files
+with a margin floor the operator chooses. Offline-verified
+(tests/test_position_offset.py, tests/test_recrop.py); the offset's
+mechanism is hardware-verified on the owner's unit (Test 120: FEEDL
+moves by exactly the offset, the window does not, the measured margins
+follow to within the edge finder's step). The first value for the
+reporting unit is to come from its next strip.

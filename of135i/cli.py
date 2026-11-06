@@ -75,13 +75,79 @@ WATCH_EXIT_CODES_HELP = (
 _MAX_OVERSCAN_MM = 5.0
 
 
+#: Environment variable holding a per-unit default for --position-offset
+#: (mm). The flag overrides it; unset or empty means 0.
+POSITION_OFFSET_ENV = "OF135I_POSITION_OFFSET"
+
+POSITION_OFFSET_HELP = (
+    "per-unit position correction, mm along the strip (default: the "
+    f"{POSITION_OFFSET_ENV} environment variable, else 0). Every scan window "
+    "is moved by this much: NEGATIVE starts the window earlier (more margin "
+    "before the opening, less after), positive later. Use it when the "
+    ".diag.json's coverage block shows the leading margin much smaller than "
+    "the trailing one on every frame, or when a frame fails with 'leading "
+    "margin below min_margin_mm' and the message suggests a value: the "
+    "geometry was fitted on one scanner, and another unit's holder can sit a "
+    "fraction of a millimetre away from it (issue #61, -0.5 on that unit). "
+    "Checked against the transport travel before anything is sent; at most "
+    "+/-3 mm. Recorded in the sidecar as cli.position_offset and "
+    "position_offset_mm")
+
+
+def _position_offset(args) -> float:
+    """The per-unit position offset for this command, in mm: the
+    --position-offset flag when given, else the OF135I_POSITION_OFFSET
+    environment variable when set and non-empty, else 0.0. Returned
+    unvalidated (a non-numeric value raises ValueError) so that
+    _validate_position_offset can report it; callers validate first."""
+    import os
+    given = getattr(args, "position_offset", None)
+    if given is not None:
+        return float(given)
+    env = os.environ.get(POSITION_OFFSET_ENV, "").strip()
+    if env:
+        try:
+            return float(env)
+        except ValueError:
+            raise ValueError(f"{POSITION_OFFSET_ENV}={env!r} is not a number of mm")
+    return 0.0
+
+
+def _validate_position_offset(offset) -> str | None:
+    """Check a --position-offset value (mm, either sign) on its own:
+    finite and within holder.POSITION_OFFSET_MAX_MM. Returns an error
+    message or None. The resulting geometry is checked frame by frame by
+    _validate_overscan, which takes the offset too."""
+    try:
+        holder.check_position_offset(offset)
+    except ValueError as e:
+        return f"--position-offset: {e}"
+    return None
+
+
+def _resolve_position_offset(args) -> "tuple[float | None, str | None]":
+    """(offset, None) when the command's position offset is valid, else
+    (None, message). Reads the flag or the environment variable
+    (_position_offset) and range-checks it."""
+    try:
+        offset = _position_offset(args)
+    except ValueError as e:
+        return None, f"--position-offset: {e}"
+    err = _validate_position_offset(offset)
+    if err is not None:
+        return None, err
+    return offset, None
+
+
 def _validate_overscan(overscan: float, frames, dpi: int = 3600,
-                       dual: bool = False) -> str | None:
+                       dual: bool = False, offset_mm: float = 0.0) -> str | None:
     """Check a --overscan value and its whole resulting geometry BEFORE any
     hardware write. Returns an error message, or None if every frame's
     window (FEEDL, scan start/end, line and chunk count) is inside the
     proven transport travel. A bad argument is thus caught before the
-    device is even opened, not after calibration."""
+    device is even opened, not after calibration. ``offset_mm`` is the
+    --position-offset the windows are computed with (checked on its own
+    by _validate_position_offset first)."""
     import math
     if not math.isfinite(overscan):
         return f"--overscan must be a finite number, got {overscan}"
@@ -102,6 +168,7 @@ def _validate_overscan(overscan: float, frames, dpi: int = 3600,
                     colour_crop_lines=image.align_shift(dpi),
                     default_wire_lines=t.DEFAULT_LINES,
                     overscan_mm=overscan,
+                    offset_mm=offset_mm,
                 )
             else:
                 holder.overscan_geometry(
@@ -110,11 +177,32 @@ def _validate_overscan(overscan: float, frames, dpi: int = 3600,
                     chunk_lines=tables.IMAGE_CHUNK_LINES,
                     colour_crop_lines=image.align_shift(3600),
                     overscan_mm=overscan,
+                    offset_mm=offset_mm,
                 )
         except (safety.FrameOutOfRangeError, safety.FeedlOutOfRangeError) as e:
-            return (f"--overscan {overscan} mm is out of range for frame "
-                    f"{frame}: {e}")
+            what = (f"--position-offset {offset_mm} mm" if offset_mm
+                    else f"--overscan {overscan} mm")
+            return f"{what} is out of range for frame {frame}: {e}"
+        except ValueError as e:
+            if "position offset" in str(e):
+                return f"--position-offset: {e}"
+            return f"the scan window for frame {frame} is not valid: {e}"
     return None
+
+
+def _offset_hint(cov) -> str:
+    """A sentence for the coverage-failure messages: how far off centre
+    the opening sits in the window and the --position-offset that would
+    centre it (aperture_crop.position_offset_hint), or '' when the
+    verdict has no two margins to compute it from."""
+    from . import aperture_crop
+    hint = aperture_crop.position_offset_hint(cov)
+    if hint is None:
+        return ""
+    return (f" The opening sits {hint['off_centre_mm']:+.2f} mm from the "
+            f"window's centre on this unit; a per-unit correction of "
+            f"--position-offset {hint['offset_mm']:+.1f} would centre it "
+            f"(README, 'A scanner whose frames sit early or late').")
 
 _STATUS_REGS = (0x01, 0x31, 0x32, 0x35)
 _BUTTON_NAMES = {0x48: "eject", 0x04: "sensor"}
@@ -233,9 +321,8 @@ def _axis_dpi(args, positive: bool):
     axes; the positive path adds a rot90(,3) (the horizontal mirror does
     not swap axes), --rotate adds args.rotate // 90. An even number of
     quarter-turns keeps (across, along); an odd number swaps it."""
-    across, along = image.sampling_resolution(args.dpi)
-    quarter = ((3 if positive else 0) + (getattr(args, "rotate", 0) or 0) // 90) % 2
-    return (along, across) if quarter else (across, along)
+    from .recrop import axis_dpi
+    return axis_dpi(args.dpi, (3 if positive else 0) * 90 + (getattr(args, "rotate", 0) or 0))
 
 
 def _write_image(arr, out: str, positive: bool = False, dpi=None) -> None:
@@ -306,6 +393,23 @@ def _validate_film110_args(args: argparse.Namespace) -> "str | None":
     return None
 
 
+def _validate_album_args(args: argparse.Namespace) -> str | None:
+    """--album: a plain directory name (digitize.check_album_name), 135
+    only (110 numbers its photographs itself, docs/film-110.md). Checked
+    before any hardware."""
+    from . import digitize
+    name = getattr(args, "album", None)
+    if name is None:
+        return None
+    try:
+        digitize.check_album_name(name)
+    except ValueError as e:
+        return f"--album: {e}"
+    if getattr(args, "film", "135") == "110":
+        return "--album is for 135 film; --film 110 numbers its photographs itself"
+    return None
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
     if args.dpi not in SUPPORTED_DPIS:
         print(f"error: --dpi must be one of {', '.join(map(str, SUPPORTED_DPIS))}", file=sys.stderr)
@@ -343,10 +447,16 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             return 2
     multi = args.frames is not None
 
-    # Validate --overscan and its whole geometry before opening the device,
-    # so a bad value is refused with zero hardware activity (Astra point 3).
+    # Validate --position-offset, then --overscan and its whole geometry,
+    # before opening the device, so a bad value is refused with zero
+    # hardware activity (Astra point 3).
+    offset, err = _resolve_position_offset(args)
+    if err is not None:
+        print(f"error: {err}", file=sys.stderr)
+        return 2
     if getattr(args, "overscan", None) is not None:
-        err = _validate_overscan(args.overscan, frames, dpi=args.dpi, dual=dual)
+        err = _validate_overscan(args.overscan, frames, dpi=args.dpi, dual=dual,
+                                 offset_mm=offset)
         if err is not None:
             print(f"error: {err}", file=sys.stderr)
             return 2
@@ -379,6 +489,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         scanner.park_mode = args.park
         scanner.recalibrate = bool(getattr(args, 'recalibrate', False))
         scanner.cal_wait_scanstop = getattr(args, "cal_wait_scanstop", "enforce")
+        scanner.position_offset_mm = _position_offset(args)
         if getattr(args, 'warmup_budget', None) is not None:
             scanner.warmup_budget_s = float(args.warmup_budget)
         # Read-only start-state check up front, so an unsafe scanner
@@ -1313,7 +1424,7 @@ def _finish_plain_scan(args: argparse.Namespace, raw: bytes, width: int,
     else:
         print(f"aperture coverage: NOT verified — {cov.reason}. Kept the full "
               f"overscan at {raw_out}; no aperture-registered product written "
-              f"for this frame.", file=sys.stderr)
+              f"for this frame.{_offset_hint(cov)}", file=sys.stderr)
     return cov
 
 
@@ -1417,7 +1528,7 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
     if not cov.verified:
         print(f"aperture coverage: NOT verified — {cov.reason}. Kept the full "
               f"overscan frame(s); no registered product written for this "
-              f"frame.", file=sys.stderr)
+              f"frame.{_offset_hint(cov)}", file=sys.stderr)
         return cov
 
     print(f"aperture coverage: VERIFIED (source: {cov.source}) — margins lead "
@@ -1473,6 +1584,7 @@ def _write_diag_sidecar(args: argparse.Namespace, scanner: Scanner, out: str,
             if not film["present"]:
                 sidecar["coverage"]["reason"] = "empty aperture"
     sidecar["cli"] = {
+        "command": getattr(args, "command", None),   # "scan" or "digitize"
         "frame": frame,
         "frames": args.frames,
         "dpi": args.dpi,
@@ -1481,6 +1593,7 @@ def _write_diag_sidecar(args: argparse.Namespace, scanner: Scanner, out: str,
         "rotate": args.rotate,
         "no_clean": args.no_clean,
         "overscan": getattr(args, "overscan", None),
+        "position_offset": _position_offset(args),
     }
     # Per-pixel calibration data (device.Scanner.last_cal_data): only a
     # fresh calibration has any, and --no-cal-data skips it. Decided and
@@ -1648,7 +1761,7 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
         if not coverage.verified:
             print(f"aperture coverage: NOT verified — {coverage.reason}. "
                   f"Kept the full overscan frame(s); no main negative "
-                  f"written for this frame.", file=sys.stderr)
+                  f"written for this frame.{_offset_hint(coverage)}", file=sys.stderr)
             return None, None, None, bool(args.ir and not args.no_clean), coverage
         print(f"aperture coverage: VERIFIED (source: {coverage.source}) — "
               f"margins lead {coverage.leading_margin_mm:.3f} mm, trail "
@@ -1704,7 +1817,7 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
         if not coverage.verified:
             print(f"aperture coverage: NOT verified — {coverage.reason}. "
                   f"Kept the full overscan at {raw_out}; no main negative "
-                  f"written for this frame.", file=sys.stderr)
+                  f"written for this frame.{_offset_hint(coverage)}", file=sys.stderr)
             return None, None, None, False, coverage
         print(f"aperture coverage: VERIFIED"
               f"{' (' + coverage.reason + ')' if coverage.source != 'visible' else ''}"
@@ -2614,27 +2727,35 @@ def _sweep_validate(args: argparse.Namespace) -> "tuple[list[int] | None, str | 
                       f"the per-frame cycle for this range. Nothing was sent to the scanner.")
     if getattr(args, "from_sweep", False) and args.roll is None:
         return None, "--from-sweep needs --roll N"
+    err = _validate_album_args(args)
+    if err is not None:
+        return None, err
     dual = bool(args.ir or args.dpi != 3600)
     if not dual:
         return None, _SWEEP_PLAIN_WITHDRAWN_MSG
+    offset, err = _resolve_position_offset(args)
+    if err is not None:
+        return None, err
     try:
         from .device import dual_tables
         t = dual_tables(args.dpi) if dual else tables
         Scanner._sweep_geometry(t, frames[0], frames[-1],
-                                getattr(args, "overscan", None) or holder.OVERSCAN_MM)
+                                getattr(args, "overscan", None) or holder.OVERSCAN_MM,
+                                offset)
     except (safety.FrameOutOfRangeError, safety.FeedlOutOfRangeError, ValueError) as e:
         return None, f"the sweep window is not valid: {e}"
     return frames, None
 
 
 def _sweep_meta(geom, width: int, dpi: int, overscan_mm: float,
-                dual: bool = True) -> dict:
+                dual: bool = True, position_offset_mm: float = 0.0) -> dict:
     """The sweep's geometry as sweep.json stores it (and the window finder
     reads it back, see _sweep_geom_from_meta)."""
     return {
         "first": geom.first, "last": geom.last, "dpi": dpi, "feedl": geom.feedl,
         "end_hwdpi": geom.end_hwdpi, "wire_lines": geom.wire_lines,
         "chunk_count": geom.chunks, "overscan_mm": overscan_mm, "width": width,
+        "position_offset_mm": float(position_offset_mm),
         "lines_per_mm": geom.lines_per_mm,
         "dual": bool(dual), "wire_per_vis": 2 if dual else 1,
         "predicted_edges": {str(k): list(v) for k, v in geom.predicted_edges.items()},
@@ -2805,12 +2926,15 @@ def _digitize_sweep(args: argparse.Namespace) -> int:
               "started_utc": started, "dpi": args.dpi, "positive": args.positive,
               "ir": args.ir, "frames": frames, "no_clean": args.no_clean,
               "rotate": args.rotate}
+    if getattr(args, "album", None):
+        record["album"] = args.album
 
     def record_failed(stage: str, **extra) -> None:
         try:
             record.update(status="failed", stage=stage,
                           finished_utc=datetime.now(timezone.utc).isoformat(), **extra)
             digitize.append_manifest(args.out, record)
+            _album_sync_after(args, roll)
         except Exception as me:
             log.warning("manifest write failed while recording a failed roll "
                         "(original error preserved): %s", me)
@@ -2836,6 +2960,7 @@ def _digitize_sweep(args: argparse.Namespace) -> int:
         scanner.park_mode = args.park
         scanner.recalibrate = bool(getattr(args, "recalibrate", False))
         scanner.cal_wait_scanstop = getattr(args, "cal_wait_scanstop", "enforce")
+        scanner.position_offset_mm = _position_offset(args)
         if getattr(args, "warmup_budget", None) is not None:
             scanner.warmup_budget_s = float(args.warmup_budget)
         scanner.check_start_state()
@@ -2851,7 +2976,8 @@ def _digitize_sweep(args: argparse.Namespace) -> int:
             width, smeta = scanner.sweep(first, last, dpi=args.dpi,
                                          overscan_mm=overscan, sink=fh.write, ir=dual)
         d = dict(scanner.last_diag or {})
-        meta = _sweep_meta(smeta["geometry"], width, args.dpi, overscan, dual=dual)
+        meta = _sweep_meta(smeta["geometry"], width, args.dpi, overscan, dual=dual,
+                           position_offset_mm=scanner.position_offset_mm)
         state.update(meta=meta, diag=d, cal=scanner.last_cal_data)
         _sweep_write_json(json_path, meta, None, d)
         print(f"sweep done: {raw_path.stat().st_size / 1e9:.2f} GB written")
@@ -2935,6 +3061,8 @@ def _sweep_finish(args, record: dict, rdir: Path, raw_path: Path, meta: dict, re
     except Exception as me:
         print(f"warning: roll {record['roll']} processed but the manifest write "
               f"failed ({me!r}); the images are saved in {rdir}.", file=sys.stderr)
+    else:
+        _album_sync_after(args, int(record["roll"]))
     if keep and raw_path.exists():
         _sweep_kept_note(raw_path)
     if not ok:
@@ -2994,6 +3122,8 @@ def _digitize_from_sweep(args: argparse.Namespace, frames: list) -> int:
               "frames": list(range(int(meta["first"]), int(meta["last"]) + 1)),
               "no_clean": args.no_clean, "rotate": args.rotate,
               "rebuilt_from_sweep": True}
+    if getattr(args, "album", None):
+        record["album"] = args.album
     d = doc.get("diag") or {}
     scanlike = SimpleNamespace(last_diag=d, last_cal_data=None)
     per_frame: list = []
@@ -3058,6 +3188,20 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
     if err is not None:
         print(f"error: {err}", file=sys.stderr)
         return 2
+    err = _validate_album_args(args)
+    if err is not None:
+        print(f"error: {err}", file=sys.stderr)
+        return 2
+    # --position-offset and every frame's window with it, before the load
+    # prompt and any hardware (as `scan` validates --overscan).
+    offset, err = _resolve_position_offset(args)
+    if err is None:
+        err = _validate_overscan(holder.OVERSCAN_MM, dig_frames, dpi=args.dpi,
+                                 dual=bool(args.ir or args.dpi != 3600),
+                                 offset_mm=offset)
+    if err is not None:
+        print(f"error: {err}", file=sys.stderr)
+        return 2
     film110 = getattr(args, "film", "135") == "110"
 
     roll = args.roll if args.roll is not None else digitize.next_roll(args.out, args.prefix)
@@ -3113,6 +3257,8 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
                 "positive": args.positive, "ir": args.ir,
                 "frames": c.frames,
                 "no_clean": args.no_clean, "rotate": args.rotate}
+    if getattr(args, "album", None):
+        c.record["album"] = args.album
     if args.force and film110:
         c.record["forced"] = True       # starts a new epoch of the roll's records
     if film110:
@@ -3130,6 +3276,7 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
                             finished_utc=datetime.now(timezone.utc).isoformat(),
                             **extra)
             digitize.append_manifest(args.out, c.record)
+            _album_sync_after(args, c.roll)
         except Exception as me:
             log.warning("manifest write failed while recording a failed roll "
                         "(original error preserved): %s", me)
@@ -3158,6 +3305,7 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
         scanner.park_mode = args.park
         scanner.recalibrate = bool(getattr(args, "recalibrate", False))
         scanner.cal_wait_scanstop = getattr(args, "cal_wait_scanstop", "enforce")
+        scanner.position_offset_mm = _position_offset(args)
         if getattr(args, "warmup_budget", None) is not None:
             scanner.warmup_budget_s = float(args.warmup_budget)
         scanner.check_start_state()
@@ -3300,6 +3448,8 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
               f"({me!r}); the images are saved in {c.rdir}. The manifest is out "
               f"of date -- record it by hand or re-run with --force.",
               file=sys.stderr)
+    else:
+        _album_sync_after(args, c.roll)
 
     if (film110 and rc in (0, 5) and not c.state.aborted
             and c.record.get("status") == "ok" and c.record.get("anchor_shift")):
@@ -3366,6 +3516,112 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
     else:
         print(f"roll {roll} FAILED at scan (rc {rc}); recorded. "
               f"Power-cycle before the next strip.", file=sys.stderr)
+    return rc
+
+
+def _album_sync_after(args: argparse.Namespace, roll: int) -> None:
+    """After a roll's manifest record is appended: rebuild the album
+    (digitize.album_sync) when the run has one, and say what it holds.
+    Never fails the run: the images and the record are already on disk,
+    and `of135i album` can rebuild the view at any time."""
+    from . import digitize
+    name = getattr(args, "album", None)
+    if not name:
+        return
+    try:
+        index = digitize.album_sync(args.out, name)
+    except Exception as e:
+        print(f"warning: album {name!r} was not updated ({e!r}); run "
+              f"'of135i album -o {args.out} {name}' to rebuild it", file=sys.stderr)
+        return
+    mine = next((s for s in index["strips"]
+                 if s["roll"] == roll and s["prefix"] == getattr(args, "prefix", "")), None)
+    nums = mine["images"] if mine else []
+    span = (f"{nums[0]:02d}-{nums[-1]:02d}" if len(nums) > 1 else
+            f"{nums[0]:02d}" if nums else "no images")
+    missing = [n for n in index["missing"] if n in nums]
+    print(f"album {name}: this strip is {span}"
+          + (f" ({len(missing)} reserved, not delivered: "
+             f"{', '.join(f'{n:02d}' for n in missing)})" if missing else "")
+          + f"; {index['delivered']} images in {digitize.album_dir(args.out, name)}")
+
+
+def _cmd_album(args: argparse.Namespace) -> int:
+    """`of135i album -o DIR NAME`: rebuild an album directory from the
+    manifest (digitize.album_sync). No scanner. Exit 0; 2 on a bad name
+    or a missing --out."""
+    from . import digitize
+    try:
+        name = digitize.check_album_name(args.name)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if not Path(args.out).is_dir():
+        print(f"error: {args.out} is not a directory", file=sys.stderr)
+        return 2
+    index = digitize.album_sync(args.out, name)
+    d = digitize.album_dir(args.out, name)
+    print(f"album {name}: {len(index['strips'])} strip(s), {index['delivered']} images in {d}")
+    for st in index["strips"]:
+        nums = st["images"]
+        span = (f"{nums[0]:02d}-{nums[-1]:02d}" if len(nums) > 1 else
+                f"{nums[0]:02d}" if nums else "no images")
+        print(f"  {digitize.roll_dirname(st['prefix'], st['roll'])}: {span} ({st['status']})")
+    if index["missing"]:
+        print(f"  reserved, not delivered: "
+              f"{', '.join(f'{n:02d}' for n in index['missing'])} (see index.json; "
+              f"`of135i recrop` can deliver a frame whose opening was located)")
+    return 0
+
+
+def _cmd_recrop(args: argparse.Namespace) -> int:
+    """`of135i recrop FILE...`: the aperture-registered products from
+    preserved overscan frames (of135i.recrop), no scanner involved. Exit 0
+    when every frame was written, 4 when any frame's coverage did not
+    verify at the chosen margin (or its opening was empty), 2 when any
+    frame could not be processed at all (file missing, settings unknown,
+    a product in the way; this outranks 4)."""
+    from . import recrop as _recrop
+    min_margin = 0.0 if args.force else float(args.min_margin)
+    if not (min_margin >= 0):
+        print(f"error: --min-margin must be >= 0 mm, got {args.min_margin}", file=sys.stderr)
+        return 2
+    rc = 0
+    for name in args.files:
+        try:
+            res = _recrop.recrop(name, min_margin_mm=min_margin, dpi=args.dpi,
+                                 rotate=args.rotate, overwrite=args.overwrite,
+                                 write_ir=not args.no_ir, dry_run=args.dry_run)
+        except _recrop.RecropError as e:
+            print(f"error: {e}", file=sys.stderr)
+            rc = 2                      # a frame not processed outranks a margin failure
+            continue
+        margins = ("" if res.leading_margin_mm is None else
+                   f" — margins lead {res.leading_margin_mm:.3f} mm, trail "
+                   f"{res.trailing_margin_mm:.3f} mm")
+        if res.verified and res.film_present:
+            what = "would write" if args.dry_run else "wrote"
+            print(f"{res.overscan}: aperture coverage VERIFIED at a {res.min_margin_mm:.2f} mm "
+                  f"floor (source: {res.source}){margins}")
+            print(f"  {what} {res.main}" + (f" and {res.ir}" if res.ir else ""))
+        if res.record_error:
+            print(f"warning: {res.overscan}: the run record was not written: "
+                  f"{res.record_error}", file=sys.stderr)
+        if res.verified and res.film_present:
+            pass
+        elif res.verified:
+            print(f"{res.overscan}: aperture EMPTY — no film in this opening; nothing written",
+                  file=sys.stderr)
+            rc = 4 if rc == 0 else rc
+        else:
+            hint = ""
+            if res.offset_hint_mm is not None:
+                hint = (f" For the next scans on this unit: --position-offset "
+                        f"{res.offset_hint_mm:+.1f}.")
+            print(f"{res.overscan}: aperture coverage NOT verified at a "
+                  f"{res.min_margin_mm:.2f} mm floor — {res.reason}{margins}; nothing "
+                  f"written.{hint}", file=sys.stderr)
+            rc = 4 if rc == 0 else rc
     return rc
 
 
@@ -3516,6 +3772,8 @@ def build_parser() -> argparse.ArgumentParser:
              "overscan frame(s) to <o>.overscan.<ext> (and "
              "<stem>-ir.overscan.tiff); on a coverage failure only the "
              "overscan raw is kept and the exit status is non-zero")
+    p_scan.add_argument("--position-offset", type=float, default=None, metavar="MM",
+        help=POSITION_OFFSET_HELP)
     p_scan.add_argument("--cal-wait-scanstop", choices=("off", "enforce"), default="enforce",
         help="calibration stop gate (docs/cal-scanstop-gate.md, issue #35). "
              "'enforce' (default) waits, after each calibration acquisition's "
@@ -3615,6 +3873,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="stop after S seconds (default: until Ctrl-C)")
     p_buttons.set_defaults(func=_cmd_buttons)
 
+    p_album = sub.add_parser(
+        "album",
+        help="rebuild a digitize album (<out>/NAME/: the film's photographs "
+             "numbered through its strips) from the manifest; no scanner")
+    p_album.add_argument("-o", "--out", required=True, metavar="DIR",
+        help="the digitize staging directory (the one with manifest.jsonl)")
+    p_album.add_argument("name", metavar="NAME",
+        help="the album name given to digitize --album")
+    p_album.set_defaults(func=_cmd_album)
+
+    p_recrop = sub.add_parser(
+        "recrop",
+        help="make the cropped fN.tiff (and fN-ir.tiff) from a frame's preserved "
+             "fN.overscan.tiff without scanning again; no scanner involved")
+    p_recrop.add_argument("files", nargs="+", metavar="FILE",
+        help="the frame's fN.overscan.tiff (fN.tiff or fN also name it); the "
+             "IR overscan (fN-ir.overscan.tiff) beside it is used when present. "
+             "Resolution and rotation are read from the frame's fN.diag.json")
+    p_recrop.add_argument("--min-margin", type=float, default=0.15, metavar="MM",
+        help="the smallest margin of plastic beyond each edge of the opening to "
+             "accept (default 0.15, the scan commands' floor). A frame that "
+             "failed with 'leading margin below min_margin_mm' typically has "
+             "0.10-0.14 mm there: --min-margin 0.05 accepts it when the edge "
+             "was located")
+    p_recrop.add_argument("--force", action="store_true",
+        help="accept any located edge (--min-margin 0)")
+    p_recrop.add_argument("--dpi", type=int, default=None, choices=SUPPORTED_DPIS,
+        help="the resolution the frame was scanned at (default: the sidecar's)")
+    p_recrop.add_argument("--rotate", type=int, default=None, choices=(0, 90, 180, 270),
+        help="the --rotate the frame was scanned with (default: the sidecar's)")
+    p_recrop.add_argument("--no-ir", action="store_true",
+        help="do not write fN-ir.tiff even when the IR overscan frame exists")
+    p_recrop.add_argument("--overwrite", action="store_true",
+        help="replace an existing fN.tiff / fN-ir.tiff")
+    p_recrop.add_argument("--dry-run", action="store_true",
+        help="measure and report; write nothing")
+    p_recrop.set_defaults(func=_cmd_recrop)
+
     p_doctor = sub.add_parser(
         "doctor", help="read-only hardware health report (no motor/register writes)")
     p_doctor.add_argument("--json", metavar="PATH", help="also write the report as JSON to PATH")
@@ -3694,6 +3990,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_dig.add_argument("--no-ir", dest="ir", action="store_false",
         help="skip the IR pass and dust removal (non-3600 profiles still "
              "run a dual-light capture; only the IR output is dropped)")
+    p_dig.add_argument("--album", default=None, metavar="NAME",
+        help="135 only: also collect this strip's photographs in <out>/NAME/, "
+             "numbered through the strips of the film (01.tiff, 02.tiff, ..., "
+             "36.tiff, with NN.diag.json beside each; issue #65). Give the same "
+             "NAME for every strip of one film. Numbering is gap-free: a strip's "
+             "images follow the previous strip's, an empty opening (a short "
+             "strip) takes no number, and a frame scanned but not delivered "
+             "(coverage not verified) keeps its number reserved and is listed as "
+             "missing in NAME/index.json until `of135i recrop` delivers it. The "
+             "numbered files are hard links to the roll directories' fN.tiff "
+             "(no extra disk); the album is rebuilt from the manifest after "
+             "every strip and by `of135i album`, so a --force re-run of a strip "
+             "renumbers what follows it")
     p_dig.add_argument("--no-stop-at-empty", action="store_true",
                        help="scan every requested frame even after an empty "
                             "aperture that follows film (default: the strip "
@@ -3702,6 +4011,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip IR-based dust/scratch removal on the visible image")
     p_dig.add_argument("--no-diag", action="store_true",
         help="skip writing per-frame .diag.json sidecars")
+    p_dig.add_argument("--position-offset", type=float, default=None, metavar="MM",
+        help=POSITION_OFFSET_HELP)
     p_dig.add_argument("--cal-wait-scanstop", choices=("off", "enforce"), default="enforce",
         help="calibration stop gate (docs/cal-scanstop-gate.md, issue #35). "
              "'enforce' (default) waits, after each calibration acquisition's "

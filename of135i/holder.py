@@ -300,6 +300,22 @@ class FiducialModel:
     def leading_hwdpi(self, frame: int) -> float:
         return self.trailing_hwdpi(frame) - self.aperture_mm[frame - 1] / MM_PER_UNIT
 
+    def shifted(self, offset_mm: float) -> "FiducialModel":
+        """The same model with every aperture moved ``offset_mm`` along
+        the strip (positive = further from the load reference, i.e. later
+        in the scan). A per-unit correction: the model was fitted on one
+        scanner, and another unit's holder sits at a slightly different
+        distance from its load reference (issue #61: about 0.5 mm earlier
+        on that unit, on every frame and both holders). Pitch and
+        aperture lengths are the holder's and do not change."""
+        if offset_mm == 0.0:
+            return self
+        return FiducialModel(
+            base_hwdpi=self.base_hwdpi + offset_mm / MM_PER_UNIT,
+            pitch_hwdpi=self.pitch_hwdpi,
+            aperture_mm=self.aperture_mm,
+        )
+
 
 #: The corrected mean mapping for the strip holder, fitted to the three
 #: empty-holder loads of Test 56 (docs/holder-position-design.md
@@ -350,6 +366,33 @@ class OverscanGeometry:
 #: spare; docs/holder-position-design.md section 4.
 OVERSCAN_MM = 0.75
 
+#: Sanity bound on a per-unit position offset (mm, either sign). The
+#: largest cross-unit difference seen is about 0.6 mm (issue #61); the
+#: transport ceiling is still checked frame by frame after the shift.
+POSITION_OFFSET_MAX_MM = 3.0
+
+
+def check_position_offset(offset_mm: float) -> float:
+    """Range-check a per-unit position offset (mm) and return it as a
+    float. Finite and within +/-POSITION_OFFSET_MAX_MM; anything else is
+    a ValueError. The geometry functions' ``offset_mm`` argument is
+    checked with this before any window is computed."""
+    try:
+        off = float(offset_mm)
+    except (TypeError, ValueError):
+        raise ValueError(f"position offset must be a number of mm, got {offset_mm!r}")
+    if not math.isfinite(off):
+        return _raise_offset(off)
+    if abs(off) > POSITION_OFFSET_MAX_MM:
+        return _raise_offset(off)
+    return off
+
+
+def _raise_offset(off: float):
+    raise ValueError(
+        f"position offset {off} mm is outside +/-{POSITION_OFFSET_MAX_MM} mm "
+        f"(the largest cross-unit difference seen is about 0.6 mm)")
+
 
 def overscan_geometry(
     frame: int,
@@ -360,6 +403,7 @@ def overscan_geometry(
     fiducial: FiducialModel | None = None,
     overscan_mm: float = OVERSCAN_MM,
     holder: Holder = DEFAULT,
+    offset_mm: float = 0.0,
 ) -> OverscanGeometry:
     """Size the scan window for ``frame`` to cover the whole aperture plus
     ``overscan_mm`` on each side, and return the engine parameters.
@@ -378,9 +422,17 @@ def overscan_geometry(
     margin). The two are computed separately so the mean-mapping centring
     is never miscounted as overscan. See docs/holder-position-design.md
     section 4 for the derivation this implements.
+
+    ``offset_mm`` moves the whole window along the strip (the fiducial
+    model shifted by that much, FiducialModel.shifted): a per-unit
+    correction, negative when the apertures sit earlier on a unit than
+    on the one the model was fitted on. The margins are unchanged by it
+    (they are relative to the shifted model); the end position is
+    range-checked after the shift.
     """
     check_frame(frame, holder)
-    fid = fiducial if fiducial is not None else STRIP_FIDUCIAL
+    fid = (fiducial if fiducial is not None else STRIP_FIDUCIAL).shifted(
+        check_position_offset(offset_mm))
     over = overscan_mm / MM_PER_UNIT
 
     lead = fid.leading_hwdpi(frame)
@@ -429,6 +481,7 @@ def dual_overscan_geometry(
     fiducial: FiducialModel | None = None,
     overscan_mm: float = OVERSCAN_MM,
     holder: Holder = DEFAULT,
+    offset_mm: float = 0.0,
 ) -> tuple[OverscanGeometry, int]:
     """A+C geometry for a dual-light profile: the same overscan_geometry,
     expressed in VISIBLE lines, plus the wire register line count.
@@ -473,12 +526,16 @@ def dual_overscan_geometry(
             f"hold whole IR/visible line pairs")
     if 7200 % dpi:
         raise ValueError(f"dpi {dpi} does not divide the 7200 dpi motor base")
+    # The per-unit offset is applied once, here; the plain geometry below
+    # gets the shifted model and offset 0.
+    fid = (fiducial if fiducial is not None else STRIP_FIDUCIAL).shifted(
+        check_position_offset(offset_mm))
     geom = overscan_geometry(
         frame,
         res_units_per_line=7200 // dpi,
         chunk_lines=lines_per_chunk // 2,
         colour_crop_lines=colour_crop_lines,
-        fiducial=fiducial,
+        fiducial=fid,
         overscan_mm=overscan_mm,
         holder=holder,
     )
@@ -541,10 +598,15 @@ def dual_sweep_geometry(
     fiducial: FiducialModel | None = None,
     overscan_mm: float = OVERSCAN_MM,
     holder: Holder = DEFAULT,
+    offset_mm: float = 0.0,
 ) -> tuple[SweepGeometry, int]:
     """One scan window from ``overscan_mm`` before aperture ``first``'s
     leading edge to ``overscan_mm`` after aperture ``last``'s trailing
     edge, for a dual-light profile (design doc section 3).
+
+    ``offset_mm``: the per-unit position offset, as overscan_geometry
+    takes it. The predicted edges are relative to the window start, so
+    they do not move with it.
 
     Positioning is anchored exactly as ``dual_overscan_geometry`` anchors
     frame ``first``: the FEEDL IS that function's FEEDL for ``first`` (same
@@ -565,7 +627,8 @@ def dual_sweep_geometry(
             f"hold whole IR/visible line pairs")
     if 7200 % dpi:
         raise ValueError(f"dpi {dpi} does not divide the 7200 dpi motor base")
-    fid = fiducial if fiducial is not None else STRIP_FIDUCIAL
+    fid = (fiducial if fiducial is not None else STRIP_FIDUCIAL).shifted(
+        check_position_offset(offset_mm))
     units_per_vis = 7200 // dpi
     over = overscan_mm / MM_PER_UNIT
     want_start = fid.leading_hwdpi(first) - over
@@ -630,6 +693,7 @@ def plain_sweep_geometry(
     fiducial: FiducialModel | None = None,
     overscan_mm: float = OVERSCAN_MM,
     holder: Holder = DEFAULT,
+    offset_mm: float = 0.0,
 ) -> tuple[SweepGeometry, int]:
     """One plain-3600 scan window from ``overscan_mm`` before aperture
     ``first``'s leading edge to ``overscan_mm`` after aperture ``last``'s
@@ -663,7 +727,8 @@ def plain_sweep_geometry(
     check_frame(last, holder)
     if first > last:
         raise ValueError(f"sweep first aperture {first} is after last {last}")
-    fid = fiducial if fiducial is not None else STRIP_FIDUCIAL
+    fid = (fiducial if fiducial is not None else STRIP_FIDUCIAL).shifted(
+        check_position_offset(offset_mm))
     units = 2                       # motor units per plain-3600 line
     over = overscan_mm / MM_PER_UNIT
     want_start = fid.leading_hwdpi(first) - over
