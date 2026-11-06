@@ -16,11 +16,12 @@ driver for the OpticFilm 135i (USB `07b3:1436`, GL126), **under active
 development**. On that unit it scans without Windows, a virtual machine, or the
 manufacturer's driver. It was developed and hardware-tested by one person on a
 **single scanner unit** in a limited Linux environment. As of November 2026 it
-has also scanned on **two other units** reported by users (one on a Steam
-Deck, one through a fork). On both, calibration failed at a step the
-developer's unit has never failed
+has also scanned on **two other units** reported by users
+([Krustenviech](https://github.com/Krustenviech) on a Steam Deck,
+[bearyjd](https://github.com/bearyjd) through a fork). On both, calibration
+failed at a step the developer's unit has never failed
 ([issue #35](https://github.com/cgillinger/opticfilm135i-linux/issues/35));
-a fix contributed by one of those users, the calibration stop gate
+a fix contributed by bearyjd, the calibration stop gate
 (`--cal-wait-scanstop`), is now the default and both units completed every
 gated scan (docs/cal-scanstop-gate.md). So compatibility with other
 OpticFilm 135i units and other Linux setups is **not yet verified** —
