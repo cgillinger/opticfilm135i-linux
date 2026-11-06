@@ -198,6 +198,8 @@ def _collect_host() -> dict:
     except Exception:
         info["driver_revision"] = None
 
+    from . import __codename__
+    info["driver_codename"] = __codename__
     return info
 
 

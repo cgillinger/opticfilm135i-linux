@@ -6,6 +6,20 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+## v0.2.11 — Second Scanner Gamble — 2026-11-06
+
+- **Release codename.** `of135i.__codename__` ("Second Scanner Gamble"
+  for this release) is printed by `of135i version` and recorded in the
+  sidecar's host block (`driver_codename`), so a report from another
+  unit names the release it ran. `tests/test_release_check.py` holds the
+  CHANGELOG heading, the version line and the sidecar to it.
+- **External reports from the second unit (test log, 2026-11-06).** The
+  cross-unit check, gated: 4 of 4 completed, exit 0, coverage verified at
+  frame 1 with the slide holder. SANE v9's magazine load, twice: one miss
+  with the known "transport ran, cassette not taken" signature, one load;
+  from the reg 0x32 write to the end of the load the backend's transfers
+  match the Python driver's on that unit. v9's scans there are pending.
+
 - **Per-unit position offset: `--position-offset MM` on `scan` and
   `digitize` (issue #61).** The corrected mean mapping was fitted on one
   scanner. On a third unit (the Steam Deck of issue #35) every frame sat

@@ -3626,10 +3626,10 @@ def _cmd_recrop(args: argparse.Namespace) -> int:
 
 
 def _cmd_version(args: argparse.Namespace) -> int:
-    from . import __version__, diag
+    from . import __codename__, __version__, diag
     host = diag._collect_host()
     rev = host.get("driver_revision") or "unknown"
-    print(f"of135i {__version__} (driver revision {rev}, python {host.get('python')}, pyusb {host.get('pyusb')})")
+    print(f"of135i {__version__} \"{__codename__}\" (driver revision {rev}, python {host.get('python')}, pyusb {host.get('pyusb')})")
     return 0
 
 

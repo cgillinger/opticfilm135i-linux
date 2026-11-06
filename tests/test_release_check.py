@@ -236,6 +236,29 @@ def test_version_is_the_same_in_both_places():
     print("test_version_is_the_same_in_both_places OK")
 
 
+def test_codename_is_in_changelog_version_and_sidecar():
+    """The release codename is carried by the CHANGELOG heading of the
+    current version, by `of135i version` and by the sidecar's host block,
+    so a report from another unit names the release it ran."""
+    import contextlib
+    import io
+    import re
+    sys.path.insert(0, str(REPO))
+    from of135i import __codename__, __version__, cli, diag
+    assert __codename__ and __codename__.strip() == __codename__, __codename__
+    headings = [l for l in (REPO / "CHANGELOG.md").read_text().splitlines()
+                if re.match(rf"^## v{re.escape(__version__)}\b", l)]
+    assert len(headings) == 1, headings
+    assert f"v{__version__} — {__codename__} — " in headings[0], headings[0]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = cli._cmd_version(None)
+    out = buf.getvalue()
+    assert rc == 0 and out.startswith(f'of135i {__version__} "{__codename__}" '), out
+    assert diag._collect_host()["driver_codename"] == __codename__
+    print("test_codename_is_in_changelog_version_and_sidecar OK")
+
+
 def main() -> int:
     tests = [
         test_classify_normal_success,
@@ -250,6 +273,7 @@ def main() -> int:
         test_verdict_failure_and_dirty_checkout,
         test_main_reports_counts_and_exit_code,
         test_version_is_the_same_in_both_places,
+        test_codename_is_in_changelog_version_and_sidecar,
     ]
     for t in tests:
         t()
