@@ -25,6 +25,18 @@ one exists; "offline" means implemented and tested without the scanner.
   that would centre the opening (e.g. `--position-offset -0.6` for that
   unit's frame 4). Offline-verified (`tests/test_position_offset.py`,
   17 tests); not run on hardware. Reported by Krustenviech.
+- **`digitize --album NAME`: one folder per film, photographs numbered
+  01–36 through the strips (issue #65).** Each strip keeps its
+  `roll-NNN/` with the holder's `f1`–`f6`; the album `<out>/NAME/` holds
+  `NN.tiff` and `NN.diag.json` for every frame with film, numbered
+  gap-free in strip order. An empty opening takes no number; a frame
+  scanned but not delivered (coverage not verified) reserves its number
+  and is listed as missing in `NAME/index.json` until `recrop` delivers
+  it. The numbered files are hard links to the roll products; the album
+  is a view rebuilt from the manifest after every strip and by the new
+  `of135i album -o DIR NAME` command, so a `--force` re-run renumbers
+  what follows. 135 only. Offline-verified (`tests/test_album.py`, 5
+  tests). Requested by Krustenviech.
 - **`of135i recrop FILE...`: the cropped products from a frame's preserved
   overscan files, without scanning again (issue #61).** A frame whose
   coverage did not verify keeps only `fN.overscan.tiff` (and

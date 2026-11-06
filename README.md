@@ -539,6 +539,21 @@ with `recrop`; and `--position-offset` corrects the next strips on a unit
 whose frames sit early or late). `--positive` writes a **separate** `fN-preview.tiff` and
 leaves the negative untouched; `--roll N` targets a specific roll,
 `--no-ir` drops the IR output (non-3600 profiles still capture dual-light).
+**One folder per film, numbered 01–36 (`--album NAME`).** A film comes as
+several strips, and each strip gets its own `roll-NNN/` with the holder's
+`f1`–`f6` names. Give every strip of one film the same `--album Rolle01`
+and the photographs are also collected in `<out>/Rolle01/` as `01.tiff`,
+`02.tiff`, …, `36.tiff` (with `NN.diag.json` beside each), numbered
+through the strips in the order they were scanned. The numbering is
+gap-free: a strip's images follow the previous strip's, and an empty
+opening (a short strip) takes no number. A frame that was scanned but not
+delivered (coverage not verified, only its overscan file exists) keeps its
+number reserved and is listed as missing in `Rolle01/index.json`, so the
+gap is visible; `recrop` delivers it under that number. The numbered
+files are hard links to the roll products (no extra disk), and the album
+is rebuilt from the manifest after every strip and at any time with
+`of135i album -o DIR Rolle01`, so a `--force` re-run of a strip renumbers
+the strips after it. 135 only (110 numbers its photographs itself).
 `--film 110` digitises a 110 strip as a roll of passes: run the roll again
 (`--roll N`) with the strip re-seated — slid or turned end for end — until
 nothing is missing; frame files are `p1-f1.tiff`, `p2-f1.tiff`, …, each
@@ -650,6 +665,7 @@ stdout/stderr pipe can no longer abort a scan.
 .venv/bin/python -m of135i watch                   # ejects on the Eject button only; prints other buttons
 .venv/bin/python -m of135i buttons [--duration S]  # read-only: print button presses
 .venv/bin/python -m of135i recrop --min-margin 0.05 roll-006/f4.overscan.tiff   # no scanner: crop a refused frame
+.venv/bin/python -m of135i album -o Scans Rolle01   # no scanner: rebuild a film's numbered folder
 ```
 
 `recrop` makes `fN.tiff` (and `fN-ir.tiff`) from a frame's preserved

@@ -14,6 +14,9 @@ Layout::
     <out>/<prefix>roll-<NNN>/f<K>.tiff     visible raw scan
     <out>/<prefix>roll-<NNN>/f<K>-ir.tiff  IR channel
     <out>/<prefix>roll-<NNN>/f<K>.diag.json
+    <out>/<album>/<NN>.tiff                 album view (``--album``): the film's
+    <out>/<album>/<NN>.diag.json            photographs numbered through its strips
+    <out>/<album>/index.json                (hard links; see "albums" below)
 
 A 110 roll (``--film 110``, docs/film-110.md §11) takes as many runs
 (passes) into the same directory as it needs: ``p<k>-f<K>.tiff`` (+
@@ -35,6 +38,7 @@ one ``--out``.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from . import holder
@@ -356,3 +360,139 @@ def delivered_image(records: list[dict], roll: int, prefix: str,
             if e.get("number") == n and e.get("main") and not e.get("uncertain"):
                 found = e
     return found
+
+
+# ------------------------------------------------------------ albums
+#
+# A film is several strips, and `digitize` gives each strip its own roll
+# directory with the holder's frame numbers 1-6. An *album* (issue #65)
+# is one directory per film with the photographs numbered through the
+# strips, 01, 02, ..., 36, gap-free: a strip's images take the numbers
+# after the previous strip's, an empty opening (a short strip's unused
+# slots) takes none, and a frame that was scanned but not delivered (its
+# coverage did not verify; only the overscan file exists) RESERVES its
+# number and is listed as missing, so the gap is visible and the number
+# is still there when `recrop` delivers the frame later.
+#
+# The album is a derived view, never a second source of truth: the roll
+# records in the manifest (the newest record of each roll that names the
+# album) decide the numbering, and album_sync() recreates the whole
+# directory from them -- the numbered files are hard links to the roll
+# directories' products (no disk cost, always the current file), plus
+# index.json. It runs after every strip and can be rerun at any time
+# (`of135i album`), e.g. after a recrop or a --force re-run of a strip,
+# which renumbers whatever follows.
+
+ALBUM_INDEX_NAME = "index.json"
+_ALBUM_NUMBERED = re.compile(r"^\d{2,}(\.tiff|\.diag\.json)$")
+
+
+def check_album_name(name) -> str:
+    """An album name is a plain directory name inside --out: no path
+    separators, not '.'/'..', not the manifest, and not shaped like a roll
+    directory (<prefix>roll-NNN). Returns the name; ValueError otherwise."""
+    s = str(name or "").strip()
+    if not s or s in (".", "..") or "/" in s or "\\" in s or s == MANIFEST_NAME:
+        raise ValueError(f"album name {name!r} is not a plain directory name")
+    if re.search(r"roll-\d+$", s):
+        raise ValueError(f"album name {s!r} looks like a roll directory; choose another")
+    return s
+
+
+def album_dir(out_dir: str, name: str) -> Path:
+    return Path(out_dir) / check_album_name(name)
+
+
+def album_rolls(out_dir: str, name: str) -> list[dict]:
+    """The newest manifest record of every roll that names the album, in
+    strip order (prefix, then roll number). A roll re-run with --force is
+    represented by its latest record only."""
+    name = check_album_name(name)
+    newest: dict = {}
+    for r in read_manifest(out_dir):
+        if "roll" not in r:
+            continue
+        key = (r.get("prefix", ""), int(r["roll"]))
+        newest[key] = r                     # append-only: the last one wins
+    return [newest[k] for k in sorted(newest) if newest[k].get("album") == name]
+
+
+def album_plan(out_dir: str, name: str) -> list[dict]:
+    """The album's images in order, numbered from 1. One item per frame
+    position that holds film: ``status`` "delivered" with ``source`` (the
+    roll's fN.tiff, which exists on disk) or "missing" (scanned, not
+    delivered, no file yet; the number is reserved). An opening recorded
+    empty takes no number; a roll with no frames (failed at the load)
+    contributes nothing."""
+    items: list[dict] = []
+    n = 0
+    for rec in album_rolls(out_dir, name):
+        prefix, roll = rec.get("prefix", ""), int(rec["roll"])
+        for e in sorted(rec.get("per_frame") or [], key=lambda x: int(x.get("frame", 0))):
+            if e.get("film_present") is False:
+                continue                    # empty opening: a short strip
+            frame = int(e["frame"])
+            path = frame_path(out_dir, prefix, roll, frame)
+            n += 1
+            if path.is_file():
+                # delivered by the scan, or by `recrop` since
+                items.append({"number": n, "prefix": prefix, "roll": roll, "frame": frame,
+                              "status": "delivered", "source": str(path),
+                              "diag": str(path.with_name(f"f{frame}.diag.json"))})
+            else:
+                items.append({"number": n, "prefix": prefix, "roll": roll, "frame": frame,
+                              "status": "missing", "source": None,
+                              "reason": e.get("coverage_reason") or e.get("stage") or "not delivered"})
+    return items
+
+
+def album_number_name(number: int, suffix: str = ".tiff") -> str:
+    return f"{number:02d}{suffix}"
+
+
+def album_sync(out_dir: str, name: str) -> dict:
+    """(Re)create the album directory from the manifest: remove the
+    numbered files it holds, hard-link every delivered image (and its
+    .diag.json when present) under its number, and write index.json.
+    Returns the index. Only numbered files (NN.tiff, NN.diag.json) are
+    ever removed; anything else in the directory is left alone."""
+    import os
+    import shutil
+    from datetime import datetime, timezone
+    d = album_dir(out_dir, name)
+    d.mkdir(parents=True, exist_ok=True)
+    for child in d.iterdir():
+        if child.is_file() and _ALBUM_NUMBERED.match(child.name):
+            child.unlink()
+    items = album_plan(out_dir, name)
+    for it in items:
+        if it["status"] != "delivered":
+            continue
+        for src, suffix in ((it["source"], ".tiff"), (it.get("diag"), ".diag.json")):
+            if not src or not Path(src).is_file():
+                continue
+            dst = d / album_number_name(it["number"], suffix)
+            try:
+                os.link(src, dst)
+            except OSError:
+                shutil.copy2(src, dst)      # another filesystem: a copy
+    strips = []
+    for rec in album_rolls(out_dir, name):
+        nums = [it["number"] for it in items
+                if it["prefix"] == rec.get("prefix", "") and it["roll"] == int(rec["roll"])]
+        strips.append({"prefix": rec.get("prefix", ""), "roll": int(rec["roll"]),
+                       "dir": rec.get("dir"), "status": rec.get("status"),
+                       "images": nums})
+    index = {
+        "album": name,
+        "generated_utc": datetime.now(timezone.utc).isoformat(),
+        "numbering": "gap-free through the strips; an empty opening takes no "
+                     "number; a scanned frame without a product reserves its "
+                     "number (status missing) until it is delivered",
+        "strips": strips,
+        "images": [{k: v for k, v in it.items() if k != "diag"} for it in items],
+        "delivered": sum(1 for it in items if it["status"] == "delivered"),
+        "missing": [it["number"] for it in items if it["status"] == "missing"],
+    }
+    (d / ALBUM_INDEX_NAME).write_text(json.dumps(index, indent=2, sort_keys=True) + "\n")
+    return index

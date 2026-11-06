@@ -393,6 +393,23 @@ def _validate_film110_args(args: argparse.Namespace) -> "str | None":
     return None
 
 
+def _validate_album_args(args: argparse.Namespace) -> str | None:
+    """--album: a plain directory name (digitize.check_album_name), 135
+    only (110 numbers its photographs itself, docs/film-110.md). Checked
+    before any hardware."""
+    from . import digitize
+    name = getattr(args, "album", None)
+    if name is None:
+        return None
+    try:
+        digitize.check_album_name(name)
+    except ValueError as e:
+        return f"--album: {e}"
+    if getattr(args, "film", "135") == "110":
+        return "--album is for 135 film; --film 110 numbers its photographs itself"
+    return None
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
     if args.dpi not in SUPPORTED_DPIS:
         print(f"error: --dpi must be one of {', '.join(map(str, SUPPORTED_DPIS))}", file=sys.stderr)
@@ -2710,6 +2727,9 @@ def _sweep_validate(args: argparse.Namespace) -> "tuple[list[int] | None, str | 
                       f"the per-frame cycle for this range. Nothing was sent to the scanner.")
     if getattr(args, "from_sweep", False) and args.roll is None:
         return None, "--from-sweep needs --roll N"
+    err = _validate_album_args(args)
+    if err is not None:
+        return None, err
     dual = bool(args.ir or args.dpi != 3600)
     if not dual:
         return None, _SWEEP_PLAIN_WITHDRAWN_MSG
@@ -2906,12 +2926,15 @@ def _digitize_sweep(args: argparse.Namespace) -> int:
               "started_utc": started, "dpi": args.dpi, "positive": args.positive,
               "ir": args.ir, "frames": frames, "no_clean": args.no_clean,
               "rotate": args.rotate}
+    if getattr(args, "album", None):
+        record["album"] = args.album
 
     def record_failed(stage: str, **extra) -> None:
         try:
             record.update(status="failed", stage=stage,
                           finished_utc=datetime.now(timezone.utc).isoformat(), **extra)
             digitize.append_manifest(args.out, record)
+            _album_sync_after(args, roll)
         except Exception as me:
             log.warning("manifest write failed while recording a failed roll "
                         "(original error preserved): %s", me)
@@ -3038,6 +3061,8 @@ def _sweep_finish(args, record: dict, rdir: Path, raw_path: Path, meta: dict, re
     except Exception as me:
         print(f"warning: roll {record['roll']} processed but the manifest write "
               f"failed ({me!r}); the images are saved in {rdir}.", file=sys.stderr)
+    else:
+        _album_sync_after(args, int(record["roll"]))
     if keep and raw_path.exists():
         _sweep_kept_note(raw_path)
     if not ok:
@@ -3097,6 +3122,8 @@ def _digitize_from_sweep(args: argparse.Namespace, frames: list) -> int:
               "frames": list(range(int(meta["first"]), int(meta["last"]) + 1)),
               "no_clean": args.no_clean, "rotate": args.rotate,
               "rebuilt_from_sweep": True}
+    if getattr(args, "album", None):
+        record["album"] = args.album
     d = doc.get("diag") or {}
     scanlike = SimpleNamespace(last_diag=d, last_cal_data=None)
     per_frame: list = []
@@ -3158,6 +3185,10 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
     err = _validate_film110_args(args)
+    if err is not None:
+        print(f"error: {err}", file=sys.stderr)
+        return 2
+    err = _validate_album_args(args)
     if err is not None:
         print(f"error: {err}", file=sys.stderr)
         return 2
@@ -3226,6 +3257,8 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
                 "positive": args.positive, "ir": args.ir,
                 "frames": c.frames,
                 "no_clean": args.no_clean, "rotate": args.rotate}
+    if getattr(args, "album", None):
+        c.record["album"] = args.album
     if args.force and film110:
         c.record["forced"] = True       # starts a new epoch of the roll's records
     if film110:
@@ -3243,6 +3276,7 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
                             finished_utc=datetime.now(timezone.utc).isoformat(),
                             **extra)
             digitize.append_manifest(args.out, c.record)
+            _album_sync_after(args, c.roll)
         except Exception as me:
             log.warning("manifest write failed while recording a failed roll "
                         "(original error preserved): %s", me)
@@ -3414,6 +3448,8 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
               f"({me!r}); the images are saved in {c.rdir}. The manifest is out "
               f"of date -- record it by hand or re-run with --force.",
               file=sys.stderr)
+    else:
+        _album_sync_after(args, c.roll)
 
     if (film110 and rc in (0, 5) and not c.state.aborted
             and c.record.get("status") == "ok" and c.record.get("anchor_shift")):
@@ -3481,6 +3517,61 @@ def _cmd_digitize(args: argparse.Namespace) -> int:
         print(f"roll {roll} FAILED at scan (rc {rc}); recorded. "
               f"Power-cycle before the next strip.", file=sys.stderr)
     return rc
+
+
+def _album_sync_after(args: argparse.Namespace, roll: int) -> None:
+    """After a roll's manifest record is appended: rebuild the album
+    (digitize.album_sync) when the run has one, and say what it holds.
+    Never fails the run: the images and the record are already on disk,
+    and `of135i album` can rebuild the view at any time."""
+    from . import digitize
+    name = getattr(args, "album", None)
+    if not name:
+        return
+    try:
+        index = digitize.album_sync(args.out, name)
+    except Exception as e:
+        print(f"warning: album {name!r} was not updated ({e!r}); run "
+              f"'of135i album -o {args.out} {name}' to rebuild it", file=sys.stderr)
+        return
+    mine = next((s for s in index["strips"]
+                 if s["roll"] == roll and s["prefix"] == getattr(args, "prefix", "")), None)
+    nums = mine["images"] if mine else []
+    span = (f"{nums[0]:02d}-{nums[-1]:02d}" if len(nums) > 1 else
+            f"{nums[0]:02d}" if nums else "no images")
+    missing = [n for n in index["missing"] if n in nums]
+    print(f"album {name}: this strip is {span}"
+          + (f" ({len(missing)} reserved, not delivered: "
+             f"{', '.join(f'{n:02d}' for n in missing)})" if missing else "")
+          + f"; {index['delivered']} images in {digitize.album_dir(args.out, name)}")
+
+
+def _cmd_album(args: argparse.Namespace) -> int:
+    """`of135i album -o DIR NAME`: rebuild an album directory from the
+    manifest (digitize.album_sync). No scanner. Exit 0; 2 on a bad name
+    or a missing --out."""
+    from . import digitize
+    try:
+        name = digitize.check_album_name(args.name)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if not Path(args.out).is_dir():
+        print(f"error: {args.out} is not a directory", file=sys.stderr)
+        return 2
+    index = digitize.album_sync(args.out, name)
+    d = digitize.album_dir(args.out, name)
+    print(f"album {name}: {len(index['strips'])} strip(s), {index['delivered']} images in {d}")
+    for st in index["strips"]:
+        nums = st["images"]
+        span = (f"{nums[0]:02d}-{nums[-1]:02d}" if len(nums) > 1 else
+                f"{nums[0]:02d}" if nums else "no images")
+        print(f"  {digitize.roll_dirname(st['prefix'], st['roll'])}: {span} ({st['status']})")
+    if index["missing"]:
+        print(f"  reserved, not delivered: "
+              f"{', '.join(f'{n:02d}' for n in index['missing'])} (see index.json; "
+              f"`of135i recrop` can deliver a frame whose opening was located)")
+    return 0
 
 
 def _cmd_recrop(args: argparse.Namespace) -> int:
@@ -3782,6 +3873,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="stop after S seconds (default: until Ctrl-C)")
     p_buttons.set_defaults(func=_cmd_buttons)
 
+    p_album = sub.add_parser(
+        "album",
+        help="rebuild a digitize album (<out>/NAME/: the film's photographs "
+             "numbered through its strips) from the manifest; no scanner")
+    p_album.add_argument("-o", "--out", required=True, metavar="DIR",
+        help="the digitize staging directory (the one with manifest.jsonl)")
+    p_album.add_argument("name", metavar="NAME",
+        help="the album name given to digitize --album")
+    p_album.set_defaults(func=_cmd_album)
+
     p_recrop = sub.add_parser(
         "recrop",
         help="make the cropped fN.tiff (and fN-ir.tiff) from a frame's preserved "
@@ -3889,6 +3990,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_dig.add_argument("--no-ir", dest="ir", action="store_false",
         help="skip the IR pass and dust removal (non-3600 profiles still "
              "run a dual-light capture; only the IR output is dropped)")
+    p_dig.add_argument("--album", default=None, metavar="NAME",
+        help="135 only: also collect this strip's photographs in <out>/NAME/, "
+             "numbered through the strips of the film (01.tiff, 02.tiff, ..., "
+             "36.tiff, with NN.diag.json beside each; issue #65). Give the same "
+             "NAME for every strip of one film. Numbering is gap-free: a strip's "
+             "images follow the previous strip's, an empty opening (a short "
+             "strip) takes no number, and a frame scanned but not delivered "
+             "(coverage not verified) keeps its number reserved and is listed as "
+             "missing in NAME/index.json until `of135i recrop` delivers it. The "
+             "numbered files are hard links to the roll directories' fN.tiff "
+             "(no extra disk); the album is rebuilt from the manifest after "
+             "every strip and by `of135i album`, so a --force re-run of a strip "
+             "renumbers what follows it")
     p_dig.add_argument("--no-stop-at-empty", action="store_true",
                        help="scan every requested frame even after an empty "
                             "aperture that follows film (default: the strip "
