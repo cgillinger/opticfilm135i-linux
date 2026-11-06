@@ -8733,3 +8733,37 @@ shown on that unit; the value for it, −0.5 or −0.6 from its own
 sidecars, is predicted from this test to put its margins where this
 unit's are. The sweep paths carry the same offset through the same
 function and were not run (no change to their wire other than FEEDL).
+
+## 2026-11-06 — External report (issue #50): SANE v9's magazine load on the second unit, twice — one miss with the "transport ran, cassette not taken" signature, one load; from the reg 0x32 write to the end of the load the backend's transfers match the Python driver's
+
+Not run by the owner. Reported by bearyjd on issue #50 with logs and a
+wire comparison in a gist; this entry is the owner's side reading the
+report. Hardware: bearyjd's unit and host, slide holder, the v9 tree
+(tip 18bea9b32, tree 60c3bff8; the backend suites pass: open_params 7,
+magazine 42, calibration_cache 6), run uninstalled through
+`LD_LIBRARY_PATH` and `SANE_CONFIG_DIR`; scanner power-cycled first,
+magazine loose in the slot. Step 3 of the v9 test table only
+(`scanimage -d $D -n --load-film`); the scans (steps 4–6) have not run.
+
+| run | date | build | edge seen after | result |
+|---|---|---|---|---|
+| 1 | 2026-11-05 | v9 | 177 polls, ~17.7 s | `PollMasked at op 24 (mask 0xfb want 0xf0) timed out after 4830ms: first 0xfc, last 0xfc, nothing further sent`; `--load-film failed (Device busy)`; after a power cycle the magazine was present, not latched; the Python driver then loaded it (`f455`, `dc55`) |
+| 2 | 2026-11-06 | v9 + bearyjd's logging patch (no added transfers) | 302 polls, ~30.2 s | loaded (`reg 0x101 = 0xdc`); `--eject-film` ejected |
+
+**Wire comparison (run 2).** A passive usbmon capture of run 2 against
+one of the Python driver's `of135i load` on the same unit the same
+morning: from the write of reg 0x32 = 0x1d to the end of the load, the
+66 transfers are identical in request, wValue, wIndex, written and
+replied byte, and in the 1.6 s and 1.1 s waits (to under 1 ms); status
+`f455`, then `dc55`, in both. The backend started LOAD 1.006 s after the
+sensor first read present.
+
+**Reading.** Op 24 is the engaging-feed poll; `0xfc & 0xfb = 0xf8`
+differs from the wanted `0xf0` only in bit 0x08, the loader sensor that
+did not clear: the "transport ran, cassette not taken" signature seen on
+the owner's unit since Test 12, with no cause found. Not new to v9 and
+no reason to change the load program; one miss and one load, no capture
+of the miss. The one difference between the flows: the Python driver
+runs LOAD on Enter, the backend about a second after it sees the
+magazine back in. bearyjd's logging patch is held for the next SANE
+revision; v9 stays as tested.
