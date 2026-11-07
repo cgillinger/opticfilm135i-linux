@@ -324,7 +324,11 @@ profile in the driver (POSITION to the opening on the measured grid, crop
 keyed on IR, positive handling without inversion) and grid stability
 beyond two loads; dust removal scaled by dpi for the low resolutions is
 done (PR #66, bearyjd, 2026-11-07: footprints in physical size, 3600 dpi
-unchanged, the Test 84 slide eye-checked at 600 dpi). C2 is
+unchanged, the Test 84 slide eye-checked at 600 dpi), and the measured
+grid is in the code as `SLIDE_FIDUCIAL` / `slide_dual_geometry()` (PR
+#67, bearyjd, 2026-11-07, no caller yet). The remaining steps are being
+built by the contributor on his unit, in the order holder option, crop,
+positive output, hardware runs (issue #70, 2026-11-07). C2 is
 done when that list is verified on a mounted slide. **Brought forward
 2026-09-18 (owner's decision, slides are in scope for the driver): in
 progress.**
