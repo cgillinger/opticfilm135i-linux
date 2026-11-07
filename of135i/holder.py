@@ -127,9 +127,10 @@ STRIP = Holder(
 #: like the strip holder (identical load flow). The vendor does not
 #: position it frame by frame (one sweep, software crop), but Test 84
 #: measured a 62.6 mm grid of 38.05 mm openings inside the verified FEEDL
-#: range (slide-holder-analysis.md section 5), so the driver reaches each
-#: opening with the strip path's own POSITION move: ``of135i scan
-#: --slides`` via SLIDE_FIDUCIAL / slide_dual_geometry() below.
+#: range (slide-holder-analysis.md section 5), so each opening can be
+#: reached with the strip path's own POSITION move, using SLIDE_FIDUCIAL /
+#: slide_dual_geometry() below. Nothing calls that model yet: the CLI and
+#: the hardware runs come in a later change.
 SLIDE = Holder(
     name="mounted-slide holder",
     frames=4,
