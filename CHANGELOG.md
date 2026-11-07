@@ -6,6 +6,24 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **IR dust cleaning scaled by resolution (PR #66, bearyjd).** The
+  dust mask's background box, border halo and dilation and the inpaint
+  footprints were fixed pixel counts tuned at 3600 dpi; at 600 dpi the
+  same counts covered six times the film area, so specks merged into a
+  mass mask (Test 84). `image.dust_mask()` and `image.remove_dust()` now
+  take `dpi` and convert every footprint to the profile's physical
+  sampling, per axis for the anisotropic 2400 dpi profile; `scan --ir`
+  and `digitize` pass the scan's dpi. At 3600 dpi the output is
+  unchanged: pinned hashes in `tests/test_ir.py`, and a 3000-line band
+  of the Test 85 slide cleaned byte-identically before and after. At
+  600 dpi on the Test 84 slide the mask fell from 28.8 % to 6.0 % of the
+  frame and the owner's eye check found the cleaned picture clearly
+  better, with the tree line and sky intact (test log, 2026-11-07,
+  offline). Specks within the border halo of the mount edge stay, and a
+  thin scratch is only partly removed at 600 dpi (the smallest inpaint
+  kernel is one pixel there). Offline; no transfer to the scanner
+  changes.
+
 ## v0.2.11 — Second Scanner Gamble — 2026-11-06
 
 - **Release codename.** `of135i.__codename__` ("Second Scanner Gamble"
