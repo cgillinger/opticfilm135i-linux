@@ -121,7 +121,7 @@ def along_strip_profile(image, *, channel="red", band=0.5) -> np.ndarray:
 
 
 def measure_coverage(image, *, dpi, min_margin_mm=0.15, channel="red",
-                     band=0.5) -> ApertureCoverage:
+                     band=0.5, min_aperture_mm=aperture.MIN_APERTURE_MM) -> ApertureCoverage:
     """Locate the aperture's two edges in a delivered frame and decide
     whether the whole opening was captured with at least `min_margin_mm`
     of overscan beyond each edge. Rule (section 5):
@@ -133,6 +133,8 @@ def measure_coverage(image, *, dpi, min_margin_mm=0.15, channel="red",
       - zero apertures, or more than one -> verified False, reason says
         so.
     Never raises on image content; returns a verdict.
+    ``min_aperture_mm`` is the shortest lit run that counts (the strip
+    default, aperture.MIN_APERTURE_MM; the slide crop passes its own).
     """
     arr = np.asarray(image)
     n_lines = arr.shape[0] if arr.ndim >= 1 else 0
@@ -154,10 +156,12 @@ def measure_coverage(image, *, dpi, min_margin_mm=0.15, channel="red",
     if factor > 1:
         usable = (len(profile) // factor) * factor
         binned = profile[:usable].reshape(-1, factor).mean(axis=1)
-        threshold, aps_b = aperture.apertures(binned, lines_per_mm / factor)
+        threshold, aps_b = aperture.apertures(binned, lines_per_mm / factor,
+                                             min_mm=min_aperture_mm)
         aps = [(a * factor, b * factor) for a, b in aps_b]
     else:
-        threshold, aps = aperture.apertures(profile, lines_per_mm)
+        threshold, aps = aperture.apertures(profile, lines_per_mm,
+                                           min_mm=min_aperture_mm)
 
     if len(aps) == 0:
         return ApertureCoverage(
@@ -297,6 +301,49 @@ def measure_coverage_dual(visible, ir, *, dpi, min_margin_mm=0.15) -> ApertureCo
         return replace(cov_vis, source="visible")
     return replace(cov_vis, source="visible",
                    reason=f"IR: {cov_ir.reason}; visible: {cov_vis.reason}")
+
+
+#: Mounted-slide crop (issue #70 step 2): the lit run the IR channel sees
+#: in a slide window is the MOUNT's aperture, not the holder's 38.05 mm
+#: opening (the mount is opaque to IR, the film is not; Test 84). Its long
+#: side runs along the transport; Tests 84/85 measured 35.06-35.1 mm and
+#: common mounts are 34-36 mm. A run shorter than SLIDE_MIN_APERTURE_MM is
+#: refused rather than cropped to: an IR-dense picture area at the mount
+#: edge (silver, some Kodachrome) shortens the lit run, and the strip floor
+#: (aperture.MIN_APERTURE_MM, 25 mm) would then crop into the picture and
+#: call it verified. A run longer than SLIDE_MAX_APERTURE_MM is the holder
+#: opening itself: no mount, or a mount the IR passes through.
+SLIDE_MIN_APERTURE_MM = 33.0
+SLIDE_MAX_APERTURE_MM = 37.0
+
+
+def measure_slide_coverage(ir, *, dpi, min_margin_mm=0.15) -> ApertureCoverage:
+    """Coverage for one mounted-slide window, keyed on the IR channel only.
+
+    `ir` is the (lines, width) IR array of a slide scan (image.split_ir,
+    cropped like the visible array). Same edge finder, binning and
+    contract as measure_coverage: exactly one lit run of
+    SLIDE_MIN_APERTURE_MM..SLIDE_MAX_APERTURE_MM with both edges found and
+    at least ``min_margin_mm`` inside the window -> verified (source
+    "ir"); anything else -> not verified, with the reason. Visible light is
+    not consulted: dark picture content fooled it on the Test 84 slide.
+    Never raises on image content.
+    """
+    cov = replace(measure_coverage(ir, dpi=dpi, min_margin_mm=min_margin_mm,
+                                   min_aperture_mm=SLIDE_MIN_APERTURE_MM),
+                  source="ir")
+    if cov.leading_line is None:
+        return replace(cov, reason=(
+            f"IR: {cov.reason} (a mount aperture is a lit run of at least "
+            f"{SLIDE_MIN_APERTURE_MM:g} mm; an IR-dense picture at the mount "
+            f"edge, a missing slide or a clipped window gives none)"))
+    length_mm = (cov.trailing_line - cov.leading_line) / (dpi / MM_PER_INCH)
+    if length_mm > SLIDE_MAX_APERTURE_MM:
+        return replace(cov, verified=False, reason=(
+            f"IR: lit run {length_mm:.2f} mm is longer than a mount aperture "
+            f"(> {SLIDE_MAX_APERTURE_MM:g} mm): an empty opening, or a mount "
+            f"the IR passes through"))
+    return cov
 
 
 #: Side-band coverage (110 film on the plain path, see

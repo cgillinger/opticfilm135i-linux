@@ -390,9 +390,9 @@ class _FakeSlideScanner:
 def test_cli_slide_scan_writes_the_overscan_pair_and_a_slide_sidecar():
     """One opening end to end off hardware: scan(slide=True) with the
     slide default overscan and the unit offset, the full overscan frame(s)
-    written, no aperture product (the strip crossbar check does not apply
-    to a slide holder), sidecar coverage.applicable False, holder recorded,
-    exit 0."""
+    written, holder recorded. This fixture's lit run (half the window) is
+    no mount aperture, so the slide crop (tests/test_slide_crop.py) does
+    not verify it: no product, coverage NOT verified, exit 4."""
     import json
     import os
     import tempfile
@@ -410,7 +410,7 @@ def test_cli_slide_scan_writes_the_overscan_pair_and_a_slide_sidecar():
                                       monkey_session=False)
         finally:
             cli._run_writing_session = saved
-        assert rc == 0, (rc, err)
+        assert rc == 4, (rc, err)
         scans = [k for name, k in fake.calls if name == "scan"]
         assert scans == [dict(frame=3, ir=True, dpi=600,
                               overscan_mm=holder.SLIDE_OVERSCAN_MM, slide=True)], scans
@@ -419,10 +419,11 @@ def test_cli_slide_scan_writes_the_overscan_pair_and_a_slide_sidecar():
         assert os.path.exists(stem + "-ir.overscan.tiff")
         assert not os.path.exists(stem + ".tiff") and not os.path.exists(stem + "-ir.tiff")
         side = json.loads(open(diag.sidecar_path(stem + ".tiff")).read())
-        assert side["coverage"]["applicable"] is False, side["coverage"]
+        assert side["coverage"]["verified"] is False, side["coverage"]
+        assert side["coverage"]["method"] == "slide-ir", side["coverage"]
         assert side["cli"]["holder"] == "slide" and side["holder"] == "slide"
         assert side["cli"]["position_offset"] == -0.5
-        assert "not checked" in out, out
+        assert "NOT verified" in err, err
     print("test_cli_slide_scan_writes_the_overscan_pair_and_a_slide_sidecar OK")
 
 

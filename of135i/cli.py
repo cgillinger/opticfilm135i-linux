@@ -565,14 +565,14 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             cov = None
             if slide:
                 # One opening = the strip path's position-scan-PARK with
-                # the slide geometry. No coverage check (cov stays None):
-                # the strip check looks for the strip holder's edges; the
-                # full overscan frame(s) are the output for now.
+                # the slide geometry; coverage and crop keyed on the IR
+                # channel (aperture_crop.measure_slide_coverage), same
+                # contract as strips.
                 raw, width, _meta = scanner.scan(
                     frame=frame, ir=True, dpi=args.dpi,
                     overscan_mm=args.overscan, slide=True)
-                _finish_dual_scan(args, raw, width, out, write_ir=args.ir,
-                                  frame=frame, slide=True)
+                cov = _finish_dual_scan(args, raw, width, out, write_ir=args.ir,
+                                        frame=frame, slide=True)
             elif dual:
                 raw, width, _meta = scanner.scan(
                     frame=frame, ir=True, dpi=args.dpi,
@@ -1521,10 +1521,13 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
     the SAME aperture-registered visible/IR crop pair right after they
     are computed, before orientation -- see `_film110_hook`.
 
-    `slide=True` (--holder slide): the full overscan frame(s) are written
-    as always, and nothing else. No coverage is measured (the strip check
-    looks for the strip holder's opening edges, not a slide mount) and
-    None is returned, so a slide is never counted as a coverage failure.
+    `slide=True` (--holder slide): coverage is measured on the IR channel
+    only, for the slide mount's aperture (aperture_crop.
+    measure_slide_coverage; the strip check looks for the strip holder's
+    opening edges), with the same contract: overscan always kept, the
+    cropped pair only when verified. No --position-offset hint on a
+    failure: the margins say where the slide sits in its mount, not where
+    the unit's windows are.
     """
     import numpy as _np
 
@@ -1555,7 +1558,10 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
     # (split_ir rolled it into register, then cropped by the same shift
     # above) share one line grid; measure_coverage_dual checks that. The IR
     # array is used for coverage even when no IR file is written.
-    cov = None if slide else aperture_crop.measure_coverage_dual(visible, ir, dpi=args.dpi)
+    if slide:
+        cov = aperture_crop.measure_slide_coverage(ir, dpi=args.dpi)
+    else:
+        cov = aperture_crop.measure_coverage_dual(visible, ir, dpi=args.dpi)
 
     # _orient_pair is the module-level helper above (shared with the
     # --film 110 hook): same orientation fix as the plain path, applied
@@ -1589,19 +1595,14 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
               f"overscan frame, IR channel)")
     del ov_vis, ov_ir
 
-    if slide:
-        print("aperture coverage: not checked (mounted-slide holder: the "
-              "slide crop is not built yet); the full overscan frame(s) above "
-              "are the output")
-        return None
-
     if not cov.verified:
         print(f"aperture coverage: NOT verified — {cov.reason}. Kept the full "
               f"overscan frame(s); no registered product written for this "
-              f"frame.{_offset_hint(cov)}", file=sys.stderr)
+              f"frame.{'' if slide else _offset_hint(cov)}", file=sys.stderr)
         return cov
 
-    print(f"aperture coverage: VERIFIED (source: {cov.source}) — margins lead "
+    what = "IR, slide mount aperture" if slide else cov.source
+    print(f"aperture coverage: VERIFIED (source: {what}) — margins lead "
           f"{cov.leading_margin_mm:.3f} mm, trail {cov.trailing_margin_mm:.3f} mm")
     vis_c = aperture_crop.crop_to_aperture(visible, cov, dpi=args.dpi)
     ir_c = aperture_crop.crop_to_aperture(ir, cov, dpi=args.dpi) if write_ir else None
@@ -1653,13 +1654,9 @@ def _write_diag_sidecar(args: argparse.Namespace, scanner: Scanner, out: str,
                                "saturated_share": film["saturated_share"]}
             if not film["present"]:
                 sidecar["coverage"]["reason"] = "empty aperture"
-    elif _is_slide(args):
-        sidecar["coverage"] = {
-            "applicable": False,
-            "verified": None,
-            "reason": "mounted-slide holder: the strip coverage check does not "
-                      "apply; the full overscan frame(s) are the output",
-        }
+        if _is_slide(args):
+            # The slide crop's own check (aperture_crop.measure_slide_coverage).
+            sidecar["coverage"]["method"] = "slide-ir"
     sidecar["cli"] = {
         "command": getattr(args, "command", None),   # "scan" or "digitize"
         "frame": frame,
