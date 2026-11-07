@@ -6,6 +6,30 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **Slide crop keyed on the IR channel (issue #70 step 2, bearyjd).
+  Synthetic fixtures only; not run on a real slide.** `scan --holder
+  slide` now checks each opening's coverage and crops, with the strips'
+  contract: the full overscan frame(s) are always kept, the cropped
+  pair (`-o`, with `--ir` also `-ir.tiff`) is written only when
+  "coverage VERIFIED", otherwise "NOT verified", no product, exit 4.
+  `aperture_crop.measure_slide_coverage()` looks for the slide mount's
+  aperture in the IR channel only (the mount is opaque to IR, the film
+  is not; visible light was fooled by dark picture content, Test 84),
+  with the strip edge finder and binning, and accepts one lit run of
+  33-37 mm (Tests 84/85: 35.06-35.1 mm) with both edges inside the
+  window. Shorter runs are refused rather than cropped to (an IR-dense
+  picture at the mount edge would otherwise be cut, and the strip's
+  25 mm floor would call it verified); a run of the 38.05 mm opening
+  itself (no mount, or an IR-translucent mount) is refused too. The crop
+  is along the transport, as for strips. No `--position-offset` hint for
+  slides (the margins say where the slide sits in its mount). Sidecar
+  `coverage.method: "slide-ir"`. Nothing sent to the scanner changes.
+  `measure_coverage()` gains `min_aperture_mm` (strip default unchanged).
+  New `tests/test_slide_crop.py` (8 tests: centred, off-centre and
+  dark-grey mounts verified at 600/1200/3600 dpi; IR-dense edge, empty
+  opening, IR-translucent mount and a clipped window NOT verified; the
+  strip default unchanged; the CLI's verified and NOT-verified outputs).
+
 - **`scan --holder slide`: the mounted-slide holder, positioned per
   opening (issue #70 step 1, bearyjd). NOT yet run on hardware.**
   `--holder {strip,slide}`, default `strip` (unchanged, byte-identical

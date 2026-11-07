@@ -8919,3 +8919,13 @@ then the next: `scan --holder slide --frame 1 --ir --no-clean -o s1.tiff`
 the FEEDL and poll lines from the log, PARK and eject, the sidecars, and
 whether each overscan frame holds the whole mount aperture (eye check;
 pictures stay with the contributor).
+
+## PLACEHOLDER (hardware run pending, no Test number) — the IR-keyed slide crop (issue #70 step 2, bearyjd) on real mounted slides
+
+**Not run. No result exists.** Offline the crop is tested on synthetic
+profiles only (`tests/test_slide_crop.py`). To be filled from the
+contributor's unit with the same runs as the step 1 placeholder above:
+per opening, the coverage verdict and reason, both margins, the cropped
+size against the mount's aperture (35.06 × 22.75 mm on the Test 85
+slide), and an eye check that the crop holds the whole picture. A real
+scan is what settles the crop.

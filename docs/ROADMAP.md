@@ -332,7 +332,10 @@ positive output, hardware runs (issue #70, 2026-11-07). Step 1, the
 holder option, is written and offline-tested, not yet run on hardware:
 `scan --holder slide`, `--frame N` = opening N positioned on that grid
 with `--position-offset`, dual profiles only, `--positive` refused,
-overscan frames only. C2 is
+overscan frames only. Step 2, the IR-keyed crop, is written and tested
+on synthetic fixtures: the mount's aperture found in the IR channel,
+33-37 mm, the strips' verified / NOT verified contract with the overscan
+kept. C2 is
 done when that list is verified on a mounted slide. **Brought forward
 2026-09-18 (owner's decision, slides are in scope for the driver): in
 progress.**
