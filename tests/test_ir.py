@@ -493,6 +493,28 @@ def test_dust_removal_low_dpi_preserves_scene():
     print("test_dust_removal_low_dpi_preserves_scene OK")
 
 
+def test_dust_removal_dpi_is_not_ignored():
+    """dpi must change the result, not just be accepted: on one input the
+    1200 and 7200 dpi masks and cleaned frames all differ from the 3600
+    ones (the halo and background box are physical, so they scale)."""
+    ir = np.full((180, 240), 40000, dtype=np.uint16)
+    ir[:, :25] = ir[:, -25:] = 700
+    ir[85:88, 115:118] = 16000
+    ir[105:109, 150:154] = 20000
+    y, x = np.mgrid[:180, :240]
+    visible = np.stack([5000 + 7*x + 11*y, 3000 + 13*x + 3*y,
+                        9000 + 5*x + 17*y], -1).astype(np.uint16)
+    base_mask = image.dust_mask(ir, dpi=3600)
+    base_clean = image.remove_dust(visible, ir, dpi=3600)
+    for dpi in (1200, 7200):
+        mask = image.dust_mask(ir, dpi=dpi)
+        assert not np.array_equal(mask, base_mask), dpi
+        assert (mask.sum() < base_mask.sum()) == (dpi < 3600), dpi
+        assert not np.array_equal(image.remove_dust(visible, ir, dpi=dpi),
+                                  base_clean), dpi
+    print("test_dust_removal_dpi_is_not_ignored OK")
+
+
 def test_dust_mask_physical_radius_anisotropic():
     """The halo is 0.0423 mm per axis, including the 2400 profile's
     3600-across/2400-along sampling (four rows but six columns)."""
@@ -642,6 +664,7 @@ def main() -> int:
         test_dust_removal_3600_backwards_compatible,
         test_dust_removal_low_dpi_preserves_scene,
         test_dust_mask_physical_radius_anisotropic,
+        test_dust_removal_dpi_is_not_ignored,
         test_cal_capture_offon_identical_write_stream_dual,
     ]
     for t in tests:
