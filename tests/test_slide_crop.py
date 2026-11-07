@@ -14,15 +14,15 @@ both edges found with at least min_margin_mm inside the window ->
 "coverage VERIFIED", crop to it; anything else -> "NOT verified", the
 full overscan frame(s) kept, exit 4, so no picture is ever lost.
 
-Slide-specific: the run must be 34.5-37 mm long (a mount aperture's long
-side; Tests 84/85 measured 35.06-35.1 mm), both margins must hold the
+Slide-specific: the run must be 33.8-37 mm long (a mount aperture's long
+side; Tests 84/85 measured 35.06-35.1 mm, four cardboard mounts 34.16-34.45 mm), both margins must hold the
 1.5 mm crop pad inside the window, and the crop is padded by that much
 per side (aperture_crop.crop_slide). An IR-dense picture area at the
 mount edge (silver, some Kodachrome) is dark in IR like the mount and
 shortens the lit run; the floor and the pad together keep a verified
-crop truthful for mount apertures up to 36.0 mm (kept whole). Above
-that a band can still be cut: a 37 mm aperture with a 2 mm band gives
-the same run as a clean 35.06 mm mount, which no length rule can tell
+crop truthful for mount apertures up to 35.3 mm (floor 33.8 + pad 1.5,
+kept whole). Above that a band can still be cut: a 37 mm aperture with
+a 3 mm band gives the same run as a clean 34.0 mm mount, which no length rule can tell
 apart (the limit test pins it). Longer than 37 mm is refused: that is
 the 38.05 mm holder opening itself (no mount, or a mount the IR passes
 through).
@@ -146,11 +146,12 @@ def test_hidden_edge_bands_are_never_cut_by_a_verified_crop():
     print("test_hidden_edge_bands_are_never_cut_by_a_verified_crop OK")
 
 
-def test_the_guarantee_holds_to_36_mm_and_its_limit_is_documented():
-    """Apertures up to 36.0 mm are kept whole by a verified crop, with the
-    widest hidden band that still verifies (run at the 34.5 mm floor).
-    The limit: a 37.0 mm aperture with a 2 mm band verifies (its 35.0 mm
-    run equals a clean 35.06 mm mount's) and the crop misses ~0.5 mm --
+def test_the_guarantee_holds_to_35_3_mm_and_its_limit_is_documented():
+    """Apertures up to 35.3 mm (floor + pad) are kept whole by a verified
+    crop, with the widest hidden band that still verifies (run at the
+    33.8 mm floor). The limit: a 37.0 mm aperture with a 3 mm band
+    verifies (its 34.0 mm run equals a clean 34.0 mm mount's) and the
+    crop misses ~1.5 mm --
     pinned so a change to the bounds has to restate the guarantee."""
     pad, lpm = aperture_crop.SLIDE_CROP_PAD_MM, 600 / 25.4
     def kept_whole(ap, band):
@@ -162,24 +163,36 @@ def test_the_guarantee_holds_to_36_mm_and_its_limit_is_documented():
         lo = cov.leading_line - pad * lpm
         hi = cov.trailing_line + pad * lpm
         return cov.verified, (lo <= a0 * lpm + 1 and hi + 1 >= (a0 + ap) * lpm)
-    for ap in (35.06, 35.5, 36.0):
+    for ap in (35.06, 35.2, 35.3):
         band = ap - aperture_crop.SLIDE_MIN_APERTURE_MM - 0.02
         verified, whole = kept_whole(ap, band)
         assert verified and whole, (ap, band)
-    verified, whole = kept_whole(37.0, 2.0)
+    verified, whole = kept_whole(37.0, 3.0)
     assert verified and not whole                   # the documented limit
-    print("test_the_guarantee_holds_to_36_mm_and_its_limit_is_documented OK")
+    print("test_the_guarantee_holds_to_35_3_mm_and_its_limit_is_documented OK")
 
 
 def test_minimum_run_length_is_enforced_by_behaviour():
-    """A clean 34.0 mm mount aperture is below the floor and refused; a
-    34.8 mm one is verified; a mount inserted turned 90 degrees (the
+    """A clean 33.5 mm mount aperture is below the floor and refused; a
+    34.0 mm one is verified; a mount inserted turned 90 degrees (the
     22.75 mm side along the transport) is refused, so the scan exits 4."""
-    assert not _cov(_slide_ir(aperture_mm=34.0)[0]).verified
-    assert _cov(_slide_ir(aperture_mm=34.8)[0]).verified
+    assert not _cov(_slide_ir(aperture_mm=33.5)[0]).verified
+    assert _cov(_slide_ir(aperture_mm=34.0)[0]).verified
     cov = _cov(_slide_ir(aperture_mm=22.75)[0])
     assert not cov.verified and "mount aperture" in cov.reason, cov
     print("test_minimum_run_length_is_enforced_by_behaviour OK")
+
+
+def test_measured_cardboard_mounts_are_verified():
+    """Real lit runs (2026-11-07, several cardboard brands, IR along the
+    transport at 3600 dpi) of 34.16, 34.20, 34.24 and 34.45 mm verify; the
+    old 34.5 mm floor refused three of the four. 33.0 mm stays refused."""
+    for ap in (34.16, 34.20, 34.24, 34.45):
+        cov = _cov(_slide_ir(3600, aperture_mm=ap)[0], 3600)
+        assert cov.verified, (ap, cov)
+    cov = _cov(_slide_ir(3600, aperture_mm=33.0)[0], 3600)
+    assert not cov.verified, cov
+    print("test_measured_cardboard_mounts_are_verified OK")
 
 
 def test_margins_must_hold_the_crop_pad():
@@ -349,8 +362,9 @@ def main():
         test_off_centre_and_dark_grey_mounts_are_verified,
         test_ir_dense_picture_at_the_mount_edge_is_not_verified,
         test_hidden_edge_bands_are_never_cut_by_a_verified_crop,
-        test_the_guarantee_holds_to_36_mm_and_its_limit_is_documented,
+        test_the_guarantee_holds_to_35_3_mm_and_its_limit_is_documented,
         test_minimum_run_length_is_enforced_by_behaviour,
+        test_measured_cardboard_mounts_are_verified,
         test_margins_must_hold_the_crop_pad,
         test_recrop_refuses_slide_overscan_files,
         test_empty_opening_and_ir_translucent_mount_are_not_verified,

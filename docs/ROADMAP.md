@@ -334,8 +334,8 @@ holder option, is written and offline-tested, not yet run on hardware:
 with `--position-offset`, dual profiles only, `--positive` refused, the
 full overscan frames always kept. Step 2, the IR-keyed crop, is written
 and tested on synthetic fixtures, not on a real slide: the mount's
-aperture found in the IR channel, 34.5-37 mm, cropped with a 1.5 mm pad
-per side (apertures up to 36.0 mm kept whole), the strips' verified /
+aperture found in the IR channel, 33.8-37 mm, cropped with a 1.5 mm pad
+per side (apertures up to 35.3 mm kept whole), the strips' verified /
 NOT verified contract with the overscan kept. Step 3, positive output,
 is written and offline-tested: `--slide-positive` turns the slide to the
 vendor orientation without inverting it (`--positive`, the negative
