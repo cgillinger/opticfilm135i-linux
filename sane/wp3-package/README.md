@@ -120,8 +120,8 @@ that ends on that tree has recreated it exactly. v8 was tip
 
 ### Hardware evidence, and whether it applies
 
-**The v9 sources have run on hardware once, on the developer's unit**
-(`docs/test-log.md`, Test 118, 2026-11-05): a cold load, frame 1 at
+**The v9 sources have run on hardware on two units.** On the
+developer's unit (`docs/test-log.md`, Test 118, 2026-11-05): a cold load, frame 1 at
 600 dpi and at plain 3600 dpi, and an eject, through the backend built
 from this repository's `sane/` in the development clone and installed.
 Both scans completed. All fourteen gate polls of the 600 dpi scan
@@ -129,9 +129,17 @@ settled at the first read; at plain 3600 dpi three of the fourteen found
 bit 0 of reg 0x100 still set and waited 11 to 18 ms. That build is the
 development clone's (older upstream base, the `exposure_lperiod` line
 present), not the v9 tree itself; the GL126 files are otherwise
-byte-identical. **Not run:** the v9 tree's own build on the scanner; a
-unit that shows the failure; 1200, 2400, 7200 dpi and the infrared
-source with the gate; a timeout on hardware. The earlier hardware tests
+byte-identical. On a second unit that had shown the failure with the
+ungated Python driver (bearyjd, issue #50, `docs/test-log.md` external
+report of 2026-11-07): the v9 tree's own build, plus a logging-only
+patch, run uninstalled; a cold load, frame 4 at 600 dpi and at plain
+3600 dpi with the slide holder, and an eject, all completed. There all
+fourteen reg 0x100 gate polls per scan found bit 0 still set at the
+first read and waited 9 to 26 ms; no timeout. An earlier load attempt on
+that unit missed with the known "transport ran, cassette not taken"
+signature (entry of 2026-11-06), not a v9 matter. **Not run:** 1200,
+2400, 7200 dpi and the infrared source with the gate; a timeout on
+hardware. The earlier hardware tests
 (Tests 62 to 92, 98) and the `tstbackend -l 1` runs (Tests 93, 94) were
 made on earlier builds of the same GL126 sources.
 

@@ -8767,3 +8767,89 @@ of the miss. The one difference between the flows: the Python driver
 runs LOAD on Enter, the backend about a second after it sees the
 magazine back in. bearyjd's logging patch is held for the next SANE
 revision; v9 stays as tested.
+
+## 2026-11-07 — External report (issue #50): SANE v9 through its whole test table on the second unit — load, 600 dpi, plain 3600 dpi and eject completed; every one of the fourteen reg 0x100 gate polls found the engine still running at the first read and waited 9–26 ms; no timeout
+
+Not run by the owner. Reported by bearyjd on issue #50 (comment of
+2026-11-07, 00:41Z) with the four `scanimage` logs and the extracted
+`poll:` lines in a gist (no images); this entry is the owner's side
+reading those files. Hardware: bearyjd's unit and host (bare metal, a
+passive usbmon capture alongside, not sent because it holds image data),
+slide holder, frame 4, the v9 tree plus bearyjd's logging patch 0001
+(`sane-backends 1.4.0.361-18bea9-dirty`; the patch adds no transfers,
+see the entry of 2026-11-06), run uninstalled. Scanner power-cycled
+first, magazine loose in the slot. Steps 3 to 6 of the v9 table, in
+order, on 2026-11-06 evening (host clock 19:28–19:33). Exit codes were
+not captured; every step wrote its output and no log holds an error
+line beyond the old harmless "Cannot open calibration for writing".
+
+| step | command | result |
+|---|---|---|
+| 3 | `scanimage -d $D -n --load-film` | loaded: cold start and jog completed, edge seen after 36 polls (~3.6 s, `last reg 0x101 0xf8`), after the settle `reg 0x101 = 0xf8, reg 0x01 = 0x22, regs 0x3b/0x3c = 0x00/0x00`, load op 0 `reg 0x32 = 0x1f`, op 24 `0xf4` at the first read, op 38 34 polls / 146 ms, `reg 0x101 = 0xdc`. Pushed in with one motion and left, as advised |
+| 4 | `--mode Color --frame 4 --resolution 600` | completed, 4.9 MB PNM (picture not inspected; off-centre on a slide is expected) |
+| 5 | the same at `--resolution 3600` (plain 3600) | completed, 119 MB PNM |
+| 6 | `scanimage -d $D -n --eject-film` | ejected, eject completion 213 polls / 940 ms |
+
+With run 1 (miss) and run 2 (load) of the previous entry this is three
+`--load-film` runs of v9 on this unit: two loaded after a firm
+push-and-leave, one missed.
+
+**The gate polls.** Each scan has fourteen: after each of the seven
+calibration acquisitions, reg 0x100 then reg 0x101, bit 0 clear wanted
+(`PollMasked`, 300 ms; the plain-3600 `cal_shading_measure` reg 0x100
+site 0xF1/0xF0 with 5 s). The seven reg 0x101 polls settled at the first
+read in both scans (0xdc, or 0xd8 after `cal_shading_measure`). **All
+fourteen reg 0x100 polls found bit 0 set at the first read** and waited:
+
+| phase | 600 dpi: first → last, polls, ms | plain 3600: first → last, polls, ms |
+|---|---|---|
+| cal_dark_a | 0xf1 → 0xf0, 4, 14 | 0xf3 → 0xf0, 6, 22 |
+| cal_dark_b | 0xf1 → 0xf0, 4, 14 | 0xf3 → 0xf0, 6, 21 |
+| cal_white | 0xf1 → 0xf0, 4, 14 | 0xf3 → 0xf0, 6, 22 |
+| cal_gain_check_a | 0xf1 → 0xf0, 4, 14 | 0xf3 → 0xf0, 6, 22 |
+| cal_gain_check_b | 0xf1 → 0xf0, 4, 14 | 0xf3 → 0xf0, 6, 23 |
+| cal_shading_measure | 0xf1 → 0xf0, 3, 9 | 0xf3 → 0xf0, 5, 17 |
+| cal_shading_verify | 0xf1 → 0xf0, 4, 14 | 0xf3 → 0xf0, 7, 26 |
+
+No poll timed out; no "the previous acquisition did not stop", no
+"dark_b is residual". At plain 3600 the first read is 0xf3, not 0xf1:
+bit 1 is also set right after the clear on this unit; it is outside the
+mask and clears with bit 0.
+
+**Against the owner's unit (Test 118).** On the owner's host 25 of 28
+gate polls settled at the first read and three waited 11–18 ms, because
+one control transfer there takes about 4 ms and the first read lands
+after the engine has stopped. On this host a control transfer takes a
+fraction of that, the first read lands while the engine is still
+running, and v8 (plain reads, logged only) would have gone on into the
+next acquisition at every one of the fourteen sites per scan: the same
+mechanism that produced the residual dark_b in the Python driver on this
+unit and on the Steam Deck (entries of 2026-11-04 and 2026-11-05). So
+this run is the first on a unit that showed the failure, and the first
+where every gate wait did work. The wait times (9–26 ms) match the
+Python gate's on the same unit (5.0–24.4 ms, median 14.0, 2026-11-04 entry).
+
+**Calibration, both units at frame 4 vs frame 1 (offsets as codes):**
+
+| | bearyjd 600 | owner 600 (Test 118, f1) | bearyjd plain 3600 | owner plain 3600 (Test 118, f1) |
+|---|---|---|---|---|
+| offset R/G/B | 0x10a/0x109/0x10a | 266/265/266 (= 0x10a/0x109/0x10a) | 0x10a/0x109/0x10a | 266/266/266 |
+| gain R/G/B | 0x2a/0x21/0x26 (42/33/38) | 44/33/39 | 0x2b/0x20/0x27 (43/32/39) | 45/32/39 |
+| POSITION | 7917 ms (frame 4, FEEDL 38809) | 1433 ms (frame 1) | 7913 ms (FEEDL 38806) | 1439 ms |
+| PARK | 10378 ms | 3840 ms | 10269 ms | 3770 ms |
+
+The offsets are identical, the gains within two codes, as in every
+cross-unit comparison so far. Shading tables at 600 dpi: 2628 pairs,
+white gains to 0xffff on both visible and IR lines (slide holder, frame
+4: the backend has no slide profile and the white reference is read
+where the strip holder's would be; the gain ceiling is expected there
+and is not a finding about the gate).
+
+**Consequences.** The v9 tree has now run on hardware on two units: the
+owner's (Test 118, the development clone's build of the same sources)
+and bearyjd's (the v9 tree's own build, plus logging). Nothing in v9
+changes. The next step is the owner's: push `wp3-gl126-submission-v9` to
+the merge request (`docs/sane-wp3-submission.md`). bearyjd offers a 7200
+dpi run and more load/eject cycles with the logging build; neither is
+needed for v9. Open from the entry of 2026-11-06: why bit 0x08 stayed set
+in load run 1.

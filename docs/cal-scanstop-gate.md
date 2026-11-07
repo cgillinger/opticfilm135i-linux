@@ -329,10 +329,13 @@ reports show:
   `digitize --sweep`, has run gated once on the owner's unit: Test 119,
   seven waits cleared at the first read.)
 - 110 film.
-- The SANE backend on a fast host: its generated op programs now wait
-  at the same sites ("The SANE backend" below) and ran on the owner's
-  unit at 600 and plain 3600 dpi (Test 118); no affected unit has run
-  it.
+- The SANE backend's other resolutions. Its generated op programs wait
+  at the same sites ("The SANE backend" below) and have run at 600 and
+  plain 3600 dpi on the owner's unit (Test 118) and on bearyjd's, a unit
+  that showed the failure (external report of 2026-11-07: all fourteen
+  reg 0x100 waits were needed there, 9–26 ms, no timeout). 1200, 2400,
+  7200 dpi and the infrared source have not run gated through the
+  backend.
 
 Callers of those paths are gated from this change on without a hardware
 run of that combination. The mechanism is the same executor change in

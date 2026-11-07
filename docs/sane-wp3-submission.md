@@ -27,7 +27,10 @@ generated tables is corrected. The base and the
 five v8 commits are unchanged, so nothing is rebased; the merge request
 was open and without conflicts on 2026-11-05. Hardware: Test 118 on the
 developer's unit, with the development clone's build of the same GL126
-sources. Export and its verification: `sane/wp3-package/README.md`. The
+sources, and the v9 tree's own build on bearyjd's unit through the whole
+test table (`docs/test-log.md`, external report of 2026-11-07: the unit
+that needed the wait, every gate poll waited, none timed out). Export and
+its verification: `sane/wp3-package/README.md`. The
 sections below describe the series as submitted (v8) unless they say
 otherwise.
 
