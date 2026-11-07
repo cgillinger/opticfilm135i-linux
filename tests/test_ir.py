@@ -29,6 +29,7 @@ Covers:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import struct
@@ -438,6 +439,74 @@ def test_scan_sequence_matches_trace_ir():
 # ---------------------------------------------------------------- dust removal
 
 
+def test_dust_removal_3600_backwards_compatible():
+    """Pin the accepted 3600 dpi result before adding physical scaling."""
+    ir = np.full((180, 240), 40000, dtype=np.uint16)
+    ir[:, :25] = ir[:, -25:] = 700
+    ir[85:88, 115:118] = 16000
+    ir[105:109, 150:154] = 20000
+    y, x = np.mgrid[:180, :240]
+    visible = np.stack([5000 + 7*x + 11*y, 3000 + 13*x + 3*y,
+                        9000 + 5*x + 17*y], -1).astype(np.uint16)
+    mask = image.dust_mask(ir)
+    cleaned = image.remove_dust(visible, ir)
+    assert hashlib.sha256(mask.tobytes()).hexdigest() == \
+        "7e96f57368d954e0cad749645f929cd8fe803c1838f24402413b63eba7fca4d0"
+    assert hashlib.sha256(cleaned.tobytes()).hexdigest() == \
+        "02bc64b937d3886695344ac2d8293384ec1d311ee2f431a896672b86888d7274"
+    assert np.array_equal(mask, image.dust_mask(ir, dpi=3600))
+    assert np.array_equal(cleaned, image.remove_dust(visible, ir, dpi=3600))
+    print("test_dust_removal_3600_backwards_compatible OK")
+
+
+def test_dust_removal_low_dpi_preserves_scene():
+    """The same dusty physical area must not become a mass mask at low dpi.
+
+    One-pixel specks at 600 dpi repeat every 0.254 mm. They cover 2.8%
+    before dilation, similar to the real slide. The old six-pixel radius
+    joins them into a near-solid mask. Check that actual cleaning leaves
+    most clean scene samples intact at both low-resolution profiles.
+    """
+    for dpi in (600, 1200):
+        scale = dpi // 600
+        h, w = 180*scale, 240*scale
+        ir = np.full((h, w), 40000, dtype=np.uint16)
+        ir[:, :25*scale] = ir[:, -25*scale:] = 700
+        specks = np.zeros((h, w), dtype=bool)
+        for y in range(45*scale, 140*scale, 6*scale):
+            for x in range(50*scale, 190*scale, 6*scale):
+                specks[y:y + scale, x:x + scale] = True
+        ir[specks] = 16000
+        y, x = np.mgrid[:h, :w]
+        truth = np.stack([10000 + 7*x + 11*y, 8000 + 13*x + 3*y,
+                          12000 + 5*x + 17*y], -1).astype(np.uint16)
+        visible = truth.copy()
+        visible[specks] //= 2
+        mask = image.dust_mask(ir, dpi=dpi)
+        roi = np.s_[55*scale:130*scale, 60*scale:180*scale]
+        assert 0 < mask[roi].mean() < 0.25, (dpi, mask[roi].mean())
+        cleaned = image.remove_dust(visible, ir, dpi=dpi)
+        assert np.array_equal(cleaned[~mask], visible[~mask])
+        before = np.abs(visible[specks].astype(float) - truth[specks]).mean()
+        after = np.abs(cleaned[specks].astype(float) - truth[specks]).mean()
+        assert after < before * 0.1, (dpi, before, after)
+    print("test_dust_removal_low_dpi_preserves_scene OK")
+
+
+def test_dust_mask_physical_radius_anisotropic():
+    """The halo is 0.0423 mm per axis, including the 2400 profile's
+    3600-across/2400-along sampling (four rows but six columns)."""
+    ir = np.full((201, 201), 40000, dtype=np.uint16)
+    ir[100, 100] = 10000
+    for dpi, y_radius, x_radius in ((600, 1, 1), (1200, 2, 2),
+                                     (2400, 4, 6), (3600, 6, 6), (7200, 12, 12)):
+        mask = image.dust_mask(ir, dpi=dpi)
+        ys, xs = np.nonzero(mask)
+        assert (ys.min(), ys.max()) == (100 - y_radius, 100 + y_radius), dpi
+        assert (xs.min(), xs.max()) == (100 - x_radius, 100 + x_radius), dpi
+    print("test_dust_mask_physical_radius_anisotropic OK")
+
+
 def test_dust_removal_synthetic():
     """Synthetic dust/scratch removal check for image.dust_mask/
     remove_dust: inject dark specks into a flat IR field (plus a
@@ -570,6 +639,9 @@ def main() -> int:
         test_split_ir_aligns_ir_channels,
         test_scan_sequence_matches_trace_ir,
         test_dust_removal_synthetic,
+        test_dust_removal_3600_backwards_compatible,
+        test_dust_removal_low_dpi_preserves_scene,
+        test_dust_mask_physical_radius_anisotropic,
         test_cal_capture_offon_identical_write_stream_dual,
     ]
     for t in tests:
