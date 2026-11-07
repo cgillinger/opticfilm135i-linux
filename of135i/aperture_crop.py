@@ -307,14 +307,25 @@ def measure_coverage_dual(visible, ir, *, dpi, min_margin_mm=0.15) -> ApertureCo
 #: in a slide window is the MOUNT's aperture, not the holder's 38.05 mm
 #: opening (the mount is opaque to IR, the film is not; Test 84). Its long
 #: side runs along the transport; Tests 84/85 measured 35.06-35.1 mm and
-#: common mounts are 34-36 mm. A run shorter than SLIDE_MIN_APERTURE_MM is
-#: refused rather than cropped to: an IR-dense picture area at the mount
-#: edge (silver, some Kodachrome) shortens the lit run, and the strip floor
-#: (aperture.MIN_APERTURE_MM, 25 mm) would then crop into the picture and
-#: call it verified. A run longer than SLIDE_MAX_APERTURE_MM is the holder
-#: opening itself: no mount, or a mount the IR passes through.
-SLIDE_MIN_APERTURE_MM = 33.0
+#: common mounts are 34-36 mm. An IR-dense picture area at the mount edge
+#: (silver, some Kodachrome) is dark in IR like the mount, so it shortens
+#: the lit run and the edge found sits INSIDE the picture. Two rules keep
+#: "verified" truthful about that:
+#:  - the run must be at least SLIDE_MIN_APERTURE_MM (34.5 mm), and
+#:  - the slide crop is padded by SLIDE_CROP_PAD_MM (1.5 mm) per side, and
+#:    both margins must hold that pad inside the window.
+#: A verified run is then at most 1.5 mm shorter than a mount aperture of
+#: up to 36.0 mm, and the pad gives that back; a picture band hidden at an
+#: edge is inside the crop whenever the verdict is "verified". Shorter
+#: runs (a 34 mm mount, a mount turned 90 degrees with its ~23 mm side
+#: along the transport, a wider IR-dense band) are NOT verified: the
+#: overscan is kept and the scan exits 4. The strip floor
+#: (aperture.MIN_APERTURE_MM, 25 mm) would have cropped into the picture
+#: and called it verified. A run longer than SLIDE_MAX_APERTURE_MM is the
+#: holder opening itself: no mount, or a mount the IR passes through.
+SLIDE_MIN_APERTURE_MM = 34.5
 SLIDE_MAX_APERTURE_MM = 37.0
+SLIDE_CROP_PAD_MM = 1.5
 
 
 def measure_slide_coverage(ir, *, dpi, min_margin_mm=0.15) -> ApertureCoverage:
@@ -324,12 +335,15 @@ def measure_slide_coverage(ir, *, dpi, min_margin_mm=0.15) -> ApertureCoverage:
     cropped like the visible array). Same edge finder, binning and
     contract as measure_coverage: exactly one lit run of
     SLIDE_MIN_APERTURE_MM..SLIDE_MAX_APERTURE_MM with both edges found and
-    at least ``min_margin_mm`` inside the window -> verified (source
-    "ir"); anything else -> not verified, with the reason. Visible light is
+    at least max(``min_margin_mm``, SLIDE_CROP_PAD_MM) inside the window ->
+    verified (source "ir"); anything else -> not verified, with the
+    reason. Crop a verified slide with crop_to_aperture(...,
+    pad_mm=SLIDE_CROP_PAD_MM). Visible light is
     not consulted: dark picture content fooled it on the Test 84 slide.
     Never raises on image content.
     """
-    cov = replace(measure_coverage(ir, dpi=dpi, min_margin_mm=min_margin_mm,
+    cov = replace(measure_coverage(ir, dpi=dpi,
+                                   min_margin_mm=max(min_margin_mm, SLIDE_CROP_PAD_MM),
                                    min_aperture_mm=SLIDE_MIN_APERTURE_MM),
                   source="ir")
     if cov.leading_line is None:
