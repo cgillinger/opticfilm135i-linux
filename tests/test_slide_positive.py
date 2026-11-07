@@ -87,23 +87,82 @@ def test_axis_dpi_follows_the_turn_at_2400():
 
 
 def test_cli_slide_positive_validation_before_the_device():
+    import os
+    import tempfile
     from tests.test_slides import _cli_rc
+    d = tempfile.TemporaryDirectory()
+    o = os.path.join(d.name, "x.tiff")
     p = cli.build_parser()
     assert p.parse_args(["scan", "--frame", "1", "-o", "x.tiff"]).slide_positive is False
     for argv, text in (
             (["--frame", "1", "--ir", "--slide-positive"], "--holder slide"),
             (["--holder", "slide", "--frame", "1", "--ir", "--positive",
               "--slide-positive"], "--positive is refused")):
-        rc, err, _out, opened = _cli_rc(["scan", *argv, "-o", "/tmp/x.tiff"])
+        rc, err, _out, opened = _cli_rc(["scan", *argv, "-o", o])
         assert rc == 2 and text in err and not opened, (argv, rc, err)
     # The --positive refusal now names the slide's own switch.
     rc, err, _o, _ = _cli_rc(["scan", "--holder", "slide", "--frame", "1", "--ir",
-                              "--positive", "-o", "/tmp/x.tiff"])
+                              "--positive", "-o", o])
     assert rc == 2 and "--slide-positive" in err, err
     rc, err, _o, opened = _cli_rc(["scan", "--holder", "slide", "--frame", "1", "--ir",
-                                   "--slide-positive", "-o", "/tmp/x.tiff"])
+                                   "--slide-positive", "-o", o])
     assert rc == 0 and opened, (rc, err)
+    d.cleanup()
     print("test_cli_slide_positive_validation_before_the_device OK")
+
+
+def test_written_resolution_tags_follow_the_turn_at_2400():
+    """At 2400 dpi (3600 across, 2400 along) every file a --slide-positive
+    slide scan writes -- product, IR, both overscan frames -- carries the
+    SWAPPED per-axis resolution, the turned --positive strip's; without the
+    switch the unturned one. (A wrong tag on the turned IR frame has
+    shipped here once before: see _finish_dual_scan's _write_ir_file.)"""
+    import io
+    import os
+    import tempfile
+    from contextlib import redirect_stdout
+    from tests.test_slide_crop import PLASTIC, _slide_ir
+    dpi, W = 2400, 8
+    ir, _ = _slide_ir(dpi, width=1)
+    sh = image.align_shift(dpi)
+    prof = np.concatenate([np.full(sh, PLASTIC), ir[:, 0],
+                           np.full(sh, PLASTIC)]).astype(np.uint16)
+    # The IR lines' R and B are staggered by align_shift like the sensor's
+    # (split_ir rolls them back into register): unstaggered equal channels
+    # would come out as 3-step ramps 2 x 8 lines wide at 2400 dpi.
+    wire = np.empty((2 * len(prof), 3), dtype=np.uint16)
+    wire[0::2, 0] = np.roll(prof, sh)
+    wire[0::2, 1] = prof
+    wire[0::2, 2] = np.roll(prof, -sh)
+    wire[1::2] = np.where(prof > 20000, 3000, 700)[:, None]
+    raw = np.repeat(wire[:, None, :], W, axis=1).astype("<u2").tobytes()
+    turned = cli._axis_dpi(SimpleNamespace(dpi=dpi, rotate=0), True)
+    flat = cli._axis_dpi(SimpleNamespace(dpi=dpi, rotate=0), False)
+    assert turned != flat
+    saved = image.write_tiff16
+    try:
+        for flag, want in ((True, turned), (False, flat)):
+            tags = {}
+
+            def capture(arr, path, icc=None, dpi=None):
+                tags[Path(path).name] = dpi
+
+            image.write_tiff16 = capture
+            with tempfile.TemporaryDirectory() as d:
+                out = os.path.join(d, "s.tiff")
+                args = SimpleNamespace(dpi=dpi, positive=False, slide_positive=flag,
+                                       rotate=0, no_clean=True, ir=True, output=out,
+                                       frames=None, holder="slide", film="135")
+                with redirect_stdout(io.StringIO()):
+                    cov = cli._finish_dual_scan(args, raw, W, out, write_ir=True,
+                                                slide=True)
+            assert cov.verified, cov
+            assert set(tags) == {"s.tiff", "s-ir.tiff", "s.overscan.tiff",
+                                 "s-ir.overscan.tiff"}, tags
+            assert all(v == want for v in tags.values()), (flag, tags, want)
+    finally:
+        image.write_tiff16 = saved
+    print("test_written_resolution_tags_follow_the_turn_at_2400 OK")
 
 
 def _capture_run(extra):
@@ -182,6 +241,7 @@ def main():
         test_strip_orientation_is_unchanged,
         test_axis_dpi_follows_the_turn_at_2400,
         test_cli_slide_positive_validation_before_the_device,
+        test_written_resolution_tags_follow_the_turn_at_2400,
         test_cli_slide_positive_writes_the_turned_raw_values_no_icc,
         test_sidecar_records_slide_positive,
     ]

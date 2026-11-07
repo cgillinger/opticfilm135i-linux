@@ -18,8 +18,9 @@ one exists; "offline" means implemented and tested without the scanner.
   its message now points at `--slide-positive`. Without the switch a
   slide is written raw, as before, so a mounted negative is untouched.
   Strip output with and without `--positive` is unchanged
-  (`tests/test_slide_positive.py`, 6 tests: no `to_positive` call on
-  the slide path, the turned values equal the raw ones, no ICC, strip
+  (`tests/test_slide_positive.py`, 7 tests: no `to_positive` call on
+  the slide path, the turned values equal the raw ones, no ICC, the
+  swapped 2400 dpi resolution tags on all four files, strip
   orientation unchanged, the refusals before the device opens, the
   sidecar's `cli.slide_positive`). Nothing sent to the scanner changes.
 
