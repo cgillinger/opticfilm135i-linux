@@ -8934,12 +8934,25 @@ appeared before calibration in the opening 1 run at 3600 dpi; they are not
 counted in `poll_timeouts`, and I do not know whether the strip path shows
 them on this unit. One load of cardboard mounts only.
 
-## PLACEHOLDER (hardware run pending, no Test number) — the IR-keyed slide crop (issue #70 step 2, bearyjd) on real mounted slides
+## Test N+1 (number for the maintainer to assign) — the IR-keyed slide crop (issue #70 step 2, bearyjd) on real mounted slides
 
-**Not run. No result exists.** Offline the crop is tested on synthetic
-profiles only (`tests/test_slide_crop.py`). To be filled from the
-contributor's unit with the same runs as the step 1 placeholder above:
-per opening, the coverage verdict and reason, both margins, the cropped
-size against the mount's aperture (35.06 × 22.75 mm on the Test 85
-slide), and an eye check that the crop holds the whole picture. A real
-scan is what settles the crop.
+Branch `upstream-pr-slides-ir-crop`, head `efaeb08`, 2026-11-07, the same
+unit and the same cardboard mounts as the entry above (several brands,
+slide holder, 3600 dpi dual).
+
+**The floor.** The IR lit run measured 34.16 to 34.45 mm over openings 1
+to 4 (34.24, 34.16, 34.20, 34.45). With the earlier 34.5 mm floor three
+of the four openings were refused (the safe failure: overscan kept, exit
+4); only opening 4 verified. That is why the floor is now 33.8 mm.
+
+**Opening 1 with the 33.8 mm floor, 3600 dpi dual.** Coverage VERIFIED,
+margins lead 3.567 mm, trail 3.208 mm. It wrote the overscan pair
+(5184 x 5824) and an aperture-registered pair of 5184 x 5289, visible and
+IR on the same grid. Inside the crop the lit aperture is 34.29 mm long,
+with 1.53 mm of mount at the lead end and 1.50 mm at the trail end (the
+1.5 mm pad), and no lit line touches either end of the crop. The plain
+run of the same opening measured the lit run at 34.30 mm, so nothing was
+cut. I judged the slide complete. Exit 0, no poll timeouts, FEEDL 6255.
+
+**Open.** Only opening 1 was re-run with the new floor; openings 2 to 4
+were not. One load of cardboard mounts only.

@@ -7,7 +7,7 @@ one exists; "offline" means implemented and tested without the scanner.
 ## Unreleased
 
 - **Slide crop keyed on the IR channel (issue #70 step 2, bearyjd).
-  Synthetic fixtures only; not run on a real slide.** `scan --holder
+  Synthetic fixtures, plus one real mount (opening 1, verified).** `scan --holder
   slide` now checks each opening's coverage and crops, with the strips'
   contract: the full overscan frame(s) are always kept, the cropped
   pair (`-o`, with `--ir` also `-ir.tiff`) is written only when
@@ -23,7 +23,12 @@ one exists; "offline" means implemented and tested without the scanner.
   35.3 mm (floor + pad) are kept whole by a verified crop (tested with 0.5-5 mm
   bands). Above 35.3 mm a band can still be cut (a 37 mm aperture with
   a 3 mm band reads like a clean 34.0 mm mount; pinned by a test as the
-  documented limit). Shorter runs are NOT verified rather than cut
+  documented limit). On hardware (cardboard mounts of several brands,
+  3600 dpi dual) the lit run measured 34.16-34.45 mm over openings 1-4,
+  so the earlier 34.5 mm floor refused three of four; with the 33.8 mm
+  floor opening 1 verified (margins lead 3.567 mm, trail 3.208 mm,
+  5184x5289 pair) and the slide was complete by eye; only opening 1 was
+  re-run. Shorter runs are NOT verified rather than cut
   (the strip's 25 mm floor would have cropped into the picture and
   called it verified). Also NOT verified, exit 4: a 33 mm mount, a mount
   turned 90 degrees (its ~23 mm side along the transport), the 38.05 mm

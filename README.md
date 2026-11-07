@@ -279,7 +279,8 @@ know about:
   profiles only, `--positive` refused). It positions the four openings
   and keeps the full overscan frame(s), and crops to the mount's
   aperture found in the IR channel when coverage verifies (exit 4
-  otherwise, as for strips; synthetic data only so far). The
+  otherwise, as for strips; verified on opening 1 of one unit's
+  cardboard mounts, the other openings not re-run). The
   positioning has been run on one unit, with cardboard mounts of several
   brands, and is still experimental. Positive output is still missing,
   and the SANE backend has no slide path. It is a separate milestone
