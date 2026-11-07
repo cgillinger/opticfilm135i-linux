@@ -329,10 +329,11 @@ grid is in the code as `SLIDE_FIDUCIAL` / `slide_dual_geometry()` (PR
 #67, bearyjd, 2026-11-07). The remaining steps are being
 built by the contributor on his unit, in the order holder option, crop,
 positive output, hardware runs (issue #70, 2026-11-07). Step 1, the
-holder option, is written and offline-tested, not yet run on hardware:
-`scan --holder slide`, `--frame N` = opening N positioned on that grid
-with `--position-offset`, dual profiles only, `--positive` refused,
-overscan frames only. C2 is
+holder option, is written, offline-tested and hardware-run on one unit
+(openings 1-4 at 3600 dpi plus opening 1 at 600 dpi, centre offsets
+-0.30..+0.22 mm): `scan --holder slide`, `--frame N` = opening N
+positioned on that grid with `--position-offset`, dual profiles only,
+`--positive` refused, overscan frames only. C2 is
 done when that list is verified on a mounted slide. **Brought forward
 2026-09-18 (owner's decision, slides are in scope for the driver): in
 progress.**

@@ -8901,21 +8901,35 @@ the border halo next to the mount edge stay, and a thin scratch in the
 sky is only partly removed (the 5 px kernel scales to 1 × 1 at 600 dpi
 and cannot fill). Merged as `bd0a66f` on the owner's go.
 
-## PLACEHOLDER (hardware run pending, no Test number) — `scan --holder slide` (issue #70 step 1, bearyjd): one opening per run, mounted slides
+## Test N (number for the maintainer to assign) — `scan --holder slide` on hardware (issue #70 step 1, bearyjd): four openings at 3600 dpi dual and opening 1 at 600 dpi, cardboard mounts
 
-**Not run. No result exists; nothing below is a measurement.** This entry
-is a placeholder so the PR carries its test-log slot; the contributor
-fills it from his unit after the run, and the maintainer assigns the
-Test number.
+Branch `upstream-pr-slides-cli`, head `323c850`, 2026-11-07, the contributor's
+unit. Slide holder with cardboard mounts of a few different brands, four
+openings. The scanner was idle-homed with the holder loaded, the watcher
+stopped and the app closed. One opening per run, looking at the result
+before the next.
 
-Plan, per the maintainer's rules in issue #70: watcher stopped, fresh
-`load`, mounted slides in the slide holder, the owner watching the
-scanner; power off at grinding or a stall, nothing further after a
-failure. The first run of the new positioning is one opening, then look,
-then the next: `scan --holder slide --frame 1 --ir --no-clean -o s1.tiff`
-(3600 dpi dual, commanded FEEDL 6255 at offset 0), then openings 2, 3, 4
-(FEEDL 24000 / 41745 / 59490), then the same at 600 dpi (6236 / 23981 /
-41726 / 59471). To be reported: what was in the holder, the command,
-the FEEDL and poll lines from the log, PARK and eject, the sidecars, and
-whether each overscan frame holds the whole mount aperture (eye check;
-pictures stay with the contributor).
+| opening | dpi | FEEDL | position s | park s | IR lit run along (mm) | lit centre vs frame centre (mm) |
+|---|---|---|---|---|---|---|
+| 1 | 3600 | 6255 | 1.6 | 3.8 | 34.24 | +0.22 |
+| 2 | 3600 | 24000 | 5.0 | 7.4 | 34.16 | -0.25 |
+| 3 | 3600 | 41745 | 8.5 | 10.9 | 34.20 | +0.01 |
+| 4 | 3600 | 59490 | 12.1 | 14.5 | 34.45 | -0.30 |
+| 1 | 600 | 6236 | 1.6 | 4.0 | 34.25 | +0.06 |
+
+**Result.** FEEDL matched the model for every opening. There were no poll
+timeouts in any run, and each run parked. The 3600 dpi scans took 43.8 to
+43.9 s. The IR lit aperture was centred within -0.30 to +0.22 mm along the
+transport, with no trend over the openings (no pitch drift); that is the
+same size as the load-to-load spread measured earlier (+-0.24 mm). Across
+the frame the lit width of opening 1 at 3600 dpi was 22.94 mm, centred
+within 0.1 mm. Opening 4, the one closest to the travel end (304 steps
+inside the ceiling at 3600 dpi), ran without a stall or an abnormal sound.
+Opening 1 at 3600 dpi wrote 5184 x 5824 overscan frames, visible and IR;
+at 600 dpi the frames are 976 x 876. The sidecar carries `holder: "slide"`
+and `coverage.applicable: false`. I judged all five scans fine.
+
+**Open.** Two start-up poll warnings (timed out after 0.3 s, continuing)
+appeared before calibration in the opening 1 run at 3600 dpi; they are not
+counted in `poll_timeouts`, and I do not know whether the strip path shows
+them on this unit. One load of cardboard mounts only.

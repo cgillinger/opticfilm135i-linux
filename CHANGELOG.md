@@ -7,7 +7,7 @@ one exists; "offline" means implemented and tested without the scanner.
 ## Unreleased
 
 - **`scan --holder slide`: the mounted-slide holder, positioned per
-  opening (issue #70 step 1, bearyjd). NOT yet run on hardware.**
+  opening (issue #70 step 1, bearyjd). Run on hardware on one unit.**
   `--holder {strip,slide}`, default `strip` (unchanged, byte-identical
   on the wire). With `slide`, `--frame N` / `--frames` are slide
   openings 1-4 and each is positioned on the #67 grid through
@@ -28,8 +28,10 @@ one exists; "offline" means implemented and tested without the scanner.
   from 5 to 11 tests (wire FEEDL and line count per opening with and
   without the offset, refusals with zero phases run, the CLI refusals
   before the device opens, one opening end to end off hardware).
-  First hardware run, per the maintainer's rule: one opening, look,
-  then the next.
+  Hardware run on one unit with cardboard mounts of a few brands:
+  openings 1-4 at 3600 dpi and opening 1 at 600 dpi, FEEDL as modelled,
+  no poll timeouts, lit aperture centred within -0.30..+0.22 mm along
+  the transport. Still experimental.
 
 - **Mounted-slide geometry model, library only (PR #67, bearyjd).**
   `of135i/holder.py` carries the slide holder's measured grid from Test
