@@ -6,6 +6,20 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **Mounted-slide geometry model, library only (PR #67, bearyjd).**
+  `of135i/holder.py` carries the slide holder's measured grid from Test
+  84 (`SLIDE_FIDUCIAL`: 38.05 mm openings on a 62.6 mm pitch, opening 1
+  extrapolated at 23.5 mm) and `slide_dual_geometry()`, the strip path's
+  dual geometry with that model, the `--position-offset` shift, and one
+  stricter travel check for slides (FEEDL plus the wire's travel must
+  stay inside the proven ceiling; slide 4 keeps 175 to 307 steps on every
+  profile at the 1.5 mm default overscan). Nothing calls it yet: no
+  option selects the slide holder, nothing sent to the scanner changes.
+  `tests/test_slides.py` (5 tests) pins the numbers, the per-profile
+  FEEDL grid, the refusals and the offset. The rest of C2 (holder
+  option, IR-keyed crop, positive output, hardware runs with mounted
+  slides) is being built by the contributor on his unit, issue #70.
+
 - **IR dust cleaning scaled by resolution (PR #66, bearyjd).** The
   dust mask's background box, border halo and dilation and the inpaint
   footprints were fixed pixel counts tuned at 3600 dpi; at 600 dpi the
