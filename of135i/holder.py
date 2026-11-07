@@ -124,17 +124,21 @@ STRIP = Holder(
 #: The mounted-slide holder that ships in the same box. Four openings by
 #: inspection of the part. Characterised 2026-09-17 with an empty holder
 #: (docs/slide-holder-analysis.md): it loads, latches and ejects exactly
-#: like the strip holder (identical load flow), but the vendor does NOT
-#: position it frame by frame -- it scans the whole holder in one sweep at
-#: a fixed position and crops the four openings in software. So it carries
-#: no per-frame geometry because there is none to carry, not because it is
-#: unmeasured. The driver still does not select it; a slide scan needs a
-#: sweep mode plus an image-side crop, not a FEEDL table.
+#: like the strip holder (identical load flow). The vendor does not
+#: position it frame by frame (one sweep, software crop), but Test 84
+#: measured a 62.6 mm grid of 38.05 mm openings inside the verified FEEDL
+#: range (slide-holder-analysis.md section 5), so the driver reaches each
+#: opening with the strip path's own POSITION move: ``of135i scan
+#: --slides`` via SLIDE_FIDUCIAL / slide_dual_geometry() below.
 SLIDE = Holder(
     name="mounted-slide holder",
     frames=4,
-    geometry_source="none: vendor scans one sweep and crops in software; "
-                    "no per-frame grid exists (docs/slide-holder-analysis.md)",
+    aperture_mm=38.05,
+    pitch_mm=62.6,
+    pitch_hwdpi=round(62.6 / MM_PER_UNIT),
+    geometry_source="Test 84 (n=1 load, 600 dpi dual): openings 2-4 "
+                    "measured, opening 1 extrapolated on the 62.6 mm pitch "
+                    "(docs/slide-holder-analysis.md section 5)",
 )
 
 #: What the driver assumes when nothing says otherwise. There is no
@@ -150,6 +154,13 @@ DEFAULT = STRIP
 #: catches a bad FEEDL however it was computed, including one that came
 #: from a valid frame number and a wrong table.
 FEEDL_CEILING = 71490
+
+
+def slide_travel_end(feedl: int, wire_lines: int, dpi: int) -> int:
+    """The slide path's stricter travel end, ``feedl + wire_lines x
+    (7200/dpi)/2`` rounded up: the position slide_dual_geometry() checks
+    against FEEDL_CEILING."""
+    return math.ceil(feedl + wire_lines * (7200 // dpi) / 2)
 
 
 def check_frame(frame: int, holder: Holder = DEFAULT) -> int:
@@ -779,3 +790,134 @@ def plain_sweep_geometry(
         end_hwdpi=end_hwdpi, start_hwdpi=start_hwdpi,
         lines_per_mm=3600 / 25.4, predicted_edges=edges)
     return geom, wire_lines
+
+
+# ---------------------------------------------------------------- slides
+#
+# The mounted-slide holder's four openings, positioned with the SAME
+# corrected mapping and the SAME POSITION/scan/PARK path as the strip
+# frames -- only the fiducial model (where the opening is, how long it
+# is) differs. docs/slide-holder-analysis.md section 5 and
+# docs/slide-scanning.md.
+#
+# Source numbers (docs/test-log.md Test 84, n = 1 load, "600-dual
+# coordinate" = commanded FEEDL + 12 x delivered line):
+#   openings 38.05 x 25.5 mm, pitch 62.6 mm, starts 23.5 / 86.1 / 148.7 /
+#   211.4 mm (opening 2-4 measured at 86.12 / 148.68 / 211.35; opening 1,
+#   hidden by the slide, extrapolated on the pitch: 86.12 - 62.6 = 23.52).
+#
+# Converting that coordinate into the fiducial model's coordinate: the
+# dual engine starts acquisition at FEEDL - K (dual_overscan_geometry's
+# docstring), K = DEFAULT_LINES x (12/2) / 2 = 1764 x 3 = 5292 units for
+# the 600 dpi dual profile (tables_dpi600.DEFAULT_LINES = 1764). So
+#   model = Test-84 coordinate - 5292.
+# Cross-check: the 600-dual production FEEDL for strip frame 1 is 6519 =
+# (strip lead 1 - 0.75 mm) + 5292, the value Test 84's ledger records.
+#
+# Strip frame 1's leading aperture edge in the model is
+#   STRIP_FIDUCIAL.leading_hwdpi(1) = 11678.3 - 36.119 mm = 1439.84 u,
+# i.e. 1439.84 + 5292 = 6731.84 u = 23.748 mm in the Test-84 coordinate.
+# Slide opening 1 starts at 23.5 mm there, so it sits
+#   SLIDE_SHIFT_MM = 23.5 - 23.748 = -0.248 mm (-70.5 u)
+# from strip frame 1's measured leading edge; the slide model is the
+# strip frame-1 corrected position plus that shift, then the 62.6 mm
+# (17744.9 u) pitch. Every profile then derives its own FEEDL from the
+# model exactly as for strips (plain: window centre; dual: start + K).
+
+#: Test-84 slide-holder grid (docs/slide-holder-analysis.md section 5).
+SLIDE_OPENING_MM = 38.05
+SLIDE_PITCH_MM = 62.6
+#: Opening 1 start, in Test 84's 600-dual coordinate (FEEDL + 12 x line).
+SLIDE_OPENING1_START_MM = 23.5
+#: K of the 600 dpi dual profile (tables_dpi600.DEFAULT_LINES 1764 x 12/2
+#: / 2): Test 84's coordinate minus this is the fiducial-model coordinate.
+#: tests/test_slides.py pins it against the table module.
+DUAL600_START_ANCHOR_HWDPI = 5292
+#: Opening 1 relative to strip frame 1's corrected leading edge (-0.248 mm).
+SLIDE_SHIFT_MM = (SLIDE_OPENING1_START_MM
+                  - (STRIP_FIDUCIAL.leading_hwdpi(1) + DUAL600_START_ANCHOR_HWDPI)
+                  * MM_PER_UNIT)
+#: The 62.6 mm pitch in motor units (17744.88): consecutive slide FEEDLs
+#: differ by this (+-1 for rounding) on every profile.
+SLIDE_PITCH_HWDPI = SLIDE_PITCH_MM / MM_PER_UNIT
+
+SLIDE_FIDUCIAL = FiducialModel(
+    base_hwdpi=(STRIP_FIDUCIAL.leading_hwdpi(1) + SLIDE_SHIFT_MM / MM_PER_UNIT
+                + SLIDE_OPENING_MM / MM_PER_UNIT),
+    pitch_hwdpi=SLIDE_PITCH_HWDPI,
+    aperture_mm=(SLIDE_OPENING_MM,) * SLIDE.frames,
+)
+
+#: Default overscan per side for slides, mm. The strip default (0.75 mm,
+#: OVERSCAN_MM) is sized around a ~36 mm aperture; the slide opening is
+#: 38.05 mm, and a real 2026-10 scan of opening 1 through strip frame 1
+#: left only ~0.6 mm of holder plastic per side. Slides also carry more
+#: position uncertainty than strips: the grid is n = 1 load (plus that
+#: scan), opening 1 is extrapolated (+-0.1 mm), the load-to-load spread is
+#: +-0.24 mm (Test 56) and a mount can sit off-centre in its opening.
+#: 1.5 mm is twice the strip margin and > 4x that position uncertainty.
+#: It is also bounded from above by slide 4's travel check
+#: (slide_dual_geometry): FEEDL + wire travel must stay <= FEEDL_CEILING,
+#: and at 600 dpi dual one chunk is 49 visible lines = 588 steps, so the
+#: trailing side rounds up in big steps. 2.0 and 2.5 mm put slide 4 at
+#: 71677 / 71535 (refused); 1.5 mm keeps every profile <= 71315 (1200
+#: dpi), >= 175 steps inside the ceiling. tests/test_slides.py pins that
+#: all four slides pass with this default on every profile.
+SLIDE_OVERSCAN_MM = 1.5
+
+
+def slide_dual_geometry(
+    slide: int,
+    *,
+    dpi: int,
+    lines_per_chunk: int,
+    colour_crop_lines: int,
+    default_wire_lines: int,
+    overscan_mm: float = SLIDE_OVERSCAN_MM,
+    offset_mm: float = 0.0,
+) -> tuple[OverscanGeometry, int]:
+    """dual_overscan_geometry() for slide-holder opening ``slide`` (1-4).
+
+    Same arithmetic, same checks (slide number against SLIDE.frames, the
+    model end position and the FEEDL against FEEDL_CEILING), plus one
+    STRICTER travel check that only the slide path gets: the commanded
+    FEEDL plus the whole wire's travel, ``feedl + wire_lines x (7200/dpi)/2``,
+    must also be inside FEEDL_CEILING. That is the bound as
+    docs/holder-position-design.md states it ("the end position is FEEDL
+    + window travel"), which for a dual profile is K (~18.7 mm) beyond the
+    model end the strip path checks. Which of the two is the true
+    carriage extreme is not established from software; slide opening 4
+    is the furthest window the driver has been asked for, so the slide
+    path requires both to be inside the proven travel. Raises
+    (FrameOutOfRangeError / FeedlOutOfRangeError) before any write, like
+    every other geometry check; a non-positive or non-finite overscan, or
+    a window of fewer than one chunk, is a ValueError.
+
+    ``offset_mm`` is the per-unit position offset (``--position-offset``,
+    issue #61), passed to dual_overscan_geometry() which shifts the slide
+    model by it. The travel check below runs on the SHIFTED FEEDL, so a
+    positive offset that pushes slide 4 past the ceiling is refused.
+    """
+    if not (isinstance(overscan_mm, (int, float)) and math.isfinite(overscan_mm)
+            and overscan_mm > 0):
+        raise ValueError(
+            f"slide overscan must be a finite number > 0 mm, got {overscan_mm!r}: "
+            f"a non-positive margin clips the opening or yields a negative "
+            f"line count. Nothing was sent to the scanner.")
+    geom, wire = dual_overscan_geometry(
+        slide,
+        dpi=dpi,
+        lines_per_chunk=lines_per_chunk,
+        colour_crop_lines=colour_crop_lines,
+        default_wire_lines=default_wire_lines,
+        fiducial=SLIDE_FIDUCIAL,
+        overscan_mm=overscan_mm,
+        holder=SLIDE,
+        offset_mm=offset_mm,
+    )
+    if geom.chunks < 1 or wire < 1 or geom.delivered_lines < 1:
+        raise ValueError(
+            f"slide {slide} window is empty ({geom.chunks} chunks, {wire} wire "
+            f"lines). Nothing was sent to the scanner.")
+    check_feedl(slide_travel_end(geom.feedl, wire, dpi), SLIDE)
+    return geom, wire
