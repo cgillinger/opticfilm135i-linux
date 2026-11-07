@@ -19,9 +19,11 @@ one exists; "offline" means implemented and tested without the scanner.
   34.5-37 mm (Tests 84/85: 35.06-35.1 mm) whose two margins each hold
   the 1.5 mm crop pad inside the window; the crop is padded by 1.5 mm
   per side. An IR-dense picture band at the mount edge looks like mount
-  and shortens the run: with the floor and the pad, a verified crop
-  still holds a mount aperture of up to 36.0 mm whole (tested with
-  0.5-5 mm bands), and anything shorter is NOT verified rather than cut
+  and shortens the run: with the floor and the pad, apertures up to
+  36.0 mm are kept whole by a verified crop (tested with 0.5-5 mm
+  bands). Above 36.0 mm a band can still be cut (a 37 mm aperture with
+  a 2 mm band reads like a clean 35.06 mm mount; pinned by a test as the
+  documented limit). Shorter runs are NOT verified rather than cut
   (the strip's 25 mm floor would have cropped into the picture and
   called it verified). Also NOT verified, exit 4: a 34 mm mount, a mount
   turned 90 degrees (its ~23 mm side along the transport), the 38.05 mm
@@ -32,9 +34,10 @@ one exists; "offline" means implemented and tested without the scanner.
   recrop` refuses an overscan file whose sidecar says `holder: slide`
   (it would apply the strip check). Nothing sent to the scanner changes.
   `measure_coverage()` gains `min_aperture_mm` (strip default unchanged).
-  New `tests/test_slide_crop.py` (12 tests: centred, off-centre and
+  New `tests/test_slide_crop.py` (13 tests: centred, off-centre and
   dark-grey mounts verified at 600/1200/3600 dpi; edge bands never cut
-  by a verified crop; the floor and the pad margin by behaviour; IR-dense
+  by a verified crop; the 36.0 mm guarantee and its limit; the floor
+  and the pad margin by behaviour; IR-dense
   edge, empty opening, IR-translucent mount, turned mount and a clipped
   window NOT verified; recrop's refusal; the strip default unchanged;
   the CLI's verified and NOT-verified outputs).

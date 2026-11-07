@@ -315,8 +315,11 @@ def measure_coverage_dual(visible, ir, *, dpi, min_margin_mm=0.15) -> ApertureCo
 #:  - the slide crop is padded by SLIDE_CROP_PAD_MM (1.5 mm) per side, and
 #:    both margins must hold that pad inside the window.
 #: A verified run is then at most 1.5 mm shorter than a mount aperture of
-#: up to 36.0 mm, and the pad gives that back; a picture band hidden at an
-#: edge is inside the crop whenever the verdict is "verified". Shorter
+#: up to 36.0 mm, and the pad gives that back: apertures up to 36.0 mm are
+#: kept whole by a verified crop. Above 36.0 mm a hidden band can still be
+#: cut (a 37 mm aperture with a 2 mm band gives a 35.0 mm run, the same as
+#: a clean 35.06 mm mount, which no length rule can tell apart without
+#: refusing the Test 85 slide); tests/test_slide_crop.py pins that limit. Shorter
 #: runs (a 34 mm mount, a mount turned 90 degrees with its ~23 mm side
 #: along the transport, a wider IR-dense band) are NOT verified: the
 #: overscan is kept and the scan exits 4. The strip floor
@@ -337,8 +340,8 @@ def measure_slide_coverage(ir, *, dpi, min_margin_mm=0.15) -> ApertureCoverage:
     SLIDE_MIN_APERTURE_MM..SLIDE_MAX_APERTURE_MM with both edges found and
     at least max(``min_margin_mm``, SLIDE_CROP_PAD_MM) inside the window ->
     verified (source "ir"); anything else -> not verified, with the
-    reason. Crop a verified slide with crop_to_aperture(...,
-    pad_mm=SLIDE_CROP_PAD_MM). Visible light is
+    reason. Crop a verified slide with crop_slide(), which applies the
+    same SLIDE_CROP_PAD_MM the margin rule here reserves. Visible light is
     not consulted: dark picture content fooled it on the Test 84 slide.
     Never raises on image content.
     """
@@ -560,3 +563,10 @@ def crop_to_aperture(image, coverage: ApertureCoverage, *, dpi, pad_mm=0.0) -> n
     hi = min(max(hi, lo), n_lines)
 
     return arr[lo:hi]
+
+
+def crop_slide(image, coverage: ApertureCoverage, *, dpi) -> np.ndarray:
+    """crop_to_aperture() for a slide verdict from measure_slide_coverage,
+    padded by SLIDE_CROP_PAD_MM per side: the one place the pad is applied,
+    and the same constant the margin rule reserved inside the window."""
+    return crop_to_aperture(image, coverage, dpi=dpi, pad_mm=SLIDE_CROP_PAD_MM)

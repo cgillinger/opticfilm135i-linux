@@ -335,8 +335,8 @@ with `--position-offset`, dual profiles only, `--positive` refused, the
 full overscan frames always kept. Step 2, the IR-keyed crop, is written
 and tested on synthetic fixtures, not on a real slide: the mount's
 aperture found in the IR channel, 34.5-37 mm, cropped with a 1.5 mm pad
-per side, the strips' verified / NOT verified contract with the overscan
-kept. C2 is
+per side (apertures up to 36.0 mm kept whole), the strips' verified /
+NOT verified contract with the overscan kept. C2 is
 done when that list is verified on a mounted slide. **Brought forward
 2026-09-18 (owner's decision, slides are in scope for the driver): in
 progress.**
