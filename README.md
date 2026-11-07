@@ -164,7 +164,8 @@ installed from this repository's build.
 - Verified against hardware: calibration values reproduce the vendor
   driver's within ±1 gain code / 0.03 % shading gain on the same unit;
   rendered output judged on par with the vendor app.
-- IR-based automatic dust/scratch removal (multi-scale inpainting), on by
+- IR-based automatic dust/scratch removal (multi-scale inpainting, footprints
+  scaled to the scan's resolution), on by
   default with `--ir`.
 - A udev rule for running without root (`udev/60-of135i.rules`).
 - A fail-closed hardware-safety layer (`of135i/safety.py`) that refuses

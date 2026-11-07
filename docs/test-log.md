@@ -8853,3 +8853,50 @@ the merge request (`docs/sane-wp3-submission.md`). bearyjd offers a 7200
 dpi run and more load/eject cycles with the logging build; neither is
 needed for v9. Open from the entry of 2026-11-06: why bit 0x08 stayed set
 in load run 1.
+
+## 2026-11-07 — Offline check, PR #66 (bearyjd): dust cleaning scaled by resolution on the Test 84 and Test 85 slide scans — 3600 dpi byte-identical to master, 600 dpi mask 28.8 % → 6.0 %, eye check: clearly better, nothing destroyed
+
+No scanner contact. The contributor's change (`image.dust_mask()` and
+`image.remove_dust()` take `dpi` and scale every footprint from the
+3600 dpi sizes to the profile's physical sampling) run against master
+on existing private scans, before the merge. Interpreter: the
+repository venv; the contributor's own suites passed (`test_ir` 9,
+`test_offline` 50) and `tools/release_check.py` was FULL (768 passed,
+0 skipped) on the branch merged with master.
+
+**3600 dpi (Test 85, the slide after brushing, `dia1.overscan.tiff`
++ `-ir`, 8-bit products, a 3000-line band around the middle, same band
+for both runs, memory-capped):** mask 3.610 % on both; mask and cleaned
+band SHA-256 identical between master and the branch. The pinned hashes
+in the new `test_dust_removal_3600_backwards_compatible` were also
+recomputed with master's code by a separate script and match.
+
+**600 dpi (Test 84, the six dual-600 windows of the slide holder with
+one slide in opening 1, `f-f1..f6.overscan.tiff` + `-ir`, 927 × 876,
+8-bit):**
+
+| window | content | IR median | mask master | mask branch |
+|---|---|---|---|---|
+| f1 | the slide | 171 | 28.83 % | 6.00 % |
+| f2 | slide end / holder plastic | 4 | 53.22 % | 29.06 % |
+| f3 | holder plastic, opening edge | 6 | 0.00 % | 22.40 % |
+| f4 | holder plastic | 13 | 0.00 % | 12.41 % |
+| f5 | holder plastic | 4 | 50.50 % | 26.61 % |
+| f6 | empty opening | 215 | 0.00 % | 0.00 % |
+
+Only f1 holds a picture. There master's mask is blobs that merge over
+the picture and its fill smears the tree line and the sky (the Test 84
+finding); the branch's mask is specks plus a thin ring along the mount
+edge. Windows f2–f5 are holder plastic and differ because the border
+rule (bg below a fraction of the frame's median) behaves differently
+with the smaller box on a mostly dark frame; no picture is affected.
+
+**Eye check (the owner, 2026-11-07, review images in the review folder
+with a LASMIG.txt; side-by-side original / master / branch at 1:1 and
+brightened 3× crops of the tree edge and the dusty sky):** the branch's
+result is clearly better than master's and nothing is destroyed; the
+tree silhouette and the cloud detail are intact. Left as known
+weaknesses of low-resolution cleaning, not of the change: specks inside
+the border halo next to the mount edge stay, and a thin scratch in the
+sky is only partly removed (the 5 px kernel scales to 1 × 1 at 600 dpi
+and cannot fill). Merged as `bd0a66f` on the owner's go.

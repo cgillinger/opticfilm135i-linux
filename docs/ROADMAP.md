@@ -321,8 +321,10 @@ mounted slide), and `remove_dust` is correct at 3600 — its dpi-blindness
 is a low-resolution problem. The aperture measured the same across three
 loads (35.06 × 22.75 mm, moving 0.13 mm). What remains for C2: a slide
 profile in the driver (POSITION to the opening on the measured grid, crop
-keyed on IR, positive handling without inversion, dust removal scaled by
-dpi for the low resolutions) and grid stability beyond two loads. C2 is
+keyed on IR, positive handling without inversion) and grid stability
+beyond two loads; dust removal scaled by dpi for the low resolutions is
+done (PR #66, bearyjd, 2026-11-07: footprints in physical size, 3600 dpi
+unchanged, the Test 84 slide eye-checked at 600 dpi). C2 is
 done when that list is verified on a mounted slide. **Brought forward
 2026-09-18 (owner's decision, slides are in scope for the driver): in
 progress.**
