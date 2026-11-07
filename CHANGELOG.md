@@ -7,12 +7,14 @@ one exists; "offline" means implemented and tested without the scanner.
 ## Unreleased
 
 - **`--slide-positive`: a positive slide written as a positive (issue
-  #70 step 3, bearyjd). Offline only.** With `--holder slide`, the
+  #70 step 3, bearyjd). Offline only.** The switch changes the
+  ORIENTATION only: slides already come out uninverted. With `--holder
+  slide`, the
   products and overscan frames (visible and IR alike) get the vendor
   orientation the `--positive` path uses (horizontal mirror +
   rot90), and **no inversion**: the values are the raw linear scan,
   written without the sRGB ICC tag (the tag describes a gamma-encoded
-  image; this one is linear). The 2400 dpi per-axis resolution follows
+  image; this one is linear, so it looks dark in an ordinary viewer). The 2400 dpi per-axis resolution follows
   the turn. `--positive` (the negative's density inversion) stays
   refused with `--holder slide`, as the contributor proposed in #70;
   its message now points at `--slide-positive`. Without the switch a
