@@ -1620,12 +1620,11 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
     what = "IR, slide mount aperture" if slide else cov.source
     print(f"aperture coverage: VERIFIED (source: {what}) — margins lead "
           f"{cov.leading_margin_mm:.3f} mm, trail {cov.trailing_margin_mm:.3f} mm")
-    # A slide crop is padded (aperture_crop.SLIDE_CROP_PAD_MM): an IR-dense
-    # picture edge may sit inside the lit run the edge finder found.
-    pad = aperture_crop.SLIDE_CROP_PAD_MM if slide else 0.0
-    vis_c = aperture_crop.crop_to_aperture(visible, cov, dpi=args.dpi, pad_mm=pad)
-    ir_c = (aperture_crop.crop_to_aperture(ir, cov, dpi=args.dpi, pad_mm=pad)
-            if write_ir else None)
+    # A slide crop is padded (aperture_crop.crop_slide): an IR-dense picture
+    # edge may sit inside the lit run the edge finder found.
+    crop = aperture_crop.crop_slide if slide else aperture_crop.crop_to_aperture
+    vis_c = crop(visible, cov, dpi=args.dpi)
+    ir_c = crop(ir, cov, dpi=args.dpi) if write_ir else None
     _film110_hook(args, film110_state, frame, out, vis_c, ir_c)
     vis_c, ir_c = _orient_pair(args, vis_c, ir_c)
 

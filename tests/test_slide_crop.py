@@ -14,12 +14,18 @@ both edges found with at least min_margin_mm inside the window ->
 "coverage VERIFIED", crop to it; anything else -> "NOT verified", the
 full overscan frame(s) kept, exit 4, so no picture is ever lost.
 
-Slide-specific: the run must be 33-37 mm long (a mount aperture's long
-side; Tests 84/85 measured 35.06-35.1 mm). Shorter is refused, because
-an IR-dense picture area at the mount edge (silver, some Kodachrome)
-shortens the lit run and a crop to it would cut into the picture.
-Longer is refused too: that is the 38.05 mm holder opening itself (no
-mount, or a mount the IR passes through).
+Slide-specific: the run must be 34.5-37 mm long (a mount aperture's long
+side; Tests 84/85 measured 35.06-35.1 mm), both margins must hold the
+1.5 mm crop pad inside the window, and the crop is padded by that much
+per side (aperture_crop.crop_slide). An IR-dense picture area at the
+mount edge (silver, some Kodachrome) is dark in IR like the mount and
+shortens the lit run; the floor and the pad together keep a verified
+crop truthful for mount apertures up to 36.0 mm (kept whole). Above
+that a band can still be cut: a 37 mm aperture with a 2 mm band gives
+the same run as a clean 35.06 mm mount, which no length rule can tell
+apart (the limit test pins it). Longer than 37 mm is refused: that is
+the 38.05 mm holder opening itself (no mount, or a mount the IR passes
+through).
 
 The fixtures are profiles built from the Test 84 geometry, not scans; a
 real scan is what settles the crop (issue #70 step 4).
@@ -135,9 +141,34 @@ def test_hidden_edge_bands_are_never_cut_by_a_verified_crop():
             lo = int(np.floor(cov.leading_line - pad * lpm))
             hi = int(np.ceil(cov.trailing_line + pad * lpm)) + 1
             assert lo <= a0 * lpm and hi >= (a0 + AP) * lpm, (dpi, band, lo, hi)
-            crop = aperture_crop.crop_to_aperture(ir, cov, dpi=dpi, pad_mm=pad)
+            crop = aperture_crop.crop_slide(ir, cov, dpi=dpi)
             assert crop.shape[0] == hi - lo, (dpi, band)    # pad inside the window
     print("test_hidden_edge_bands_are_never_cut_by_a_verified_crop OK")
+
+
+def test_the_guarantee_holds_to_36_mm_and_its_limit_is_documented():
+    """Apertures up to 36.0 mm are kept whole by a verified crop, with the
+    widest hidden band that still verifies (run at the 34.5 mm floor).
+    The limit: a 37.0 mm aperture with a 2 mm band verifies (its 35.0 mm
+    run equals a clean 35.06 mm mount's) and the crop misses ~0.5 mm --
+    pinned so a change to the bounds has to restate the guarantee."""
+    pad, lpm = aperture_crop.SLIDE_CROP_PAD_MM, 600 / 25.4
+    def kept_whole(ap, band):
+        ir, _ = _slide_ir(aperture_mm=ap, dense_lead_mm=band)
+        cov = _cov(ir)
+        if cov.leading_line is None:
+            return False, False
+        a0 = OVER + (holder.SLIDE_OPENING_MM - ap) / 2
+        lo = cov.leading_line - pad * lpm
+        hi = cov.trailing_line + pad * lpm
+        return cov.verified, (lo <= a0 * lpm + 1 and hi + 1 >= (a0 + ap) * lpm)
+    for ap in (35.06, 35.5, 36.0):
+        band = ap - aperture_crop.SLIDE_MIN_APERTURE_MM - 0.02
+        verified, whole = kept_whole(ap, band)
+        assert verified and whole, (ap, band)
+    verified, whole = kept_whole(37.0, 2.0)
+    assert verified and not whole                   # the documented limit
+    print("test_the_guarantee_holds_to_36_mm_and_its_limit_is_documented OK")
 
 
 def test_minimum_run_length_is_enforced_by_behaviour():
@@ -318,6 +349,7 @@ def main():
         test_off_centre_and_dark_grey_mounts_are_verified,
         test_ir_dense_picture_at_the_mount_edge_is_not_verified,
         test_hidden_edge_bands_are_never_cut_by_a_verified_crop,
+        test_the_guarantee_holds_to_36_mm_and_its_limit_is_documented,
         test_minimum_run_length_is_enforced_by_behaviour,
         test_margins_must_hold_the_crop_pad,
         test_recrop_refuses_slide_overscan_files,
