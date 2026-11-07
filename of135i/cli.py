@@ -1484,7 +1484,7 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
         ir = ir[_shift:-_shift]
 
     if write_ir and not args.no_clean:
-        visible = image.remove_dust(visible, ir)
+        visible = image.remove_dust(visible, ir, dpi=args.dpi)
 
     from . import aperture_crop
     # `visible` (aligned, cropped by the colour shift at both ends) and `ir`
@@ -1731,7 +1731,7 @@ def _finish_digitize_frame(args: argparse.Namespace, raw: bytes, width: int,
         if _shift:
             ir = ir[_shift:-_shift]
         if args.ir and not args.no_clean:
-            visible = image.remove_dust(visible, ir)
+            visible = image.remove_dust(visible, ir, dpi=args.dpi)
         # visible and ir share one line grid (both trimmed by the same
         # colour shift above); the IR array is used for coverage even when
         # no IR file is written (dpi != 3600 without --ir).

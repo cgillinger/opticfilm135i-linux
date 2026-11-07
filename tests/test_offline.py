@@ -263,6 +263,38 @@ def _xy_res(path):
     return int(im.tag_v2[282]), int(im.tag_v2[283])
 
 
+def test_digitize_cleaning_receives_dpi_and_honors_no_clean():
+    """Exercise the second real CLI writer with its existing dual fixture."""
+    import argparse
+    from of135i import cli
+    calls = []
+    original = cli.image.remove_dust
+
+    def spy(visible, ir, *, dpi):
+        calls.append(dpi)
+        return visible.copy()
+
+    cli.image.remove_dust = spy
+    try:
+        for dpi in (600, 2400):
+            lpm = dpi / 25.4
+            raw, width = _small_dual_raw(dpi, round(40*lpm),
+                                        (round(4*lpm), round(34*lpm)))
+            for no_clean in (False, True):
+                calls.clear()
+                args = argparse.Namespace(dpi=dpi, ir=True, no_clean=no_clean,
+                                          rotate=0, positive=False)
+                with tempfile.TemporaryDirectory() as d:
+                    main, _, _, cleaned, coverage = cli._finish_digitize_frame(
+                        args, raw, width, str(Path(d) / "f1.tiff"), dual=True)
+                    assert main is not None and coverage.verified
+                    assert calls == ([] if no_clean else [dpi]), calls
+                    assert cleaned is not no_clean
+    finally:
+        cli.image.remove_dust = original
+    print("test_digitize_cleaning_receives_dpi_and_honors_no_clean OK")
+
+
 def test_digitize_dual_metadata_axes_follow_each_flow():
     """The real _finish_digitize_frame export, read back from disk.
     digitize keeps three separate flows with different rotation:
@@ -1609,6 +1641,7 @@ def main() -> int:
         test_tiff_anisotropic_resolution,
         test_axis_dpi_rotation_parity,
         test_digitize_dual_metadata_axes_follow_each_flow,
+        test_digitize_cleaning_receives_dpi_and_honors_no_clean,
         test_pnm_roundtrip_via_pillow,
         test_digitize_layout_and_paths,
         test_digitize_manifest_roundtrip_and_torn_line,

@@ -286,9 +286,10 @@ def split_ir(raw: bytes, width: int = 5184, dpi: int = 3600) -> tuple[np.ndarray
     return visible, ir
 
 
-def _box_blur(a: np.ndarray, box: int) -> np.ndarray:
+def _box_blur(a: np.ndarray, box: int | tuple[int, int]) -> np.ndarray:
     """Box blur of a 2D array via a summed-area table (cumsum twice),
-    numpy-only (no scipy). Edge-padded so the output covers the full
+    numpy-only (no scipy). `box` is a square size or (rows, columns).
+    Edge-padded so the output covers the full
     input shape. The cumsum accumulator is float64 (precision matters:
     box sums over ~4000 terms lose too much accuracy in float32 once
     two nearby large partial sums are subtracted) but is a single
@@ -296,34 +297,35 @@ def _box_blur(a: np.ndarray, box: int) -> np.ndarray:
     off the memory budget for the caller's own full-frame arrays.
     """
     h, w = a.shape
-    pad_lo = box // 2
-    pad_hi = box - pad_lo
-    ap = np.pad(a, ((pad_lo, pad_hi), (pad_lo, pad_hi)), mode="edge").astype(np.float64)
+    box_y, box_x = (box, box) if isinstance(box, int) else box
+    ap = np.pad(a, ((box_y // 2, box_y - box_y // 2),
+                    (box_x // 2, box_x - box_x // 2)), mode="edge").astype(np.float64)
     np.cumsum(ap, axis=0, out=ap)
     np.cumsum(ap, axis=1, out=ap)
     csum = np.pad(ap, ((1, 0), (1, 0)))
     del ap
     y0 = np.arange(h)
     x0 = np.arange(w)
-    y1 = y0 + box
-    x1 = x0 + box
+    y1 = y0 + box_y
+    x1 = x0 + box_x
     total = csum[y1][:, x1] - csum[y0][:, x1] - csum[y1][:, x0] + csum[y0][:, x0]
     del csum
-    return (total / (box * box)).astype(np.float32)
+    return (total / (box_y * box_x)).astype(np.float32)
 
 
-def _dilate_bool(mask: np.ndarray, iterations: int = 2) -> np.ndarray:
-    """Binary dilation (4-neighborhood) via np.roll ORs, `iterations`
-    times -- each pass grows the mask by one pixel in each direction."""
+def _dilate_bool(mask: np.ndarray, iterations: int | tuple[int, int] = 2) -> np.ndarray:
+    """Binary dilation via 4-neighborhood np.roll ORs.
+
+    `iterations` is a shared radius or (row radius, column radius).
+    """
+    radius_y, radius_x = (iterations, iterations) if isinstance(iterations, int) else iterations
     out = mask
-    for _ in range(iterations):
-        out = (
-            out
-            | np.roll(out, 1, axis=0)
-            | np.roll(out, -1, axis=0)
-            | np.roll(out, 1, axis=1)
-            | np.roll(out, -1, axis=1)
-        )
+    for step in range(max(radius_y, radius_x)):
+        previous = out
+        if step < radius_y:
+            out = out | np.roll(previous, 1, axis=0) | np.roll(previous, -1, axis=0)
+        if step < radius_x:
+            out = out | np.roll(previous, 1, axis=1) | np.roll(previous, -1, axis=1)
     return out
 
 
@@ -337,8 +339,18 @@ _DUST_BORDER_FRAC = 0.3  # local bg below this fraction of the image's
                           # typical (median) bg is film-holder border,
                           # not scannable frame -- never masked as dust.
 
+def _dust_scale(size: int, dpi: int) -> tuple[int, int]:
+    """Convert a 3600 dpi footprint to (rows, columns) at this profile.
 
-def dust_mask(ir: np.ndarray, sensitivity: float = 1.0) -> np.ndarray:
+    Test 84/85 in docs/test-log.md establishes the 3600 dpi calibration:
+    fixed pixel sizes turn low-resolution cleaning into mass inpainting.
+    The 2400 profile samples across at 3600 dpi, along at 2400 dpi.
+    """
+    across, along = sampling_resolution(dpi)
+    return max(1, round(size * along / 3600)), max(1, round(size * across / 3600))
+
+
+def dust_mask(ir: np.ndarray, sensitivity: float = 1.0, *, dpi: int = 3600) -> np.ndarray:
     """Detect dust/scratch specks in an IR channel image.
 
     `ir` is a (lines, width) array (any integer/float dtype) from the
@@ -348,8 +360,12 @@ def dust_mask(ir: np.ndarray, sensitivity: float = 1.0) -> np.ndarray:
     blocked by opaque debris). Returns a boolean mask, True where a
     pixel is judged part of a speck.
 
-    Method: estimate the local IR background with a coarse (~64 px) box
-    blur, then flag pixels significantly darker than that local
+    All spatial sizes are calibrated at 3600 dpi and scaled per axis by
+    `dpi`, including the anisotropic 2400 dpi profile. The default keeps
+    the original 3600 dpi behavior.
+
+    Method: estimate the local IR background with a coarse (~64 px at
+    3600 dpi) box blur, then flag pixels significantly darker than that local
     background (`ir < background * (1 - t)`, t scaled inversely by
     `sensitivity` -- higher sensitivity masks more). The dark
     film-holder borders (present in full-sensor-width IR-mode scans;
@@ -357,19 +373,20 @@ def dust_mask(ir: np.ndarray, sensitivity: float = 1.0) -> np.ndarray:
     and are excluded outright, including a halo around the border/frame
     edge as wide as the blur box -- inside that halo the box blur mixes
     border and frame content, which would otherwise register as bogus
-    "specks" right along the border. The mask is then dilated 2-3 px
-    since a speck's faint penumbra usually extends past where the
+    "specks" right along the border. The mask is then dilated 6 px at
+    3600 dpi since a speck's faint penumbra usually extends past where the
     hard threshold first trips.
     """
     ir_f = np.asarray(ir, dtype=np.float32)
-    bg = _box_blur(ir_f, _DUST_BG_BOX)
+    bg_box = _dust_scale(_DUST_BG_BOX, dpi)
+    bg = _box_blur(ir_f, bg_box)
 
     border = bg < (_DUST_BORDER_FRAC * float(np.median(bg)))
     # Dilate the border exclusion by the same box radius: _box_blur's
     # boxcar average blends border and frame content within half the
     # box width of the true edge, so bg is depressed there too, wide
     # enough to otherwise register as a "speck" band along the border.
-    border = _box_blur(border.astype(np.float32), _DUST_BG_BOX + 1) > 0
+    border = _box_blur(border.astype(np.float32), (bg_box[0] + 1, bg_box[1] + 1)) > 0
 
     t = min(_DUST_T0 / max(sensitivity, 1e-6), 0.9)
     mask = (ir_f < bg * (1.0 - t)) & ~border
@@ -378,7 +395,7 @@ def dust_mask(ir: np.ndarray, sensitivity: float = 1.0) -> np.ndarray:
     # 6 px: wide enough that the inpaint rim sits in clean film beyond
     # the stagger-colored halo around a speck (rainbow fill observed
     # with 2 px, 2026-08-30).
-    return _dilate_bool(mask, iterations=6)
+    return _dilate_bool(mask, iterations=_dust_scale(6, dpi))
 
 
 _INPAINT_KERNELS = (5, 17, 49)  # increasing box sizes, numpy-only via
@@ -387,7 +404,8 @@ _INPAINT_MIN_WEIGHT = 4.0        # a scale's fill only counts once its box
                                   # holds at least this many valid pixels
 
 
-def _inpaint_channel(chan: np.ndarray, mask: np.ndarray) -> np.ndarray:
+def _inpaint_channel(chan: np.ndarray, mask: np.ndarray,
+                     kernels: tuple[int | tuple[int, int], ...] = _INPAINT_KERNELS) -> np.ndarray:
     """Fill `mask`-True pixels of a single 2D channel by multi-scale
     normalized convolution: for a box of size k,
 
@@ -426,12 +444,13 @@ def _inpaint_channel(chan: np.ndarray, mask: np.ndarray) -> np.ndarray:
     filled = img.copy()
     unresolved = mask.copy()
 
-    for k in _INPAINT_KERNELS:
+    for k in kernels:
         if not unresolved.any():
             break
         num = _box_blur(masked_vals, k)
         den = _box_blur(weight, k)
-        good = unresolved & (den * (k * k) > _INPAINT_MIN_WEIGHT)
+        area = k*k if isinstance(k, int) else k[0]*k[1]
+        good = unresolved & (den * area > _INPAINT_MIN_WEIGHT)
         if good.any():
             with np.errstate(divide="ignore", invalid="ignore"):
                 filled[good] = num[good] / den[good]
@@ -450,7 +469,8 @@ def _inpaint_channel(chan: np.ndarray, mask: np.ndarray) -> np.ndarray:
     return filled
 
 
-def remove_dust(visible: np.ndarray, ir: np.ndarray, sensitivity: float = 1.0) -> np.ndarray:
+def remove_dust(visible: np.ndarray, ir: np.ndarray, sensitivity: float = 1.0,
+                *, dpi: int = 3600) -> np.ndarray:
     """Remove dust/scratches from `visible` using the IR channel's dust
     map (see `dust_mask`). `visible` is (lines, width, 3), `ir` is the
     same-shape-minus-channel (lines, width) IR image, pixel-aligned
@@ -459,6 +479,7 @@ def remove_dust(visible: np.ndarray, ir: np.ndarray, sensitivity: float = 1.0) -
     orientation transforms). Returns a same-shape, same-dtype array
     with masked pixels replaced per channel from unmasked neighbors
     (`_inpaint_channel`); everything else is untouched.
+    `dpi` scales the 3600 dpi mask and fill footprints to physical size.
 
     Processes one channel at a time (rather than all three at once) to
     keep peak memory to a few hundred MB instead of ~1 GB for a full
@@ -468,15 +489,16 @@ def remove_dust(visible: np.ndarray, ir: np.ndarray, sensitivity: float = 1.0) -
         raise ValueError(
             f"visible/ir line-grid mismatch: {visible.shape[:2]} vs {ir.shape}"
         )
-    mask = dust_mask(ir, sensitivity=sensitivity)
+    mask = dust_mask(ir, sensitivity=sensitivity, dpi=dpi)
     if not mask.any():
         return visible.copy()
 
     dtype = visible.dtype
     info = np.iinfo(dtype) if np.issubdtype(dtype, np.integer) else None
     out = np.empty_like(visible)
+    kernels = tuple(_dust_scale(k, dpi) for k in _INPAINT_KERNELS)
     for c in range(visible.shape[2]):
-        filled = _inpaint_channel(visible[..., c], mask)
+        filled = _inpaint_channel(visible[..., c], mask, kernels=kernels)
         if info is not None:
             filled = np.clip(np.rint(filled), info.min, info.max)
         out[..., c] = filled.astype(dtype)
