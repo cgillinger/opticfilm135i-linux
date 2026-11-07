@@ -331,10 +331,11 @@ built by the contributor on his unit, in the order holder option, crop,
 positive output, hardware runs (issue #70, 2026-11-07). Step 1, the
 holder option, is written and offline-tested, not yet run on hardware:
 `scan --holder slide`, `--frame N` = opening N positioned on that grid
-with `--position-offset`, dual profiles only, `--positive` refused,
-overscan frames only. Step 2, the IR-keyed crop, is written and tested
-on synthetic fixtures: the mount's aperture found in the IR channel,
-33-37 mm, the strips' verified / NOT verified contract with the overscan
+with `--position-offset`, dual profiles only, `--positive` refused, the
+full overscan frames always kept. Step 2, the IR-keyed crop, is written
+and tested on synthetic fixtures, not on a real slide: the mount's
+aperture found in the IR channel, 34.5-37 mm, cropped with a 1.5 mm pad
+per side, the strips' verified / NOT verified contract with the overscan
 kept. Step 3, positive output, is written and offline-tested:
 `--slide-positive` turns the slide to the vendor orientation without
 inverting it (`--positive`, the negative inversion, stays refused with

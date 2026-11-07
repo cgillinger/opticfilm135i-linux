@@ -112,8 +112,78 @@ def test_ir_dense_picture_at_the_mount_edge_is_not_verified():
     assert strip_like.verified                          # the hazard
     cov = _cov(ir)
     assert not cov.verified and cov.leading_line is None, cov
-    assert "mount aperture" in cov.reason and "33" in cov.reason, cov.reason
+    assert "mount aperture" in cov.reason and f"{aperture_crop.SLIDE_MIN_APERTURE_MM:g}" in cov.reason, cov.reason
     print("test_ir_dense_picture_at_the_mount_edge_is_not_verified OK")
+
+
+def test_hidden_edge_bands_are_never_cut_by_a_verified_crop():
+    """An IR-dense band of picture at the mount edge (0.5-5 mm) shortens
+    the lit run. Whatever the verdict, a VERIFIED crop (padded by
+    SLIDE_CROP_PAD_MM) must still hold the whole mount aperture, band
+    included: 'verified' never means 'picture cut'."""
+    pad = aperture_crop.SLIDE_CROP_PAD_MM
+    for dpi in (600, 3600):
+        lpm = dpi / 25.4
+        for band in (0.5, 1.0, 1.5, 2.0, 2.5, 5.0):
+            ir, _ = _slide_ir(dpi, dense_lead_mm=band)
+            cov = _cov(ir, dpi)
+            if band == 0.5:
+                assert cov.verified, (dpi, cov)          # the pad is exercised
+            if not cov.verified:
+                continue
+            a0 = OVER + (holder.SLIDE_OPENING_MM - AP) / 2
+            lo = int(np.floor(cov.leading_line - pad * lpm))
+            hi = int(np.ceil(cov.trailing_line + pad * lpm)) + 1
+            assert lo <= a0 * lpm and hi >= (a0 + AP) * lpm, (dpi, band, lo, hi)
+            crop = aperture_crop.crop_to_aperture(ir, cov, dpi=dpi, pad_mm=pad)
+            assert crop.shape[0] == hi - lo, (dpi, band)    # pad inside the window
+    print("test_hidden_edge_bands_are_never_cut_by_a_verified_crop OK")
+
+
+def test_minimum_run_length_is_enforced_by_behaviour():
+    """A clean 34.0 mm mount aperture is below the floor and refused; a
+    34.8 mm one is verified; a mount inserted turned 90 degrees (the
+    22.75 mm side along the transport) is refused, so the scan exits 4."""
+    assert not _cov(_slide_ir(aperture_mm=34.0)[0]).verified
+    assert _cov(_slide_ir(aperture_mm=34.8)[0]).verified
+    cov = _cov(_slide_ir(aperture_mm=22.75)[0])
+    assert not cov.verified and "mount aperture" in cov.reason, cov
+    print("test_minimum_run_length_is_enforced_by_behaviour OK")
+
+
+def test_margins_must_hold_the_crop_pad():
+    """The padded crop must lie inside the window: a margin under the pad
+    is NOT verified (the window may have missed picture beyond it)."""
+    pad = aperture_crop.SLIDE_CROP_PAD_MM
+    cov = _cov(_slide_ir(lead_border=2.7)[0])   # Test 84: trailing ~1.79 mm
+    assert cov.verified and cov.trailing_margin_mm >= pad, cov
+    # The aperture 0.5 mm into the window: a found edge, but under the pad.
+    cov = _cov(_slide_ir(lead_border=0.5, shift_mm=-OVER)[0])
+    assert not cov.verified and cov.leading_line is not None, cov
+    assert cov.leading_margin_mm < pad, cov
+    print("test_margins_must_hold_the_crop_pad OK")
+
+
+def test_recrop_refuses_slide_overscan_files():
+    import json
+    import os
+    import tempfile
+    from of135i import recrop
+    with tempfile.TemporaryDirectory() as d:
+        stem = os.path.join(d, "s")
+        image_mod = __import__("of135i.image", fromlist=["write_tiff16"])
+        image_mod.write_tiff16(np.zeros((8, 8, 3), np.uint16), stem + ".overscan.tiff")
+        for side in ({"cli": {"dpi": 600, "rotate": 0, "holder": "slide"}},
+                     {"holder": "slide", "cli": {"dpi": 600, "rotate": 0}}):
+            Path(stem + ".diag.json").write_text(json.dumps(side))
+            try:
+                recrop.recrop(stem + ".tiff")
+            except recrop.RecropError as e:
+                assert "slide" in str(e) and "--holder slide" in str(e), e
+            else:
+                raise AssertionError("a slide overscan file must be refused")
+        assert not os.path.exists(stem + ".tiff")
+    print("test_recrop_refuses_slide_overscan_files OK")
 
 
 def test_empty_opening_and_ir_translucent_mount_are_not_verified():
@@ -215,6 +285,7 @@ def test_cli_slide_verified_writes_the_cropped_pair_and_keeps_the_overscan():
         c = side["coverage"]
         assert c["verified"] is True and c["source"] == "ir", c
         assert c["method"] == "slide-ir", c
+        assert c["crop_pad_mm"] == aperture_crop.SLIDE_CROP_PAD_MM, c
         assert abs((c["trailing_line"] - c["leading_line"]) / lpm - AP) < 0.2, c
         assert "VERIFIED" in out and "mount aperture" in out, out
     print("test_cli_slide_verified_writes_the_cropped_pair_and_keeps_the_overscan OK")
@@ -246,6 +317,10 @@ def main():
         test_centred_mount_is_verified_and_cropped_to_the_aperture,
         test_off_centre_and_dark_grey_mounts_are_verified,
         test_ir_dense_picture_at_the_mount_edge_is_not_verified,
+        test_hidden_edge_bands_are_never_cut_by_a_verified_crop,
+        test_minimum_run_length_is_enforced_by_behaviour,
+        test_margins_must_hold_the_crop_pad,
+        test_recrop_refuses_slide_overscan_files,
         test_empty_opening_and_ir_translucent_mount_are_not_verified,
         test_clipped_aperture_is_not_verified,
         test_strip_coverage_is_unchanged,
