@@ -329,14 +329,19 @@ grid is in the code as `SLIDE_FIDUCIAL` / `slide_dual_geometry()` (PR
 #67, bearyjd, 2026-11-07). The remaining steps are being
 built by the contributor on his unit, in the order holder option, crop,
 positive output, hardware runs (issue #70, 2026-11-07). Step 1, the
-holder option, is written and offline-tested, not yet run on hardware:
-`scan --holder slide`, `--frame N` = opening N positioned on that grid
-with `--position-offset`, dual profiles only, `--positive` refused, the
+holder option, is written, offline-tested and hardware-run on one unit
+(openings 1-4 at 3600 dpi plus opening 1 at 600 dpi, centre offsets
+-0.30..+0.22 mm): `scan --holder slide`, `--frame N` = opening N
+positioned on that grid with `--position-offset`, dual profiles only,
+`--positive` refused, the
 full overscan frames always kept. Step 2, the IR-keyed crop, is written
-and tested on synthetic fixtures, not on a real slide: the mount's
-aperture found in the IR channel, 33.8-37 mm, cropped with a 1.5 mm pad
-per side (apertures up to 35.3 mm kept whole), the strips' verified /
-NOT verified contract with the overscan kept. Step 3, positive output,
+and tested on synthetic fixtures and run on a real mount (opening 1,
+verified, margins lead 3.567 mm, trail 3.208 mm; only opening 1 re-run):
+the mount's aperture found in the IR channel, 33.8-37 mm (the measured
+lit runs are 34.16-34.45 mm; the earlier 34.5 mm floor refused three of
+four openings), cropped with a 1.5 mm pad per side (apertures up to
+35.3 mm kept whole), the strips' verified / NOT verified contract with
+the overscan kept. Step 3, positive output,
 is written and offline-tested: `--slide-positive` turns the slide to the
 vendor orientation without inverting it (`--positive`, the negative
 inversion, stays refused with slides). C2 is

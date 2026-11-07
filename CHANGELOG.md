@@ -27,7 +27,7 @@ one exists; "offline" means implemented and tested without the scanner.
   sidecar's `cli.slide_positive`). Nothing sent to the scanner changes.
 
 - **Slide crop keyed on the IR channel (issue #70 step 2, bearyjd).
-  Synthetic fixtures only; not run on a real slide.** `scan --holder
+  Synthetic fixtures, plus one real mount (opening 1, verified).** `scan --holder
   slide` now checks each opening's coverage and crops, with the strips'
   contract: the full overscan frame(s) are always kept, the cropped
   pair (`-o`, with `--ir` also `-ir.tiff`) is written only when
@@ -43,7 +43,12 @@ one exists; "offline" means implemented and tested without the scanner.
   35.3 mm (floor + pad) are kept whole by a verified crop (tested with 0.5-5 mm
   bands). Above 35.3 mm a band can still be cut (a 37 mm aperture with
   a 3 mm band reads like a clean 34.0 mm mount; pinned by a test as the
-  documented limit). Shorter runs are NOT verified rather than cut
+  documented limit). On hardware (cardboard mounts of several brands,
+  3600 dpi dual) the lit run measured 34.16-34.45 mm over openings 1-4,
+  so the earlier 34.5 mm floor refused three of four; with the 33.8 mm
+  floor opening 1 verified (margins lead 3.567 mm, trail 3.208 mm,
+  5184x5289 pair) and the slide was complete by eye; only opening 1 was
+  re-run. Shorter runs are NOT verified rather than cut
   (the strip's 25 mm floor would have cropped into the picture and
   called it verified). Also NOT verified, exit 4: a 33 mm mount, a mount
   turned 90 degrees (its ~23 mm side along the transport), the 38.05 mm
@@ -63,7 +68,7 @@ one exists; "offline" means implemented and tested without the scanner.
   the CLI's verified and NOT-verified outputs).
 
 - **`scan --holder slide`: the mounted-slide holder, positioned per
-  opening (issue #70 step 1, bearyjd). NOT yet run on hardware.**
+  opening (issue #70 step 1, bearyjd). Run on hardware on one unit.**
   `--holder {strip,slide}`, default `strip` (unchanged, byte-identical
   on the wire). With `slide`, `--frame N` / `--frames` are slide
   openings 1-4 and each is positioned on the #67 grid through
@@ -84,8 +89,10 @@ one exists; "offline" means implemented and tested without the scanner.
   from 5 to 11 tests (wire FEEDL and line count per opening with and
   without the offset, refusals with zero phases run, the CLI refusals
   before the device opens, one opening end to end off hardware).
-  First hardware run, per the maintainer's rule: one opening, look,
-  then the next.
+  Hardware run on one unit with cardboard mounts of a few brands:
+  openings 1-4 at 3600 dpi and opening 1 at 600 dpi, FEEDL as modelled,
+  no poll timeouts, lit aperture centred within -0.30..+0.22 mm along
+  the transport. Still experimental.
 
 - **Mounted-slide geometry model, library only (PR #67, bearyjd).**
   `of135i/holder.py` carries the slide holder's measured grid from Test
