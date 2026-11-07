@@ -274,13 +274,13 @@ know about:
   scanner ships with a four-slide holder. Its load flow is the strip
   holder's, a mounted slide scans whole through the strip-holder windows
   and the four openings form a measured grid (Test 84). The driver has
-  an experimental, **not yet hardware-verified** option that positions
-  on that grid, opening by opening: `scan --holder slide --frame N --ir`
-  (N = 1-4, dual-light profiles only, `--positive` refused); it keeps
-  the full overscan frame(s) and crops to the mount's aperture found in
-  the IR channel when coverage verifies (exit 4 otherwise, as for
-  strips; tested on synthetic data only). Positive output is still
-  missing, and the SANE backend has no slide path. It is a
+  an experimental option, **hardware run pending** (offline-tested
+  only), that positions on that grid, opening by opening: `scan --holder
+  slide --frame N --ir` (N = 1-4, dual-light profiles only, `--positive`
+  refused); it keeps the full overscan frame(s) and crops to the mount's
+  aperture found in the IR channel when coverage verifies (exit 4
+  otherwise, as for strips; synthetic data only so far). Positive output
+  is still missing, and the SANE backend has no slide path. It is a
   separate milestone (C2 in the roadmap), not part of what works today.
   **110 (Pocket Instamatic) film in the strip holder — supported, two
   strips from two cameras (n = 2).** A 16 mm 110 strip lies in the

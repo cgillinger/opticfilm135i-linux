@@ -168,9 +168,12 @@ def test_slide_position_offset_moves_every_feedl_and_is_travel_checked():
                 assert holder.slide_travel_end(g1.feedl, w1, dpi) \
                     <= holder.FEEDL_CEILING, (dpi, n, off)
         assert _slide_geom(1, dpi, offset_mm=0.0) == _slide_geom(1, dpi)
-        # Slide 4 sits 175..307 steps (0.62..1.08 mm) inside the ceiling
-        # on every profile, so +1.5 mm must be refused by the travel check.
+        # Slide 4 sits 175..311 steps (0.62..1.10 mm) inside the ceiling
+        # on every profile, so +1.5 mm must be refused by the travel check;
+        # at 600 (259 steps) and 1200 (175) dpi +1.0 mm is refused too.
         _raises(safety.FeedlOutOfRangeError, _slide_geom, 4, dpi, offset_mm=1.5)
+        if dpi in (600, 1200):
+            _raises(safety.FeedlOutOfRangeError, _slide_geom, 4, dpi, offset_mm=1.0)
         _slide_geom(3, dpi, offset_mm=1.5)
         for bad in (holder.POSITION_OFFSET_MAX_MM + 0.1, float("nan")):
             _raises(ValueError, _slide_geom, 1, dpi, offset_mm=bad)
