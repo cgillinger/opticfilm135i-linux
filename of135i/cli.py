@@ -3834,9 +3834,10 @@ def build_parser() -> argparse.ArgumentParser:
              "the four-slide mounted-slide holder: --frame/--frames are its "
              "openings 1-4, positioned on the measured grid (Test 84, "
              "holder.SLIDE_FIDUCIAL); dual-light only (--ir, or any --dpi "
-             "but 3600); default --overscan 1.5; --positive refused. Writes "
-             "the full overscan frame(s) only (no slide crop yet). Not "
-             "hardware-verified yet (issue #70)")
+             "but 3600); default --overscan 1.5; --positive refused. Keeps "
+             "the full overscan frame(s) and crops to the mount's aperture "
+             "found in the IR channel when coverage verifies (exit 4 "
+             "otherwise, as for strips). Not hardware-verified yet (issue #70)")
     p_scan.add_argument("--eject", action="store_true",
         help="eject the film magazine after the last frame")
     p_scan.add_argument("--dpi", type=int, default=3600, choices=SUPPORTED_DPIS,
