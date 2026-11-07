@@ -6,6 +6,31 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **`scan --holder slide`: the mounted-slide holder, positioned per
+  opening (issue #70 step 1, bearyjd). NOT yet run on hardware.**
+  `--holder {strip,slide}`, default `strip` (unchanged, byte-identical
+  on the wire). With `slide`, `--frame N` / `--frames` are slide
+  openings 1-4 and each is positioned on the #67 grid through
+  `holder.slide_dual_geometry()`, with `--position-offset` applied and
+  the slide-only travel check; `Scanner.scan(slide=True)` checks that
+  whole geometry before the operation, so a refusal sends nothing. What
+  goes to the scanner per opening: the strip path's own phases
+  (calibration, POSITION, scan, PARK); only the FEEDL (slide 1-4 at
+  3600 dpi dual: 6255 / 24000 / 41745 / 59490) and the line count
+  differ. Dual-light profiles only (plain 3600 clips a mounted slide
+  across, Test 85), default `--overscan 1.5`; plain 3600, `--film 110`
+  and `--positive` (a negative inversion, which would invert a positive
+  slide) are refused before the device opens. Output: the full overscan
+  frame(s) only (`.overscan.tiff`, with `--ir` also `-ir.overscan.tiff`),
+  sidecar `coverage.applicable: false` and `holder: "slide"`; the IR
+  crop for slides is the next step. `digitize` is unchanged (its roll,
+  album and 110 workflow is strip-shaped). `tests/test_slides.py` grows
+  from 5 to 11 tests (wire FEEDL and line count per opening with and
+  without the offset, refusals with zero phases run, the CLI refusals
+  before the device opens, one opening end to end off hardware).
+  First hardware run, per the maintainer's rule: one opening, look,
+  then the next.
+
 - **Mounted-slide geometry model, library only (PR #67, bearyjd).**
   `of135i/holder.py` carries the slide holder's measured grid from Test
   84 (`SLIDE_FIDUCIAL`: 38.05 mm openings on a 62.6 mm pitch, opening 1

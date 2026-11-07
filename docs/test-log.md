@@ -8900,3 +8900,22 @@ weaknesses of low-resolution cleaning, not of the change: specks inside
 the border halo next to the mount edge stay, and a thin scratch in the
 sky is only partly removed (the 5 px kernel scales to 1 × 1 at 600 dpi
 and cannot fill). Merged as `bd0a66f` on the owner's go.
+
+## PLACEHOLDER (hardware run pending, no Test number) — `scan --holder slide` (issue #70 step 1, bearyjd): one opening per run, mounted slides
+
+**Not run. No result exists; nothing below is a measurement.** This entry
+is a placeholder so the PR carries its test-log slot; the contributor
+fills it from his unit after the run, and the maintainer assigns the
+Test number.
+
+Plan, per the maintainer's rules in issue #70: watcher stopped, fresh
+`load`, mounted slides in the slide holder, the owner watching the
+scanner; power off at grinding or a stall, nothing further after a
+failure. The first run of the new positioning is one opening, then look,
+then the next: `scan --holder slide --frame 1 --ir --no-clean -o s1.tiff`
+(3600 dpi dual, commanded FEEDL 6255 at offset 0), then openings 2, 3, 4
+(FEEDL 24000 / 41745 / 59490), then the same at 600 dpi (6236 / 23981 /
+41726 / 59471). To be reported: what was in the holder, the command,
+the FEEDL and poll lines from the log, PARK and eject, the sidecars, and
+whether each overscan frame holds the whole mount aperture (eye check;
+pictures stay with the contributor).
