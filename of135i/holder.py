@@ -797,8 +797,8 @@ def plain_sweep_geometry(
 # The mounted-slide holder's four openings, positioned with the SAME
 # corrected mapping and the SAME POSITION/scan/PARK path as the strip
 # frames -- only the fiducial model (where the opening is, how long it
-# is) differs. docs/slide-holder-analysis.md section 5 and
-# docs/slide-scanning.md.
+# is) differs. docs/slide-holder-analysis.md section 5 (the grid) and
+# docs/test-log.md Test 84.
 #
 # Source numbers (docs/test-log.md Test 84, n = 1 load, "600-dual
 # coordinate" = commanded FEEDL + 12 x delivered line):
@@ -850,11 +850,10 @@ SLIDE_FIDUCIAL = FiducialModel(
 
 #: Default overscan per side for slides, mm. The strip default (0.75 mm,
 #: OVERSCAN_MM) is sized around a ~36 mm aperture; the slide opening is
-#: 38.05 mm, and a real 2026-10 scan of opening 1 through strip frame 1
-#: left only ~0.6 mm of holder plastic per side. Slides also carry more
-#: position uncertainty than strips: the grid is n = 1 load (plus that
-#: scan), opening 1 is extrapolated (+-0.1 mm), the load-to-load spread is
-#: +-0.24 mm (Test 56) and a mount can sit off-centre in its opening.
+#: 38.05 mm, so a strip-sized margin leaves little holder plastic either
+#: side of the opening. Slides also carry more position uncertainty than
+#: strips: the grid is n = 1 load, opening 1 is extrapolated (+-0.1 mm),
+#: the load-to-load spread is +-0.24 mm (Test 56) and a mount can sit off-centre in its opening.
 #: 1.5 mm is twice the strip margin and > 4x that position uncertainty.
 #: It is also bounded from above by slide 4's travel check
 #: (slide_dual_geometry): FEEDL + wire travel must stay <= FEEDL_CEILING,
