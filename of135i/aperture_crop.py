@@ -307,26 +307,28 @@ def measure_coverage_dual(visible, ir, *, dpi, min_margin_mm=0.15) -> ApertureCo
 #: in a slide window is the MOUNT's aperture, not the holder's 38.05 mm
 #: opening (the mount is opaque to IR, the film is not; Test 84). Its long
 #: side runs along the transport; Tests 84/85 measured 35.06-35.1 mm and
-#: common mounts are 34-36 mm. An IR-dense picture area at the mount edge
+#: cardboard mounts of several brands measured 34.16-34.45 mm
+#: (2026-11-07, IR lit run at 3600 dpi). An IR-dense picture area at the mount edge
 #: (silver, some Kodachrome) is dark in IR like the mount, so it shortens
 #: the lit run and the edge found sits INSIDE the picture. Two rules keep
 #: "verified" truthful about that:
-#:  - the run must be at least SLIDE_MIN_APERTURE_MM (34.5 mm), and
+#:  - the run must be at least SLIDE_MIN_APERTURE_MM (33.8 mm), and
 #:  - the slide crop is padded by SLIDE_CROP_PAD_MM (1.5 mm) per side, and
 #:    both margins must hold that pad inside the window.
-#: A verified run is then at most 1.5 mm shorter than a mount aperture of
-#: up to 36.0 mm, and the pad gives that back: apertures up to 36.0 mm are
-#: kept whole by a verified crop. Above 36.0 mm a hidden band can still be
-#: cut (a 37 mm aperture with a 2 mm band gives a 35.0 mm run, the same as
-#: a clean 35.06 mm mount, which no length rule can tell apart without
-#: refusing the Test 85 slide); tests/test_slide_crop.py pins that limit. Shorter
-#: runs (a 34 mm mount, a mount turned 90 degrees with its ~23 mm side
+#: A verified run is then at most 1.5 mm shorter than the aperture, and
+#: the pad gives that back: apertures up to floor + pad (33.8 + 1.5 =
+#: 35.3 mm, which covers the Test 85 slide at 35.06 mm) are kept whole by
+#: a verified crop. Above 35.3 mm a hidden band can still be cut (a
+#: 37 mm aperture with a 3 mm band gives a 34.0 mm run, the same as a
+#: clean 34.0 mm mount, which no length rule can tell apart without
+#: refusing the measured 34.16-34.45 mm mounts); tests/test_slide_crop.py pins that limit. Shorter
+#: runs (a 33 mm mount, a mount turned 90 degrees with its ~23 mm side
 #: along the transport, a wider IR-dense band) are NOT verified: the
 #: overscan is kept and the scan exits 4. The strip floor
 #: (aperture.MIN_APERTURE_MM, 25 mm) would have cropped into the picture
 #: and called it verified. A run longer than SLIDE_MAX_APERTURE_MM is the
 #: holder opening itself: no mount, or a mount the IR passes through.
-SLIDE_MIN_APERTURE_MM = 34.5
+SLIDE_MIN_APERTURE_MM = 33.8
 SLIDE_MAX_APERTURE_MM = 37.0
 SLIDE_CROP_PAD_MM = 1.5
 
