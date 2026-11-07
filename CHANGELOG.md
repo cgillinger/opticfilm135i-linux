@@ -6,6 +6,23 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **`--slide-positive`: a positive slide written as a positive (issue
+  #70 step 3, bearyjd). Offline only.** With `--holder slide`, the
+  products and overscan frames (visible and IR alike) get the vendor
+  orientation the `--positive` path uses (horizontal mirror +
+  rot90), and **no inversion**: the values are the raw linear scan,
+  written without the sRGB ICC tag (the tag describes a gamma-encoded
+  image; this one is linear). The 2400 dpi per-axis resolution follows
+  the turn. `--positive` (the negative's density inversion) stays
+  refused with `--holder slide`, as the contributor proposed in #70;
+  its message now points at `--slide-positive`. Without the switch a
+  slide is written raw, as before, so a mounted negative is untouched.
+  Strip output with and without `--positive` is unchanged
+  (`tests/test_slide_positive.py`, 6 tests: no `to_positive` call on
+  the slide path, the turned values equal the raw ones, no ICC, strip
+  orientation unchanged, the refusals before the device opens, the
+  sidecar's `cli.slide_positive`). Nothing sent to the scanner changes.
+
 - **Slide crop keyed on the IR channel (issue #70 step 2, bearyjd).
   Synthetic fixtures only; not run on a real slide.** `scan --holder
   slide` now checks each opening's coverage and crops, with the strips'

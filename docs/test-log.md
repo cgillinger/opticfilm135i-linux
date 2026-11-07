@@ -8929,3 +8929,10 @@ per opening, the coverage verdict and reason, both margins, the cropped
 size against the mount's aperture (35.06 × 22.75 mm on the Test 85
 slide), and an eye check that the crop holds the whole picture. A real
 scan is what settles the crop.
+
+## PLACEHOLDER (hardware run pending, no Test number) — `--slide-positive` (issue #70 step 3, bearyjd) on a real positive slide
+
+**Not run. No result exists.** To be filled from the contributor's unit:
+one positive (reversal) slide, `scan --holder slide --frame N --ir
+--slide-positive`, the owner's eye check that the picture reads the
+right way round (not mirrored, not upside down) and is not inverted.

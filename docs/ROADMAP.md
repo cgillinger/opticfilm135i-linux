@@ -335,7 +335,10 @@ with `--position-offset`, dual profiles only, `--positive` refused,
 overscan frames only. Step 2, the IR-keyed crop, is written and tested
 on synthetic fixtures: the mount's aperture found in the IR channel,
 33-37 mm, the strips' verified / NOT verified contract with the overscan
-kept. C2 is
+kept. Step 3, positive output, is written and offline-tested:
+`--slide-positive` turns the slide to the vendor orientation without
+inverting it (`--positive`, the negative inversion, stays refused with
+slides). C2 is
 done when that list is verified on a mounted slide. **Brought forward
 2026-09-18 (owner's decision, slides are in scope for the driver): in
 progress.**

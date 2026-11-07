@@ -279,8 +279,9 @@ know about:
   (N = 1-4, dual-light profiles only, `--positive` refused); it keeps
   the full overscan frame(s) and crops to the mount's aperture found in
   the IR channel when coverage verifies (exit 4 otherwise, as for
-  strips; tested on synthetic data only). Positive output is still
-  missing, and the SANE backend has no slide path. It is a
+  strips; tested on synthetic data only). `--slide-positive` writes a
+  positive slide in the vendor orientation without inverting it (raw
+  linear values). The SANE backend has no slide path. It is a
   separate milestone (C2 in the roadmap), not part of what works today.
   **110 (Pocket Instamatic) film in the strip holder — supported, two
   strips from two cameras (n = 2).** A 16 mm 110 strip lies in the
