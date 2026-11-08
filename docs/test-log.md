@@ -8901,7 +8901,7 @@ the border halo next to the mount edge stay, and a thin scratch in the
 sky is only partly removed (the 5 px kernel scales to 1 × 1 at 600 dpi
 and cannot fill). Merged as `bd0a66f` on the owner's go.
 
-## Test N (number for the maintainer to assign) — `scan --holder slide` on hardware (issue #70 step 1, bearyjd): four openings at 3600 dpi dual and opening 1 at 600 dpi, cardboard mounts
+## Test 121 — `scan --holder slide` on hardware (issue #70 step 1, bearyjd): four openings at 3600 dpi dual and opening 1 at 600 dpi, cardboard mounts
 
 Branch `upstream-pr-slides-cli`, head `323c850`, 2026-11-07, the contributor's
 unit. Slide holder with cardboard mounts of a few different brands, four

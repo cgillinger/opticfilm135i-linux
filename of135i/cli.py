@@ -3838,8 +3838,8 @@ def build_parser() -> argparse.ArgumentParser:
              "openings 1-4, positioned on the measured grid (Test 84, "
              "holder.SLIDE_FIDUCIAL); dual-light only (--ir, or any --dpi "
              "but 3600); default --overscan 1.5; --positive refused. Writes "
-             "the full overscan frame(s) only (no slide crop yet). Not "
-             "hardware-verified yet (issue #70)")
+             "the full overscan frame(s) only (no slide crop yet). Run on "
+             "one unit so far (test log, Test 121); experimental")
     p_scan.add_argument("--eject", action="store_true",
         help="eject the film magazine after the last frame")
     p_scan.add_argument("--dpi", type=int, default=3600, choices=SUPPORTED_DPIS,
