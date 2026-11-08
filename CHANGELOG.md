@@ -39,6 +39,12 @@ one exists; "offline" means implemented and tested without the scanner.
   mirrored (correlation +1.000 on a 96x96 block-mean comparison), it is
   not inverted (mean 6484 against 6461 of 65535), and the slide is
   upright and not mirrored by the owner's eye. One slide, one mount.
+  Run on the owner's unit as well (Test 124, 2026-11-08, one pass
+  through all three steps: FEEDL 6255, crop verified on the IR channel,
+  35.12 mm aperture, the slide whole and upright by eye); two units,
+  two slides. Insertion rule from a second pass: the mount's white,
+  shiny side (the film base) up toward the holder's open face; the
+  picture then reads the right way round with `--slide-positive`.
 
 - **Slide crop keyed on the IR channel (issue #70 step 2, bearyjd).
   Synthetic fixtures, plus one real mount (opening 1, verified).** `scan --holder

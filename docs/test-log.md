@@ -9073,3 +9073,61 @@ mirrored.
 **Open.** One slide, one opening, one mount: I checked that it reads the
 right way round on this slide only, not on other slides or other mounts.
 The file is linear, not a display rendering.
+
+## 2026-11-08 — Test 124: the three slide steps on the owner's unit in one pass — `scan --holder slide --frame 1 --ir --slide-positive` on the PR #75 head: FEEDL 6255, crop VERIFIED on the IR channel (35.12 mm aperture), the slide whole and upright by eye
+
+Owner's unit, the PR #75 head (`603a969`, steps 1–3 of issue #70 merged
+forward), run from a worktree after the three suites (11, 14, 7 tests)
+and `release_check` FULL (800 passed, 0 skipped, with the built v9
+backend) had passed on that tree. Scanner woken from standby by a power
+cycle, cold start with "no re-seating", jog, load (`dc55`) through
+`tools/load_magazine.py`, then one opening. The slide: the owner's one
+mounted slide (Tests 84/85), a cardboard mount, in opening 1.
+
+| | value |
+|---|---|
+| command | `scan --holder slide --frame 1 --ir --slide-positive` (3600 dpi dual) |
+| exit, poll_timeouts, cr_mismatches | 0, 0, 32 |
+| gain / offset | R 0x2c G 0x20 B 0x26 / 0x10a 0x10a 0x10a |
+| geometry | FEEDL 6255, 731 chunks, 11696 wire lines, model margins lead 1.500 / trail 1.542 mm |
+| coverage | VERIFIED, source IR, method slide-ir, margins lead 3.208 / trail 2.753 mm |
+| aperture run | 35.12 mm (Test 85: 35.06 mm) |
+| files | overscan pair 5824x5184, cropped pair 5405x5184 (turned; 1.5 mm pad per side), sidecar `holder: slide`, `cli.slide_positive: true` |
+| wall clock | 83 s |
+| eject | ejected from the post-PARK state, normal |
+
+**Eye check (owner).** The whole slide is inside the crop with a thin
+band of mount on every side (the pad), sky up, the scene upright, not
+inverted (the file is linear, viewed through a levels-stretched preview).
+Across the frame the full 36.6 mm window is kept, mount above and below
+the ~23 mm picture: the lateral crop is the open item of #74. The IR
+channel shows dust and scratches only.
+
+**Mirroring.** Judged by the film itself: with the picture reading as in
+the preview, the mount's white side faced the viewer, and that side gives
+a sharp lamp reflection while the grey side feels matt and reflects
+diffusely (emulsion), so the preview is the right way round. That agrees
+with the contributor's check on his slide (Test 123). Which way the
+mount had sat in the holder was not noted, so a second pass was run with
+the same slide put in opening 1 **white side up** (toward the holder's
+open face): load, the same command, eject, all normal (exit 0,
+poll_timeouts 0, crop VERIFIED, margins lead 3.074 / trail 2.912 mm,
+cropped pair 5401x5184). A 96x96 block-mean comparison of the two crops
+(green channel) gives correlation 1.000 for the same orientation against
+0.933 mirrored left-right and -0.24 for the two flips, so the first pass
+had the slide the same way. **Insertion rule: the mount's white, shiny
+side (the film base) up toward the holder's open face, the matt
+emulsion side down; `--slide-positive` then reads the right way round.**
+The owner's unit and slide only; the contributor has been asked whether
+his slides sat the same way.
+
+**The two start-up warnings.** The same two best-effort polls the
+contributor reported on his unit appeared here before calibration:
+`poll wv=0x018e wi=0x0122 timed out after 0.3s (last d855, want f855)`
+and `(last dc55, want fc55)`. They are the ready polls that stay
+best-effort by design (entry of 2026-09-15) and are not counted in
+`poll_timeouts`; the owner's strip logs show them too.
+
+**Result.** Steps 1–3 of C2 hold on the second unit they were run on;
+PRs #73, #74 and #75 were merged after this run. Open: the lateral
+crop, more mounts, the insertion rule on other mounts.

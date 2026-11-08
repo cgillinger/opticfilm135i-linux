@@ -345,7 +345,12 @@ the overscan kept. Step 3, positive output,
 is written, offline-tested and run on one real slide (opening 1: upright
 and not mirrored, not inverted; one slide, one mount): `--slide-positive`
 turns the slide to the vendor orientation without inverting it
-(`--positive`, the negative inversion, stays refused with slides). C2 is
+(`--positive`, the negative inversion, stays refused with slides). All
+three steps were then run on the owner's unit in one pass (Test 124,
+2026-11-08: crop verified, slide whole and upright), so they hold on two
+units with two slides; merged as PRs #73, #74 and #75. Insertion rule
+(Test 124): white, shiny side of the mount up toward the holder's open
+face. Open: the lateral crop, more mounts. C2 is
 done when that list is verified on a mounted slide. **Brought forward
 2026-09-18 (owner's decision, slides are in scope for the driver): in
 progress.**

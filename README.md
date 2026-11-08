@@ -283,7 +283,9 @@ know about:
   cardboard mounts, the other openings not re-run).
   `--slide-positive` turns the output to the vendor orientation
   (orientation only: slides are never inverted; linear values, no sRGB
-  tag); checked on one slide, one mount. The positioning has been run on one unit,
+  tag); checked on two slides on two units. Put the slide in the holder
+  with the mount's white, shiny side (the film base) up, the matt
+  emulsion side down; the picture then reads the right way round. The positioning has been run on one unit,
   with cardboard mounts of several brands, and is still experimental.
   The SANE backend has no slide path. It is a separate milestone (C2 in
   the roadmap).
