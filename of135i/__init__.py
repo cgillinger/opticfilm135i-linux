@@ -2,7 +2,7 @@
 
 from .usbio import UsbIo
 
-__version__ = "0.2.11"
-__codename__ = "Second Scanner Gamble"
+__version__ = "0.2.12"
+__codename__ = "Shiny Side Slides"
 
 __all__ = ["UsbIo", "__version__", "__codename__"]

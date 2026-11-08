@@ -6,6 +6,10 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+(nothing yet)
+
+## v0.2.12 — Shiny Side Slides — 2026-11-08
+
 - **README: a safety section before anything else.** "Read this before
   you connect a scanner": use at your own risk, the OpticFilm 135i
   (`07b3:1436`) is the only supported model, do not patch the product id
