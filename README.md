@@ -220,8 +220,8 @@ process holds the scanner; v0.2.10 (2026-11-05) makes the calibration
 stop gate the default, the fix for a calibration failure found on two
 other users' units (issue #35), adds a transfer recorder and a
 cross-unit protocol, removes the two-strip 110 mode, and gives the SANE
-backend the same wait (submission revision v9, prepared, not yet on the
-merge request); v0.2.11 (2026-11-06) adds a per-unit position offset
+backend the same wait (submission revision v9, on the merge request
+since 2026-11-08); v0.2.11 (2026-11-06) adds a per-unit position offset
 for units whose frames sit off the model (issue #61), `recrop` to make
 the products from a frame's preserved overscan, and an album numbering
 a film's photographs through its strips (issue #65). Changes on master
