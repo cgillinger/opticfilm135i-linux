@@ -6,6 +6,13 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **Capture guide (`docs/capture-guide.md`, issue #72).** How to record
+  the manufacturer's software driving the scanner from a Windows virtual
+  machine with usbmon, for a unit or model that behaves differently
+  (the OpticFilm 135 without infrared). Safety rules first, at the
+  reader's own risk; one program at a time, power cycle afterwards; what
+  to note and send, and the size/privacy trade-off (`-s 0` vs `-s 256`).
+
 - **SANE submission revision v9 pushed to merge request !1032 (2026-11-08).**
   v8 plus the calibration stop gate (co-authored by bearyjd) and a
   comments-only commit, nothing rebased, `94628f3f2..18bea9b32`; fork
