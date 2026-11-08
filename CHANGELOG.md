@@ -6,6 +6,10 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+(nothing yet)
+
+## v0.2.12 — Shiny Side Slides — 2026-11-08
+
 - **Capture guide (`docs/capture-guide.md`, issue #72).** How to record
   the manufacturer's software driving the scanner from a Windows virtual
   machine with usbmon, for a unit or model that behaves differently

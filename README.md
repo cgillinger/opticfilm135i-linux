@@ -2,7 +2,7 @@
 
 ![License: GPL-2.0-or-later or MIT (driver), CC BY 4.0 (docs)](https://img.shields.io/badge/License-GPL--2.0--or--later%20%7C%20MIT%20%7C%20CC--BY--4.0-blue.svg)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
-![Release: v0.2.11](https://img.shields.io/badge/Release-v0.2.11-blue.svg)
+![Release: v0.2.12](https://img.shields.io/badge/Release-v0.2.12-blue.svg)
 ![Status: CLI driver complete, SANE backend working locally](https://img.shields.io/badge/Status-CLI%20driver%20complete%2C%20SANE%20backend%20working%20locally-green.svg)
 
 **Unofficial, community-built Linux driver for the Plustek OpticFilm 135i**
