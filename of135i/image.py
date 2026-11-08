@@ -113,10 +113,10 @@ def write_tiff16(arr: np.ndarray, path: str | Path, icc: bytes | None = None,
 
     # Pixel data, forced to little-endian, row-major, RGB-interleaved —
     # exactly the raw wire order.
-    pixel_data = np.ascontiguousarray(arr, dtype="<u2").tobytes()
+    pixel_data = np.ascontiguousarray(arr, dtype="<u2")
 
     data_offset = 8  # right after the 8-byte header
-    extra_offset = data_offset + len(pixel_data)  # always even (u16 * 3)
+    extra_offset = data_offset + pixel_data.nbytes  # always even (u16 * 3)
 
     # Out-of-line arrays for tags whose value doesn't fit in 4 bytes.
     bits_per_sample = struct.pack("<HHH", 16, 16, 16)
@@ -158,7 +158,7 @@ def write_tiff16(arr: np.ndarray, path: str | Path, icc: bytes | None = None,
         _ifd_entry(273, _TAG_TYPE_LONG, 1, long1(data_offset)),  # StripOffsets
         _ifd_entry(277, _TAG_TYPE_SHORT, 1, short1(3)),         # SamplesPerPixel
         _ifd_entry(278, _TAG_TYPE_LONG, 1, long1(height)),      # RowsPerStrip (single strip)
-        _ifd_entry(279, _TAG_TYPE_LONG, 1, long1(len(pixel_data))),  # StripByteCounts
+        _ifd_entry(279, _TAG_TYPE_LONG, 1, long1(pixel_data.nbytes)),  # StripByteCounts
         _ifd_entry(282, _TAG_TYPE_RATIONAL, 1, long1(resolution_offset)),      # XResolution
         _ifd_entry(283, _TAG_TYPE_RATIONAL, 1, long1(resolution_offset + 8)),  # YResolution
         _ifd_entry(296, _TAG_TYPE_SHORT, 1, short1(2 if has_res else 1)),  # ResolutionUnit: inch / none
@@ -174,10 +174,12 @@ def write_tiff16(arr: np.ndarray, path: str | Path, icc: bytes | None = None,
     ifd += struct.pack("<I", 0)  # no next IFD
 
     header = b"II" + struct.pack("<H", 42) + struct.pack("<I", ifd_offset)
-    blob = (header + pixel_data + bits_per_sample + sample_format
-            + resolution + icc_data + ifd)
-
-    Path(path).write_bytes(blob)
+    # Streamed: the pixel block (hundreds of MB at 7200 dpi) goes out from
+    # the array's own buffer instead of being copied into a joined blob.
+    with open(path, "wb") as f:
+        f.write(header)
+        f.write(memoryview(pixel_data).cast("B"))
+        f.write(bits_per_sample + sample_format + resolution + icc_data + ifd)
 
 
 # ---------------------------------------------------------------- PNM writer
@@ -286,31 +288,59 @@ def split_ir(raw: bytes, width: int = 5184, dpi: int = 3600) -> tuple[np.ndarray
     return visible, ir
 
 
+def _integral(a: np.ndarray, pad_y: tuple[int, int],
+              pad_x: tuple[int, int]) -> np.ndarray:
+    """Zero-bordered summed-area table of `a`, edge-padded by (before,
+    after) rows and columns: element [i, j] is the sum of the padded
+    array's first i rows and j columns. float64 (precision matters: box
+    sums over ~4000 terms lose too much accuracy in float32 once two
+    nearby large partial sums are subtracted)."""
+    ap = np.pad(a, (pad_y, pad_x), mode="edge")
+    csum = np.zeros((ap.shape[0] + 1, ap.shape[1] + 1), dtype=np.float64)
+    inner = csum[1:, 1:]
+    np.cumsum(ap, axis=0, dtype=np.float64, out=inner)
+    del ap
+    np.cumsum(inner, axis=1, out=inner)
+    return csum
+
+
 def _box_blur(a: np.ndarray, box: int | tuple[int, int]) -> np.ndarray:
     """Box blur of a 2D array via a summed-area table (cumsum twice),
     numpy-only (no scipy). `box` is a square size or (rows, columns).
-    Edge-padded so the output covers the full
-    input shape. The cumsum accumulator is float64 (precision matters:
-    box sums over ~4000 terms lose too much accuracy in float32 once
-    two nearby large partial sums are subtracted) but is a single
-    transient array, freed before returning a float32 result -- kept
-    off the memory budget for the caller's own full-frame arrays.
+    Edge-padded so the output covers the full input shape; float32 result.
+    The four corner terms are consecutive-offset slices of the table,
+    combined as ((A - B) - C) + D.
     """
     h, w = a.shape
     box_y, box_x = (box, box) if isinstance(box, int) else box
-    ap = np.pad(a, ((box_y // 2, box_y - box_y // 2),
-                    (box_x // 2, box_x - box_x // 2)), mode="edge").astype(np.float64)
-    np.cumsum(ap, axis=0, out=ap)
-    np.cumsum(ap, axis=1, out=ap)
-    csum = np.pad(ap, ((1, 0), (1, 0)))
-    del ap
-    y0 = np.arange(h)
-    x0 = np.arange(w)
-    y1 = y0 + box_y
-    x1 = x0 + box_x
-    total = csum[y1][:, x1] - csum[y0][:, x1] - csum[y1][:, x0] + csum[y0][:, x0]
+    csum = _integral(a, (box_y // 2, box_y - box_y // 2),
+                     (box_x // 2, box_x - box_x // 2))
+    total = csum[box_y:box_y + h, box_x:box_x + w] - csum[:h, box_x:box_x + w]
+    total -= csum[box_y:box_y + h, :w]
+    total += csum[:h, :w]
     del csum
-    return (total / (box_y * box_x)).astype(np.float32)
+    total /= box_y * box_x
+    return total.astype(np.float32)
+
+
+def _window_means(csum: np.ndarray, pad_before: tuple[int, int],
+                  ys: np.ndarray, xs: np.ndarray,
+                  box: tuple[int, int]) -> np.ndarray:
+    """`_box_blur(a, box)[ys, xs]` read from a table made by `_integral`
+    with `pad_before` leading rows/columns of padding (at least the
+    box's own): the same four corners, in the same order, for just those
+    pixels. Edge replication makes a window the same set of values
+    whatever the (sufficient) padding, so one table serves every box."""
+    box_y, box_x = box
+    r0 = ys + (pad_before[0] - box_y // 2)
+    c0 = xs + (pad_before[1] - box_x // 2)
+    r1 = r0 + box_y
+    c1 = c0 + box_x
+    total = csum[r1, c1] - csum[r0, c1]
+    total -= csum[r1, c0]
+    total += csum[r0, c0]
+    total /= box_y * box_x
+    return total.astype(np.float32)
 
 
 def _dilate_bool(mask: np.ndarray, iterations: int | tuple[int, int] = 2) -> np.ndarray:
@@ -404,69 +434,85 @@ _INPAINT_MIN_WEIGHT = 4.0        # a scale's fill only counts once its box
                                   # holds at least this many valid pixels
 
 
-def _inpaint_channel(chan: np.ndarray, mask: np.ndarray,
-                     kernels: tuple[int | tuple[int, int], ...] = _INPAINT_KERNELS) -> np.ndarray:
-    """Fill `mask`-True pixels of a single 2D channel by multi-scale
-    normalized convolution: for a box of size k,
+def _kernel_pad(kernels) -> tuple[tuple[int, int], tuple[int, int]]:
+    """(rows, columns) edge padding (before, after) that fits every kernel."""
+    return ((max(k[0] // 2 for k in kernels), max(k[0] - k[0] // 2 for k in kernels)),
+            (max(k[1] // 2 for k in kernels), max(k[1] - k[1] // 2 for k in kernels)))
+
+
+def _inpaint_plan(mask: np.ndarray, ys: np.ndarray, xs: np.ndarray,
+                  kernels: tuple[tuple[int, int], ...]):
+    """Which kernel fills which masked pixel. Each masked pixel is filled
+    from the SMALLEST kernel whose box already holds at least
+    `_INPAINT_MIN_WEIGHT` valid (unmasked) pixels; that depends on the
+    mask only, so it is decided once for all colour channels. Returns
+    (steps, unresolved): steps = [(kernel, indices into ys/xs, valid-pixel
+    mean at them)], unresolved = indices no kernel could fill."""
+    weight = (~mask).astype(np.float32)
+    pad = _kernel_pad(kernels)
+    csum = _integral(weight, *pad)
+    del weight
+    left = np.ones(len(ys), dtype=bool)
+    steps = []
+    for k in kernels:
+        if not left.any():
+            break
+        idx = np.flatnonzero(left)
+        den = _window_means(csum, (pad[0][0], pad[1][0]), ys[idx], xs[idx], k)
+        good = den * (k[0] * k[1]) > _INPAINT_MIN_WEIGHT
+        if good.any():
+            steps.append((k, idx[good], den[good]))
+            left[idx[good]] = False
+    return steps, np.flatnonzero(left)
+
+
+def _inpaint_values(chan: np.ndarray, mask: np.ndarray, ys: np.ndarray,
+                    xs: np.ndarray, plan, exact: bool) -> np.ndarray:
+    """The float32 fill value for every masked pixel of one channel, by
+    multi-scale normalized convolution: for a box of size k,
 
         fill = boxblur(image * weight, k) / boxblur(weight, k)
 
-    with weight = 1 on unmasked pixels and 0 on masked ones -- a
-    weighted local average that only ever draws on real (unmasked)
-    values, however few or many fall in the box (the `boxblur(image *
-    weight)` and `boxblur(weight)` calls both divide by k*k internally;
-    that factor cancels in the ratio, leaving exactly the weighted
-    mean of the valid pixels in the box).
+    with weight = 1 on unmasked pixels and 0 on masked ones -- a weighted
+    local average that only ever draws on real (unmasked) values (both
+    blurs divide by k*k internally; that factor cancels in the ratio).
+    The kernel for each pixel comes from `_inpaint_plan`. This avoids the
+    prior flood-fill approach's directional bias and, unlike one fixed
+    kernel, stays local near a speck's edge while widening toward the
+    centre of a large one.
 
-    A single fixed kernel size forces a choice between over-blurring
-    flat areas (a box big enough to always find valid pixels even deep
-    inside a large speck) and leaving a speck's center under-supported
-    (a box small enough to stay local everywhere else). Instead each
-    masked pixel is filled from the SMALLEST of `_INPAINT_KERNELS`
-    whose box already contains at least `_INPAINT_MIN_WEIGHT` valid
-    pixels -- tight, local averaging near a speck's edge, widening only
-    as far as actually needed toward its center. This also removes the
-    prior flood-fill approach's directional bias (a pixel's fill value
-    depended on which edge of the speck a fill wave reached it from
-    first, leaving flat plateaus and color-banded smudges in larger
-    specks); normalized convolution instead averages every valid pixel
-    the box reaches, from every direction, in one step per scale.
-
-    Unmasked pixels are never read into a fill value and never
-    written -- only `filled[good]` assignments touch the output, always
-    restricted to (still-unresolved) masked positions.
+    The summed-area table of `image * weight` is only ever read at the
+    masked pixels. With `exact` (integer samples of at most 16 bit: every
+    partial sum is an exact integer in float64) one table serves all
+    kernels; otherwise each kernel gets a table padded for itself, as the
+    full-frame blur would.
     """
-    img = chan.astype(np.float32, copy=True)
-    weight = (~mask).astype(np.float32)
-    masked_vals = img * weight  # zero at masked positions regardless of
-                                 # the speck's own (dust-darkened) value
-
-    filled = img.copy()
-    unresolved = mask.copy()
-
-    for k in kernels:
-        if not unresolved.any():
-            break
-        num = _box_blur(masked_vals, k)
-        den = _box_blur(weight, k)
-        area = k*k if isinstance(k, int) else k[0]*k[1]
-        good = unresolved & (den * area > _INPAINT_MIN_WEIGHT)
-        if good.any():
-            with np.errstate(divide="ignore", invalid="ignore"):
-                filled[good] = num[good] / den[good]
-            unresolved &= ~good
-        del num, den, good
-
-    if unresolved.any():
+    steps, unresolved = plan
+    img = chan.astype(np.float32)
+    masked_vals = img * (~mask)            # zero at masked positions
+    values = np.empty(len(ys), dtype=np.float32)
+    shared = None
+    for k, sel, den in steps:
+        if exact:
+            if shared is None:
+                pad = _kernel_pad([s[0] for s in plan[0]])
+                shared = (_integral(masked_vals, *pad), (pad[0][0], pad[1][0]))
+            csum, before = shared
+        else:
+            pad = _kernel_pad([k])
+            csum, before = _integral(masked_vals, *pad), (pad[0][0], pad[1][0])
+        num = _window_means(csum, before, ys[sel], xs[sel], k)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            values[sel] = num / den
+    del shared, masked_vals
+    if len(unresolved):
         # Only reachable for a masked region wider than the largest
         # kernel with no valid pixel anywhere inside it -- well past the
         # ~20 px specks this is calibrated for. Falls back to the
         # frame's overall valid-pixel mean rather than leaving the raw
         # dust-darkened value in place.
-        fallback = float(img[~mask].mean()) if (~mask).any() else 0.0
-        filled[unresolved] = fallback
-
-    return filled
+        values[unresolved] = float(img[~mask].mean()) if (~mask).any() else 0.0
+    return values
 
 
 def remove_dust(visible: np.ndarray, ir: np.ndarray, sensitivity: float = 1.0,
@@ -478,12 +524,13 @@ def remove_dust(visible: np.ndarray, ir: np.ndarray, sensitivity: float = 1.0,
     and cli.py's --ir path for how alignment is kept in sync through
     orientation transforms). Returns a same-shape, same-dtype array
     with masked pixels replaced per channel from unmasked neighbors
-    (`_inpaint_channel`); everything else is untouched.
+    (`_inpaint_values`); everything else is untouched.
     `dpi` scales the 3600 dpi mask and fill footprints to physical size.
 
     Processes one channel at a time (rather than all three at once) to
-    keep peak memory to a few hundred MB instead of ~1 GB for a full
-    5184x5272x3 frame.
+    keep peak memory down: a full 3-channel float copy is ~1 GB at
+    3600 dpi. (Threads over the channels were measured and did not
+    help: the work is memory-bandwidth bound.)
     """
     if visible.shape[:2] != ir.shape:
         raise ValueError(
@@ -495,14 +542,22 @@ def remove_dust(visible: np.ndarray, ir: np.ndarray, sensitivity: float = 1.0,
 
     dtype = visible.dtype
     info = np.iinfo(dtype) if np.issubdtype(dtype, np.integer) else None
-    out = np.empty_like(visible)
+    exact = info is not None and dtype.itemsize <= 2
     kernels = tuple(_dust_scale(k, dpi) for k in _INPAINT_KERNELS)
+    ys, xs = np.nonzero(mask)
+    plan = _inpaint_plan(mask, ys, xs, kernels)
+    out = visible.copy() if exact else np.empty_like(visible)
+
     for c in range(visible.shape[2]):
-        filled = _inpaint_channel(visible[..., c], mask, kernels=kernels)
-        if info is not None:
-            filled = np.clip(np.rint(filled), info.min, info.max)
-        out[..., c] = filled.astype(dtype)
-        del filled
+        values = _inpaint_values(visible[..., c], mask, ys, xs, plan, exact)
+        if exact:
+            out[ys, xs, c] = np.clip(np.rint(values), info.min, info.max).astype(dtype)
+        else:
+            filled = visible[..., c].astype(np.float32)
+            filled[ys, xs] = values
+            if info is not None:
+                filled = np.clip(np.rint(filled), info.min, info.max)
+            out[..., c] = filled.astype(dtype)
     return out
 
 
@@ -532,8 +587,7 @@ def align_channels(arr, dpi: int = 3600):
     shift = align_shift(dpi)
     if shift == 0:
         return arr
-    out = np.ascontiguousarray(arr)
-    out = out.copy()
+    out = np.array(arr, order="C", copy=True)
     out[..., 0] = np.roll(out[..., 0], -shift, axis=0)
     out[..., 2] = np.roll(out[..., 2], +shift, axis=0)
     return out[shift:-shift]

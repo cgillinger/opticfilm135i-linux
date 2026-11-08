@@ -55,6 +55,7 @@ SUITES = (
     ("test_cal_wait_scanstop", "core"), ("test_cross_unit_check", "core"),
     ("test_cr_mismatch_details", "core"), ("test_trace_recorder", "core"),
     ("test_position_offset", "core"), ("test_recrop", "core"), ("test_album", "core"), ("test_slides", "core"), ("test_slide_crop", "core"), ("test_slide_positive", "core"),
+    ("test_postscan_perf", "core"),
     ("test_sane_mark", "compiler"), ("test_sane_ops", "compiler"),
     ("test_sane_geometry", "compiler"), ("test_sane_install", "compiler"),
     ("test_sane_open_params", "backend"), ("test_sane_calibration_cache", "backend"),
