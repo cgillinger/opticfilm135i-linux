@@ -1,0 +1,66 @@
+From b0b69e1214dda03ffb2cdfcf7c644857818f105d Mon Sep 17 00:00:00 2001
+From: bearyjd <28201062+bearyjd@users.noreply.github.com>
+Date: Sat, 7 Nov 2026 16:23:22 -0500
+Subject: [PATCH 9/9] genesys: GL126, tell the operator when to take the
+ magazine out and push it back in; give a next step when the load fails
+
+Text only. The edge wait logs one more line when it starts, the load
+failure message gets a next step, and the man page gets a short section
+on the magazine. No transfer, wait, budget or sequence changes.
+---
+ backend/genesys/gl126.cpp |  7 ++++++-
+ doc/sane-genesys.man      | 13 +++++++++++++
+ 2 files changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/backend/genesys/gl126.cpp b/backend/genesys/gl126.cpp
+index 366837214..a0c78493e 100644
+--- a/backend/genesys/gl126.cpp
++++ b/backend/genesys/gl126.cpp
+@@ -944,6 +944,8 @@ EdgeWaitOutcome wait_for_magazine_edge(Genesys_Device* dev)
+     std::uint8_t last_val = 0;
+ 
+     DBG(DBG_info, "gl126: magazine edge wait started (budget %u ms)\n", budget_ms);
++    DBG(DBG_info, "gl126: magazine: take the magazine out of the slot now, then push it "
++        "back in to the mechanical stop and let go; the load starts by itself\n");
+ 
+     while (polls < max_polls) {
+         std::uint8_t status = dev->interface->read_register(0x101);
+@@ -1229,7 +1231,10 @@ void run_magazine_program(Genesys_Device* dev, const char* name, RunResult& out,
+         throw SaneException(status,
+                             "gl126: %s in the magazine %s sequence at op %zu (%s). Nothing "
+                             "further was written and no recovery was attempted; the session "
+-                            "is blocked. Read the log before anything else is attempted.",
++                            "is blocked. Read the log before anything else is attempted. Next "
++                            "step: power-cycle the scanner, put the magazine in loose in the "
++                            "slot, and run the load again; if it still fails, keep the log "
++                            "and report it.",
+                             what, name, e.op_index, e.what());
+     }
+     for (const PollRecord& p : out.polls) {
+diff --git a/doc/sane-genesys.man b/doc/sane-genesys.man
+index 022b4c859..6f928f643 100644
+--- a/doc/sane-genesys.man
++++ b/doc/sane-genesys.man
+@@ -45,6 +45,19 @@ slightly different from the models mentioned above, please let me know.
+ If you own a scanner that isn't detected by the genesys backend but has a GL646,
+ GL841, GL843, GL847, GL124 or GL126 chipset, you can try to add it to the backend.
+ .PP
++.SH "FILM MAGAZINE (GL126)"
++On the GL126 35mm film scanner, press (or pass)
++.B Load film
++first. When the backend logs that it is waiting for the magazine, take the magazine
++out of the slot and push it back in to the mechanical stop; the load then starts by itself.
++To change strips, use
++.BR "Eject film" ,
++swap the strip, push the magazine in to the mechanical stop and use
++.B Load film
++once more. If a load fails, nothing further is sent to the scanner: power-cycle it,
++put the magazine in loose in the slot, and run the load again; if it still fails,
++keep the log and report it.
++.PP
+ .SH "CALIBRATION"
+ To give correct image quality, sheet fed scanners need to be calibrated using the
+ calibration sheet sold with the scanner. To do calibration, you must insert this target
+-- 
+2.55.0
+

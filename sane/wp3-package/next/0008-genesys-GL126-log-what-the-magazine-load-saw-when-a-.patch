@@ -1,0 +1,641 @@
+From 88c1ad8da4f572b7fcb0fc7ee156d1199539f6d4 Mon Sep 17 00:00:00 2001
+From: bearyjd <28201062+bearyjd@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 23:09:59 -0500
+Subject: [PATCH 8/9] genesys: GL126, log what the magazine load saw when a
+ program op fails
+
+On one unit "Load film" fails after the magazine edge and the 600 ms
+settle. LOAD's first motor completion (op 24, mask 0xfb want 0xf0)
+reads 0xfc first and last and times out. The log cannot say why. Poll
+records are logged only when a program succeeds, and nothing logs the
+status word at the edge, the registers checked after the settle, or
+what LOAD itself read before op 24.
+
+Log those values at DBG_info, next to the other magazine lines:
+
+- at the edge, the reg 0x101 poll the edge was seen on, in the "edge
+  seen" line. Reg 0x01 and regs 0x3b/0x3c are not read at the edge, so
+  they are not logged there;
+- after the settle, the reg 0x101, reg 0x01 and regs 0x3b/0x3c values
+  the post-edge check reads. Until now they appeared only in its
+  refusal;
+- the reg 0x32 value LOAD's op 0 reads, whether or not the load
+  succeeds;
+- when a magazine program op fails, the polls of that program before
+  it (op, first/last value, poll count, ms; a best-effort poll that ran
+  out of time is labelled so), the poll that timed out, and the last
+  reg 0x100/0x101 values the program's own Read ops returned. RunResult
+  gains timed_out for the poll that timed out, filled at the three
+  throw sites.
+
+Every value logged was already being read. No transfer is added,
+removed or reordered, and nothing else changes: no timing, budget or
+recovery.
+
+To test this offline, the test USB device gets an optional reply hook
+for IN control transfers and an ordered transfer log. The test scanner
+interface adds its register and buffer methods, which are USB traffic
+on hardware, and its sleeps to the log. A poll loop is stored once with
+a repeat count. Both are off unless a test turns them on.
+
+A probe (tests/test_sane_magazine.py in the companion driver
+repository) drives the ejected Load film flow through OPEN and LOAD:
+every poll matching, and reg 0x101 frozen at 0xfc from op 24 and from
+op 38. In all three the transfer sequence, sleeps included, is
+identical byte for byte to goldens recorded from 18bea9b32 plus only
+these test hooks (tests/gen_gl126_load_film_goldens.sh there), and the
+two failures show the new lines.
+---
+ backend/genesys/gl126.cpp                  | 80 +++++++++++++++++-
+ backend/genesys/gl126_ops.cpp              |  3 +
+ backend/genesys/gl126_ops.h                |  5 ++
+ backend/genesys/test_scanner_interface.cpp | 95 +++++++++++++++++-----
+ backend/genesys/test_scanner_interface.h   |  4 +
+ backend/genesys/test_usb_device.cpp        | 92 +++++++++++++++++++--
+ backend/genesys/test_usb_device.h          | 46 +++++++++++
+ 7 files changed, 298 insertions(+), 27 deletions(-)
+
+diff --git a/backend/genesys/gl126.cpp b/backend/genesys/gl126.cpp
+index 1cd65b190..366837214 100644
+--- a/backend/genesys/gl126.cpp
++++ b/backend/genesys/gl126.cpp
+@@ -34,6 +34,7 @@
+ #include <cerrno>
+ #include <cstddef>
+ #include <cstdint>
++#include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
+ #include <array>
+@@ -978,8 +979,13 @@ EdgeWaitOutcome wait_for_magazine_edge(Genesys_Device* dev)
+         } else {
+             if (present) {
+                 if (++present_consec >= kEdgePresentReadsNeeded) {
+-                    DBG(DBG_info, "gl126: magazine edge seen (%u polls, ~%u ms); "
+-                        "settling %u ms\n", polls, polls * kEdgePollIntervalMs, kEdgeSettleMs);
++                    /* With the status word the edge was seen on, for a load
++                       that fails after it. Reg 0x01 and regs 0x3b/0x3c are
++                       not read at the edge (only after the settle, logged
++                       there), and reading them here would add transfers. */
++                    DBG(DBG_info, "gl126: magazine edge seen (%u polls, ~%u ms, last reg 0x101 "
++                        "0x%02x); settling %u ms\n", polls, polls * kEdgePollIntervalMs, status,
++                        kEdgeSettleMs);
+                     dev->interface->sleep_ms(kEdgeSettleMs);
+                     return EdgeWaitOutcome::Seen;
+                 }
+@@ -1114,6 +1120,71 @@ std::size_t masked_poll_op_index(const OpProgram& prog, unsigned nth)
+     return static_cast<std::size_t>(-1);
+ }
+ 
++/** What a failed magazine program saw before op `failed_op` ended it.
++    Only logs what the run already read: the polls before it (logged on
++    success too, but a failure skipped them), the poll that timed out,
++    and the last status words (regs 0x100/0x101) the program's own Read
++    ops returned. */
++void log_failed_magazine_run(const char* name, const OpProgram& prog, const RunResult& out,
++                             std::size_t failed_op)
++{
++    if (out.polls.empty()) {
++        DBG(DBG_info, "gl126: magazine %s: no poll completed before op %zu\n", name, failed_op);
++    }
++    for (const PollRecord& p : out.polls) {
++        // A best-effort poll is recorded whether it matched or ran out
++        // of time and the program went on; say which.
++        const Op& op = prog.ops[p.op_index];
++        const bool gave_up = op.kind == OpKind::PollBestEffort && (p.last & op.mask) != op.want;
++        DBG(DBG_info, "gl126: magazine %s op %zu poll (%s before op %zu): first 0x%02x "
++            "last 0x%02x, %u polls, %u ms\n", name, p.op_index,
++            gave_up ? "best effort, timed out and continued" : "completed", failed_op,
++            p.first, p.last, p.polls, p.elapsed_ms);
++    }
++    if (out.timed_out.polls != 0) {
++        const PollRecord& p = out.timed_out;
++        DBG(DBG_info, "gl126: magazine %s op %zu poll timed out: first 0x%02x last 0x%02x, "
++            "%u polls, %u ms\n", name, p.op_index, p.first, p.last, p.polls, p.elapsed_ms);
++    }
++    // wValue 0x018e with wIndex 0x0022 / 0x0122 reads reg 0x100 / 0x101.
++    // BulkDone replies are in out.reads too, but at other wIndex values.
++    const ReadRecord* reg100 = nullptr;
++    const ReadRecord* reg101 = nullptr;
++    for (const ReadRecord& r : out.reads) {
++        if (r.value == 0x018e && r.index == 0x0022 && r.reply_len >= 1) {
++            reg100 = &r;
++        } else if (r.value == 0x018e && r.index == 0x0122 && r.reply_len >= 1) {
++            reg101 = &r;
++        }
++    }
++    char word100[40] = "reg 0x100 not read";
++    char word101[40] = "reg 0x101 not read";
++    if (reg100 != nullptr) {
++        std::snprintf(word100, sizeof(word100), "reg 0x100 = 0x%02x (op %zu)",
++                      reg100->reply[0], reg100->op_index);
++    }
++    if (reg101 != nullptr) {
++        std::snprintf(word101, sizeof(word101), "reg 0x101 = 0x%02x (op %zu)",
++                      reg101->reply[0], reg101->op_index);
++    }
++    DBG(DBG_info, "gl126: magazine %s: last status words read by Read ops (not polls) before "
++        "op %zu: %s, %s\n", name, failed_op, word100, word101);
++}
++
++/** LOAD's op 0 reads reg 0x32 (wValue 0x008e wIndex 0x3222), the first
++    thing LOAD reads, after the settle (and, on the ejected path, after
++    OPEN). Logged whether or not the load then succeeds; the read itself
++    is LOAD's own, nothing is read here. */
++void log_load_reg32(const RunResult& load_result)
++{
++    for (const ReadRecord& r : load_result.reads) {
++        if (r.op_index == 0 && r.value == 0x008e && r.index == 0x3222 && r.reply_len >= 1) {
++            DBG(DBG_info, "gl126: magazine load op 0 read reg 0x32: 0x%02x (captured 0x%02x)\n",
++                r.reply[0], r.captured[0]);
++        }
++    }
++}
++
+ void run_magazine_program(Genesys_Device* dev, const char* name, RunResult& out,
+                           std::size_t* failed_op = nullptr)
+ {
+@@ -1134,6 +1205,7 @@ void run_magazine_program(Genesys_Device* dev, const char* name, RunResult& out,
+         if (failed_op != nullptr) {
+             *failed_op = e.op_index;
+         }
++        log_failed_magazine_run(name, *prog, out, e.op_index);
+         const char* what = "I/O failure";
+         SANE_Status status = SANE_STATUS_IO_ERROR;
+         switch (e.failure) {
+@@ -1466,6 +1538,8 @@ void magazine_load_film_impl(Genesys_Device* dev)
+     std::uint8_t reg01_now = dev->interface->read_register(REG_0x01);
+     std::uint8_t reg3b = dev->interface->read_register(0x3B);
+     std::uint8_t reg3c = dev->interface->read_register(0x3C);
++    DBG(DBG_info, "gl126: magazine after the settle: reg 0x101 = 0x%02x, reg 0x01 = 0x%02x, "
++        "regs 0x3b/0x3c = 0x%02x/0x%02x\n", sensor_after.status, reg01_now, reg3b, reg3c);
+     bool regs_ok = effective_ejected ? (reg3b != 0xFF && reg3c != 0xFF)
+                                      : (reg3b == 0x00 && reg3c == 0x00);
+     if (reg01_now != 0x22 || !sensor_after.present() || !sensor_after.idle_class() || !regs_ok) {
+@@ -1497,6 +1571,7 @@ void magazine_load_film_impl(Genesys_Device* dev)
+     try {
+         run_magazine_program(dev, "load", load_result, &failed_op);
+     } catch (const SaneException& e) {
++        log_load_reg32(load_result);
+         // Name the step that did not complete, that much is known, and
+         // it is the diagnosis the log needs. Say nothing about the
+         // cause: a timeout at this op has more than one possible cause,
+@@ -1527,6 +1602,7 @@ void magazine_load_film_impl(Genesys_Device* dev)
+                             step, e.what());
+     }
+ 
++    log_load_reg32(load_result);
+     dev->interface->test_checkpoint("gl126_magazine_after_load");
+ 
+     // The traverse's own completion was checked by the program; read the
+diff --git a/backend/genesys/gl126_ops.cpp b/backend/genesys/gl126_ops.cpp
+index 977a8a964..7f9c9450c 100644
+--- a/backend/genesys/gl126_ops.cpp
++++ b/backend/genesys/gl126_ops.cpp
+@@ -232,6 +232,7 @@ void do_poll(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
+ 
+         unsigned elapsed = wire.now_ms() - start;
+         if (elapsed > poll_budget_ms(op, policy.poll_timeout_ms, policy)) {
++            out.timed_out = PollRecord{idx, first, last, polls, elapsed};
+             std::ostringstream oss;
+             oss << "gl126_ops: PollDataReady at op " << idx << " (DATAENB, reg 0x101) "
+                 << "timed out after " << elapsed << "ms: first 0x" << std::hex
+@@ -362,6 +363,7 @@ void do_poll_class(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
+ 
+         unsigned elapsed = wire.now_ms() - start;
+         if (elapsed > poll_budget_ms(op, policy.class_timeout_ms, policy)) {
++            out.timed_out = PollRecord{idx, first, last, polls, elapsed};
+             std::ostringstream oss;
+             oss << "gl126_ops: PollClass at op " << idx << " (reg 0x100) "
+                 << "timed out after " << elapsed << "ms: first 0x" << std::hex
+@@ -403,6 +405,7 @@ void do_poll_masked(Wire& wire, const Op& op, std::size_t idx, RunResult& out,
+ 
+         unsigned elapsed = wire.now_ms() - start;
+         if (elapsed > poll_budget_ms(op, policy.masked_timeout_ms, policy)) {
++            out.timed_out = PollRecord{idx, first, last, polls, elapsed};
+             std::ostringstream oss;
+             oss << "gl126_ops: PollMasked at op " << idx << " (mask 0x" << std::hex
+                 << static_cast<int>(op.mask) << " want 0x" << static_cast<int>(op.want)
+diff --git a/backend/genesys/gl126_ops.h b/backend/genesys/gl126_ops.h
+index ee320ce4c..8ee47a817 100644
+--- a/backend/genesys/gl126_ops.h
++++ b/backend/genesys/gl126_ops.h
+@@ -154,6 +154,11 @@ struct RunResult {
+     std::vector<PollRecord> polls;
+     std::vector<ReadRecord> reads;
+     std::size_t ops_done = 0;  // completed ops; ties a failure to "no transfer after it"
++    /* The poll that ended the run with OpsFailure::PollTimeout, `polls`
++       0 when none did. `polls` above only ever holds the sites that
++       settled, so without this a failed run's log would lose what its
++       last poll actually read. */
++    PollRecord timed_out{};
+ };
+ 
+ /** Tunable wait policy for PollDataReady/PollClass (2 s timeout;
+diff --git a/backend/genesys/test_scanner_interface.cpp b/backend/genesys/test_scanner_interface.cpp
+index c385fdc75..2646eb06a 100644
+--- a/backend/genesys/test_scanner_interface.cpp
++++ b/backend/genesys/test_scanner_interface.cpp
+@@ -22,10 +22,60 @@
+ 
+ #include "test_scanner_interface.h"
+ #include "device.h"
++#include <cstdarg>
++#include <cstdio>
+ #include <cstring>
+ 
+ namespace genesys {
+ 
++namespace {
++
++// Records one transfer-log line (TestUsbDevice::record_transfer()) for
++// a method of this class that is USB traffic on hardware (a register
++// write may share one transfer with others there, it is logged one line
++// per register here) or a sleep, formatted only while a recording is on.
++void record_transfer(TestUsbDevice& usb, const char* format, ...)
++    __attribute__((format(printf, 2, 3)));
++
++void record_transfer(TestUsbDevice& usb, const char* format, ...)
++{
++    if (!usb.records_transfers()) {
++        return;
++    }
++    char line[64];
++    std::va_list args;
++    va_start(args, format);
++    std::vsnprintf(line, sizeof(line), format, args);
++    va_end(args);
++    usb.record_transfer(line);
++}
++
++// The same, followed by the `size` bytes written.
++void record_transfer_bytes(TestUsbDevice& usb, const std::uint8_t* data, std::size_t size,
++                           const char* format, ...) __attribute__((format(printf, 4, 5)));
++
++void record_transfer_bytes(TestUsbDevice& usb, const std::uint8_t* data, std::size_t size,
++                           const char* format, ...)
++{
++    if (!usb.records_transfers()) {
++        return;
++    }
++    char line[64];
++    std::va_list args;
++    va_start(args, format);
++    std::vsnprintf(line, sizeof(line), format, args);
++    va_end(args);
++    std::string out = line;
++    char byte[4];
++    for (std::size_t i = 0; i < size; ++i) {
++        std::snprintf(byte, sizeof(byte), " %02x", data[i]);
++        out += byte;
++    }
++    usb.record_transfer(out);
++}
++
++} // namespace
++
+ TestScannerInterface::TestScannerInterface(Genesys_Device* dev, std::uint16_t vendor_id,
+                                            std::uint16_t product_id, std::uint16_t bcd_device) :
+     dev_{dev},
+@@ -104,17 +154,23 @@ bool TestScannerInterface::is_mock() const
+ 
+ std::uint8_t TestScannerInterface::read_register(std::uint16_t address)
+ {
+-    return cached_regs_.get(address);
++    std::uint8_t value = cached_regs_.get(address);
++    record_transfer(usb_dev_, "REG R 0x%04x: %02x", address, value);
++    return value;
+ }
+ 
+ void TestScannerInterface::write_register(std::uint16_t address, std::uint8_t value)
+ {
++    record_transfer(usb_dev_, "REG W 0x%04x: %02x", address, value);
+     cached_regs_.update(address, value);
+     ++cache_write_count_;
+ }
+ 
+ void TestScannerInterface::write_registers(const Genesys_Register_Set& regs)
+ {
++    for (const auto& reg : regs) {
++        record_transfer(usb_dev_, "REG W 0x%04x: %02x", reg.address, reg.value);
++    }
+     cached_regs_.update(regs);
+     ++cache_write_count_;
+ }
+@@ -122,60 +178,54 @@ void TestScannerInterface::write_registers(const Genesys_Register_Set& regs)
+ 
+ void TestScannerInterface::write_0x8c(std::uint8_t index, std::uint8_t value)
+ {
+-    (void) index;
+-    (void) value;
++    record_transfer(usb_dev_, "0x8C W 0x%02x: %02x", index, value);
+     ++cache_write_count_;
+ }
+ 
+ void TestScannerInterface::bulk_read_data(std::uint8_t addr, std::uint8_t* data, std::size_t size)
+ {
+-    (void) addr;
+     std::memset(data, 0, size);
++    record_transfer(usb_dev_, "DATA R 0x%02x len=%zu", addr, size);
+ }
+ 
+ void TestScannerInterface::bulk_write_data(std::uint8_t addr, std::uint8_t* data, std::size_t size)
+ {
+-    (void) addr;
+-    (void) data;
+-    (void) size;
++    record_transfer_bytes(usb_dev_, data, size, "DATA W 0x%02x len=%zu:", addr, size);
+     ++cache_write_count_;
+ }
+ 
+ void TestScannerInterface::write_buffer(std::uint8_t type, std::uint32_t addr, std::uint8_t* data,
+                                         std::size_t size)
+ {
+-    (void) type;
+-    (void) addr;
+-    (void) data;
+-    (void) size;
++    record_transfer_bytes(usb_dev_, data, size, "BUFFER W 0x%02x 0x%08x len=%zu:", type,
++                          addr, size);
+     ++cache_write_count_;
+ }
+ 
+ void TestScannerInterface::write_gamma(std::uint8_t type, std::uint32_t addr, std::uint8_t* data,
+                                        std::size_t size)
+ {
+-    (void) type;
+-    (void) addr;
+-    (void) data;
+-    (void) size;
++    record_transfer_bytes(usb_dev_, data, size, "GAMMA W 0x%02x 0x%08x len=%zu:", type,
++                          addr, size);
+     ++cache_write_count_;
+ }
+ 
+ void TestScannerInterface::write_ahb(std::uint32_t addr, std::uint32_t size, std::uint8_t* data)
+ {
+-    (void) addr;
+-    (void) size;
+-    (void) data;
++    record_transfer_bytes(usb_dev_, data, size, "AHB W 0x%08x len=%u:", addr, size);
+     ++cache_write_count_;
+ }
+ 
+ std::uint16_t TestScannerInterface::read_fe_register(std::uint8_t address)
+ {
+-    return cached_fe_regs_.get(address);
++    std::uint16_t value = cached_fe_regs_.get(address);
++    record_transfer(usb_dev_, "FE R 0x%02x: %04x", address, value);
++    return value;
+ }
+ 
+ void TestScannerInterface::write_fe_register(std::uint8_t address, std::uint16_t value)
+ {
++    record_transfer(usb_dev_, "FE W 0x%02x: %04x", address, value);
+     cached_fe_regs_.update(address, value);
+     ++cache_write_count_;
+ }
+@@ -187,7 +237,7 @@ IUsbDevice& TestScannerInterface::get_usb_device()
+ 
+ void TestScannerInterface::sleep_us(unsigned microseconds)
+ {
+-    (void) microseconds;
++    record_transfer(usb_dev_, "SLEEP %u us", microseconds);
+ }
+ 
+ void TestScannerInterface::record_slope_table(unsigned table_nr,
+@@ -228,6 +278,11 @@ void TestScannerInterface::test_checkpoint(const std::string& name)
+     }
+ }
+ 
++TestUsbDevice& TestScannerInterface::test_usb_device()
++{
++    return usb_dev_;
++}
++
+ void TestScannerInterface::set_checkpoint_callback(TestCheckpointCallback callback)
+ {
+     checkpoint_callback_ = callback;
+diff --git a/backend/genesys/test_scanner_interface.h b/backend/genesys/test_scanner_interface.h
+index 4683bc736..df4b3a665 100644
+--- a/backend/genesys/test_scanner_interface.h
++++ b/backend/genesys/test_scanner_interface.h
+@@ -62,6 +62,10 @@ public:
+ 
+     IUsbDevice& get_usb_device() override;
+ 
++    /* The mock itself, for a test to set its reply hook and read its
++       transfer log (test_usb_device.h). */
++    TestUsbDevice& test_usb_device();
++
+     void sleep_us(unsigned microseconds) override;
+ 
+     void record_progress_message(const char* msg) override;
+diff --git a/backend/genesys/test_usb_device.cpp b/backend/genesys/test_usb_device.cpp
+index cac274182..29048506e 100644
+--- a/backend/genesys/test_usb_device.cpp
++++ b/backend/genesys/test_usb_device.cpp
+@@ -22,9 +22,26 @@
+ 
+ #include "test_usb_device.h"
+ #include "low.h"
++#include <cstdio>
+ 
+ namespace genesys {
+ 
++namespace {
++
++// " 0a 55 ..." for the transfer log.
++std::string format_bytes(const std::uint8_t* data, std::size_t len)
++{
++    std::string out;
++    char byte[4];
++    for (std::size_t i = 0; i < len; ++i) {
++        std::snprintf(byte, sizeof(byte), " %02x", data[i]);
++        out += byte;
++    }
++    return out;
++}
++
++} // namespace
++
+ TestUsbDevice::TestUsbDevice(std::uint16_t vendor, std::uint16_t product,
+                              std::uint16_t bcd_device) :
+     vendor_{vendor},
+@@ -97,16 +114,22 @@ std::uint16_t TestUsbDevice::get_bcd_device()
+ void TestUsbDevice::control_msg(int rtype, int reg, int value, int index, int length,
+                                 std::uint8_t* data)
+ {
+-    (void) reg;
+-    (void) value;
+-    (void) index;
+     DBG_HELPER(dbg);
+     assert_is_open();
+     if (rtype == REQUEST_TYPE_IN) {
+         std::memset(data, 0, length);
++        if (control_in_reply_) {
++            control_in_reply_(reg, value, index, length, data);
++        }
+     } else {
+         ++out_transfer_count_;
+     }
++    if (record_transfers_) {
++        char head[64];
++        std::snprintf(head, sizeof(head), "CTRL %s req=0x%02x val=0x%04x idx=0x%04x len=%d:",
++                      rtype == REQUEST_TYPE_IN ? "IN" : "OUT", reg, value, index, length);
++        record_transfer(head + format_bytes(data, static_cast<std::size_t>(length)));
++    }
+ }
+ 
+ void TestUsbDevice::bulk_read(std::uint8_t* buffer, std::size_t* size)
+@@ -115,15 +138,74 @@ void TestUsbDevice::bulk_read(std::uint8_t* buffer, std::size_t* size)
+     DBG_HELPER(dbg);
+     assert_is_open();
+     std::memset(buffer, 0, *size);
++    if (record_transfers_) {
++        record_transfer("BULK IN len=" + std::to_string(*size) + ":" +
++                        format_bytes(buffer, *size));
++    }
+ }
+ 
+ void TestUsbDevice::bulk_write(const std::uint8_t* buffer, std::size_t* size)
+ {
+-    (void) buffer;
+-    (void) size;
+     DBG_HELPER(dbg);
+     assert_is_open();
+     ++out_transfer_count_;
++    if (record_transfers_) {
++        record_transfer("BULK OUT len=" + std::to_string(*size) + ":" +
++                        format_bytes(buffer, *size));
++    }
++}
++
++void TestUsbDevice::set_record_transfers(bool record)
++{
++    record_transfers_ = record;
++    transfer_log_.clear();
++    repeat_count_ = 0;
++    held_ = false;
++}
++
++void TestUsbDevice::record_transfer(const std::string& line)
++{
++    if (!record_transfers_) {
++        return;
++    }
++    std::size_t n = transfer_log_.size();
++    if (held_) {
++        held_ = false;
++        if (line == transfer_log_[n - 1]) {
++            ++repeat_count_;    // the pair came once more
++            return;
++        }
++        // Not a repetition after all: end the count, store the held line
++        // and go on with this one.
++        if (repeat_count_ != 0) {
++            transfer_log_.push_back("REPEAT 2 x" + std::to_string(repeat_count_));
++            repeat_count_ = 0;
++        }
++        transfer_log_.push_back(held_line_);
++        n = transfer_log_.size();
++    }
++    if (n >= 2 && line == transfer_log_[n - 2] && line != transfer_log_[n - 1]) {
++        held_ = true;
++        held_line_ = line;
++        return;
++    }
++    if (repeat_count_ != 0) {
++        transfer_log_.push_back("REPEAT 2 x" + std::to_string(repeat_count_));
++        repeat_count_ = 0;
++    }
++    transfer_log_.push_back(line);
++}
++
++std::vector<std::string> TestUsbDevice::transfer_log() const
++{
++    std::vector<std::string> log = transfer_log_;
++    if (repeat_count_ != 0) {
++        log.push_back("REPEAT 2 x" + std::to_string(repeat_count_));
++    }
++    if (held_) {
++        log.push_back(held_line_);
++    }
++    return log;
+ }
+ 
+ void TestUsbDevice::assert_is_open() const
+diff --git a/backend/genesys/test_usb_device.h b/backend/genesys/test_usb_device.h
+index aa599bce2..6d9349548 100644
+--- a/backend/genesys/test_usb_device.h
++++ b/backend/genesys/test_usb_device.h
+@@ -22,6 +22,9 @@
+ #define BACKEND_GENESYS_TEST_USB_DEVICE_H
+ 
+ #include "usb_device.h"
++#include <functional>
++#include <string>
++#include <vector>
+ 
+ namespace genesys {
+ 
+@@ -62,6 +65,40 @@ public:
+     unsigned out_transfer_count() const { return out_transfer_count_; }
+     void reset_out_transfer_count() { out_transfer_count_ = 0; }
+ 
++    /* Two more test-only aids, both off unless a test sets them, so every
++       other genesys test sees the mock exactly as before. Added for the
++       GL126 magazine load: its op programs check what the device answers
++       (an ack read must return 0x55, a motor completion poll a masked
++       status class), and a mock that only ever answers zeroes stops every
++       program at its first ack read, long before the polls a test needs
++       to reach.
++
++       The reply hook is called for every IN control transfer, after the
++       zero fill, and may overwrite the reply; with no hook the reply
++       stays all zeroes. */
++    using ControlInReply = std::function<void(int reg, int value, int index, int length,
++                                              std::uint8_t* data)>;
++    void set_control_in_reply(ControlInReply reply) { control_in_reply_ = std::move(reply); }
++
++    /* The transfer log: one line per transfer, in order, with its
++       setup fields and every byte sent or answered, so a test can assert
++       that two builds put the identical sequence on the wire, not just
++       the same number of transfers. TestScannerInterface also records
++       here (record_transfer()) its register and buffer methods, which
++       never reach this mock but are USB traffic on hardware, and its
++       sleeps, so a stray register read or a changed wait shows up too.
++
++       A poll loop (a read, a sleep, the same read, the same sleep, ...)
++       is stored once, followed by "REPEAT 2 x<n>": the two lines above
++       it came n more times. A test-mode poll that never matches spins
++       for its whole real-time budget, millions of iterations, which
++       could not be stored line by line, and how many it gets in that
++       time depends on the host. Starting a recording clears the log. */
++    void set_record_transfers(bool record);
++    bool records_transfers() const { return record_transfers_; }
++    void record_transfer(const std::string& line);
++    std::vector<std::string> transfer_log() const;
++
+ private:
+     void assert_is_open() const;
+ 
+@@ -71,6 +108,15 @@ private:
+     std::uint16_t product_ = 0;
+     std::uint16_t bcd_device_ = 0;
+     unsigned out_transfer_count_ = 0;
++    ControlInReply control_in_reply_;
++    bool record_transfers_ = false;
++    std::vector<std::string> transfer_log_;
++    // The pair repetition being counted (see transfer_log()): how many
++    // more times the last two stored lines came, and the first line of
++    // a possible next repetition, held until the second one arrives.
++    unsigned repeat_count_ = 0;
++    bool held_ = false;
++    std::string held_line_;
+ };
+ 
+ } // namespace genesys
+-- 
+2.55.0
+
