@@ -9121,6 +9121,15 @@ emulsion side down; `--slide-positive` then reads the right way round.**
 The owner's unit and slide only; the contributor has been asked whether
 his slides sat the same way.
 
+*Addendum, 2026-11-08 evening.* The photographer who took the slide (in
+the 1960s) looked at the preview and its mirrored copy and confirmed
+that the preview is the right way round, so the orientation above is
+confirmed by someone who knows the scene, not only by the lamp-reflection
+test. The contributor replied the same day that his mounts sat with the
+branding up (issue #70), which on a cardboard mount is the front, the
+side the film base faces, and his pictures read the right way round.
+The README's wording is therefore "the branded or shiny side up".
+
 **The two start-up warnings.** The same two best-effort polls the
 contributor reported on his unit appeared here before calibration:
 `poll wv=0x018e wi=0x0122 timed out after 0.3s (last d855, want f855)`
@@ -9167,7 +9176,9 @@ and the pictures read the right way round with `--slide-positive`. On a
 cardboard mount the branding is normally on the front, the side the
 film's base faces, so that agrees with the owner's rule (white, shiny
 side up, Test 124) if his mounts follow that convention; he has not
-checked the film surface itself, so the rule stays "owner's slide,
-plus the contributor's by convention" until he does.
+checked the film surface itself. The same evening he confirmed the
+branding-up placement and accepted "the branded or shiny side up" as
+the README wording; the owner's orientation was confirmed by the
+photographer the same day (Test 124 addendum).
 
 Open from his side: the lateral crop; plastic and glass mounts untried.
