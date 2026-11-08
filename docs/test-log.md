@@ -8995,3 +8995,36 @@ merge request (`docs/sane-wp3-submission.md`). Open, unchanged from the
 entry of 2026-11-06: the op 24 miss ("transport ran, cassette not
 taken") on this unit, 3 of 10 here against the owner's rare misses; not
 a v9 question.
+
+## Test 121 — `scan --holder slide` on hardware (issue #70 step 1, bearyjd): four openings at 3600 dpi dual and opening 1 at 600 dpi, cardboard mounts
+
+Branch `upstream-pr-slides-cli`, head `323c850`, 2026-11-07, the contributor's
+unit. Slide holder with cardboard mounts of a few different brands, four
+openings. The scanner was idle-homed with the holder loaded, the watcher
+stopped and the app closed. One opening per run, looking at the result
+before the next.
+
+| opening | dpi | FEEDL | position s | park s | IR lit run along (mm) | lit centre vs frame centre (mm) |
+|---|---|---|---|---|---|---|
+| 1 | 3600 | 6255 | 1.6 | 3.8 | 34.24 | +0.22 |
+| 2 | 3600 | 24000 | 5.0 | 7.4 | 34.16 | -0.25 |
+| 3 | 3600 | 41745 | 8.5 | 10.9 | 34.20 | +0.01 |
+| 4 | 3600 | 59490 | 12.1 | 14.5 | 34.45 | -0.30 |
+| 1 | 600 | 6236 | 1.6 | 4.0 | 34.25 | +0.06 |
+
+**Result.** FEEDL matched the model for every opening. There were no poll
+timeouts in any run, and each run parked. The 3600 dpi scans took 43.8 to
+43.9 s. The IR lit aperture was centred within -0.30 to +0.22 mm along the
+transport, with no trend over the openings (no pitch drift); that is the
+same size as the load-to-load spread measured earlier (+-0.24 mm). Across
+the frame the lit width of opening 1 at 3600 dpi was 22.94 mm, centred
+within 0.1 mm. Opening 4, the one closest to the travel end (304 steps
+inside the ceiling at 3600 dpi), ran without a stall or an abnormal sound.
+Opening 1 at 3600 dpi wrote 5184 x 5824 overscan frames, visible and IR;
+at 600 dpi the frames are 976 x 876. The sidecar carries `holder: "slide"`
+and `coverage.applicable: false`. I judged all five scans fine.
+
+**Open.** Two start-up poll warnings (timed out after 0.3 s, continuing)
+appeared before calibration in the opening 1 run at 3600 dpi; they are not
+counted in `poll_timeouts`, and I do not know whether the strip path shows
+them on this unit. One load of cardboard mounts only.

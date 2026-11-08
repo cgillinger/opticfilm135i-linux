@@ -2228,6 +2228,7 @@ class Scanner:
     def scan(
         self, frame: int = 1, lines: int | None = None, ir: bool = False,
         dpi: int = 3600, overscan_mm: float | None = None,
+        slide: bool = False,
     ) -> tuple[bytes, int] | tuple[bytes, int, dict]:
         """Run the full calibration + scan sequence for one frame.
 
@@ -2252,6 +2253,18 @@ class Scanner:
         {"width": W, "alternating": True, "dpi": dpi} -- see
         image.split_ir() for turning raw_bytes into separate visible/IR
         arrays.
+
+        slide=True: ``frame`` is a mounted-slide holder opening (1-4) and
+        the dual window comes from holder.slide_dual_geometry() (the
+        slide fiducial model, default overscan holder.SLIDE_OVERSCAN_MM,
+        the per-unit position_offset_mm, the slide-only travel check)
+        instead of the strip model. That is the only difference: the
+        same calibration, POSITION, scan and PARK phases run. Dual
+        profiles only (plain 3600 covers 26.5 mm across and clips a
+        mounted slide, Test 85), and not with lines=. The whole slide
+        geometry is checked here, before the operation, so a refusal
+        sends nothing and leaves the session usable. slide=False (the
+        default) is the strip path, unchanged.
 
         Safety: runs as a hardware operation (start-state guard on the
         session's first write; any exception marks the session failed
@@ -2284,6 +2297,22 @@ class Scanner:
             raise OperationNotAllowedError(
                 "scan() requires initialize() first (before every frame) in this session. "
                 f"{safety.NO_COMMANDS_SENT}", session=self.session.snapshot())
+        if slide:
+            if t is None:
+                raise ValueError(
+                    "slide scans need a dual-light profile (ir=True or dpi != "
+                    "3600): plain 3600 covers 26.5 mm across the frame and clips "
+                    f"a mounted slide (Test 85). {safety.NO_COMMANDS_SENT}")
+            if lines is not None:
+                raise ValueError(
+                    "lines= is the strip capture-grid path; slide scans are "
+                    f"sized by overscan_mm. {safety.NO_COMMANDS_SENT}")
+            if overscan_mm is None:
+                overscan_mm = holder.SLIDE_OVERSCAN_MM
+            # The geometry _scan_dual will command, checked here: opening
+            # number, FEEDL, model end and the slide-only travel check,
+            # with this unit's offset.
+            self._slide_geometry(t, frame, overscan_mm)
         if t is not None:
             # Dual: the production default (lines=None, overscan_mm=None)
             # is the same A+C geometry as plain, in visible lines
@@ -2316,8 +2345,22 @@ class Scanner:
                 self._cal_capture.set_frame(frame)
             if t is not None:
                 return self._scan_dual(t, frame=frame, lines=lines,
-                                       overscan_mm=overscan_mm)
+                                       overscan_mm=overscan_mm, slide=slide)
             return self._scan_plain(frame=frame, overscan_mm=overscan_mm)
+
+    def _slide_geometry(self, t, slide: int, overscan_mm: float):
+        """holder.slide_dual_geometry() for opening ``slide`` on dual table
+        module ``t``, with this session's position offset. One call site
+        for the public pre-check and the commanded window."""
+        return holder.slide_dual_geometry(
+            slide,
+            dpi=t.DPI,
+            lines_per_chunk=t.LINES_PER_CHUNK,
+            colour_crop_lines=image_mod.align_shift(t.DPI),
+            default_wire_lines=t.DEFAULT_LINES,
+            overscan_mm=overscan_mm,
+            offset_mm=self.position_offset_mm,
+        )
 
     def _cal_white_line(self) -> np.ndarray:
         """The last warm-up white-line measurement (N, 3) uint16, for the
@@ -2797,7 +2840,8 @@ class Scanner:
             dips_a=dips_a, dips_b=dips_b, blocks_a=blocks_a, blocks_b=blocks_b)
 
     def _scan_dual(self, t, frame: int = 1, lines: int | None = None,
-                   overscan_mm: float | None = None) -> tuple[bytes, int, dict]:
+                   overscan_mm: float | None = None,
+                   slide: bool = False) -> tuple[bytes, int, dict]:
         """Dual-light (alternating IR/visible line) counterpart of scan(),
         driven by the phases of table module `t` -- tables_ir (3600 dpi,
         trace 04) or a tables_dpi<N> module (the 2026-09-02 captures);
@@ -2885,7 +2929,22 @@ class Scanner:
         # in visible lines (holder.dual_overscan_geometry); explicit
         # lines= = the diagnostic/capture path on the historical grid.
         geom = None
-        if lines is None:
+        if slide:
+            # Mounted-slide opening `frame` (1-4): the slide fiducial model
+            # through the same dual geometry, plus the slide-only travel
+            # check. Everything after this -- POSITION, scan, PARK -- is
+            # the strip path verbatim.
+            if lines is not None:
+                raise ValueError("slide scans do not take lines=")
+            if overscan_mm is None:
+                overscan_mm = holder.SLIDE_OVERSCAN_MM
+            geom, wire_lines = self._slide_geometry(t, frame, overscan_mm)
+            feedl = holder.check_feedl(geom.feedl, holder.SLIDE)
+            log.info("dual slide %d (%d dpi): FEEDL=%d chunks=%d "
+                     "wire_lines=%d margins lead=%.3f trail=%.3f mm",
+                     frame, dpi, feedl, geom.chunks, wire_lines,
+                     geom.leading_margin_mm, geom.trailing_margin_mm)
+        elif lines is None:
             geom, wire_lines = holder.dual_overscan_geometry(
                 frame,
                 dpi=dpi,
@@ -2968,6 +3027,8 @@ class Scanner:
             "overscan_mm": (overscan_mm if overscan_mm is not None
                             else holder.OVERSCAN_MM) if geom is not None else None,
             "position_offset_mm": self.position_offset_mm,
+            # Only a slide scan carries the key: strip sidecars unchanged.
+            **({"holder": "slide"} if slide else {}),
             # Dual has no skip-calibration path (see _scan_dual's opening
             # comment) -- always a fresh measurement.
             "calibration": "fresh",

@@ -270,13 +270,18 @@ know about:
   path on a second film stock (Test 60). The dual-light profiles carry
   the same contract in visible-line units, hardware-verified one run
   per profile (Test 61; see
-  [`docs/ROADMAP.md`](docs/ROADMAP.md) milestone C). **Mounted slides — not supported yet.** The
+  [`docs/ROADMAP.md`](docs/ROADMAP.md) milestone C). **Mounted slides — experimental.** The
   scanner ships with a four-slide holder. Its load flow is the strip
   holder's, a mounted slide scans whole through the strip-holder windows
-  and the four openings form a measured grid (Test 84), but **neither the
-  driver nor the SANE backend has a slide path yet** (positioning, crop,
-  positive handling). It is a planned, separate milestone (C2 in the
-  roadmap), not part of what works today.
+  and the four openings form a measured grid (Test 84). The driver has
+  an experimental option that positions on that grid, opening by
+  opening: `scan --holder slide --frame N --ir` (N = 1-4, dual-light
+  profiles only, `--positive` refused). It positions the four openings
+  and writes the full overscan frame(s). It has been run on one unit,
+  with cardboard mounts of several brands, and is still experimental.
+  There is no crop and no positive output in this step, and the SANE
+  backend has no slide path. It is a separate milestone (C2 in the
+  roadmap).
   **110 (Pocket Instamatic) film in the strip holder — supported, two
   strips from two cameras (n = 2).** A 16 mm 110 strip lies in the
   35 mm holder against one rail; its 13 x 17 mm images fit inside the

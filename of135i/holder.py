@@ -129,8 +129,8 @@ STRIP = Holder(
 #: measured a 62.6 mm grid of 38.05 mm openings inside the verified FEEDL
 #: range (slide-holder-analysis.md section 5), so each opening can be
 #: reached with the strip path's own POSITION move, using SLIDE_FIDUCIAL /
-#: slide_dual_geometry() below. Nothing calls that model yet: the CLI and
-#: the hardware runs come in a later change.
+#: slide_dual_geometry() below. `scan --holder slide` (Scanner.scan(
+#: slide=True)) is its caller; run on one unit so far (Test 121).
 SLIDE = Holder(
     name="mounted-slide holder",
     frames=4,
