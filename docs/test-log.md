@@ -9131,3 +9131,43 @@ best-effort by design (entry of 2026-09-15) and are not counted in
 **Result.** Steps 1–3 of C2 hold on the second unit they were run on;
 PRs #73, #74 and #75 were merged after this run. Open: the lateral
 crop, more mounts, the insertion rule on other mounts.
+
+## 2026-11-08 — External report (issue #70): the merged slide path on the second unit beyond opening 1 — two trays of cardboard mounts (7 of 7 occupied openings verified, the empty opening refused by the 37 mm bound), 7200 dpi opening 1 verified, `--overscan 0.5` verified on four openings
+
+Not run by the owner. Reported by bearyjd on issue #70 (comment of
+2026-11-08, 13:52Z), numbers only, no pictures; this entry is the
+owner's side reading that comment. Hardware: bearyjd's unit, the slide
+holder, cardboard mounts, the #75 code (his branch changes only the
+speed of host-side post-processing; wire, geometry and crop are the
+merged ones). Command: `scan --holder slide --frames 1-4 --dpi 3600 --ir
+--slide-positive`.
+
+| run | openings | result |
+|---|---|---|
+| tray 1, 3600 dpi | 1–4 | all VERIFIED, `poll_timeouts` 0, FEEDL 6255 / 24000 / 41745 / 59490; crop margins lead/trail 3.61/3.16, 3.17/3.64, 3.40/3.39, 2.94/3.57 mm; driver totals 55.9 / 62.1 / 69.3 / 76.3 s, scan pass 43.9–44.6 s; pictures judged fine by him |
+| tray 2, 3600 dpi | 1–3 | VERIFIED, margins 3.37/3.38, 3.52/3.24, 3.43/3.28 mm |
+| tray 2, 3600 dpi | 4 (empty) | NOT verified, as designed: `IR: lit run 38.07 mm is longer than a mount aperture (> 37 mm): an empty opening …`, exit 4, overscan kept, no crop |
+| 7200 dpi, opening 1 | 1 | FEEDL 6256, scan pass 174.6 s (driver 187.7 s), `poll_timeouts` 0, VERIFIED (3.59/3.16 mm), cropped pair 10573 x 10512 |
+| `--overscan 0.5`, 3600 dpi | 1–4 | all VERIFIED, smallest post-crop margin 1.94 mm against the 1.5 mm pad, scan pass 41.7 s (43.8 s at the default); default kept |
+
+Calibration ran on every opening (5.1–5.2 s each): no saving from one
+calibration per tray on the dual profile, as on strips.
+
+**Reading.** With the owner's Test 124 that is nine occupied openings on
+two units, all verified, margins 2.75–3.64 mm, and one empty opening
+refused by the upper bound, which had only been exercised on fixtures
+before. The 7200 dpi profile runs on the slide path with the same
+geometry (FEEDL 6256 vs 6255 at 3600, the profile's own rounding). The
+`--overscan 0.5` figures say the 1.5 mm default has about 1 mm of slack
+on these mounts; it stays, since the slack is what absorbs an off-centre
+mount (Test 84: 2.7 mm border).
+
+**Insertion rule.** His mounts sat with the written (branding) side up,
+and the pictures read the right way round with `--slide-positive`. On a
+cardboard mount the branding is normally on the front, the side the
+film's base faces, so that agrees with the owner's rule (white, shiny
+side up, Test 124) if his mounts follow that convention; he has not
+checked the film surface itself, so the rule stays "owner's slide,
+plus the contributor's by convention" until he does.
+
+Open from his side: the lateral crop; plastic and glass mounts untried.

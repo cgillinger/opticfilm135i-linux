@@ -6,7 +6,12 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
-(nothing yet)
+- **External report, slides on the second unit (test log, 2026-11-08).**
+  Two trays of cardboard mounts through the released slide path: seven
+  of seven occupied openings verified (margins 2.94–3.64 mm), the empty
+  opening refused by the 37 mm bound as designed, 7200 dpi opening 1
+  verified, `--overscan 0.5` verified on four openings (default kept).
+  His mounts sat branding side up and read the right way round.
 
 ## v0.2.12 — Shiny Side Slides — 2026-11-08
 
