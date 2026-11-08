@@ -130,7 +130,7 @@ STRIP = Holder(
 #: range (slide-holder-analysis.md section 5), so each opening can be
 #: reached with the strip path's own POSITION move, using SLIDE_FIDUCIAL /
 #: slide_dual_geometry() below. `scan --holder slide` (Scanner.scan(
-#: slide=True)) is its caller; not yet run on hardware (issue #70).
+#: slide=True)) is its caller; run on one unit so far (Test 121).
 SLIDE = Holder(
     name="mounted-slide holder",
     frames=4,

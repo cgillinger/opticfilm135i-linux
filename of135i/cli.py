@@ -3842,7 +3842,8 @@ def build_parser() -> argparse.ArgumentParser:
              "but 3600); default --overscan 1.5; --positive refused. Keeps "
              "the full overscan frame(s) and crops to the mount's aperture "
              "found in the IR channel when coverage verifies (exit 4 "
-             "otherwise, as for strips). Not hardware-verified yet (issue #70)")
+             "otherwise, as for strips). Run on one unit so far (test log, "
+             "Tests 121-122); experimental")
     p_scan.add_argument("--eject", action="store_true",
         help="eject the film magazine after the last frame")
     p_scan.add_argument("--dpi", type=int, default=3600, choices=SUPPORTED_DPIS,

@@ -8901,7 +8901,7 @@ the border halo next to the mount edge stay, and a thin scratch in the
 sky is only partly removed (the 5 px kernel scales to 1 × 1 at 600 dpi
 and cannot fill). Merged as `bd0a66f` on the owner's go.
 
-## Test N (number for the maintainer to assign) — `scan --holder slide` on hardware (issue #70 step 1, bearyjd): four openings at 3600 dpi dual and opening 1 at 600 dpi, cardboard mounts
+## Test 121 — `scan --holder slide` on hardware (issue #70 step 1, bearyjd): four openings at 3600 dpi dual and opening 1 at 600 dpi, cardboard mounts
 
 Branch `upstream-pr-slides-cli`, head `323c850`, 2026-11-07, the contributor's
 unit. Slide holder with cardboard mounts of a few different brands, four
@@ -8934,7 +8934,7 @@ appeared before calibration in the opening 1 run at 3600 dpi; they are not
 counted in `poll_timeouts`, and I do not know whether the strip path shows
 them on this unit. One load of cardboard mounts only.
 
-## Test N+1 (number for the maintainer to assign) — the IR-keyed slide crop (issue #70 step 2, bearyjd) on real mounted slides
+## Test 122 — the IR-keyed slide crop (issue #70 step 2, bearyjd) on real mounted slides
 
 Branch `upstream-pr-slides-ir-crop`, head `efaeb08`, 2026-11-07, the same
 unit and the same cardboard mounts as the entry above (several brands,
