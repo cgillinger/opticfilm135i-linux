@@ -10,6 +10,17 @@ re-deliberation.
 
 ## Where the three stand
 
+**Update 2026-11-08: v9 pushed by the owner to the merge request.** v9 is
+v8 plus two commits (the calibration stop gate, co-authored by bearyjd, and
+a comments-only commit naming the gl124 origin of three files), nothing
+rebased; pushed from the `sane-wp3-v9` worktree (`94628f3f2..18bea9b32`,
+fast-forward). Fork pipeline 8/8 (3041799540), no conflicts; the
+description's testing paragraph, a paragraph on v9 and limitations 1 and 9
+were edited, and a comment announcing v9 posted, the same day. Hardware
+before the push: Test 118 on the owner's unit and bearyjd's unit through
+the whole test table including 3600 dpi infrared (test log, 2026-11-07).
+Still under review, not merged.
+
 **Update 2026-10-16: v8 pushed by the owner to the merge request.** The
 maintainer asked (2026-10-14) why the backend takes a process lock shared
 with an external driver; the owner decided to drop it. v8 (v7 rebased onto

@@ -8901,6 +8901,101 @@ the border halo next to the mount edge stay, and a thin scratch in the
 sky is only partly removed (the 5 px kernel scales to 1 × 1 at 600 dpi
 and cannot fill). Merged as `bd0a66f` on the owner's go.
 
+## 2026-11-07 — External report (issue #50): SANE v9 at 3600 dpi infrared on the second unit — load (one miss, then a load), the `ir3600` scan and the eject completed; all seven reg 0x100 gate polls found the engine running and waited 9–15 ms; ten blind cold loads at 4 ms vs 20 ms poll cadence, 4 of 5 vs 5 of 5, no difference claimed
+
+Not run by the owner. Reported by bearyjd on issue #50 (comment of
+2026-11-07, 21:54Z) with the load, scan and eject logs and the extracted
+`poll:` lines in a gist (no images, no capture); this entry is the
+owner's side reading those files. Hardware: bearyjd's unit and host (bare
+metal), slide holder, frame 4, the v9 tree plus bearyjd's logging patch
+0001 (`sane-backends 1.4.0.361-18bea9-dirty`, `SANE_DEBUG_GENESYS=4`).
+This is the run the entry of 2026-11-07 (600 dpi and plain 3600) left
+open: the `ir3600` profile, the one the Python driver's dual IR path
+uses. Scanner power-cycled before each load attempt, magazine loose in
+the slot, pushed in with one motion and left. Host clock 15:36–15:43.
+Exit codes were not captured; the scan log holds no error, warning,
+timeout or best-effort line; the load and eject logs end with the old
+harmless "Cannot open calibration for writing".
+
+| step | command | result |
+|---|---|---|
+| 3 (miss) | `scanimage -d $D -n --load-film` | cold start and jog completed, edge seen after 36 polls (~3.6 s, `last reg 0x101 0xf8`), settle 600 ms, then `load op 24 poll timed out: first 0xfc last 0xfc, 1071 polls, 4829 ms` (mask 0xfb, want 0xf0); the Read ops before it showed reg 0x100 = 0xf0, reg 0x101 = 0xf8; `magazine released -> failed`, nothing further sent, session blocked. The known signature of the entry of 2026-11-06 |
+| 3 (load, after a power cycle) | the same | edge seen after 55 polls (~5.5 s), settle 600 ms, op 24 `first 0xf4 last 0xf4, 1 polls, 1 ms`, op 38 `0xdd → 0xdc, 13 polls, 53 ms`, `magazine released -> loaded`, `reg 0x101 = 0xdc` |
+| 4 | `--source "Transparency Adapter Infrared" --mode Color --frame 4 --resolution 3600` | completed: `offset calibration, profile ir3600 frame 4`, shading tables 1A/1B (dark map, visible/IR lines) and 2A/2B (white uniformity, visible/IR lines), 15552 pairs each; POSITION to FEEDL 38828; `scan pass started (ir3600), line register 10624, 10624 raw lines`; 164,477,952 bytes delivered, a valid P6 (164 MB); `parked (2 waits recorded)`, `already at home` |
+| 5 | `scanimage -d $D -n --eject-film` | ejected: `eject op 9 poll: first 0xd9 last 0xf8, 209 polls, 938 ms`, `magazine unknown -> ejected` |
+
+**The gate polls.** Fourteen per scan as before: after each of the seven
+calibration acquisitions, reg 0x100 then reg 0x101, bit 0 clear wanted
+(`PollMasked`, 300 ms). The seven reg 0x101 polls settled at the first
+read (0xdc, or 0xd8 after `cal_shading_measure`), 1 poll, 0–1 ms. **All
+seven reg 0x100 polls found bit 0 set at the first read** and waited:
+
+| phase | ir3600: first → last, polls, ms |
+|---|---|
+| cal_dark_a | 0xf1 → 0xf0, 3, 10 |
+| cal_dark_b | 0xf1 → 0xf0, 3, 9 |
+| cal_white | 0xf1 → 0xf0, 3, 9 |
+| cal_gain_check_a | 0xf1 → 0xf0, 3, 9 |
+| cal_gain_check_b | 0xf1 → 0xf0, 3, 9 |
+| cal_shading_measure | 0xf3 → 0xf0, 4, 14 |
+| cal_shading_verify | 0xf3 → 0xf0, 4, 15 |
+
+Shortest 9 ms, longest 15 ms, between the 600 dpi (9–14 ms) and plain
+3600 (17–26 ms) figures of the previous entry on the same host. No poll
+timed out; no "the previous acquisition did not stop", no "dark_b is
+residual". Over the three v9 scans on this unit that is 21 of 21 reg
+0x100 gate sites that needed the wait (9–26 ms) and 21 of 21 reg 0x101
+sites that did not.
+
+**Calibration, this unit, frame 4, the three profiles:**
+
+| | 600 (prev. entry) | plain 3600 (prev. entry) | ir3600 (this run) |
+|---|---|---|---|
+| offset R/G/B | 0x10a/0x109/0x10a | 0x10a/0x109/0x10a | 0x10a/0x109/0x10a (slopes 19.64/19.86/19.86) |
+| gain R/G/B | 0x2a/0x21/0x26 | 0x2b/0x20/0x27 | 0x29/0x1f/0x26, one measurement |
+| gain check A / B (offset 0x80 / 0xff), R G B means | | | 48416 42016 46132 / 53932 46304 51216 |
+| POSITION | 7917 ms (FEEDL 38809) | 7913 ms (FEEDL 38806) | 7921 ms (FEEDL 38828) |
+| PARK | 10378 ms | 10269 ms | 10262 ms |
+
+Offsets identical across the three profiles and to the owner's (Test
+118), gains within two codes. Shading at ir3600: dark-map offsets 0..43
+(visible) and 0..58 (IR), gains 0x4000 flat; white gains 0x4787..0xffff
+(visible, mean 20200) and 0x6efa..0xffff (IR, mean 34778). The gain
+ceiling on the IR lines is the slide holder at frame 4 again (no slide
+profile in the backend, white reference read where the strip holder's
+would be), not a finding about the gate.
+
+**The load tally and a blind A/B (bearyjd's, 2026-11-07 afternoon).**
+With the two attempts above, five `--load-film` runs of v9 on this
+unit: three loaded, two missed. Afterwards bearyjd ran ten more cold
+loads blind: five on v9 and five on a variant polling status every
+20 ms instead of 4 ms (`poll_interval_ms`; the Python driver polls about
+every 20 ms during the homing moves, so the cold start makes ~420 reads
+per step against ~95 over the same ~1.9 s), in random order, power cycle
+before each load, same motion, builds unknown to him until the end.
+Result: 20 ms 5 of 5, v9 4 of 5; the one v9 miss had the same op 24
+signature (`first 0xfc last 0xfc`, 4832 ms, edge after 59 polls) with "a
+little stutter" on the load. His reading, and the owner's: no difference
+is shown at this size, and the stutter was also heard at the start of
+the session on v9 and not later on the same build, so the sound is not
+read as an effect of the code. Over everything on this unit v9 has
+loaded 7 of 10 times and missed 3. The 20 ms variant stays on his branch
+`ot135i-poll-cadence-experiment` and is not proposed for the merge
+request. He also offers a text-only branch `ot135i-v9-load-guidance`
+(an operator line in the log when the edge wait starts, a next step in
+the load failure message, a man page section; no timing or sequence
+change) for the next revision; held with his logging patch 0001.
+
+**Consequences.** v9 has now run on the second unit at all three
+profiles the Python driver uses in production (600, plain 3600, ir3600)
+plus load and eject, with every gate wait doing work and none timing
+out, and on the owner's unit at 600 and plain 3600 (Test 118). Nothing
+in v9 changes. Next: the owner pushes `wp3-gl126-submission-v9` to the
+merge request (`docs/sane-wp3-submission.md`). Open, unchanged from the
+entry of 2026-11-06: the op 24 miss ("transport ran, cassette not
+taken") on this unit, 3 of 10 here against the owner's rare misses; not
+a v9 question.
+
 ## Test 121 — `scan --holder slide` on hardware (issue #70 step 1, bearyjd): four openings at 3600 dpi dual and opening 1 at 600 dpi, cardboard mounts
 
 Branch `upstream-pr-slides-cli`, head `323c850`, 2026-11-07, the contributor's
