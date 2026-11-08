@@ -90,6 +90,7 @@ class RecropSettings:
     rotate: int
     positive: bool          #: the overscan file is a positive rendering
     source: str             #: "sidecar" or "arguments"
+    slide: bool = False     #: written by `scan --holder slide` (refused)
 
 
 def settings_from_sidecar(sidecar: Path) -> RecropSettings | None:
@@ -107,8 +108,9 @@ def settings_from_sidecar(sidecar: Path) -> RecropSettings | None:
     # its preview. A sidecar without the "command" key (written before it
     # existed) is read as scan's when it says positive.
     positive = bool(cli.get("positive")) and cli.get("command") != "digitize"
+    slide = cli.get("holder") == "slide" or d.get("holder") == "slide"
     return RecropSettings(dpi=int(cli["dpi"]), rotate=int(cli.get("rotate") or 0),
-                          positive=positive, source="sidecar")
+                          positive=positive, source="sidecar", slide=slide)
 
 
 def axis_dpi(dpi: int, rotate: int) -> tuple[int, int]:
@@ -195,6 +197,13 @@ def recrop(name: str | Path, *, min_margin_mm: float = 0.15,
         raise RecropError(f"min_margin_mm must be a finite number >= 0, got {min_margin_mm}")
 
     side = settings_from_sidecar(paths.sidecar)
+    if side is not None and side.slide:
+        raise RecropError(
+            f"{paths.overscan} is a mounted-slide scan (`scan --holder slide`, "
+            f"its sidecar says holder: slide): recrop uses the strip holder's "
+            f"coverage check, not the slide crop, so it would not find or would "
+            f"misplace the mount's aperture; nothing was written. Scan the "
+            f"slide again with --holder slide")
     if side is not None and side.positive:
         raise RecropError(
             f"{paths.overscan} was written by `scan --positive` (or its sidecar "

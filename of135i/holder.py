@@ -886,9 +886,12 @@ def slide_dual_geometry(
     docs/holder-position-design.md states it ("the end position is FEEDL
     + window travel"), which for a dual profile is K (~18.7 mm) beyond the
     model end the strip path checks. Which of the two is the true
-    carriage extreme is not established from software; slide opening 4
-    is the furthest window the driver has been asked for, so the slide
-    path requires both to be inside the proven travel. Raises
+    carriage extreme is not established from software. Slide 4's
+    POSITION move is shorter than strip frame 6's in the dual flow (FEEDL
+    59471 vs 60256 at 600 dpi, 59490 vs 60275 at 3600), but its FEEDL +
+    wire travel is the larger of the two from 1200 dpi up (71315 vs 70948
+    at 1200), so the slide path requires both to be inside the proven
+    travel. Raises
     (FrameOutOfRangeError / FeedlOutOfRangeError) before any write, like
     every other geometry check; a non-positive or non-finite overscan, or
     a window of fewer than one chunk, is a ValueError.

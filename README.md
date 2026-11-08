@@ -277,11 +277,14 @@ know about:
   an experimental option that positions on that grid, opening by
   opening: `scan --holder slide --frame N --ir` (N = 1-4, dual-light
   profiles only, `--positive` refused). It positions the four openings
-  and writes the full overscan frame(s). It has been run on one unit,
-  with cardboard mounts of several brands, and is still experimental.
-  There is no crop and no positive output in this step, and the SANE
-  backend has no slide path. It is a separate milestone (C2 in the
-  roadmap).
+  and keeps the full overscan frame(s), and crops to the mount's
+  aperture found in the IR channel when coverage verifies (exit 4
+  otherwise, as for strips; verified on opening 1 of one unit's
+  cardboard mounts, the other openings not re-run). The
+  positioning has been run on one unit, with cardboard mounts of several
+  brands, and is still experimental. Positive output is still missing,
+  and the SANE backend has no slide path. It is a separate milestone
+  (C2 in the roadmap).
   **110 (Pocket Instamatic) film in the strip holder — supported, two
   strips from two cameras (n = 2).** A 16 mm 110 strip lies in the
   35 mm holder against one rail; its 13 x 17 mm images fit inside the

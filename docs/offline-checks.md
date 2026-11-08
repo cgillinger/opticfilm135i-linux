@@ -81,7 +81,8 @@ for t in test_safety test_cold_reseat test_calibrate test_hwblock \
          test_buttons test_release_check test_poll test_white_blockage \
          test_cal_wait_scanstop test_cross_unit_check \
          test_cr_mismatch_details test_trace_recorder \
-         test_position_offset test_recrop test_album test_slides; do
+         test_position_offset test_recrop test_album test_slides \
+         test_slide_crop; do
     .venv/bin/python tests/$t.py || exit 1
 done
 ```

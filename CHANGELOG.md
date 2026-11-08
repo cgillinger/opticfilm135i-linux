@@ -14,6 +14,47 @@ one exists; "offline" means implemented and tested without the scanner.
   3600 and 3600 dpi infrared (test log, external reports of 2026-11-07).
   The merge request's description now says two units. Under review.
 
+- **Slide crop keyed on the IR channel (issue #70 step 2, bearyjd).
+  Synthetic fixtures, plus one real mount (opening 1, verified).** `scan --holder
+  slide` now checks each opening's coverage and crops, with the strips'
+  contract: the full overscan frame(s) are always kept, the cropped
+  pair (`-o`, with `--ir` also `-ir.tiff`) is written only when
+  "coverage VERIFIED", otherwise "NOT verified", no product, exit 4.
+  `aperture_crop.measure_slide_coverage()` looks for the slide mount's
+  aperture in the IR channel only (the mount is opaque to IR, the film
+  is not; visible light was fooled by dark picture content, Test 84),
+  with the strip edge finder and binning, and accepts one lit run of
+  33.8-37 mm (Tests 84/85: 35.06-35.1 mm; four cardboard mounts on 2026-11-07: 34.16-34.45 mm) whose two margins each hold
+  the 1.5 mm crop pad inside the window; the crop is padded by 1.5 mm
+  per side. An IR-dense picture band at the mount edge looks like mount
+  and shortens the run: with the floor and the pad, apertures up to
+  35.3 mm (floor + pad) are kept whole by a verified crop (tested with 0.5-5 mm
+  bands). Above 35.3 mm a band can still be cut (a 37 mm aperture with
+  a 3 mm band reads like a clean 34.0 mm mount; pinned by a test as the
+  documented limit). On hardware (cardboard mounts of several brands,
+  3600 dpi dual) the lit run measured 34.16-34.45 mm over openings 1-4,
+  so the earlier 34.5 mm floor refused three of four; with the 33.8 mm
+  floor opening 1 verified (margins lead 3.567 mm, trail 3.208 mm,
+  5184x5289 pair) and the slide was complete by eye; only opening 1 was
+  re-run. Shorter runs are NOT verified rather than cut
+  (the strip's 25 mm floor would have cropped into the picture and
+  called it verified). Also NOT verified, exit 4: a 33 mm mount, a mount
+  turned 90 degrees (its ~23 mm side along the transport), the 38.05 mm
+  opening itself (no mount, or an IR-translucent mount). The crop is
+  along the transport, as for strips. No `--position-offset` hint for
+  slides (the margins say where the slide sits in its mount). Sidecar
+  `coverage.method: "slide-ir"`, `coverage.crop_pad_mm: 1.5`. `of135i
+  recrop` refuses an overscan file whose sidecar says `holder: slide`
+  (it would apply the strip check). Nothing sent to the scanner changes.
+  `measure_coverage()` gains `min_aperture_mm` (strip default unchanged).
+  New `tests/test_slide_crop.py` (14 tests: centred, off-centre and
+  dark-grey mounts verified at 600/1200/3600 dpi; edge bands never cut
+  by a verified crop; the 35.3 mm guarantee and its limit; the floor
+  and the pad margin by behaviour; IR-dense
+  edge, empty opening, IR-translucent mount, turned mount and a clipped
+  window NOT verified; recrop's refusal; the strip default unchanged;
+  the CLI's verified and NOT-verified outputs).
+
 - **`scan --holder slide`: the mounted-slide holder, positioned per
   opening (issue #70 step 1, bearyjd). Run on hardware on one unit.**
   `--holder {strip,slide}`, default `strip` (unchanged, byte-identical
@@ -29,9 +70,9 @@ one exists; "offline" means implemented and tested without the scanner.
   across, Test 85), default `--overscan 1.5`; plain 3600, `--film 110`
   and `--positive` (a negative inversion, which would invert a positive
   slide) are refused before the device opens. Output: the full overscan
-  frame(s) only (`.overscan.tiff`, with `--ir` also `-ir.overscan.tiff`),
-  sidecar `coverage.applicable: false` and `holder: "slide"`; the IR
-  crop for slides is the next step. `digitize` is unchanged (its roll,
+  frame(s) always (`.overscan.tiff`, with `--ir` also
+  `-ir.overscan.tiff`), the cropped pair when the IR crop (entry above)
+  verifies, sidecar `holder: "slide"`. `digitize` is unchanged (its roll,
   album and 110 workflow is strip-shaped). `tests/test_slides.py` grows
   from 5 to 11 tests (wire FEEDL and line count per opening with and
   without the offset, refusals with zero phases run, the CLI refusals
@@ -47,7 +88,7 @@ one exists; "offline" means implemented and tested without the scanner.
   extrapolated at 23.5 mm) and `slide_dual_geometry()`, the strip path's
   dual geometry with that model, the `--position-offset` shift, and one
   stricter travel check for slides (FEEDL plus the wire's travel must
-  stay inside the proven ceiling; slide 4 keeps 175 to 307 steps on every
+  stay inside the proven ceiling; slide 4 keeps 175 to 311 steps on every
   profile at the 1.5 mm default overscan). Nothing calls it yet: no
   option selects the slide holder, nothing sent to the scanner changes.
   `tests/test_slides.py` (5 tests) pins the numbers, the per-profile

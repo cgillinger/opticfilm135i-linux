@@ -168,9 +168,12 @@ def test_slide_position_offset_moves_every_feedl_and_is_travel_checked():
                 assert holder.slide_travel_end(g1.feedl, w1, dpi) \
                     <= holder.FEEDL_CEILING, (dpi, n, off)
         assert _slide_geom(1, dpi, offset_mm=0.0) == _slide_geom(1, dpi)
-        # Slide 4 sits 175..307 steps (0.62..1.08 mm) inside the ceiling
-        # on every profile, so +1.5 mm must be refused by the travel check.
+        # Slide 4 sits 175..311 steps (0.62..1.10 mm) inside the ceiling
+        # on every profile, so +1.5 mm must be refused by the travel check;
+        # at 600 (259 steps) and 1200 (175) dpi +1.0 mm is refused too.
         _raises(safety.FeedlOutOfRangeError, _slide_geom, 4, dpi, offset_mm=1.5)
+        if dpi in (600, 1200):
+            _raises(safety.FeedlOutOfRangeError, _slide_geom, 4, dpi, offset_mm=1.0)
         _slide_geom(3, dpi, offset_mm=1.5)
         for bad in (holder.POSITION_OFFSET_MAX_MM + 0.1, float("nan")):
             _raises(ValueError, _slide_geom, 1, dpi, offset_mm=bad)
@@ -390,9 +393,9 @@ class _FakeSlideScanner:
 def test_cli_slide_scan_writes_the_overscan_pair_and_a_slide_sidecar():
     """One opening end to end off hardware: scan(slide=True) with the
     slide default overscan and the unit offset, the full overscan frame(s)
-    written, no aperture product (the strip crossbar check does not apply
-    to a slide holder), sidecar coverage.applicable False, holder recorded,
-    exit 0."""
+    written, holder recorded. This fixture's lit run (half the window) is
+    no mount aperture, so the slide crop (tests/test_slide_crop.py) does
+    not verify it: no product, coverage NOT verified, exit 4."""
     import json
     import os
     import tempfile
@@ -410,7 +413,7 @@ def test_cli_slide_scan_writes_the_overscan_pair_and_a_slide_sidecar():
                                       monkey_session=False)
         finally:
             cli._run_writing_session = saved
-        assert rc == 0, (rc, err)
+        assert rc == 4, (rc, err)
         scans = [k for name, k in fake.calls if name == "scan"]
         assert scans == [dict(frame=3, ir=True, dpi=600,
                               overscan_mm=holder.SLIDE_OVERSCAN_MM, slide=True)], scans
@@ -419,10 +422,11 @@ def test_cli_slide_scan_writes_the_overscan_pair_and_a_slide_sidecar():
         assert os.path.exists(stem + "-ir.overscan.tiff")
         assert not os.path.exists(stem + ".tiff") and not os.path.exists(stem + "-ir.tiff")
         side = json.loads(open(diag.sidecar_path(stem + ".tiff")).read())
-        assert side["coverage"]["applicable"] is False, side["coverage"]
+        assert side["coverage"]["verified"] is False, side["coverage"]
+        assert side["coverage"]["method"] == "slide-ir", side["coverage"]
         assert side["cli"]["holder"] == "slide" and side["holder"] == "slide"
         assert side["cli"]["position_offset"] == -0.5
-        assert "not checked" in out, out
+        assert "NOT verified" in err, err
     print("test_cli_slide_scan_writes_the_overscan_pair_and_a_slide_sidecar OK")
 
 
