@@ -1429,6 +1429,35 @@ def frame_geom_entries(key: str, mod, dpi: int) -> list[dict]:
     return out
 
 
+def slide_geom_entries(key: str, mod, dpi: int) -> list[dict]:
+    """The slide-holder geometry for openings 1-4 of one DUAL profile, from
+    ``holder.slide_dual_geometry`` (the function the CLI's ``--holder slide``
+    programs from) -- the same single-source bridge as ``frame_geom_entries``:
+    Python computes, the generator freezes, a stale table is caught by
+    ``--check``. Same six fields as ``frame_geom_entries`` (same meaning),
+    so the C++ reads both tables through one ``FrameGeom``.
+
+    ``slide_dual_geometry`` raises before returning if an opening's FEEDL,
+    model end or its stricter FEEDL + wire-travel bound leaves
+    FEEDL_CEILING, so a profile whose slide 4 is refused cannot be emitted.
+    Slides exist only on the dual path: a plain profile has no entries.
+    """
+    if not hasattr(mod, "LINES_PER_CHUNK"):
+        raise ValueError(f"{key}: no slide geometry on a plain (non-dual) profile")
+    crop = _image.align_shift(dpi)
+    out: list[dict] = []
+    for slide in range(1, holder.SLIDE.frames + 1):
+        geom, wire = holder.slide_dual_geometry(
+            slide, dpi=dpi, lines_per_chunk=mod.LINES_PER_CHUNK,
+            colour_crop_lines=crop, default_wire_lines=mod.DEFAULT_LINES)
+        out.append(dict(
+            frame=slide, feedl=geom.feedl, line_register=wire,
+            read_lines=geom.chunks * mod.LINES_PER_CHUNK,
+            delivered_lines=geom.delivered_lines, chunks=geom.chunks,
+            end_hwdpi=round(geom.end_hwdpi)))
+    return out
+
+
 def emit() -> tuple[str, str]:
     """Return (header, source) for the generated tables."""
     h: list[str] = []
@@ -1660,6 +1689,9 @@ def emit() -> tuple[str, str]:
     h.append("                                  not used at runtime, use frames[] */")
     h.append("    const FrameGeom* frames;   /* production geometry, frames 1-6 (index")
     h.append("                                  frame-1); the runtime positioning/window authority */")
+    h.append("    const FrameGeom* slides;   /* slide-holder geometry, openings 1-4 (index")
+    h.append("                                  opening-1), same fields as frames[]; nullptr")
+    h.append("                                  on a profile with no dual slide path (plain3600) */")
     h.append("    const std::uint8_t* slope_position;")
     h.append("    std::size_t slope_position_len;")
     h.append("    const std::uint8_t* slope_scan;")
@@ -1739,6 +1771,21 @@ def emit() -> tuple[str, str]:
                      f"{fe['chunks']}, {fe['end_hwdpi']}}},"
                      f"   /* frame {fe['frame']} */")
         c.append("};\n")
+
+        if hasattr(mod, "LINES_PER_CHUNK"):
+            slides_name = f"{key.upper()}_SLIDES"
+            c.append(f"/* {key}: slide-holder geometry, openings 1-4 (from the driver's "
+                     f"holder.slide_dual_geometry via gen_sane_tables.slide_geom_entries, "
+                     f"Python is authoritative, do not hand-edit). */")
+            c.append(f"static const FrameGeom {slides_name}[4] = {{")
+            for se in slide_geom_entries(key, mod, dpi):
+                c.append(f"    {{{se['feedl']}, {se['line_register']}, "
+                         f"{se['read_lines']}, {se['delivered_lines']}, "
+                         f"{se['chunks']}, {se['end_hwdpi']}}},"
+                         f"   /* opening {se['frame']} */")
+            c.append("};\n")
+        else:
+            slides_name = "nullptr"
 
         phase_entries: list[str] = []
         for phase in mod.PHASES:
@@ -1922,7 +1969,7 @@ def emit() -> tuple[str, str]:
             f'{getattr(mod, "SHADING_UPLOAD_LEN", 0)}, '
             f'{mod.DEFAULT_LINES}, {mod.IMAGE_CHUNK_COUNT}, '
             f'{mod.FEEDL_FRAME1}, {mod.FEEDL_PITCH}, '
-            f'{frames_name}, '
+            f'{frames_name}, {slides_name}, '
             f'{pos}, {pos}_LEN, {scan}, {scan}_LEN, '
             f'{key.upper()}_PHASES, {len(phase_entries)}, '
             f'{progs_name}, {len(program_entries)}}},   /* {doc} */')

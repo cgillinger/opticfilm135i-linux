@@ -24,7 +24,12 @@ used, exactly, for every profile and every frame).
      lines and chunks are always positive; the proven invariant
      (delivered + 2*align_shift == read_lines, or read_lines/2 for dual)
      holds for every entry.
-  3. test_frame_bounds_enforced_before_any_write -- frame 0 and frame 7
+  3. test_slide_geom_matches_generator / test_slide_geom_safety_bounds --
+     the same two checks for the slide-holder tables (<KEY>_SLIDES[4],
+     openings 1-4, dual profiles only; plain3600 has none), against
+     slide_geom_entries() / holder.slide_dual_geometry(), plus the slide
+     path's own stricter FEEDL + wire-travel bound and the 62.6 mm pitch.
+  4. test_frame_bounds_enforced_before_any_write -- frame 0 and frame 7
      are refused, before any transfer: the C++ probe (feedl_for_frame()
      and frame_geometry(), both via gl126_ops_probe.cpp) and the Python
      authority (holder.check_frame()) agree.
@@ -67,6 +72,10 @@ FIELDS = ("feedl", "line_register", "read_lines", "delivered_lines", "chunks", "
 
 _FRAMES_ARRAY_RE = re.compile(
     r"static const FrameGeom (\w+)_FRAMES\[6\] = \{(.*?)\};", re.DOTALL)
+_SLIDES_ARRAY_RE = re.compile(
+    r"static const FrameGeom (\w+)_SLIDES\[4\] = \{(.*?)\};", re.DOTALL)
+_PROFILE_ROW_RE = re.compile(
+    r'\{"(\w+)", \d+(?:, \d+)*, (\w+_FRAMES), (\w+)(?:,|\})')
 _ENTRY_RE = re.compile(
     r"\{(\d+),\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\}")
 
@@ -114,6 +123,78 @@ def test_frame_geom_matches_generator():
                         "delivered_lines": 5335, "chunks": 233, "end_hwdpi": 11897}, plain[0]
     print(f"test_frame_geom_matches_generator OK ({checked} profile x frame entries, "
           f"{len(ALL_PROFILES)} profiles)")
+
+
+def _parse_generated_slides() -> dict[str, list[dict[str, int]]]:
+    """Every `<KEY>_SLIDES[4]` array in sane/gl126_tables.cpp, keyed by
+    the lowercased profile name, each a list of 4 dicts (opening 1..4)."""
+    src = GL126_TABLES_CPP.read_text()
+    out: dict[str, list[dict[str, int]]] = {}
+    for m in _SLIDES_ARRAY_RE.finditer(src):
+        key = m.group(1).lower()
+        entries = _ENTRY_RE.findall(m.group(2))
+        assert len(entries) == 4, (key, len(entries))
+        out[key] = [dict(zip(FIELDS, (int(v) for v in vals))) for vals in entries]
+    return out
+
+
+def test_slide_geom_matches_generator():
+    """Each dual profile's frozen SLIDES table equals slide_geom_entries()
+    exactly; plain3600 has no table; the Profile row points at it (and at
+    nullptr for plain3600), so a table can be neither stale nor orphaned."""
+    parsed = _parse_generated_slides()
+    assert set(parsed) == {name for name, _m, _d in ALL_PROFILES if name != "plain3600"}, \
+        sorted(parsed)
+    checked = 0
+    for name, mod, dpi in ALL_PROFILES:
+        if name == "plain3600":
+            continue
+        want = gen.slide_geom_entries(name, mod, dpi)
+        assert len(want) == holder.SLIDE.frames == 4
+        for w, got in zip(want, parsed[name]):
+            for field in FIELDS:
+                assert got[field] == w[field], (
+                    f"{name} opening {w['frame']} {field}: table has "
+                    f"{got[field]}, slide_geom_entries() has {w[field]}")
+            checked += 1
+    src = GL126_TABLES_CPP.read_text()
+    rows = {m.group(1): m.group(3) for m in _PROFILE_ROW_RE.finditer(src)}
+    assert set(rows) == {name for name, _m, _d in ALL_PROFILES}, sorted(rows)
+    for name, ref in rows.items():
+        assert ref == ("nullptr" if name == "plain3600" else f"{name.upper()}_SLIDES"), \
+            (name, ref)
+    print(f"test_slide_geom_matches_generator OK ({checked} profile x opening entries, "
+          f"Profile rows wired)")
+
+
+def test_slide_geom_safety_bounds():
+    """Every frozen slide entry: feedl, end_hwdpi and the slide path's
+    stricter FEEDL + wire-travel end within FEEDL_CEILING (the bound that
+    makes opening 4 the binding one), wire parity, positivity, the
+    delivered + 2*align_shift == read_lines/2 invariant, and consecutive
+    openings one slide pitch (62.6 mm) apart (+-1 for rounding)."""
+    parsed = _parse_generated_slides()
+    checked = 0
+    for name, _mod, dpi in ALL_PROFILES:
+        if name == "plain3600":
+            continue
+        crop = _image.align_shift(dpi)
+        rows = parsed[name]
+        for opening, e in enumerate(rows, start=1):
+            assert e["feedl"] <= holder.FEEDL_CEILING, (name, opening, e)
+            assert e["end_hwdpi"] <= holder.FEEDL_CEILING, (name, opening, e)
+            assert holder.slide_travel_end(
+                e["feedl"], e["line_register"], dpi) <= holder.FEEDL_CEILING, (name, opening, e)
+            assert e["line_register"] % 2 == 0, (name, opening, e)
+            assert e["delivered_lines"] + 2 * crop == e["read_lines"] // 2, (name, opening, e)
+            assert e["delivered_lines"] > 0 and e["chunks"] > 0, (name, opening, e)
+            checked += 1
+        for a, b in zip(rows, rows[1:]):
+            assert abs((b["feedl"] - a["feedl"]) - holder.SLIDE_PITCH_HWDPI) <= 1.5, \
+                (name, a["feedl"], b["feedl"])
+    assert checked == 4 * (len(ALL_PROFILES) - 1), checked
+    print(f"test_slide_geom_safety_bounds OK ({checked} entries: ceiling incl. slide "
+          f"travel, parity, positivity, invariant, pitch)")
 
 
 def test_frame_geom_safety_bounds():
@@ -357,6 +438,8 @@ def main() -> int:
     tests = [
         test_frame_geom_matches_generator,
         test_frame_geom_safety_bounds,
+        test_slide_geom_matches_generator,
+        test_slide_geom_safety_bounds,
         test_frame_bounds_enforced_before_any_write,
         test_offset_calibration_preflight_precedes_any_io,
         test_load_document_is_pure_and_never_moves_the_magazine,

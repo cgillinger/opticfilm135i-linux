@@ -3054,6 +3054,14 @@ static const FrameGeom IR3600_FRAMES[6] = {
     {60275, 10640, 10640, 5296, 665, 65556},   /* frame 6 */
 };
 
+/* ir3600: slide-holder geometry, openings 1-4 (from the driver's holder.slide_dual_geometry via gen_sane_tables.slide_geom_entries, Python is authoritative, do not hand-edit). */
+static const FrameGeom IR3600_SLIDES[4] = {
+    {6255, 11696, 11696, 5824, 731, 12592},   /* opening 1 */
+    {24000, 11696, 11696, 5824, 731, 30337},   /* opening 2 */
+    {41745, 11696, 11696, 5824, 731, 48082},   /* opening 3 */
+    {59490, 11696, 11696, 5824, 731, 65827},   /* opening 4 */
+};
+
 /* ir3600 / prep: 14 register writes from 58 captured ops (40 reads not reproduced). */
 static const RegPair IR3600_PREP_REGS[14] = {
     {0x32, 0x95}, {0x36, 0xfc}, {0x3a, 0x00}, {0x36, 0xfc},
@@ -6720,6 +6728,14 @@ static const FrameGeom DPI600_FRAMES[6] = {
     {60256, 1862, 1862, 927, 19, 66088},   /* frame 6 */
 };
 
+/* dpi600: slide-holder geometry, openings 1-4 (from the driver's holder.slide_dual_geometry via gen_sane_tables.slide_geom_entries, Python is authoritative, do not hand-edit). */
+static const FrameGeom DPI600_SLIDES[4] = {
+    {6236, 1960, 1960, 976, 20, 12656},   /* opening 1 */
+    {23981, 1960, 1960, 976, 20, 30401},   /* opening 2 */
+    {41726, 1960, 1960, 976, 20, 48146},   /* opening 3 */
+    {59471, 1960, 1960, 976, 20, 65891},   /* opening 4 */
+};
+
 /* dpi600 / prep: 14 register writes from 57 captured ops (39 reads not reproduced). */
 static const RegPair DPI600_PREP_REGS[14] = {
     {0x32, 0x95}, {0x36, 0xfc}, {0x3a, 0x00}, {0x36, 0xfc},
@@ -9104,6 +9120,14 @@ static const FrameGeom DPI1200_FRAMES[6] = {
     {38845, 3552, 3552, 1768, 74, 44125},   /* frame 4 */
     {49577, 3552, 3552, 1768, 74, 54857},   /* frame 5 */
     {60292, 3552, 3552, 1768, 74, 65572},   /* frame 6 */
+};
+
+/* dpi1200: slide-holder geometry, openings 1-4 (from the driver's holder.slide_dual_geometry via gen_sane_tables.slide_geom_entries, Python is authoritative, do not hand-edit). */
+static const FrameGeom DPI1200_SLIDES[4] = {
+    {6272, 3936, 3936, 1960, 82, 12704},   /* opening 1 */
+    {24017, 3936, 3936, 1960, 82, 30449},   /* opening 2 */
+    {41762, 3936, 3936, 1960, 82, 48194},   /* opening 3 */
+    {59507, 3936, 3936, 1960, 82, 65939},   /* opening 4 */
 };
 
 /* dpi1200 / prep: 3 register writes from 17 captured ops (10 reads not reproduced). */
@@ -12004,6 +12028,14 @@ static const FrameGeom DPI2400_FRAMES[6] = {
     {38833, 7088, 7088, 3528, 443, 44101},   /* frame 4 */
     {49565, 7088, 7088, 3528, 443, 54833},   /* frame 5 */
     {60280, 7104, 7104, 3536, 444, 65572},   /* frame 6 */
+};
+
+/* dpi2400: slide-holder geometry, openings 1-4 (from the driver's holder.slide_dual_geometry via gen_sane_tables.slide_geom_entries, Python is authoritative, do not hand-edit). */
+static const FrameGeom DPI2400_SLIDES[4] = {
+    {6260, 7792, 7792, 3880, 487, 12584},   /* opening 1 */
+    {24005, 7792, 7792, 3880, 487, 30329},   /* opening 2 */
+    {41750, 7792, 7792, 3880, 487, 48074},   /* opening 3 */
+    {59495, 7792, 7792, 3880, 487, 65819},   /* opening 4 */
 };
 
 /* dpi2400 / prep: 14 register writes from 58 captured ops (40 reads not reproduced). */
@@ -15836,6 +15868,14 @@ static const FrameGeom DPI7200_FRAMES[6] = {
     {38829, 21248, 21248, 10576, 2656, 44093},   /* frame 4 */
     {49561, 21248, 21248, 10576, 2656, 54825},   /* frame 5 */
     {60276, 21280, 21280, 10592, 2660, 65556},   /* frame 6 */
+};
+
+/* dpi7200: slide-holder geometry, openings 1-4 (from the driver's holder.slide_dual_geometry via gen_sane_tables.slide_geom_entries, Python is authoritative, do not hand-edit). */
+static const FrameGeom DPI7200_SLIDES[4] = {
+    {6256, 23376, 23376, 11640, 2922, 12584},   /* opening 1 */
+    {24001, 23376, 23376, 11640, 2922, 30329},   /* opening 2 */
+    {41746, 23376, 23376, 11640, 2922, 48074},   /* opening 3 */
+    {59491, 23376, 23376, 11640, 2922, 65819},   /* opening 4 */
 };
 
 /* dpi7200 / prep: 3 register writes from 17 captured ops (10 reads not reproduced). */
@@ -24979,12 +25019,12 @@ const OpProgram MAGAZINE_PROGRAMS[5] = {
 };
 
 const Profile PROFILES[6] = {
-    {"plain3600", 3600, 3762, 3762, 519156, 0, 0, 0, 5137, 223, 6743, 10760, PLAIN3600_FRAMES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_PLAIN3600_SCAN, SLOPE_PLAIN3600_SCAN_LEN, PLAIN3600_PHASES, 13, PLAIN3600_PROGRAMS, 14},   /* 3600 dpi, visible only (plain scan) */
-    {"ir3600", 3600, 5184, 5184, 497664, 16, 256, 63192, 10622, 659, 6746, 10760, IR3600_FRAMES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_IR3600_SCAN, SLOPE_IR3600_SCAN_LEN, IR3600_PHASES, 13, IR3600_PROGRAMS, 14},   /* 3600 dpi, dual-light (IR + visible) */
-    {"dpi600", 600, 876, 876, 515088, 98, 256, 10672, 1764, 18, 6746, 10760, DPI600_FRAMES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI600_SCAN, SLOPE_DPI600_SCAN_LEN, DPI600_PHASES, 13, DPI600_PROGRAMS, 14},   /* 600 dpi, dual-light */
-    {"dpi1200", 1200, 1752, 1752, 504576, 48, 256, 21352, 3552, 74, 6746, 10760, DPI1200_FRAMES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI1200_SCAN, SLOPE_DPI1200_SCAN_LEN, DPI1200_PHASES, 13, DPI1200_PROGRAMS, 14},   /* 1200 dpi, dual-light */
-    {"dpi2400", 2400, 5256, 3504, 504576, 16, 256, 64072, 7088, 443, 6746, 10760, DPI2400_FRAMES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI2400_SCAN, SLOPE_DPI2400_SCAN_LEN, DPI2400_PHASES, 13, DPI2400_PROGRAMS, 14},   /* 2400 dpi, dual-light */
-    {"dpi7200", 7200, 10512, 10512, 504576, 8, 256, 128144, 21248, 2656, 6746, 10760, DPI7200_FRAMES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI7200_SCAN, SLOPE_DPI7200_SCAN_LEN, DPI7200_PHASES, 13, DPI7200_PROGRAMS, 14},   /* 7200 dpi, dual-light */
+    {"plain3600", 3600, 3762, 3762, 519156, 0, 0, 0, 5137, 223, 6743, 10760, PLAIN3600_FRAMES, nullptr, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_PLAIN3600_SCAN, SLOPE_PLAIN3600_SCAN_LEN, PLAIN3600_PHASES, 13, PLAIN3600_PROGRAMS, 14},   /* 3600 dpi, visible only (plain scan) */
+    {"ir3600", 3600, 5184, 5184, 497664, 16, 256, 63192, 10622, 659, 6746, 10760, IR3600_FRAMES, IR3600_SLIDES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_IR3600_SCAN, SLOPE_IR3600_SCAN_LEN, IR3600_PHASES, 13, IR3600_PROGRAMS, 14},   /* 3600 dpi, dual-light (IR + visible) */
+    {"dpi600", 600, 876, 876, 515088, 98, 256, 10672, 1764, 18, 6746, 10760, DPI600_FRAMES, DPI600_SLIDES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI600_SCAN, SLOPE_DPI600_SCAN_LEN, DPI600_PHASES, 13, DPI600_PROGRAMS, 14},   /* 600 dpi, dual-light */
+    {"dpi1200", 1200, 1752, 1752, 504576, 48, 256, 21352, 3552, 74, 6746, 10760, DPI1200_FRAMES, DPI1200_SLIDES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI1200_SCAN, SLOPE_DPI1200_SCAN_LEN, DPI1200_PHASES, 13, DPI1200_PROGRAMS, 14},   /* 1200 dpi, dual-light */
+    {"dpi2400", 2400, 5256, 3504, 504576, 16, 256, 64072, 7088, 443, 6746, 10760, DPI2400_FRAMES, DPI2400_SLIDES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI2400_SCAN, SLOPE_DPI2400_SCAN_LEN, DPI2400_PHASES, 13, DPI2400_PROGRAMS, 14},   /* 2400 dpi, dual-light */
+    {"dpi7200", 7200, 10512, 10512, 504576, 8, 256, 128144, 21248, 2656, 6746, 10760, DPI7200_FRAMES, DPI7200_SLIDES, SLOPE_PLAIN3600_POSITION, SLOPE_PLAIN3600_POSITION_LEN, SLOPE_DPI7200_SCAN, SLOPE_DPI7200_SCAN_LEN, DPI7200_PHASES, 13, DPI7200_PROGRAMS, 14},   /* 7200 dpi, dual-light */
 };
 
 } // namespace gl126
