@@ -14,6 +14,32 @@ one exists; "offline" means implemented and tested without the scanner.
   3600 and 3600 dpi infrared (test log, external reports of 2026-11-07).
   The merge request's description now says two units. Under review.
 
+- **`--slide-positive`: a positive slide written as a positive (issue
+  #70 step 3, bearyjd). Run on one real slide.** The switch changes the
+  ORIENTATION only: slides already come out uninverted. With `--holder
+  slide`, the
+  products and overscan frames (visible and IR alike) get the vendor
+  orientation the `--positive` path uses (horizontal mirror +
+  rot90), and **no inversion**: the values are the raw linear scan,
+  written without the sRGB ICC tag (the tag describes a gamma-encoded
+  image; this one is linear, so it looks dark in an ordinary viewer). The 2400 dpi per-axis resolution follows
+  the turn. `--positive` (the negative's density inversion) stays
+  refused with `--holder slide`, as the contributor proposed in #70;
+  its message now points at `--slide-positive`. Without the switch a
+  slide is written raw, as before, so a mounted negative is untouched.
+  Strip output with and without `--positive` is unchanged
+  (`tests/test_slide_positive.py`, 7 tests: no `to_positive` call on
+  the slide path, the turned values equal the raw ones, no ICC, the
+  swapped 2400 dpi resolution tags on all four files, strip
+  orientation unchanged, the refusals before the device opens, the
+  sidecar's `cli.slide_positive`). Nothing sent to the scanner changes.
+  On hardware (opening 1, 3600 dpi dual, cardboard mount): the crop
+  verified (margins lead 3.593 mm, trail 3.178 mm); the positive crop
+  equals the plain crop of the same opening rotated 270 degrees and
+  mirrored (correlation +1.000 on a 96x96 block-mean comparison), it is
+  not inverted (mean 6484 against 6461 of 65535), and the slide is
+  upright and not mirrored by the owner's eye. One slide, one mount.
+
 - **Slide crop keyed on the IR channel (issue #70 step 2, bearyjd).
   Synthetic fixtures, plus one real mount (opening 1, verified).** `scan --holder
   slide` now checks each opening's coverage and crops, with the strips'

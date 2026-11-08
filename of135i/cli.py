@@ -342,6 +342,13 @@ def _axis_dpi(args, positive: bool):
     return axis_dpi(args.dpi, (3 if positive else 0) * 90 + (getattr(args, "rotate", 0) or 0))
 
 
+def _turned(args) -> bool:
+    """Whether the output gets the vendor orientation (mirror + rot90(,3)):
+    --positive on strips, --slide-positive on slides (without the
+    inversion). Pass to _axis_dpi as its `positive`."""
+    return bool(args.positive or getattr(args, "slide_positive", False))
+
+
 def _write_image(arr, out: str, positive: bool = False, dpi=None) -> None:
     """Write `arr`; a --positive TIFF gets an sRGB ICC profile embedded
     (the positive rendering targets the vendor app's sRGB output), a
@@ -437,6 +444,10 @@ def _validate_slide_args(args: argparse.Namespace, dual: bool) -> "str | None":
     """--holder slide: a dual-light profile, 35 mm, no --positive. Checked
     before any device I/O, like the neighbouring --dpi/--overscan checks."""
     if not _is_slide(args):
+        if getattr(args, "slide_positive", False):
+            return ("--slide-positive applies to --holder slide only (strip "
+                    "positives are an open question, issue #70). Nothing was "
+                    "sent to the scanner")
         return None
     if not dual:
         return ("--holder slide needs a dual-light profile: add --ir (or pick "
@@ -450,8 +461,10 @@ def _validate_slide_args(args: argparse.Namespace, dual: bool) -> "str | None":
         return ("--positive is refused with --holder slide: it inverts a "
                 "negative (density inversion), and a mounted slide is "
                 "normally positive film, which would come out inverted. "
-                "Without --positive the raw scan is written, not inverted. "
-                "Nothing was sent to the scanner")
+                "Without it the raw scan is written, not inverted; "
+                "--slide-positive writes a positive slide as a positive (the "
+                "vendor orientation, no inversion). Nothing was sent to the "
+                "scanner")
     return None
 
 
@@ -642,10 +655,13 @@ def _orient_pair(args: argparse.Namespace, vis, irr):
     and by the --film 110 hook, which needs the SAME transform the
     aperture product gets, on each individual 110 image crop."""
     import numpy as _np
-    if args.positive:
+    if _turned(args):
         vis = _np.ascontiguousarray(_np.rot90(vis, 3)[:, ::-1])
         if irr is not None:
             irr = _np.ascontiguousarray(_np.rot90(irr, 3)[:, ::-1])
+    if args.positive:
+        # The negative's density inversion. Never for --slide-positive: a
+        # positive slide is written as the positive it already is.
         vis = image.to_positive(vis)
     if args.rotate:
         vis = _np.ascontiguousarray(_np.rot90(vis, k=args.rotate // 90))
@@ -1578,13 +1594,13 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
         # from digitize, where the IR is only --rotate'd (positive=False is
         # correct there).
         image.write_tiff16(_np.stack([arr, arr, arr], axis=-1), path,
-                           dpi=_axis_dpi(args, args.positive))
+                           dpi=_axis_dpi(args, _turned(args)))
 
     # Preserve the full overscan frame(s) regardless of the verdict
     # (raw-data principle), oriented like the products.
     raw_out = _overscan_raw_path(out)
     ov_vis, ov_ir = _orient_pair(args, visible, ir if write_ir else None)
-    _write_image(ov_vis, raw_out, positive=args.positive, dpi=_axis_dpi(args, args.positive))
+    _write_image(ov_vis, raw_out, positive=args.positive, dpi=_axis_dpi(args, _turned(args)))
     print(f"wrote {raw_out} ({ov_vis.shape[1]}x{ov_vis.shape[0]}, full "
           f"overscan frame, visible)")
     if write_ir:
@@ -1612,7 +1628,7 @@ def _finish_dual_scan(args: argparse.Namespace, raw: bytes, width: int,
     _film110_hook(args, film110_state, frame, out, vis_c, ir_c)
     vis_c, ir_c = _orient_pair(args, vis_c, ir_c)
 
-    _write_image(vis_c, out, positive=args.positive, dpi=_axis_dpi(args, args.positive))
+    _write_image(vis_c, out, positive=args.positive, dpi=_axis_dpi(args, _turned(args)))
     print(f"wrote {out} ({vis_c.shape[1]}x{vis_c.shape[0]}, 16-bit RGB, "
           f"visible, aperture-registered)")
 
@@ -1676,6 +1692,7 @@ def _write_diag_sidecar(args: argparse.Namespace, scanner: Scanner, out: str,
     }
     if _is_slide(args):
         sidecar["cli"]["holder"] = "slide"
+        sidecar["cli"]["slide_positive"] = bool(getattr(args, "slide_positive", False))
     # Per-pixel calibration data (device.Scanner.last_cal_data): only a
     # fresh calibration has any, and --no-cal-data skips it. Decided and
     # written BEFORE the sidecar so the sidecar records the outcome.
@@ -3843,7 +3860,14 @@ def build_parser() -> argparse.ArgumentParser:
              "the full overscan frame(s) and crops to the mount's aperture "
              "found in the IR channel when coverage verifies (exit 4 "
              "otherwise, as for strips). Run on one unit so far (test log, "
-             "Tests 121-122); experimental")
+             "Tests 121-123); experimental")
+    p_scan.add_argument("--slide-positive", action="store_true",
+        help="--holder slide only: write a positive (reversal) slide as a "
+             "positive -- the vendor orientation --positive uses (mirror + "
+             "rotate), applied to the visible and IR images alike, and NO "
+             "inversion: the values are the raw linear scan, no sRGB tag. "
+             "Negatives and strips are untouched (--positive is refused "
+             "with --holder slide)")
     p_scan.add_argument("--eject", action="store_true",
         help="eject the film magazine after the last frame")
     p_scan.add_argument("--dpi", type=int, default=3600, choices=SUPPORTED_DPIS,

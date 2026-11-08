@@ -280,11 +280,13 @@ know about:
   and keeps the full overscan frame(s), and crops to the mount's
   aperture found in the IR channel when coverage verifies (exit 4
   otherwise, as for strips; verified on opening 1 of one unit's
-  cardboard mounts, the other openings not re-run). The
-  positioning has been run on one unit, with cardboard mounts of several
-  brands, and is still experimental. Positive output is still missing,
-  and the SANE backend has no slide path. It is a separate milestone
-  (C2 in the roadmap).
+  cardboard mounts, the other openings not re-run).
+  `--slide-positive` turns the output to the vendor orientation
+  (orientation only: slides are never inverted; linear values, no sRGB
+  tag); checked on one slide, one mount. The positioning has been run on one unit,
+  with cardboard mounts of several brands, and is still experimental.
+  The SANE backend has no slide path. It is a separate milestone (C2 in
+  the roadmap).
   **110 (Pocket Instamatic) film in the strip holder — supported, two
   strips from two cameras (n = 2).** A 16 mm 110 strip lies in the
   35 mm holder against one rail; its 13 x 17 mm images fit inside the

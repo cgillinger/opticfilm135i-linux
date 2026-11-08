@@ -341,7 +341,11 @@ the mount's aperture found in the IR channel, 33.8-37 mm (the measured
 lit runs are 34.16-34.45 mm; the earlier 34.5 mm floor refused three of
 four openings), cropped with a 1.5 mm pad per side (apertures up to
 35.3 mm kept whole), the strips' verified / NOT verified contract with
-the overscan kept. C2 is
+the overscan kept. Step 3, positive output,
+is written, offline-tested and run on one real slide (opening 1: upright
+and not mirrored, not inverted; one slide, one mount): `--slide-positive`
+turns the slide to the vendor orientation without inverting it
+(`--positive`, the negative inversion, stays refused with slides). C2 is
 done when that list is verified on a mounted slide. **Brought forward
 2026-09-18 (owner's decision, slides are in scope for the driver): in
 progress.**

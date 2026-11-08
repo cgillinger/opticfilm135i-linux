@@ -9051,3 +9051,25 @@ cut. I judged the slide complete. Exit 0, no poll timeouts, FEEDL 6255.
 
 **Open.** Only opening 1 was re-run with the new floor; openings 2 to 4
 were not. One load of cardboard mounts only.
+
+## Test 123 — `--slide-positive` (issue #70 step 3, bearyjd) on a real mounted slide
+
+Branch `upstream-pr-slides-positive`, head `58431d7`, 2026-11-07, the same
+unit and cardboard mounts as the entries above. `scan --holder slide
+--frame 1 --dpi 3600 --ir --slide-positive`, floor 33.8 mm. Exit 0, no
+poll timeouts, FEEDL 6255.
+
+**Crop.** Coverage VERIFIED, margins lead 3.593 mm, trail 3.178 mm. The
+overscan pair is 5824 x 5184 (turned) and the cropped pair is 5291 x 5184.
+
+**Orientation.** A block-mean comparison (96 x 96) against the plain crop
+of the same opening shows that the positive crop equals the plain crop
+rotated 270 degrees and mirrored, correlation +1.000 (the other seven
+orientations 0.20 or lower). It is not inverted: mean level 6484 against
+6461 of 65535. The file is linear with no sRGB tag, so it looks dark in an
+ordinary viewer. Looking at the picture, the slide is upright and not
+mirrored.
+
+**Open.** One slide, one opening, one mount: I checked that it reads the
+right way round on this slide only, not on other slides or other mounts.
+The file is linear, not a display rendering.
