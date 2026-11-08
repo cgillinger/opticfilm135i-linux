@@ -817,6 +817,9 @@ describes the architecture; [`docs/cal-analysis.md`](docs/cal-analysis.md)
 the calibration formula reverse-engineering; [`docs/replay-analysis.md`](docs/replay-analysis.md)
 classifies the replayed command stream and sets the order for turning
 it into semantic register sets and explicit waits.
+[`docs/capture-guide.md`](docs/capture-guide.md) describes how such a
+capture is made, for a unit or model that behaves differently (at your
+own risk; the manufacturer's software drives the scanner during it).
 
 The driver executes the captured command stream as data tables
 (`of135i/tables.py`, regenerable via `tools/gen_tables.py`) with live
