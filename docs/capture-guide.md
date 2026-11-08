@@ -68,7 +68,7 @@ development unit intact; they are not a guarantee.
 5. **After the capture, power-cycle the scanner** before any Linux-side
    use. The manufacturer's software leaves the mechanism in its own idle
    state; the Linux driver expects the state a power cycle gives (see
-   `README.md`, "Power-cycling"). The driver refuses to start from a
+   `docs/hardware-safety.md`). The driver refuses to start from a
    state it does not recognise, and that refusal is the right outcome.
 6. **Close the application completely** before detaching the scanner
    from the virtual machine. QuickScan keeps running in the background
