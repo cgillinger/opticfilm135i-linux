@@ -12,6 +12,12 @@ one exists; "offline" means implemented and tested without the scanner.
   opening refused by the 37 mm bound as designed, 7200 dpi opening 1
   verified, `--overscan 0.5` verified on four openings (default kept).
   His mounts sat branding side up and read the right way round.
+- **Slide insertion rule confirmed on both units (docs only).** The
+  photographer of the owner's slide confirmed that the Test 124 preview
+  is the right way round, and the contributor's mounts sat branding side
+  up with pictures reading correctly, so README, ROADMAP and the test
+  log now say "the branded or shiny side (the front) up toward the
+  holder's open face" (issue #70).
 
 ## v0.2.12 — Shiny Side Slides — 2026-11-08
 
