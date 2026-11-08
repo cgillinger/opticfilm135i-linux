@@ -6,6 +6,14 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **SANE submission revision v9 pushed to merge request !1032 (2026-11-08).**
+  v8 plus the calibration stop gate (co-authored by bearyjd) and a
+  comments-only commit, nothing rebased, `94628f3f2..18bea9b32`; fork
+  pipeline 8/8 green. Pushed after v9 had run on the owner's unit (Test
+  118) and on bearyjd's unit through the whole test table, 600 dpi, plain
+  3600 and 3600 dpi infrared (test log, external reports of 2026-11-07).
+  The merge request's description now says two units. Under review.
+
 - **Slide crop keyed on the IR channel (issue #70 step 2, bearyjd).
   Synthetic fixtures, plus one real mount (opening 1, verified).** `scan --holder
   slide` now checks each opening's coverage and crops, with the strips'
@@ -113,12 +121,17 @@ one exists; "offline" means implemented and tested without the scanner.
   sidecar's host block (`driver_codename`), so a report from another
   unit names the release it ran. `tests/test_release_check.py` holds the
   CHANGELOG heading, the version line and the sidecar to it.
-- **External reports from the second unit (test log, 2026-11-06).** The
-  cross-unit check, gated: 4 of 4 completed, exit 0, coverage verified at
-  frame 1 with the slide holder. SANE v9's magazine load, twice: one miss
-  with the known "transport ran, cassette not taken" signature, one load;
+- **External reports from the second unit (test log, 2026-11-06 and
+  2026-11-07).** The cross-unit check, gated: 4 of 4 completed, exit 0,
+  coverage verified at frame 1 with the slide holder. SANE v9 through its
+  test table on that unit: load (7 of 10 cold loads over all runs, the
+  misses with the known "transport ran, cassette not taken" signature;
   from the reg 0x32 write to the end of the load the backend's transfers
-  match the Python driver's on that unit. v9's scans there are pending.
+  match the Python driver's), scans at 600 dpi, plain 3600 and 3600 dpi
+  infrared, and eject, all completed. Every one of the 21 reg 0x100 gate
+  polls on that host found the engine still running and waited 9–26 ms;
+  none timed out. Calibration offsets identical to the owner's unit,
+  gains within two codes. v9 is ready to push.
 
 - **Per-unit position offset: `--position-offset MM` on `scan` and
   `digitize` (issue #61).** The corrected mean mapping was fitted on one
