@@ -53,6 +53,11 @@ def _ref_dust_mask(ir, sensitivity=1.0, *, dpi=3600):
     return image._dilate_bool(mask, iterations=image._dust_scale(6, dpi))
 
 
+# Master's constants, copied as literals (not read from the module under test).
+_REF_KERNELS = (5, 17, 49)
+_REF_MIN_WEIGHT = 4.0
+
+
 def _ref_inpaint_channel(chan, mask, kernels):
     img = chan.astype(np.float32, copy=True)
     weight = (~mask).astype(np.float32)
@@ -65,7 +70,7 @@ def _ref_inpaint_channel(chan, mask, kernels):
         num = _ref_box_blur(masked_vals, k)
         den = _ref_box_blur(weight, k)
         area = k * k if isinstance(k, int) else k[0] * k[1]
-        good = unresolved & (den * area > image._INPAINT_MIN_WEIGHT)
+        good = unresolved & (den * area > _REF_MIN_WEIGHT)
         if good.any():
             with np.errstate(divide="ignore", invalid="ignore"):
                 filled[good] = num[good] / den[good]
@@ -83,7 +88,7 @@ def _ref_remove_dust(visible, ir, sensitivity=1.0, *, dpi=3600):
     dtype = visible.dtype
     info = np.iinfo(dtype) if np.issubdtype(dtype, np.integer) else None
     out = np.empty_like(visible)
-    kernels = tuple(image._dust_scale(k, dpi) for k in image._INPAINT_KERNELS)
+    kernels = tuple(image._dust_scale(k, dpi) for k in _REF_KERNELS)
     for c in range(visible.shape[2]):
         filled = _ref_inpaint_channel(visible[..., c], mask, kernels)
         if info is not None:
@@ -161,6 +166,12 @@ def test_remove_dust_other_dtypes_match_the_reference():
     print("test_remove_dust_other_dtypes_match_the_reference OK")
 
 
+def test_inpaint_kernel_selection_is_pinned_to_the_old_constants():
+    assert tuple(image._INPAINT_KERNELS) == _REF_KERNELS
+    assert image._INPAINT_MIN_WEIGHT == _REF_MIN_WEIGHT
+    print("test_inpaint_kernel_selection_is_pinned_to_the_old_constants OK")
+
+
 def test_remove_dust_actually_changes_something():
     """Guard against a vacuous identity test: the fixtures have specks."""
     vis, ir = _scene(150, 170, 1)
@@ -185,6 +196,13 @@ _TIFF_GOLDEN = {
     "icc": "baaf7e3e6a5b876c0ae1228921d79e8ce94a7faaef50e39caec89e3a1d846dbe",
     "be": "5e67fc56937930fb138c0ed4083b02c6bc21971847be61d301a260a3ddb282a2",
     "noncontig": "acea74da6cdcb5529656e9a71a55265819c15b07514f9a660c4d2d73910d2d4f",
+    # zero-size arrays: an empty strip, still a valid file
+    "empty_h": "0d05fe7cd055155bb948a68d80fae30c2e49d5a9c6f4e522f85fa6ba94460aad",
+    "empty_h_icc": "252164382e014251b262cafd8668aa85288f4f018d47847db0dc87ee3232815f",
+    "empty_w": "d3fecb4875e0ea1c0ef76c4712c428dc6c1854ae115ed135005fb70ebbd63458",
+    "empty_w_icc": "44225761e7a1ef81fdc3f2f47b3f8690457385be9a1d04aa8913b983a6a1ef68",
+    "empty_hw": "a444ba6daa7100e000e6d17a6edbd16da6637374e1b5f6d531fe5bdbe79f6371",
+    "empty_hw_icc": "fa34089e2b25168171714c6599875638ae0983e26afcda171ac3ca3ed03540b1",
 }
 
 
@@ -201,6 +219,10 @@ def test_write_tiff16_bytes_are_unchanged():
         "be": (np.ascontiguousarray(a).astype(">u2"), dict(dpi=600)),
         "noncontig": (a[::-1], dict(dpi=600)),
     }
+    for tag, shape in (("h", (0, 5, 3)), ("w", (4, 0, 3)), ("hw", (0, 0, 3))):
+        z = np.zeros(shape, np.uint16)
+        cases["empty_" + tag] = (z, {})
+        cases["empty_" + tag + "_icc"] = (z, dict(dpi=3600, icc=image.srgb_icc()))
     with tempfile.TemporaryDirectory() as d:
         for name, (arr, kw) in cases.items():
             p = os.path.join(d, name + ".tiff")
@@ -234,6 +256,7 @@ def main():
         test_box_blur_matches_the_reference_bit_for_bit,
         test_remove_dust_is_bit_identical_to_the_reference,
         test_remove_dust_other_dtypes_match_the_reference,
+        test_inpaint_kernel_selection_is_pinned_to_the_old_constants,
         test_remove_dust_actually_changes_something,
         test_remove_dust_does_not_touch_its_input,
         test_write_tiff16_bytes_are_unchanged,

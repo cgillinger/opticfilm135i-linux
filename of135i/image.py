@@ -178,7 +178,7 @@ def write_tiff16(arr: np.ndarray, path: str | Path, icc: bytes | None = None,
     # the array's own buffer instead of being copied into a joined blob.
     with open(path, "wb") as f:
         f.write(header)
-        f.write(memoryview(pixel_data).cast("B"))
+        f.write(pixel_data.reshape(-1).view(np.uint8))
         f.write(bits_per_sample + sample_format + resolution + icc_data + ifd)
 
 
