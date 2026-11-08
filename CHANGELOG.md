@@ -6,6 +6,14 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **SANE submission revision v9 pushed to merge request !1032 (2026-11-08).**
+  v8 plus the calibration stop gate (co-authored by bearyjd) and a
+  comments-only commit, nothing rebased, `94628f3f2..18bea9b32`; fork
+  pipeline 8/8 green. Pushed after v9 had run on the owner's unit (Test
+  118) and on bearyjd's unit through the whole test table, 600 dpi, plain
+  3600 and 3600 dpi infrared (test log, external reports of 2026-11-07).
+  The merge request's description now says two units. Under review.
+
 - **Mounted-slide geometry model, library only (PR #67, bearyjd).**
   `of135i/holder.py` carries the slide holder's measured grid from Test
   84 (`SLIDE_FIDUCIAL`: 38.05 mm openings on a 62.6 mm pitch, opening 1
