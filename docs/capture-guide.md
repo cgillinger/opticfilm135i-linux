@@ -179,12 +179,42 @@ larger capture goes through a file-transfer link posted in the issue.
 
 ## What happens with the capture
 
-The maintainer compiles it (`tools/compile_trace.py`) and compares the
-register writes against the traces this driver was built from
-(`docs/protocol-notes.md`, pass 17 describes the method on the dpi
-captures). The outcome is a list of registers that differ, which says
-whether the other model is a table difference (a variant in the same
-driver, tested by its owners) or something larger. The capture itself
-is not added to the repository: it contains the manufacturer's command
-stream and possibly your picture, and the repository holds only derived
-constants and our own code.
+Nothing automatic. A capture is raw material: it has to be compiled
+(`tools/compile_trace.py`) and its register writes compared against the
+traces this driver was built from, which is a few hours of careful
+reading per capture (`docs/protocol-notes.md`, pass 17, shows the method
+on the dpi captures). Whether and when that happens depends on the
+maintainer's time; this project is developed around one scanner and one
+person's needs, and another model is outside them. The first comparison
+is something you can do yourself: compile the capture, compile one of
+the traces in `traces/`, and diff the register writes; the registers
+that differ are the finding. The capture itself is not added to the
+repository: it contains the manufacturer's command stream and possibly
+your picture, and the repository holds only derived constants and our
+own code.
+
+## If you would rather do the analysis with an AI assistant
+
+The comparison is text work (JSON traces, register tables, these
+documents), which an AI coding assistant handles well. The capture is
+not: keep the two apart.
+
+- **The assistant never drives the scanner.** Every command that moves
+  the mechanism is typed by you, one at a time, after you have read what
+  it does. An assistant cannot hear a stalled motor, and a "let me try a
+  few settings" loop is the failure mode this guide warns about.
+- Give it the compiled trace (`compile_trace.py` output), the
+  corresponding trace from `traces/`, `docs/protocol-notes.md` and
+  `docs/hardware-safety.md`. Ask for the list of registers whose values
+  differ, grouped by phase, with the evidence (op index, value on each
+  side). Do not give it the raw pcap; it is too large and contains your
+  picture.
+- Treat what it says as a hypothesis until you have seen the same
+  values in the trace yourself. Models read confidently and wrongly at
+  the same tone.
+- You need a current model with a long context window (the compiled
+  traces are large; work on one phase at a time) and a harness that lets
+  it read files and run scripts: a coding-agent tool, not a chat box.
+
+Post the register list in the issue, not the assistant's narrative; the
+list is what can be checked.
