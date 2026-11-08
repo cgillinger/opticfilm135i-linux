@@ -52,8 +52,9 @@ The project has two parts, at different stages:
   Upstream: the backend was submitted to the SANE project on 2026-09-29
   as [merge request !1032](https://gitlab.com/sane-project/backends/-/merge_requests/1032)
   (submitted as revision v5; rebased revisions have been pushed to it as
-  upstream moved, most recently v8 on 2026-10-16, which drops the process
-  lock at the maintainer's question; the merge request shows no
+  upstream moved: v8 on 2026-10-16 dropped the process lock at the
+  maintainer's question, and v9 on 2026-11-08 added the calibration stop
+  gate after it had run on a second unit; the merge request shows no
   conflicts and a passing pipeline — see
   [docs/sane-wp3-submission.md](docs/sane-wp3-submission.md)). It is
   under review and **not merged**, so it is still installed from this
@@ -61,7 +62,51 @@ The project has two parts, at different stages:
   verification is tracked independently of the CLI driver's — see the
   roadmap.
 
-**Jump to:** [Install](#install) · [Usage](#usage--the-normal-workflow) ·
+## Read this before you connect a scanner
+
+**Use at your own risk.** This driver moves a motorised film transport
+that has no position feedback the software can read. It replays motor
+sequences recorded from the manufacturer's software on one scanner and
+trusts that the mechanism started where those sequences expect. If that
+assumption is wrong, the driver can push the film holder against the end
+of its travel and stall the motor. That has happened once on the
+development unit; the holder survived, but nothing in the software could
+have prevented it. The authors take no responsibility for damage to your
+scanner, your film or your computer.
+
+**Supported hardware: the Plustek OpticFilm 135i only (USB `07b3:1436`).**
+It has run on three 135i units: the developer's and two users'. **No
+other model is supported**, including the OpticFilm 135 (`07b3:1422`),
+the 8100/8200 series or anything else from Plustek. The driver opens
+only `07b3:1436`, on purpose. Do not edit the product id in the code to
+make it open another scanner: the mechanics may well run (on an
+OpticFilm 135 they did, [issue #72](https://github.com/cgillinger/opticfilm135i-linux/issues/72)),
+but the sensor, lamp and calibration tables were recorded for the 135i,
+and every motor pass on an untested model is a pass nobody has verified
+is safe. If you own another model and want to help, start from
+[`docs/capture-guide.md`](docs/capture-guide.md), not from a patched id.
+
+Rules that apply to every unit, even a 135i:
+
+- **One program at a time.** Nothing else may talk to the scanner while
+  the driver runs: no manufacturer software in a virtual machine, no
+  SANE frontend, no second terminal.
+- **Stay at the scanner the first times and listen.** Grinding or
+  scraping means a stalled motor: switch the scanner off at the wall at
+  once. Do not wait for the program and do not press Ctrl-C first.
+- **Never run `home` or `eject` from an unknown state**, and never
+  interrupt a scan. The safe way back from any confused state is a power
+  cycle followed by `load`, as described under Usage.
+- **After a power cycle, run the load flow before anything else.** The
+  driver refuses to scan from a cold start on purpose.
+
+The driver's own protections (a fail-closed safety layer, refusal to
+start from unrecognised states, read-only `status` and `doctor`) are
+described in [`docs/hardware-safety.md`](docs/hardware-safety.md). They
+cover the mistakes known from one unit; they cannot cover a model nobody
+has run.
+
+**Jump to:** [Safety](#read-this-before-you-connect-a-scanner) · [Install](#install) · [Usage](#usage--the-normal-workflow) ·
 [What works today](#what-works-today) ·
 [Known limitations](#development-status) · [SANE status &amp; roadmap](#roadmap)
 
@@ -388,6 +433,8 @@ know about:
 
 ## Requirements
 
+- A Plustek OpticFilm 135i (USB `07b3:1436`). No other model; see
+  [Read this before you connect a scanner](#read-this-before-you-connect-a-scanner).
 - Linux, Python 3.10+
 - `pyusb`, `numpy`, `pillow`
 - The scanner connected via USB
@@ -849,11 +896,16 @@ interoperability constants and our own code.
 ## Status & disclaimer
 
 Working prototype, developed and tested against a single OpticFilm 135i
-unit, with first reports from two more (issue #35). This project is not
-affiliated with, endorsed by, or supported by Plustek Inc. Use at your own
-risk. Plustek and OpticFilm are trademarks of their respective owner; they
-are used here only to identify the hardware this software interoperates
-with.
+unit, with reports from two more 135i units (issue #35) and from one
+OpticFilm 135, which is not supported (issue #72). **Use at your own
+risk.** The software drives a motorised mechanism without position
+feedback; a software error, an unexpected scanner state or an
+unsupported unit can jam the film holder or stall the motor, and the
+authors accept no liability for any damage. There is no warranty of any
+kind. This project is not affiliated with, endorsed by, or supported by
+Plustek Inc. Plustek and OpticFilm are trademarks of their respective
+owner; they are used here only to identify the hardware this software
+interoperates with.
 
 ## Acknowledgements
 

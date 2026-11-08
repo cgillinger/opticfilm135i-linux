@@ -142,11 +142,15 @@ complete.**
 Each is outside the promised function or has a verified safe handling:
 - **Cross-unit:** the maintainer has one unit; behaviour is compensated by
   run-time calibration and honestly labelled. Since 2026-10 two other
-  units have reported (issue #35): both scan, both fail calibration
+  135i units have reported (issue #35): both scan, both failed calibration
   intermittently on a step this unit never fails; the contributed fix
   (`--cal-wait-scanstop`, now the default) removed the failure on both
-  (docs/cal-scanstop-gate.md).
-  (Out of scope for A; tracked in the issue.)
+  (docs/cal-scanstop-gate.md), and the SANE backend's v9 has run its whole
+  test table on one of them. One OpticFilm 135 (`07b3:1422`, no infrared)
+  has also been tried with a patched product id (issue #72): the mechanics
+  ran, the red channel did not; it is a different model and is not
+  supported (README, "Read this before you connect a scanner").
+  (Out of scope for A; tracked in the issues.)
 - **Colour interpretation:** the driver delivers correct raw data; colour
   is the application's job. (Out of scope by design.)
 - **Speed:** correct but not tuned. (Out of scope for A; a functional scan
@@ -387,16 +391,22 @@ progress.**
   v7 (2026-10-13) and revision v8 (2026-10-16), the latter dropping the
   backend's process lock at a maintainer's question; v8 is what the
   merge request carries, its pipeline is green, and there is no review
-  verdict yet. Revision v9 (2026-11-05: v8 plus the
-  calibration stop gate, `docs/cal-scanstop-gate.md`) is prepared in
-  `sane/wp3-package/` and not pushed. B2's definition of done
+  verdict yet. Revision v9 (v8 plus the calibration stop gate,
+  `docs/cal-scanstop-gate.md`, prepared 2026-11-05) was pushed on
+  2026-11-08 after it had run on the owner's unit and on a second unit
+  (600, plain 3600 and infrared 3600 dpi, every gate wait doing work);
+  the merge request now carries v9 (`18bea9b32`), pipeline green,
+  description updated to two units, still no verdict. B2's definition of done
   is *submitted, review-ready* (see **B2 — SANE contribution delivered**
   above), which the submission meets; *accepted → published* is the
   maintainers' decision and is not a gate we can close. The blocker list
   in **B2 — preparation phase** below is kept as the record.
 - **C — full-length holder:** C1 is done for the driver and verified
   through the backend as far as it promises (per-criterion status above);
-  C2 (slides) is pending, scheduled after B2. History: the strip holder's six
+  C2 (slides): steps 1–3 (holder option, IR-keyed crop, positive output)
+  were built by a contributor and merged 2026-11-08 after runs on two
+  units (Tests 121–124; see the C section); open: the lateral crop, more
+  mounts. History: the strip holder's six
   apertures are measured and the driver reaches and scans all six
   positions on hardware — transport, scan and PARK verified across
   three separate empty-holder loads plus one with film (Test 55–57).
@@ -469,7 +479,8 @@ progress.**
     with the compatible .cal cache present, both calibrated and completed).
     --force-calibration is no longer required for an ordinary scan.
   - Slide holder: empty-holder mechanics characterised 2026-09-17 (S1+S2,
-    docs/slide-holder-analysis.md); imaging + crop pending a physical slide
+    docs/slide-holder-analysis.md); imaging, crop and positive output run
+    on real slides on two units 2026-11-08 (Tests 121–124, C2 steps 1–3)
 - **A6 note** (Test 44/46): the driver's eject stalled from a state only
   the backend's first `init()` produced; that `init()` now writes nothing.
   No CLI workflow was ever affected. The stall mechanism itself is an
@@ -706,7 +717,7 @@ promised scope require them. VueScan stays out of public docs.
 
 **WP-3 — SANE submission package (B2). SUBMITTED 2026-09-29 as merge
 request !1032 (<https://gitlab.com/sane-project/backends/-/merge_requests/1032>);
-open, under review, not merged. v8 (2026-10-15: process lock removed from the backend at the maintainer's question, mark path and test env var renamed, `.desc` status `:basic` + "Experimental") pushed to the merge request 2026-10-16 (fork branch `wp3-gl126-submission-v5` now holds v8, tip `94628f3f2`; pipeline green, no conflicts; description's "Known limitations" rewritten, reply posted in the maintainer's thread), not hardware-run.** Prepared and rebased onto current
+open, under review, not merged. v8 (2026-10-15: process lock removed from the backend at the maintainer's question, mark path and test env var renamed, `.desc` status `:basic` + "Experimental") pushed to the merge request 2026-10-16 (fork branch `wp3-gl126-submission-v5` now holds v8, tip `94628f3f2`; pipeline green, no conflicts; description's "Known limitations" rewritten, reply posted in the maintainer's thread), not hardware-run. v9 (v8 plus the calibration stop gate, co-authored by bearyjd) pushed 2026-11-08 as a fast-forward, tip `18bea9b32`, pipeline 8/8, after running on the owner's unit (Test 118) and on bearyjd's unit through the whole test table; description now says two units.** Prepared and rebased onto current
 upstream 2026-09-28 (v3), comments cleaned of every internal citation
 the same evening (v4), and 42 lines of dead code removed 2026-09-29 after
 the upstream clang CI job rejected them (v5), and v5 rebased onto

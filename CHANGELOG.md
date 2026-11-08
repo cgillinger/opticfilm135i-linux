@@ -6,6 +6,13 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **README: a safety section before anything else.** "Read this before
+  you connect a scanner": use at your own risk, the OpticFilm 135i
+  (`07b3:1436`) is the only supported model, do not patch the product id
+  to open another scanner (issue #72), the four rules that apply to every
+  unit, and a pointer to docs/hardware-safety.md. Requirements and the
+  disclaimer say the same; the SANE paragraph now mentions v9.
+
 - **Capture guide (`docs/capture-guide.md`, issue #72).** How to record
   the manufacturer's software driving the scanner from a Windows virtual
   machine with usbmon, for a unit or model that behaves differently
