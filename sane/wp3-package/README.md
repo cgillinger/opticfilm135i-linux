@@ -1,9 +1,9 @@
 # WP-3 package — the exact SANE submission series, exported
 
-**Status: revision v9 prepared 2026-11-05, NOT pushed.** The merge request
-(!1032, <https://gitlab.com/sane-project/backends/-/merge_requests/1032>)
-still holds v8 (fork source branch `wp3-gl126-submission-v5`, tip
-`94628f3f2`; open, no conflicts, checked 2026-11-05). v9 is v8 with two
+**Status: revision v9 prepared 2026-11-05, pushed 2026-11-08.** The merge
+request (!1032, <https://gitlab.com/sane-project/backends/-/merge_requests/1032>)
+holds v9 (fork source branch `wp3-gl126-submission-v5`, tip `18bea9b32`;
+open, no conflicts, fork pipeline 8/8 green, checked 2026-11-08). v9 is v8 with two
 commits added on top; the five v8 commits keep their ids and the base is
 unchanged, so nothing is rebased. The series is exactly the repository's
 `sane/` (the nine `gl126_*` files and `gl126-integration.patch`) with the
@@ -260,14 +260,18 @@ All checks above were run on the final seven-commit tip (tree
 Not run for v9: the full replay of the upstream `make-dist` and compile
 jobs (only the genesys backend was built with clang), `make distcheck`,
 `tstbackend` (any level), and `scanimage` against the v9 tree's own
-build. The fork's pipeline will run them when the branch is pushed.
+build. The fork's pipeline ran them on the pushed branch on 2026-11-08
+(pipeline 3041799540: make-dist, make-distcheck and the six compile jobs,
+all passed).
 
 ## What was pushed, and from where
 
-**v9 has not been pushed.** It exists as the local branch
-`wp3-gl126-submission-v9` (worktree `sane-wp3-v9`) and as this package.
-Pushing it to the fork's branch `wp3-gl126-submission-v5` is the owner's
-step, as for every revision.
+v9 was pushed on 2026-11-08 by the owner, by hand, from the `sane-wp3-v9`
+worktree to his fork's branch `wp3-gl126-submission-v5`
+(`--force-with-lease`, `94628f3f2..18bea9b32`, a fast-forward since v9
+descends from v8). The merge request picked the new head up by itself and
+the fork pipeline passed (8/8). The package here is the same seven
+commits.
 
 v8 was pushed on 2026-10-16 by the owner, by hand, from the
 `sane-wp3-v8` worktree to his fork's branch `wp3-gl126-submission-v5`
