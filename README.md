@@ -329,9 +329,12 @@ know about:
   `--slide-positive` turns the output to the vendor orientation
   (orientation only: slides are never inverted; linear values, no sRGB
   tag); checked on two slides on two units. Put the slide in the holder
-  with the mount's white, shiny side (the film base) up, the matt
-  emulsion side down; the picture then reads the right way round. The positioning has been run on one unit,
-  with cardboard mounts of several brands, and is still experimental.
+  with the mount's branded or shiny side (the front, the side the film
+  base faces) up toward the holder's open face, the matt emulsion side
+  down; the picture then reads the right way round (Test 124, confirmed
+  by the photographer of the owner's slide; the contributor's mounts sat
+  the same way). The positioning has been run on two units with
+  cardboard mounts of several brands and is still experimental.
   The SANE backend has no slide path. It is a separate milestone (C2 in
   the roadmap).
   **110 (Pocket Instamatic) film in the strip holder — supported, two

@@ -353,8 +353,10 @@ turns the slide to the vendor orientation without inverting it
 three steps were then run on the owner's unit in one pass (Test 124,
 2026-11-08: crop verified, slide whole and upright), so they hold on two
 units with two slides; merged as PRs #73, #74 and #75. Insertion rule
-(Test 124): white, shiny side of the mount up toward the holder's open
-face. Open: the lateral crop, more mounts. C2 is
+(Test 124): the branded or shiny side of the mount up toward the
+holder's open face; orientation confirmed by the photographer of the
+owner's slide, and the contributor's mounts sat the same way. Open: the
+lateral crop, more mounts. C2 is
 done when that list is verified on a mounted slide. **Brought forward
 2026-09-18 (owner's decision, slides are in scope for the driver): in
 progress.**

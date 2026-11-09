@@ -235,6 +235,9 @@ struct Profile {
                                   not used at runtime, use frames[] */
     const FrameGeom* frames;   /* production geometry, frames 1-6 (index
                                   frame-1); the runtime positioning/window authority */
+    const FrameGeom* slides;   /* slide-holder geometry, openings 1-4 (index
+                                  opening-1), same fields as frames[]; nullptr
+                                  on a profile with no dual slide path (plain3600) */
     const std::uint8_t* slope_position;
     std::size_t slope_position_len;
     const std::uint8_t* slope_scan;
