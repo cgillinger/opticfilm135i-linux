@@ -9274,6 +9274,7 @@ warnings. `make -C testsuite/backend/genesys check`: PASS 1/1.
 | `test_sane_geometry` | 10 passed (8 + 2) | the compiled slide path against `slide_geom_entries()` for all 20 profile × opening entries, `gl126::slide_travel_end` == `holder.slide_travel_end` and inside the ceiling (opening 4: 175–311 steps), openings 0/5 and the slide holder on plain3600 refused with the named reason, strip 1–6 unchanged; `validate_scan_request` still precedes the first read and the first write |
 | `test_sane_ops` | 52 passed | unchanged |
 | `test_sane_calibration_cache` | 6 passed | unchanged |
+| `tools/release_check.py --allow-dirty` (backend found via `SANE_BACKENDS_DIR`) | FULL VERIFICATION PASSED: 814 passed, 0 skipped | every suite, every test, the backend group included |
 
 Not done: hardware. The next step is the run named in issue #70 item 4
 (scanimage: load, opening 1 and 4, eject, with the slide holder) on the
