@@ -60,6 +60,17 @@ namespace gl126 {
     this holder. */
 constexpr unsigned kFrameMax = 6;
 
+/** The mounted-slide holder's opening count: the largest value the
+    "frame" SANE option accepts while the "holder" option is "slide"
+    (its constraint range is swapped to 1-kSlideOpeningMax then), and
+    the bound begin_scan() and validate_scan_request() apply to a slide
+    request. Four openings on a 62.6 mm pitch (Test 84,
+    docs/slide-holder-analysis.md), frozen per dual profile in
+    Profile::slides by the table generator. Mirrors gl126_ops.h's
+    kFeedlSlideMax the way kFrameMax mirrors kFeedlFrameMax, and the
+    companion driver's own holder.SLIDE.frames. */
+constexpr unsigned kSlideOpeningMax = 4;
+
 class CommandSetGl126 : public CommandSetCommon
 {
 public:

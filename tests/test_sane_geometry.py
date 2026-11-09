@@ -33,6 +33,14 @@ used, exactly, for every profile and every frame).
      are refused, before any transfer: the C++ probe (feedl_for_frame()
      and frame_geometry(), both via gl126_ops_probe.cpp) and the Python
      authority (holder.check_frame()) agree.
+  5. test_slide_geometry_cpp_matches_python /
+     test_slide_bounds_enforced_before_any_write -- the COMPILED slide
+     path (HolderKind::Slide, the backend's "holder" option, issue #70):
+     frame_geometry()/feedl_for_frame() read slides[] and agree with
+     slide_geom_entries() entry for entry, gl126::slide_travel_end()
+     equals holder.slide_travel_end() and sits inside FEEDL_CEILING;
+     openings 0/5 and the slide holder on plain3600 are refused before
+     any transfer, in C++ and in Python alike.
 
 Run with:
     .venv/bin/python tests/test_sane_geometry.py
@@ -268,6 +276,130 @@ def test_frame_bounds_enforced_before_any_write():
           "(feedl_for_frame + frame_geometry + holder.check_frame agree)")
 
 
+def _probe_kv(r) -> dict[str, int]:
+    """The last `KEY=value ...` line of a probe run as ints (GEOMETRY /
+    FEEDL output), hex fields included."""
+    parts = r.stdout.strip().splitlines()[-1].split()
+    out = {}
+    for p in parts:
+        if "=" in p:
+            k, v = p.split("=", 1)
+            out[k] = int(v, 16) if k in ("hi", "mid", "lo") else int(v)
+    return out
+
+
+def test_slide_geometry_cpp_matches_python():
+    """The COMPILED slide path (frame_geometry(profile, opening, Slide)
+    and feedl_for_frame(opening, profile, Slide), via the probe's
+    "slide" word) against the Python authority the tables were frozen
+    from (slide_geom_entries() / holder.slide_dual_geometry()), for
+    every dual profile x opening 1-4: FEEDL, the wire line register, the
+    raw and delivered lines, the chunk count, and the slide path's own
+    travel end (gl126::slide_travel_end == holder.slide_travel_end),
+    which must sit inside FEEDL_CEILING for every entry (opening 4 is
+    the binding one, 175-311 steps inside depending on the profile)."""
+    probe = _build_probe()
+    if probe is None:
+        print("test_slide_geometry_cpp_matches_python SKIPPED (no g++)")
+        return "skipped"
+    checked = 0
+    margins = []
+    for name, mod, dpi in ALL_PROFILES:
+        if name == "plain3600":
+            continue
+        want = gen.slide_geom_entries(name, mod, dpi)
+        for opening in range(1, 5):
+            e = want[opening - 1]
+            r = subprocess.run([str(probe), "geometry", name, str(opening), "slide"],
+                               capture_output=True, text=True)
+            assert r.returncode == 0, (name, opening, r.stdout, r.stderr)
+            g = _probe_kv(r)
+            assert g["dual"] == 1, (name, g)
+            assert g["wire_lines"] == e["line_register"], (name, opening, g, e)
+            assert g["read_lines"] == e["read_lines"], (name, opening, g, e)
+            assert g["image_lines"] == e["read_lines"] // 2, (name, opening, g, e)
+            assert g["delivered_lines"] == e["delivered_lines"], (name, opening, g, e)
+            assert g["chunk_count"] == e["chunks"], (name, opening, g, e)
+            assert g["shift_lines"] == 24 * dpi // 3600, (name, g)
+
+            rf = subprocess.run([str(probe), "feedl", str(opening), name, "slide"],
+                                capture_output=True, text=True)
+            assert rf.returncode == 0, (name, opening, rf.stdout, rf.stderr)
+            f = _probe_kv(rf)
+            assert f["FEEDL"] == e["feedl"], (name, opening, f, e)
+            assert (f["hi"], f["mid"], f["lo"]) == (
+                (e["feedl"] >> 16) & 0xFF, (e["feedl"] >> 8) & 0xFF, e["feedl"] & 0xFF), f
+            want_end = holder.slide_travel_end(e["feedl"], e["line_register"], dpi)
+            assert f["travel_end"] == want_end, (name, opening, f, want_end)
+            assert f["travel_end"] <= holder.FEEDL_CEILING, (name, opening, f)
+            if opening == 4:
+                margins.append(holder.FEEDL_CEILING - f["travel_end"])
+            checked += 1
+    assert checked == 4 * (len(ALL_PROFILES) - 1), checked
+    assert min(margins) >= 175 and max(margins) <= 311, margins   # PR #86's figures
+    # The strip path is untouched by the holder argument: the default and
+    # an explicit "strip" give the same answer.
+    a = subprocess.run([str(probe), "feedl", "6", "ir3600"], capture_output=True, text=True)
+    b = subprocess.run([str(probe), "feedl", "6", "ir3600", "strip"],
+                       capture_output=True, text=True)
+    assert a.returncode == 0 and a.stdout == b.stdout, (a.stdout, b.stdout, b.stderr)
+    print(f"test_slide_geometry_cpp_matches_python OK ({checked} profile x opening entries; "
+          f"opening 4 travel end {min(margins)}-{max(margins)} steps inside the ceiling)")
+
+
+def test_slide_bounds_enforced_before_any_write():
+    """The slide path's refusals, before any transfer, in both languages:
+    opening 0 and 5 (the four-opening holder), and the slide holder on
+    plain 3600 dpi (no slide ledger: the plain window clips a mounted
+    slide, Test 85). C++: feedl_for_frame()/frame_geometry() with the
+    Slide holder throw; Python: holder.check_frame(opening, SLIDE) and
+    slide_dual_geometry()'s own checks. Openings 1 and 4 are accepted,
+    and the strip bounds (1-6) are unchanged."""
+    for opening in (0, 5):
+        try:
+            holder.check_frame(opening, holder.SLIDE)
+        except Exception as e:  # FrameOutOfRangeError
+            assert "outside" in str(e), (opening, e)
+        else:
+            raise AssertionError(f"holder.check_frame({opening}, SLIDE) did not raise")
+    for opening in (1, 4):
+        assert holder.check_frame(opening, holder.SLIDE) == opening
+
+    probe = _build_probe()
+    if probe is None:
+        print("test_slide_bounds_enforced_before_any_write OK (Python bound only; "
+              "C++ probe SKIPPED, no g++)")
+        return "skipped"
+
+    for opening in (0, 5):
+        for cmd in (["feedl", str(opening), "ir3600", "slide"],
+                    ["geometry", "ir3600", str(opening), "slide"]):
+            r = subprocess.run([str(probe), *cmd], capture_output=True, text=True)
+            assert r.returncode == 2, (cmd, r.stdout, r.stderr)
+            assert "slide opening" in r.stderr and "outside 1-4" in r.stderr, (cmd, r.stderr)
+    for cmd in (["feedl", "1", "plain3600", "slide"], ["geometry", "plain3600", "1", "slide"]):
+        r = subprocess.run([str(probe), *cmd], capture_output=True, text=True)
+        assert r.returncode == 2, (cmd, r.stdout, r.stderr)
+        assert "no slide-holder geometry" in r.stderr, (cmd, r.stderr)
+        assert "dual-light profile" in r.stderr, (cmd, r.stderr)
+    for opening in (1, 4):
+        for cmd in (["feedl", str(opening), "dpi600", "slide"],
+                    ["geometry", "dpi600", str(opening), "slide"]):
+            r = subprocess.run([str(probe), *cmd], capture_output=True, text=True)
+            assert r.returncode == 0, (cmd, r.stdout, r.stderr)
+    # Strip bounds unchanged: 6 accepted, 7 refused, with the holder
+    # spelled out.
+    r6 = subprocess.run([str(probe), "feedl", "6", "dpi600", "strip"],
+                        capture_output=True, text=True)
+    assert r6.returncode == 0, r6.stderr
+    r7 = subprocess.run([str(probe), "feedl", "7", "dpi600", "strip"],
+                        capture_output=True, text=True)
+    assert r7.returncode == 2 and "outside 1-6" in r7.stderr, r7.stderr
+    print("test_slide_bounds_enforced_before_any_write OK "
+          "(openings 0/5 and the slide holder on plain3600 refused; 1/4 accepted; "
+          "strip 1-6 unchanged)")
+
+
 GL126_CPP = REPO / "sane" / "gl126.cpp"
 GL126_OPS_H = REPO / "sane" / "gl126_ops.h"
 GL126_H = REPO / "sane" / "gl126.h"
@@ -338,8 +470,10 @@ def test_offset_calibration_preflight_precedes_any_io():
     # writes.
     preflight = _validate_scan_request_body()
     for needle in ("frame < 1 || frame > kFrameMax",
-                   "feedl_for_frame(frame",
-                   "frame_geometry(*profile, frame)"):
+                   "frame < 1 || frame > kSlideOpeningMax",
+                   "profile->slides == nullptr",
+                   "feedl_for_frame(frame, *profile, holder)",
+                   "frame_geometry(*profile, frame, holder)"):
         assert needle in preflight, (needle, "missing from validate_scan_request")
     # And it is write-free by construction: no device I/O in its body.
     for banned in ("interface->", "check_start_state", "write_table",
@@ -358,9 +492,12 @@ def test_offset_calibration_preflight_precedes_any_io():
     assert i_state < i_write, (i_state, i_write)
 
     ops_h = GL126_OPS_H.read_text()
-    # Pure signatures: frame + Profile only, no device/Wire/interface.
-    assert "feedl_for_frame(unsigned frame, const Profile& profile)" in ops_h, ops_h[:0]
-    assert "frame_geometry(const Profile& profile, unsigned frame)" in ops_h
+    # Pure signatures: frame + Profile (+ the holder enum) only, no
+    # device/Wire/interface.
+    assert "feedl_for_frame(unsigned frame, const Profile& profile,\n" \
+           "                         HolderKind holder = HolderKind::Strip)" in ops_h, ops_h[:0]
+    assert "frame_geometry(const Profile& profile, unsigned frame,\n" \
+           "                             HolderKind holder = HolderKind::Strip)" in ops_h
     for banned in ("Genesys_Device", "Wire", "interface"):
         # neither declaration line may mention a device/wire type
         for line in ops_h.splitlines():
@@ -429,6 +566,25 @@ def test_public_frame_option_constraint_is_1_to_6():
     assert "OPT_FRAME].constraint_type = SANE_CONSTRAINT_RANGE" in patch
     assert "OPT_FRAME].constraint.range = &gl126_frame_range" in patch
     assert "kFrameMax = 6" in GL126_H.read_text()
+    # The "holder" option (issue #70): a STRING_LIST of strip/slide, and
+    # while slide is set OPT_FRAME's range is gl126_slide_range = [1,
+    # kSlideOpeningMax]; kSlideOpeningMax is 4 in gl126.h, and
+    # gl126_ops.h's own mirror kFeedlSlideMax is 4 too. So scanimage
+    # --holder slide --frame 5 is clamped by SANE core before any hook
+    # runs (tests/test_sane_magazine.py exercises that path live).
+    assert "static const SANE_Range gl126_slide_range" in patch
+    m2 = re.search(r"gl126_slide_range\s*=\s*\{.*?1,.*?gl126::kSlideOpeningMax",
+                   patch, re.DOTALL)
+    assert m2, "gl126_slide_range must run [1, kSlideOpeningMax]"
+    assert 'OPT_HOLDER].name = "holder"' in patch
+    assert "OPT_HOLDER].constraint_type = SANE_CONSTRAINT_STRING_LIST" in patch
+    assert "OPT_HOLDER].constraint.string_list = gl126_holder_list" in patch
+    assert re.search(r'GL126_HOLDER_STRIP "strip"', patch) and \
+        re.search(r'GL126_HOLDER_SLIDE "slide"', patch), "holder values strip/slide"
+    assert "slide ? &gl126_slide_range" in patch, "holder switch must swap the frame range"
+    assert "settings.slide_holder = (s->holder == " in patch
+    assert "kSlideOpeningMax = 4" in GL126_H.read_text()
+    assert "kFeedlSlideMax = 4" in GL126_OPS_H.read_text()
     print("test_public_frame_option_constraint_is_1_to_6 OK "
           "(OPT_FRAME SANE_CONSTRAINT_RANGE [1,6]; scanimage rejects 0/7 "
           "before any hook)")
@@ -441,6 +597,8 @@ def main() -> int:
         test_slide_geom_matches_generator,
         test_slide_geom_safety_bounds,
         test_frame_bounds_enforced_before_any_write,
+        test_slide_geometry_cpp_matches_python,
+        test_slide_bounds_enforced_before_any_write,
         test_offset_calibration_preflight_precedes_any_io,
         test_load_document_is_pure_and_never_moves_the_magazine,
         test_public_frame_option_constraint_is_1_to_6,

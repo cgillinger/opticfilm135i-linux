@@ -15,7 +15,14 @@
    backend.
 
    Usage:
-     session <dpi> <color|gray> <none|red|green|blue> <visible|ir> [frame] [pull]
+     session <dpi> <color|gray> <none|red|green|blue> <visible|ir> [frame] [pull] [slide]
+
+   With the trailing word `slide`: settings.slide_holder is set (the
+   "holder" option = slide), so a dual profile's session is sized from
+   its slides[] ledger (opening `frame`, 1-4) instead of frames[]; on
+   plain 3600 dpi, which has no slide ledger, the parameter path falls
+   back to the strip ledger (tolerant, the preflight refuses the scan
+   itself later), so the probe must print OK there, not THROW.
 
    With the trailing word `pull` (Test 68's gap): the probe gives the device
    a counting mock interface, builds the REAL image pipeline and pulls every
@@ -88,9 +95,17 @@ int main(int argc, char** argv)
     }
     unsigned dpi = static_cast<unsigned>(std::stoul(argv[1]));
     std::string mode = argv[2], filter = argv[3], method = argv[4];
-    unsigned frame = (argc > 5 && std::string(argv[5]) != "pull")
+    unsigned frame = (argc > 5 && std::string(argv[5]) != "pull" && std::string(argv[5]) != "slide")
         ? static_cast<unsigned>(std::stoul(argv[5])) : 1;
-    bool pull = (argc > 5 && std::string(argv[argc - 1]) == "pull");
+    bool pull = false;
+    bool slide = false;
+    // Trailing words, in any order after [frame]: `pull` (see above) and
+    // `slide` (the "holder" option set to the slide holder:
+    // settings.slide_holder, so the session is sized from slides[]).
+    for (int i = 5; i < argc; i++) {
+        if (std::string(argv[i]) == "pull") pull = true;
+        if (std::string(argv[i]) == "slide") slide = true;
+    }
 
     // The tables sane_init() builds (genesys.cpp), so find_sensor and the
     // model list are populated.
@@ -137,6 +152,7 @@ int main(int argc, char** argv)
     s.yres = dpi;
     s.depth = 16;
     s.frame = frame;
+    s.slide_holder = slide;
     // A plausible raw window, as genesys' own calc_parameters passes before
     // the profile is pinned (the real values are overwritten for a capture,
     // and left as-is for the tolerant preliminary path).

@@ -107,10 +107,12 @@ def _build_probe():
     return _probe_bin
 
 
-def _run(probe, dpi, mode, filt, method, frame=None):
+def _run(probe, dpi, mode, filt, method, frame=None, slide=False):
     cmd = [probe, str(dpi), mode, filt, method]
     if frame is not None:
         cmd.append(str(frame))
+    if slide:
+        cmd.append("slide")
     r = subprocess.run(cmd, capture_output=True, text=True)
     assert r.returncode == 0, f"probe exit {r.returncode}: {r.stdout}\n{r.stderr}"
     line = r.stdout.strip()
@@ -196,6 +198,44 @@ def test_ir_pins_dual_geometry():
     assert not r["throw"], r.get("msg")
     assert r["pixels"] == 5184, r         # IR dual width
     assert r["max_shift"] == 24, r        # IR is colour-aligned like the visible image (Test 70)
+    return True
+
+
+def test_slide_holder_sizes_the_session_from_the_slide_ledger():
+    """The "holder" option (issue #70, SANE v10 candidate): with
+    settings.slide_holder a dual profile's session is sized from its
+    slides[] ledger (the opening's delivered lines), not frames[]; the
+    strip request on the same profile is unchanged; and on plain 3600
+    dpi, which has no slide ledger, the parameter path stays tolerant
+    (reports the strip geometry instead of throwing), leaving the refusal
+    to validate_scan_request at sane_start. Values come from the same
+    generator the tables were frozen from, not from literals."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip()
+    sys.path.insert(0, str(REPO))
+    sys.path.insert(0, str(REPO / "tools"))
+    sys.path.insert(0, str(REPO / "tests"))
+    import gen_sane_tables as gen
+    from of135i import tables
+    from test_sane_ops import _dual_module
+
+    for dpi, method, mode, name in ((3600, "ir", "gray", "ir3600"),
+                                    (600, "visible", "color", "dpi600")):
+        mod = _dual_module(dpi)
+        slides = gen.slide_geom_entries(name, mod, dpi)
+        frames = gen.frame_geom_entries(name, mod, dpi)
+        for opening in (1, 4):
+            r = _run(probe, dpi, mode, "none", method, opening, slide=True)
+            assert not r["throw"], (name, opening, r.get("msg"))
+            assert r["channels"] == 3, r
+            assert r["lines"] == slides[opening - 1]["delivered_lines"], (name, opening, r)
+        strip = _run(probe, dpi, mode, "none", method, 1)
+        assert strip["lines"] == frames[0]["delivered_lines"], (name, strip)
+    plain = gen.frame_geom_entries("plain3600", tables, 3600)
+    r = _run(probe, 3600, "color", "none", "visible", 1, slide=True)
+    assert not r["throw"], f"plain3600 + slide holder must stay tolerant here: {r.get('msg')}"
+    assert r["lines"] == plain[0]["delivered_lines"], r
     return True
 
 
@@ -299,6 +339,7 @@ def main():
         test_host_side_gray_pins_like_color,
         test_unsupported_single_channel_gray_is_tolerant_not_pinned,
         test_ir_pins_dual_geometry,
+        test_slide_holder_sizes_the_session_from_the_slide_ledger,
         test_dpi2400_delivers_square_width_raw_unchanged,
         test_pipeline_pull_plus_tail_equals_wire,
     ]

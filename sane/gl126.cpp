@@ -556,8 +556,33 @@ void run_shading_calibration(Genesys_Device* dev, const Profile& profile)
     cal_stage()[dev] = CalStage::ShadingDone;
 }
 
+/** Parameter reporting only (calculate_scan_session and the session
+    check): the ledger the request is sized from. The slide holder when
+    the "holder" option says so AND the profile has a slide ledger; the
+    strip otherwise, so that sane_get_parameters on a request the
+    preflight will refuse anyway (the slide holder on plain 3600 dpi)
+    still answers instead of throwing from an option change. The
+    writing paths (validate_scan_request, begin_scan) never default: they
+    refuse that request. */
+HolderKind reporting_holder(const Profile& profile, const Genesys_Settings& settings)
+{
+    return (settings.slide_holder && profile.slides != nullptr) ? HolderKind::Slide
+                                                                : HolderKind::Strip;
+}
+
+/** Parameter reporting only: settings.frame when it is inside `holder`
+    (1-kFrameMax strip, 1-kSlideOpeningMax slide), else 1. A frontend
+    can query parameters before it has set a valid frame; the writing
+    paths do their own, non-defaulting check. */
+unsigned reporting_frame(const Genesys_Settings& settings, HolderKind holder)
+{
+    unsigned max = holder == HolderKind::Slide ? kSlideOpeningMax : kFrameMax;
+    return (settings.frame >= 1 && settings.frame <= max) ? settings.frame : 1;
+}
+
 /** Everything about a scan request that can be refused without touching
-    the device: the profile, the frame bound, the travel ceiling, the
+    the device: the profile, the holder, the frame bound, the travel
+    ceiling (and the slide path's travel bound), the
     ledger invariant and the colour mode. Pure computation on the
     frontend's settings and the frozen geometry, no device, no wire, so a
     valid request changes nothing and an invalid one throws before the
@@ -583,13 +608,34 @@ const Profile* validate_scan_request(Genesys_Device* dev)
                             dev->settings.xres, ir ? " with IR" : "");
     }
     unsigned frame = dev->settings.frame;
-    if (frame < 1 || frame > kFrameMax) {
+    HolderKind holder = dev->settings.slide_holder ? HolderKind::Slide : HolderKind::Strip;
+    if (holder == HolderKind::Slide) {
+        // The slide holder ("holder" option = slide): the frame number is
+        // an opening, 1-4, on a dual-light profile only; plain 3600 dpi
+        // has no slide ledger (its 26.5 mm window clips a mounted slide,
+        // Test 85). Both are refused here, before any I/O, as the
+        // driver's --holder slide refuses them before any write.
+        if (profile->slides == nullptr) {
+            throw SaneException(SANE_STATUS_INVAL,
+                                "gl126: the slide holder needs a dual-light profile (600, "
+                                "1200, 2400 or 7200 dpi, or 3600 dpi with infrared); %u dpi "
+                                "without infrared has none. Nothing was written.",
+                                dev->settings.xres);
+        }
+        if (frame < 1 || frame > kSlideOpeningMax) {
+            throw SaneException(SANE_STATUS_INVAL,
+                                "gl126: slide opening %u is outside 1-%u (the four-opening "
+                                "slide holder). Nothing was written.", frame, kSlideOpeningMax);
+        }
+    } else if (frame < 1 || frame > kFrameMax) {
         throw SaneException(SANE_STATUS_INVAL,
                             "gl126: frame %u is outside 1-%u (the six-aperture strip "
                             "holder). Nothing was written.", frame, kFrameMax);
     }
-    (void) feedl_for_frame(frame, *profile);   // FEEDL + end_hwdpi <= travel ceiling
-    (void) frame_geometry(*profile, frame);    // ledger consistency invariant
+    // FEEDL + end_hwdpi <= travel ceiling; for the slide holder also the
+    // slide path's FEEDL + wire-travel bound (gl126_ops.h).
+    (void) feedl_for_frame(frame, *profile, holder);
+    (void) frame_geometry(*profile, frame, holder);    // ledger consistency invariant
 
     // The visible pass is always the vendor's 3-channel RGB16 capture. Colour,
     // IR, and host-side gray (HOST_SIDE_GRAY: colour filter NONE, scanned RGB
@@ -1980,19 +2026,26 @@ ScanSession CommandSetGl126::calculate_scan_session(const Genesys_Device* dev,
     bool is_capture = ir || settings.get_channels() == 3 || host_side_gray;
     bool pinned = profile != nullptr && is_capture;
     /* sane_get_parameters can run before the frontend has chosen a valid
-       frame (settings.frame defaults to 1); default to frame 1 for
-       parameter reporting only, begin_scan does its own, non-defaulting,
-       1-kFrameMax check before any write. */
-    unsigned frame = (settings.frame >= 1 && settings.frame <= kFrameMax) ? settings.frame : 1;
+       frame (settings.frame defaults to 1) or a holder the profile
+       supports (the slide holder on plain 3600 dpi); default to frame 1,
+       and to the strip ledger when the slide one is missing, for
+       parameter reporting only. begin_scan and validate_scan_request do
+       their own, non-defaulting checks before any write. */
+    HolderKind holder = HolderKind::Strip;
+    unsigned frame = 1;
+    if (profile != nullptr) {
+        holder = reporting_holder(*profile, settings);
+        frame = reporting_frame(settings, holder);
+    }
     FrameGeometry geo;
     if (pinned) {
         /* This pin generalises to every captured profile: the dual-light
            ones (600/1200/2400/7200 dpi, and 3600 dpi with IR) stream IR
            and visible lines alternately at the full sensor width; the
-           host keeps one line in two. The ledger (frames[]) makes the
-           geometry frame-dependent, so frame_geometry() takes the
-           frame. */
-        geo = frame_geometry(*profile, frame);
+           host keeps one line in two. The ledger (frames[] / slides[])
+           makes the geometry frame-dependent, so frame_geometry() takes
+           the frame and the holder. */
+        geo = frame_geometry(*profile, frame, holder);
         /* The raw read window is geo.width (the full sensor width the wire
            delivers): params.pixels drives compute_session's output_line_
            bytes_raw, the USB read size and the chunk bookkeeping, all of
@@ -2081,12 +2134,12 @@ void CommandSetGl126::init_regs_for_scan_session(Genesys_Device* dev,
     bool ir = dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
     const Profile* profile = find_profile(dev->settings.xres, ir);
     // Same defaulting rule as calculate_scan_session() above (settings.frame
-    // may not yet be a chosen frame when this core path runs early).
-    unsigned frame = (dev->settings.frame >= 1 && dev->settings.frame <= kFrameMax)
-        ? dev->settings.frame : 1;
+    // and the holder may not yet be a valid choice when this core path
+    // runs early).
     FrameGeometry geo;
     if (profile != nullptr) {
-        geo = frame_geometry(*profile, frame);
+        HolderKind holder = reporting_holder(*profile, dev->settings);
+        geo = frame_geometry(*profile, reporting_frame(dev->settings, holder), holder);
     }
     if (profile == nullptr || session.params.pixels != geo.width ||
         session.optical_line_count != geo.read_lines ||
@@ -2379,32 +2432,51 @@ void CommandSetGl126::begin_scan(Genesys_Device* dev, const Genesys_Sensor& /*se
     // POSITION to the frame, matching the driver's own scan(frame=N):
     // the same program with the frame's absolute FEEDL and the
     // FEEDL-scaled budget. The option's range is 1-6, the six-aperture
-    // strip holder (kFrameMax, gl126.h); the check here is the backend's
-    // own, in case the value arrives otherwise.
+    // strip holder (kFrameMax, gl126.h), or 1-4 while the "holder"
+    // option is slide (kSlideOpeningMax, the slide ledger, dual
+    // profiles only, as the driver's --holder slide); the check here is
+    // the backend's own, in case the value arrives otherwise. The same
+    // program and the same move either way: only the FEEDL target and
+    // the window come from a different ledger.
     unsigned frame = dev->settings.frame;
-    if (frame < 1 || frame > kFrameMax) {
+    HolderKind holder = dev->settings.slide_holder ? HolderKind::Slide : HolderKind::Strip;
+    if (holder == HolderKind::Slide) {
+        if (profile->slides == nullptr) {
+            throw SaneException(SANE_STATUS_INVAL,
+                                "gl126: the slide holder needs a dual-light profile; %u dpi "
+                                "without infrared has none. Nothing was written.",
+                                dev->settings.xres);
+        }
+        if (frame < 1 || frame > kSlideOpeningMax) {
+            throw SaneException(SANE_STATUS_INVAL,
+                                "gl126: slide opening %u is outside 1-%u. Nothing was written.",
+                                frame, kSlideOpeningMax);
+        }
+    } else if (frame < 1 || frame > kFrameMax) {
         throw SaneException(SANE_STATUS_INVAL,
                             "gl126: frame %u is outside 1-%u. Nothing was written.",
                             frame, kFrameMax);
     }
-    unsigned feedl = feedl_for_frame(frame, *profile);
+    unsigned feedl = feedl_for_frame(frame, *profile, holder);
     std::map<std::string, std::uint8_t> values;
     values["feedl_hi"] = static_cast<std::uint8_t>((feedl >> 16) & 0xff);
     values["feedl_mid"] = static_cast<std::uint8_t>((feedl >> 8) & 0xff);
     values["feedl_lo"] = static_cast<std::uint8_t>(feedl & 0xff);
     RunPolicy position_policy;
     position_policy.masked_timeout_ms = position_timeout_ms(feedl);
-    DBG(DBG_info, "gl126: positioning to frame %u (FEEDL %u), completion budget %u ms\n",
-        frame, feedl, position_policy.masked_timeout_ms);
+    DBG(DBG_info, "gl126: positioning to %s %u (FEEDL %u), completion budget %u ms\n",
+        holder == HolderKind::Slide ? "slide opening" : "frame", frame, feedl,
+        position_policy.masked_timeout_ms);
     RunResult position;
     run_phase_program(dev, *profile, "position", position, &values, nullptr, &position_policy);
 
     // The scan pass's setup, with this frame's line-count register
-    // value from the ledger (profile.frames[frame-1].line_register, via
-    // frame_geometry -> geo.wire_lines; plain carries the 8-line drain,
-    // dual the interleaved wire count). The frontend receives
-    // params.lines; the raw lines read are session.optical_line_count.
-    FrameGeometry geo = frame_geometry(*profile, frame);
+    // value from the ledger (profile.frames[frame-1].line_register, or
+    // slides[frame-1] for the slide holder, via frame_geometry ->
+    // geo.wire_lines; plain carries the 8-line drain, dual the
+    // interleaved wire count). The frontend receives params.lines; the
+    // raw lines read are session.optical_line_count.
+    FrameGeometry geo = frame_geometry(*profile, frame, holder);
     unsigned lines = geo.wire_lines;
     values.clear();
     values["lines_top"] = static_cast<std::uint8_t>((lines >> 16) & 0xff);

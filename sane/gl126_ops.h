@@ -571,12 +571,24 @@ struct FrameGeometry {
     unsigned chunk_len = 0;
     unsigned chunk_count = 0;
 };
+/** Which holder the frame number counts in, and so which of the two
+    frozen ledgers a profile carries is read: Strip is profile.frames[]
+    (six apertures, frames 1-6), Slide is profile.slides[] (the four-
+    opening mounted-slide holder, openings 1-4, dual profiles only; the
+    strip holder stays the default everywhere). Mirrors the driver's own
+    `--holder strip|slide` (of135i/holder.py: STRIP / SLIDE). */
+enum class HolderKind { Strip, Slide };
+
 /** Throws std::invalid_argument (before any use) if `frame` is outside
-    1-kFeedlFrameMax, or if the ledger's own invariant (delivered_lines +
-    shift_lines == image_lines) fails, the latter means frames[] and
-    this function's wiring have drifted apart, or the table generator's
-    output changed shape; either way, nothing has been written. */
-FrameGeometry frame_geometry(const Profile& profile, unsigned frame);
+    the holder (1-kFeedlFrameMax for the strip, 1-kFeedlSlideMax for
+    the slide holder), if the slide holder is asked of a profile with no
+    slide ledger (plain3600, profile.slides == nullptr), or if the
+    ledger's own invariant (delivered_lines + shift_lines == image_lines)
+    fails, the latter means the table and this function's wiring have
+    drifted apart, or the table generator's output changed shape; either
+    way, nothing has been written. */
+FrameGeometry frame_geometry(const Profile& profile, unsigned frame,
+                             HolderKind holder = HolderKind::Strip);
 
 // ------------------------------------------------- positioning, scanning and park
 
@@ -604,6 +616,15 @@ constexpr unsigned kFeedlPitch = 10760;
     two numbers equal by hand, the way both already mirror the driver's
     own frame count, its one authority on the same holder. */
 constexpr unsigned kFeedlFrameMax = 6;
+/** The mounted-slide holder's opening count: the largest opening number
+    feedl_for_frame()/frame_geometry() accept with HolderKind::Slide.
+    Four openings on a 62.6 mm pitch (Test 84, docs/slide-holder-
+    analysis.md), frozen per dual profile in profile.slides[] by
+    gen_sane_tables.slide_geom_entries() from the driver's own
+    holder.slide_dual_geometry(). Mirrors gl126.h's kSlideOpeningMax the
+    way kFeedlFrameMax mirrors kFrameMax (same reason, same rule: keep
+    the two equal by hand). */
+constexpr unsigned kFeedlSlideMax = 4;
 /** The largest FEEDL target this runner will ever hand to POSITION,
     independent of which frame number produced it, a second guard behind
     kFeedlFrameMax, so a bad FEEDL is caught however it was computed,
@@ -627,8 +648,28 @@ unsigned feedl_for_frame(unsigned frame);
     1-kFeedlFrameMax, or if that frame's end_hwdpi (the pass's furthest
     motor reach) or feedl exceeds kFeedlCeiling, the same travel ceiling
     the driver's own overscan_geometry() already checked, inherited
-    verbatim. */
-unsigned feedl_for_frame(unsigned frame, const Profile& profile);
+    verbatim.
+
+    With HolderKind::Slide the same from `profile.slides[frame-1]`
+    (opening 1-kFeedlSlideMax; a profile without a slide ledger is
+    refused), plus the slide path's own STRICTER travel bound, the one
+    the driver's slide_dual_geometry() applies and the strip path does
+    not: the commanded FEEDL plus the whole wire's travel,
+    slide_travel_end(), must also be inside kFeedlCeiling. Which of the
+    two ends (end_hwdpi, the model end; or FEEDL + wire travel) is the
+    true carriage extreme is not established from software, so the
+    slide path requires both (docs/holder-position-design.md, "the end
+    position is FEEDL + window travel"); opening 4 is the binding case,
+    175-311 steps inside the ceiling depending on the profile. */
+unsigned feedl_for_frame(unsigned frame, const Profile& profile,
+                         HolderKind holder = HolderKind::Strip);
+
+/** The slide path's travel end: `feedl + wire_lines x (7200/dpi) / 2`,
+    rounded up, in HWDPI steps. The same arithmetic as the driver's
+    holder.slide_travel_end() (the /2 is the dual profile's interleave:
+    two wire lines per step of travel at the profile's dpi). Pure
+    computation. */
+unsigned slide_travel_end(unsigned feedl, unsigned wire_lines, unsigned dpi);
 
 /** feedl split into its three POSITION injection bytes (hi/mid/lo,
     matching the driver's own feedl_hi/feedl_mid/feedl_lo, POSITION's

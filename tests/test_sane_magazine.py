@@ -79,7 +79,9 @@ SANE_TYPE_BUTTON = 4
 SANE_TYPE_GROUP = 5
 
 # sane.h's *info bits.
+SANE_INFO_INEXACT = 1 << 0
 SANE_INFO_RELOAD_OPTIONS = 1 << 1
+SANE_INFO_RELOAD_PARAMS = 1 << 2
 
 
 def _sane_backends_dir():
@@ -1374,7 +1376,7 @@ def test_dead_options_are_inactive_and_film_group_is_placed_and_ordered():
         assert name in by_name, name
         assert by_name[name][1]["inactive"] == "0", by_name[name]
 
-    for name in ("magazine", "load-film", "eject-film", "check-status", "frame"):
+    for name in ("magazine", "load-film", "eject-film", "check-status", "holder", "frame"):
         assert name in by_name, name
         assert by_name[name][1]["inactive"] == "0", by_name[name]
 
@@ -1382,13 +1384,16 @@ def test_dead_options_are_inactive_and_film_group_is_placed_and_ordered():
     load_idx = by_name["load-film"][0]
     eject_idx = by_name["eject-film"][0]
     check_status_idx = by_name["check-status"][0]
+    holder_idx = by_name["holder"][0]
     frame_idx = by_name["frame"][0]
     # In this order, and consecutive -- no other option sits between the
-    # group and Frame.
+    # group and Frame. Holder (issue #70) sits right before Frame: it
+    # decides what the frame number means.
     assert load_idx == magazine_idx + 1, by_name
     assert eject_idx == load_idx + 1, by_name
     assert check_status_idx == eject_idx + 1, by_name
-    assert frame_idx == check_status_idx + 1, by_name
+    assert holder_idx == check_status_idx + 1, by_name
+    assert frame_idx == holder_idx + 1, by_name
 
     # The group immediately above them: a GROUP item at magazine_idx - 1,
     # titled "Film".
@@ -1453,7 +1458,7 @@ def test_dead_options_are_inactive_and_film_group_is_placed_and_ordered():
     other_by_name = {f["name"]: (idx, f) for idx, f in other["items"] if "name" in f}
     for name in ("brightness", "contrast"):
         assert other_by_name[name][1]["inactive"] == "0", (name, other_by_name[name])
-    for name in ("magazine", "load-film", "eject-film", "check-status", "frame"):
+    for name in ("magazine", "load-film", "eject-film", "check-status", "holder", "frame"):
         assert other_by_name[name][1]["inactive"] == "1", (name, other_by_name[name])
     other_group_idx = other_by_name["magazine"][0] - 1
     other_group = next((f for idx, f in other["items"] if idx == other_group_idx), None)
@@ -1463,8 +1468,65 @@ def test_dead_options_are_inactive_and_film_group_is_placed_and_ordered():
     print("test_dead_options_are_inactive_and_film_group_is_placed_and_ordered OK "
           f"(Film group between Enhancement and Extras at index {group_idx}; "
           f"magazine={magazine_idx} load={load_idx} eject={eject_idx} "
-          f"check-status={check_status_idx} frame={frame_idx}; "
+          f"check-status={check_status_idx} holder={holder_idx} frame={frame_idx}; "
           "default mode Color, colour filter None)")
+
+
+def _holder_states(r):
+    """The VALUE holder=... lines of a holder scenario, parsed."""
+    out = []
+    for v in r.get("values", []):
+        if v.startswith("holder="):
+            kv = dict(p.split("=", 1) for p in v.split())
+            out.append({k: (int(x) if k != "holder" else x) for k, x in kv.items()})
+    return out
+
+
+def test_the_holder_option_swaps_the_frame_range_and_clamps_the_frame():
+    """The "holder" option (issue #70, the SANE v10 slide path): strip is
+    the default with Frame 1-6; setting slide swaps Frame's range to 1-4,
+    pulls a frame above 4 down to 4 and announces RELOAD_OPTIONS and
+    RELOAD_PARAMS; setting strip again restores 1-6 and leaves the frame.
+    All through the real sane_control_option path, so SANE core's own
+    constraint handling is exercised too: with the slide holder, frame 5
+    is clamped to 4 with INEXACT (RANGE constraints clamp, they do not
+    refuse), an unlisted holder value is INVAL from core before the
+    handler runs, and re-sending the current value announces nothing.
+    No hook is called and nothing reaches the wire: the backend's own
+    refusal of a bad slide request (opening 5 set some other way, or the
+    slide holder on plain 3600 dpi) lives in validate_scan_request, pinned
+    by tests/test_sane_geometry.py."""
+    probe = _build_probe()
+    if probe is None:
+        return _skip("test_the_holder_option_swaps_the_frame_range_and_clamps_the_frame")
+
+    r = _run(probe, "scenario", "holder-slide-swaps-frame-range")
+    assert r["optstatuses"] == [SANE_STATUS_GOOD, SANE_STATUS_GOOD], r["optstatuses"]
+    both = SANE_INFO_RELOAD_OPTIONS | SANE_INFO_RELOAD_PARAMS
+    assert r["optinfos"] == [both, both], r["optinfos"]
+    states = _holder_states(r)
+    assert len(states) == 3, r.get("values")
+    assert states[0] == {"holder": "strip", "frame": 1, "frame-min": 1, "frame-max": 6}, states
+    assert states[1] == {"holder": "slide", "frame": 4, "frame-min": 1, "frame-max": 4}, states
+    assert states[2] == {"holder": "strip", "frame": 4, "frame-min": 1, "frame-max": 6}, states
+
+    r2 = _run(probe, "scenario", "holder-slide-clamps-frame-5")
+    assert r2["optstatuses"] == [SANE_STATUS_GOOD, SANE_STATUS_GOOD], r2["optstatuses"]
+    assert r2["optinfos"][0] == both, r2["optinfos"]
+    assert r2["optinfos"][1] & SANE_INFO_INEXACT, r2["optinfos"]
+    assert _holder_states(r2)[-1]["frame"] == 4, r2.get("values")
+
+    r3 = _run(probe, "scenario", "holder-rejects-an-unlisted-value")
+    assert r3["optstatuses"] == [SANE_STATUS_INVAL], r3["optstatuses"]
+    assert r3["optinfos"] == [0], r3["optinfos"]
+    assert _holder_states(r3)[-1]["holder"] == "strip", r3.get("values")
+
+    r4 = _run(probe, "scenario", "holder-same-value-is-quiet")
+    assert r4["optstatuses"] == [SANE_STATUS_GOOD], r4["optstatuses"]
+    assert r4["optinfos"] == [0], r4["optinfos"]
+    print("test_the_holder_option_swaps_the_frame_range_and_clamps_the_frame OK "
+          "(strip 1-6 <-> slide 1-4, frame 6 -> 4, RELOAD_OPTIONS|RELOAD_PARAMS; "
+          "frame 5 clamped INEXACT; unlisted value INVAL; same value quiet)")
 
 
 def test_switching_to_gray_does_not_reopen_hidden_options_on_gl126():
@@ -1544,6 +1606,7 @@ def main() -> int:
         test_check_status_reports_loaded_despite_a_busy_class,
         test_dead_options_are_inactive_and_film_group_is_placed_and_ordered,
         test_switching_to_gray_does_not_reopen_hidden_options_on_gl126,
+        test_the_holder_option_swaps_the_frame_range_and_clamps_the_frame,
     ]
     passed = 0
     skipped = 0
