@@ -361,6 +361,27 @@ done when that list is verified on a mounted slide. **Brought forward
 2026-09-18 (owner's decision, slides are in scope for the driver): in
 progress.**
 
+**C2 in the SANE backend (towards submission revision v10, issue #70,
+2026-11-08 plan; desk work until the maintainers react to v9).** The
+five items and where they stand (2026-11-09): (1) the slide ledger,
+`<KEY>_SLIDES[4]` per dual profile from `slide_dual_geometry()`, with
+the generator parity test extended: done, PR #86 (bearyjd), merged
+2026-11-09, offline. (2) The `holder` option (strip / slide, strip the
+default) that makes `frame` mean opening 1-4, `frame_geometry()` and
+`feedl_for_frame()` taking the holder, and the slide-only travel bound
+(FEEDL + wire travel inside the ceiling) checked before anything is
+sent: written and offline-verified 2026-11-09 against a built backend
+(see CHANGELOG, Unreleased), not run on hardware. (3) The crop stays
+out: the backend delivers the whole overscan window for a slide as for a
+strip (submission limitation 2); one sentence for the merge request and
+the man page, not written yet. (4) Hardware: scanimage runs with the
+slide holder (load, opening 1 and 4, eject) on the owner's unit and on
+the contributor's, on a build the owner names once (2) is reviewed; not
+done. (5) The contributor's two held patches (logging, load-guidance
+text, PR #84, draft): rebased onto the v9 tip and held; review notes in
+the PR thread. Limitation 9 of the submission ("strip holder only") is
+rewritten only after (4).
+
 ---
 
 ## Current status (2026-09-15)
@@ -408,7 +429,10 @@ progress.**
   C2 (slides): steps 1–3 (holder option, IR-keyed crop, positive output)
   were built by a contributor and merged 2026-11-08 after runs on two
   units (Tests 121–124; see the C section); open: the lateral crop, more
-  mounts. History: the strip holder's six
+  mounts. In the SANE backend the slide ledger is in (PR #86,
+  2026-11-09) and the `holder` option with the slide travel bound is
+  written and offline-verified (2026-11-09), hardware run pending (see
+  "C2 in the SANE backend" in the C section). History: the strip holder's six
   apertures are measured and the driver reaches and scans all six
   positions on hardware — transport, scan and PARK verified across
   three separate empty-holder loads plus one with film (Test 55–57).
