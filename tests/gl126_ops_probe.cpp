@@ -99,9 +99,12 @@
          op=<i>" (op_index is 0 for a BadAck, 1 for a ShortBulk -- this
          mode is not table-driven).
 
-     probe feedl <frame>
+     probe feedl <frame> [profile [strip|slide]]
          Runs gl126::feedl_for_frame()/feedl_bytes() and prints
-         "FEEDL=<n> hi=<hex2> mid=<hex2> lo=<hex2>".
+         "FEEDL=<n> hi=<hex2> mid=<hex2> lo=<hex2>"; with a profile the
+         production overload (frames[] / slides[]), and with "slide"
+         also " travel_end=<n>" (gl126::slide_travel_end(), the slide
+         path's own bound).
 
      probe position_timeout <feedl>
          Runs gl126::position_timeout_ms() and prints "MS=<n>".
@@ -1182,12 +1185,23 @@ int cmd_alternate_lines(int argc, char** argv)
     return 0;
 }
 
-/* geometry <profile> <frame> -- frame_geometry() of a named profile's
-   frame (1-6, the A+C ledger since Test 58/61). */
+/* "strip" (default) or "slide" -> HolderKind; anything else is a usage
+   error (exit 2, before any computation). */
+HolderKind parse_holder(const char* arg)
+{
+    std::string s = arg;
+    if (s == "strip") return HolderKind::Strip;
+    if (s == "slide") return HolderKind::Slide;
+    throw std::invalid_argument("holder must be 'strip' or 'slide', got '" + s + "'");
+}
+
+/* geometry <profile> <frame> [strip|slide] -- frame_geometry() of a
+   named profile's frame (1-6, the A+C ledger since Test 58/61), or of
+   its slide-holder opening (1-4, slides[]) with "slide". */
 int cmd_geometry(int argc, char** argv)
 {
-    if (argc != 4) {
-        std::cerr << "usage: probe geometry <profile> <frame>\n";
+    if (argc != 4 && argc != 5) {
+        std::cerr << "usage: probe geometry <profile> <frame> [strip|slide]\n";
         return 2;
     }
     const Profile* p = nullptr;
@@ -1199,7 +1213,8 @@ int cmd_geometry(int argc, char** argv)
         return 2;
     }
     unsigned frame = static_cast<unsigned>(std::stoul(argv[3]));
-    FrameGeometry g = frame_geometry(*p, frame);
+    HolderKind holder = argc == 5 ? parse_holder(argv[4]) : HolderKind::Strip;
+    FrameGeometry g = frame_geometry(*p, frame, holder);
     std::cout << "GEOMETRY dual=" << (g.dual ? 1 : 0) << " width=" << g.width
               << " wire_lines=" << g.wire_lines << " read_lines=" << g.read_lines
               << " image_lines=" << g.image_lines << " shift_lines=" << g.shift_lines
@@ -1287,20 +1302,34 @@ int cmd_image_chunks(int argc, char** argv)
 
 int cmd_feedl(int argc, char** argv)
 {
-    if (argc != 3 && argc != 4) {
-        std::cerr << "usage: probe feedl <frame> [profile]\n";
+    if (argc < 3 || argc > 5) {
+        std::cerr << "usage: probe feedl <frame> [profile [strip|slide]]\n";
         return 2;
     }
     unsigned frame = static_cast<unsigned>(std::stoul(argv[2]));
-    unsigned feedl = feedl_for_frame(frame);
-    if (argc == 4) {
+    HolderKind holder = argc == 5 ? parse_holder(argv[4]) : HolderKind::Strip;
+    const Profile* p = nullptr;
+    if (argc >= 4) {
         for (std::size_t i = 0; i < PROFILE_COUNT; i++) {
-            if (std::string(PROFILES[i].name) == argv[3]) feedl = feedl_for_frame(frame, PROFILES[i]);
+            if (std::string(PROFILES[i].name) == argv[3]) p = &PROFILES[i];
+        }
+        if (p == nullptr) {
+            std::cerr << "no profile " << argv[3] << "\n";
+            return 2;
         }
     }
+    // The legacy single-arg overload (the vendor capture grid) has no
+    // slide form; with a profile the production overload is used.
+    unsigned feedl = p == nullptr ? feedl_for_frame(frame) : feedl_for_frame(frame, *p, holder);
     FeedlBytes b = feedl_bytes(feedl);
     std::cout << "FEEDL=" << feedl << " hi=" << hex2(b.hi) << " mid=" << hex2(b.mid)
-              << " lo=" << hex2(b.lo) << "\n";
+              << " lo=" << hex2(b.lo);
+    if (p != nullptr && holder == HolderKind::Slide) {
+        // The slide path's own bound, as feedl_for_frame() checked it.
+        const FrameGeom& fg = p->slides[frame - 1];
+        std::cout << " travel_end=" << slide_travel_end(fg.feedl, fg.line_register, p->dpi);
+    }
+    std::cout << "\n";
     return 0;
 }
 

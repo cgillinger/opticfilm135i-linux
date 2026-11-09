@@ -18,12 +18,53 @@ one exists; "offline" means implemented and tested without the scanner.
   up with pictures reading correctly, so README, ROADMAP and the test
   log now say "the branded or shiny side (the front) up toward the
   holder's open face" (issue #70).
-- **Faster dust removal and TIFF writing, same output.** `remove_dust`
+- **Faster dust removal and TIFF writing, same output (PR #83,
+  bearyjd).** `remove_dust`
   builds the fill plan once for all channels and reads the summed-area
   tables only at the masked pixels; `write_tiff16` streams the pixel
   block instead of joining a copy; `align_channels` copies once. Pixels
   and written bytes are identical to before (offline suite
   `test_postscan_perf`, compared against a frozen copy of the old code).
+  Merged 2026-11-09 after the offline check (test log): 8 new tests,
+  release check 756 passed, 54 skipped; the eye check on real frames from
+  the owner's unit is still to come.
+- **SANE backend: the slide-holder geometry tables (PR #86, bearyjd,
+  offline).** `tools/gen_sane_tables.py` freezes
+  `holder.slide_dual_geometry()` for openings 1-4 of each dual profile
+  into `<KEY>_SLIDES[4]` next to the strip `<KEY>_FRAMES[6]`, and
+  `Profile` gains a `slides` pointer (nullptr on plain3600).
+  `test_sane_geometry` checks every table against the generator, the
+  Profile wiring, and the slide path's FEEDL + wire-travel bound inside
+  FEEDL_CEILING (opening 4 ends 175-311 steps inside it). Merged
+  2026-11-09; nothing read the tables yet at that point.
+- **SANE backend: the `holder` option and the slide travel bound
+  (issue #70 step 2 of the v10 list, offline only, not run on
+  hardware).** A new string option `holder` (`strip`, the default, or
+  `slide`) in the Film group, right before `frame`. With `slide`, `frame`
+  means the opening (its range swaps to 1-4 and a higher frame is pulled
+  down to 4, with RELOAD_OPTIONS), and the backend positions and sizes
+  the pass from the profile's `slides[]` ledger instead of `frames[]`;
+  the same POSITION program and the same move, only the FEEDL target and
+  the window differ. `gl126_ops` gains `HolderKind`, `kFeedlSlideMax` and
+  `slide_travel_end()`; `feedl_for_frame()`/`frame_geometry()` take the
+  holder (strip default, every existing caller unchanged) and, for the
+  slide holder, also refuse an opening whose FEEDL + wire travel would
+  pass FEEDL_CEILING, the driver's own `slide_dual_geometry()` bound.
+  Refused before anything is written: opening 0 or 5, and the slide
+  holder on plain 3600 dpi (no slide ledger; its window clips a mounted
+  slide, Test 85). Parameter reporting stays tolerant of that last
+  request (it answers with the strip geometry) so an option change never
+  throws; the refusal is sane_start's. Verified offline against a build
+  of sane-backends `1d47d7c` with the integration patch: 0 warnings,
+  upstream's genesys testsuite PASS, `test_sane_magazine` 43 (one new,
+  the range swap and clamp through the real option path),
+  `test_sane_open_params` 8 (one new, the session sized from `slides[]`),
+  `test_sane_geometry` 10 (two new, the compiled slide path against
+  `slide_geom_entries()` and `holder.slide_travel_end()`),
+  `test_sane_ops` 52, `test_sane_calibration_cache` 6. The hardware
+  run (load, opening 1 and 4, eject through scanimage) is the next step
+  and has not happened; the submission package in `sane/wp3-package/`
+  is still v9 and untouched.
 
 ## v0.2.12 — Shiny Side Slides — 2026-11-08
 

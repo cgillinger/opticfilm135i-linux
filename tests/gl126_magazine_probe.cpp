@@ -314,6 +314,61 @@ void set_magazine(SANE_Handle h, const char* value)
     std::printf("OPTINFO %d\n", static_cast<int>(info));
 }
 
+/* SET a string or INT option through the REAL option path and report
+   OPTSTATUS + OPTINFO like set_magazine(); for the "holder" option
+   (issue #70, SANE v10 candidate) a test wants the info word too, since
+   switching holders must announce RELOAD_OPTIONS (the "frame" range
+   changed) as well as RELOAD_PARAMS. */
+void set_str_report(SANE_Handle h, const char* name, const char* value)
+{
+    int opt = find_opt(h, name);
+    if (opt < 0) {
+        std::printf("OPTSTATUS -1\n");
+        return;
+    }
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%s", value);
+    SANE_Int info = 0;
+    SANE_Status st = sane_control_option(h, opt, SANE_ACTION_SET_VALUE, buf, &info);
+    std::printf("OPTSTATUS %d\n", static_cast<int>(st));
+    std::printf("OPTINFO %d\n", static_cast<int>(info));
+}
+
+void set_int_report(SANE_Handle h, const char* name, SANE_Word value)
+{
+    int opt = find_opt(h, name);
+    if (opt < 0) {
+        std::printf("OPTSTATUS -1\n");
+        return;
+    }
+    SANE_Int info = 0;
+    SANE_Word v = value;
+    SANE_Status st = sane_control_option(h, opt, SANE_ACTION_SET_VALUE, &v, &info);
+    std::printf("OPTSTATUS %d\n", static_cast<int>(st));
+    std::printf("OPTINFO %d\n", static_cast<int>(info));
+}
+
+/* The holder/frame state a frontend would see: the "holder" value, the
+   "frame" value and the "frame" option's current range maximum (its
+   descriptor is re-read, as a frontend does after RELOAD_OPTIONS). */
+void print_holder_state(SANE_Handle h)
+{
+    int hopt = find_opt(h, "holder");
+    int fopt = find_opt(h, "frame");
+    if (hopt < 0 || fopt < 0) {
+        std::printf("VALUE holder-state=<missing option>\n");
+        return;
+    }
+    char holder[64] = {0};
+    sane_control_option(h, hopt, SANE_ACTION_GET_VALUE, holder, nullptr);
+    SANE_Word frame = 0;
+    sane_control_option(h, fopt, SANE_ACTION_GET_VALUE, &frame, nullptr);
+    const SANE_Option_Descriptor* d = sane_get_option_descriptor(h, fopt);
+    std::printf("VALUE holder=%s frame=%d frame-min=%d frame-max=%d\n", holder,
+                static_cast<int>(frame), static_cast<int>(d->constraint.range->min),
+                static_cast<int>(d->constraint.range->max));
+}
+
 void print_text(SANE_Handle h)
 {
     int opt = find_opt(h, "magazine");
@@ -1089,6 +1144,38 @@ int cmd_scenario(int argc, char** argv)
         seed(dev, 0x101, 0xF0);
         call_hook(dev, "eject");
         set_magazine(h, "not one of the constrained values");
+    } else if (scenario == "holder-slide-swaps-frame-range") {
+        // The "holder" option (issue #70, SANE v10 candidate). Frame 6 is
+        // legal on the strip; switching to the slide holder swaps the
+        // frame range to 1-4, pulls the frame down to 4, and announces
+        // RELOAD_OPTIONS + RELOAD_PARAMS. Switching back restores 1-6
+        // and leaves the frame where it is. Pure option plumbing, no
+        // hook, no wire.
+        print_holder_state(h);
+        set_int(h, "frame", 6);
+        set_str_report(h, "holder", "slide");
+        print_holder_state(h);
+        set_str_report(h, "holder", "strip");
+        print_holder_state(h);
+    } else if (scenario == "holder-slide-clamps-frame-5") {
+        // With the slide holder, frame 5 is outside the option's range:
+        // SANE core (sanei_constrain_value, RANGE) clamps it to 4 and
+        // reports INEXACT, before set_option_value() runs. So no frame
+        // beyond the slide holder's openings ever reaches the backend
+        // through the option path.
+        set_str_report(h, "holder", "slide");
+        set_int_report(h, "frame", 5);
+        print_holder_state(h);
+    } else if (scenario == "holder-rejects-an-unlisted-value") {
+        // Same core STRING_LIST check as the magazine option's.
+        set_str_report(h, "holder", "tray");
+        print_holder_state(h);
+    } else if (scenario == "holder-same-value-is-quiet") {
+        // Setting the holder to what it already is changes nothing and
+        // announces nothing (no RELOAD bits), so a frontend that re-sends
+        // the current value does not loop on RELOAD_OPTIONS.
+        set_str_report(h, "holder", "strip");
+        print_holder_state(h);
     } else {
         std::fprintf(stderr, "unknown scenario: %s\n", scenario.c_str());
         sane_close(h);

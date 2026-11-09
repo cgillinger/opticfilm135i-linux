@@ -1067,13 +1067,24 @@ std::vector<std::uint8_t> shading_table2_dual(const std::uint8_t* white, std::si
 namespace {
 
 // Shared by frame_geometry() and both feedl_for_frame() overloads: the
-// frame must be inside the holder before it indexes profile.frames[] or
-// any FEEDL is computed from it, and a FEEDL/end_hwdpi that comes out
-// must not exceed the proven travel ceiling, whatever produced it
-// (kFeedlFrameMax / kFeedlCeiling, gl126_ops.h). Neither write happens
-// on the wire until both have passed.
-void check_frame_in_holder(unsigned frame)
+// frame must be inside the holder before it indexes profile.frames[]
+// (or profile.slides[]) or any FEEDL is computed from it, and a
+// FEEDL/end_hwdpi that comes out must not exceed the proven travel
+// ceiling, whatever produced it (kFeedlFrameMax / kFeedlSlideMax /
+// kFeedlCeiling, gl126_ops.h). Neither write happens on the wire until
+// both have passed.
+void check_frame_in_holder(unsigned frame, HolderKind holder = HolderKind::Strip)
 {
+    if (holder == HolderKind::Slide) {
+        if (frame < 1 || frame > kFeedlSlideMax) {
+            std::ostringstream oss;
+            oss << "gl126_ops: slide opening " << frame << " is outside 1-"
+                << kFeedlSlideMax << " (the slide holder's opening count); "
+                   "nothing was computed";
+            throw std::invalid_argument(oss.str());
+        }
+        return;
+    }
     if (frame < 1 || frame > kFeedlFrameMax) {
         std::ostringstream oss;
         oss << "gl126_ops: frame " << frame << " is outside 1-"
@@ -1081,6 +1092,32 @@ void check_frame_in_holder(unsigned frame)
                "nothing was computed";
         throw std::invalid_argument(oss.str());
     }
+}
+
+// The ledger `holder` selects on `profile`: frames[] for the strip,
+// slides[] for the slide holder. The slide ledger exists on the dual
+// profiles only (gen_sane_tables emits <KEY>_SLIDES for them and nullptr
+// for plain3600, whose 26.5 mm window clips a mounted slide, Test 85);
+// asking the slide holder of a profile without one is refused here,
+// before anything indexes it.
+const FrameGeom* holder_ledger(const Profile& profile, HolderKind holder)
+{
+    if (holder == HolderKind::Strip) {
+        return profile.frames;
+    }
+    if (profile.slides == nullptr) {
+        std::ostringstream oss;
+        oss << "gl126_ops: profile '" << profile.name << "' has no slide-holder geometry: "
+               "the slide holder needs a dual-light profile (600, 1200, 2400 or 7200 dpi, "
+               "or 3600 dpi with infrared); nothing was computed";
+        throw std::invalid_argument(oss.str());
+    }
+    return profile.slides;
+}
+
+const char* holder_noun(HolderKind holder)
+{
+    return holder == HolderKind::Slide ? "slide opening" : "frame";
 }
 
 void check_feedl_ceiling(unsigned feedl)
@@ -1099,12 +1136,14 @@ void check_feedl_ceiling(unsigned feedl)
 // The production geometry: every value is sourced from
 // profile.frames[frame-1] (the frozen ledger
 // gen_sane_tables.frame_geom_entries() emits from the driver's own
-// holder geometry), not from profile.captured_lines/chunk_count, those
-// legacy fields are capture-evidence only now.
-FrameGeometry frame_geometry(const Profile& profile, unsigned frame)
+// holder geometry), or profile.slides[frame-1] for the slide holder
+// (slide_geom_entries(), same FrameGeom fields), not from
+// profile.captured_lines/chunk_count, those legacy fields are
+// capture-evidence only now.
+FrameGeometry frame_geometry(const Profile& profile, unsigned frame, HolderKind holder)
 {
-    check_frame_in_holder(frame);
-    const FrameGeom& fg = profile.frames[frame - 1];
+    check_frame_in_holder(frame, holder);
+    const FrameGeom& fg = holder_ledger(profile, holder)[frame - 1];
 
     FrameGeometry g;
     g.dual = profile.lines_per_chunk != 0;   // the plain profile carries no chunk plan
@@ -1124,10 +1163,11 @@ FrameGeometry frame_geometry(const Profile& profile, unsigned frame)
     // been written yet.
     if (g.delivered_lines + g.shift_lines != g.image_lines) {
         std::ostringstream oss;
-        oss << "gl126_ops::frame_geometry: profile '" << profile.name << "' frame " << frame
+        oss << "gl126_ops::frame_geometry: profile '" << profile.name << "' "
+            << holder_noun(holder) << " " << frame
             << " ledger invariant failed: delivered_lines " << g.delivered_lines
             << " + shift_lines " << g.shift_lines << " != image_lines " << g.image_lines
-            << " (frames[] wiring or table generation is wrong). Nothing was written.";
+            << " (frames[]/slides[] wiring or table generation is wrong). Nothing was written.";
         throw std::invalid_argument(oss.str());
     }
     // The delivered width is a host-side down-scale of the raw sensor width
@@ -1159,20 +1199,45 @@ unsigned feedl_for_frame(unsigned frame)
 // (the commanded POSITION target the ledger computed), re-checking both
 // the FEEDL itself and the pass's furthest reach (end_hwdpi) against the
 // same travel ceiling the driver's own overscan_geometry() already
-// checked, inherited verbatim, not re-derived.
-unsigned feedl_for_frame(unsigned frame, const Profile& profile)
+// checked, inherited verbatim, not re-derived. For the slide holder the
+// same from profile.slides[frame-1], plus the slide path's stricter
+// FEEDL + wire-travel bound (slide_dual_geometry()'s check_feedl on
+// slide_travel_end), re-applied here on the frozen values.
+unsigned feedl_for_frame(unsigned frame, const Profile& profile, HolderKind holder)
 {
-    check_frame_in_holder(frame);
-    const FrameGeom& fg = profile.frames[frame - 1];
+    check_frame_in_holder(frame, holder);
+    const FrameGeom& fg = holder_ledger(profile, holder)[frame - 1];
     if (fg.end_hwdpi > kFeedlCeiling) {
         std::ostringstream oss;
-        oss << "gl126_ops::feedl_for_frame: profile '" << profile.name << "' frame " << frame
+        oss << "gl126_ops::feedl_for_frame: profile '" << profile.name << "' "
+            << holder_noun(holder) << " " << frame
             << " end_hwdpi " << fg.end_hwdpi << " exceeds the proven travel ceiling "
             << kFeedlCeiling << " (matching the driver's own FEEDL_CEILING); nothing was written";
         throw std::invalid_argument(oss.str());
     }
+    if (holder == HolderKind::Slide) {
+        unsigned travel_end = slide_travel_end(fg.feedl, fg.line_register, profile.dpi);
+        if (travel_end > kFeedlCeiling) {
+            std::ostringstream oss;
+            oss << "gl126_ops::feedl_for_frame: profile '" << profile.name
+                << "' slide opening " << frame << " FEEDL " << fg.feedl << " + wire travel ends at "
+                << travel_end << ", beyond the proven travel ceiling " << kFeedlCeiling
+                << " (the slide path's own bound, matching the driver's slide_dual_geometry); "
+                   "nothing was written";
+            throw std::invalid_argument(oss.str());
+        }
+    }
     check_feedl_ceiling(fg.feedl);   // defensive; feedl <= end_hwdpi so this is subsumed
     return fg.feedl;
+}
+
+unsigned slide_travel_end(unsigned feedl, unsigned wire_lines, unsigned dpi)
+{
+    // ceil(feedl + wire_lines * (7200 // dpi) / 2), in integers: the
+    // product is even for every dual profile (wire parity), so the
+    // rounding term is a no-op there and a guard elsewhere.
+    unsigned steps_per_line = 7200 / dpi;
+    return feedl + (wire_lines * steps_per_line + 1) / 2;
 }
 
 FeedlBytes feedl_bytes(unsigned feedl)

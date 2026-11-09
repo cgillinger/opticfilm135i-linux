@@ -9182,3 +9182,102 @@ the README wording; the owner's orientation was confirmed by the
 photographer the same day (Test 124 addendum).
 
 Open from his side: the lateral crop; plastic and glass mounts untried.
+
+## 2026-11-09 — Offline check, PR #86 (bearyjd): the slide-holder geometry tables for the SANE backend — 20 rows recomputed from `holder.slide_dual_geometry()`, entry for entry equal; opening 4 ends 175–311 steps inside FEEDL_CEILING on every dual profile
+
+No scanner contact. The contributor's change: `tools/gen_sane_tables.py`
+gains `slide_geom_entries()`, which freezes `holder.slide_dual_geometry()`
+for openings 1–4 of each dual profile into `<KEY>_SLIDES[4]` next to the
+strip `<KEY>_FRAMES[6]` (same `FrameGeom` fields), and `Profile` gains a
+`slides` pointer (the table on the five dual profiles, nullptr on
+plain3600). Nothing in the backend read the table at merge time; the
+holder option and the slide travel bound in the C++ were the owner's
+next step (below).
+
+Checked before the merge, on master `5f88a44`'s parent with the branch:
+all 20 rows recomputed from `holder.slide_dual_geometry()` on master and
+compared to the frozen table, equal entry for entry; the slide path's
+own bound (FEEDL + wire travel, `holder.slide_travel_end()`) inside
+`FEEDL_CEILING` for every row, opening 4 the binding one:
+
+| profile | opening 4 FEEDL | travel end | steps inside the ceiling (71490) |
+|---|---|---|---|
+| dpi600 | 59471 | 71231 | 259 |
+| dpi1200 | 59507 | 71315 | 175 |
+| dpi2400 | 59495 | 71183 | 307 |
+| ir3600 | 59490 | 71186 | 304 |
+| dpi7200 | 59491 | 71179 | 311 |
+
+(Figures from the compiled probe, `feedl 4 <profile> slide`, after the
+holder option landed; the PR's own check gave the same bounds.) Suites: `gen_sane_tables.py
+--check`, `test_sane_geometry` 8, `test_sane_ops` 52, `test_sane_mark`,
+`test_sane_install` all passed on the branch. Merged as `5f88a44`.
+
+## 2026-11-09 — Offline check, PR #83 (bearyjd): faster dust removal, TIFF writer and channel alignment — 8 identity tests against a frozen copy of the old code, release check 756 passed / 54 skipped; eye check on real frames pending
+
+No scanner contact. The contributor's change is confined to
+`of135i/image.py` (`remove_dust` plans the fill once for all three
+channels and reads the summed-area tables only at the masked pixels;
+`_box_blur` in slices with one allocation; `write_tiff16` streams the
+pixel block; `align_channels` copies once) plus the new suite
+`tests/test_postscan_perf.py`, registered in `tools/release_check.py`
+and `docs/offline-checks.md`. His own numbers (PR description): old and
+new byte-identical on synthetic frames and on real 3600/7200 dpi frames
+from his unit with injected specks (3.5 M and 15 M pixels changed, arrays
+and SHA-256 equal, TIFF bytes equal); `remove_dust` 18.2 s → 3.5 s at
+3600 dpi on a quiet machine.
+
+Run here on the merge head `706b378` (his branch with master merged, the
+only conflict CHANGELOG.md), in a fresh environment (Python 3, numpy
+2.5.3, pyusb, tifffile):
+
+| check | result |
+|---|---|
+| `tests/test_postscan_perf.py` | 8 passed (`_box_blur` and `remove_dust` bit for bit against the frozen reference, other dtypes, kernel list pinned to master's constants, empty mask, input untouched, `write_tiff16` hashes incl. zero-size arrays, `align_channels` input untouched) |
+| `tools/release_check.py --no-backend --allow-dirty` | 756 passed, 54 skipped, 0 failed (the skips are the backend group, no built `libsane-genesys.so` in that run) |
+
+A first run of the release check failed two suites (`test_recrop`,
+`test_film110_digitize`) on a missing `tifffile` module in the
+environment, not on the change; green after installing it. Merged as
+`e41f2e9`. Not done: the eye check on real frames from the owner's unit
+(the output is claimed and tested byte-identical, so this is a
+confirmation, not a condition), and real-frame identity at sensitivities
+other than 1.0, covered by the synthetic tests only.
+
+## 2026-11-09 — Offline check: the SANE backend's `holder` option and the slide travel bound (issue #70, v10 item 2) against a built backend — option plumbing, session geometry from `slides[]`, refusals before any write; not run on hardware
+
+No scanner contact. The owner's side of the v10 slide path (the C++,
+kept in one hand per issue #70): `gl126_ops` gains `HolderKind`
+(Strip / Slide), `kFeedlSlideMax` (4) and `slide_travel_end()`;
+`frame_geometry()` and `feedl_for_frame()` take the holder (strip the
+default, so every existing caller is unchanged) and read `slides[]` for
+the slide holder, with the slide path's stricter FEEDL + wire-travel
+bound re-applied on the frozen values; `gl126.cpp` validates the holder
+and the opening in `validate_scan_request()` and `begin_scan()`, and the
+integration patch adds the `holder` option (string list strip / slide,
+strip the default, right before `frame` in the Film group) whose switch
+swaps `frame`'s range between 1–6 and 1–4 and pulls a higher frame down,
+announcing RELOAD_OPTIONS and RELOAD_PARAMS. The same POSITION program
+and the same move either way: only the FEEDL target and the window come
+from another ledger.
+
+Build: sane-backends `1d47d7c` with `sane/gl126-integration.patch`
+(applies cleanly) and the nine `sane/` files symlinked, `./configure
+--sysconfdir=/etc BACKENDS=genesys --disable-locking --without-gphoto2
+--without-v4l`, `make -C backend libsane-genesys.la`: 0 compiler
+warnings. `make -C testsuite/backend/genesys check`: PASS 1/1.
+
+| suite | result | what the new tests pin |
+|---|---|---|
+| `test_sane_magazine` | 43 passed (42 + 1) | through the real `sane_control_option` path: strip 1–6 ↔ slide 1–4, frame 6 → 4 on the switch with RELOAD_OPTIONS \| RELOAD_PARAMS, frame 5 with the slide holder clamped to 4 by SANE core (INEXACT), an unlisted holder value INVAL from core, re-sending the current value announces nothing; the Film group order magazine, load-film, eject-film, check-status, holder, frame, all inactive on GL124 |
+| `test_sane_open_params` | 8 passed (7 + 1) | `calculate_scan_session` with the slide holder sizes ir3600 and dpi600 openings 1 and 4 from `slides[]` (delivered lines equal to `slide_geom_entries()`), the strip request unchanged, and plain3600 + slide holder answers with the strip geometry instead of throwing (the refusal is sane_start's) |
+| `test_sane_geometry` | 10 passed (8 + 2) | the compiled slide path against `slide_geom_entries()` for all 20 profile × opening entries, `gl126::slide_travel_end` == `holder.slide_travel_end` and inside the ceiling (opening 4: 175–311 steps), openings 0/5 and the slide holder on plain3600 refused with the named reason, strip 1–6 unchanged; `validate_scan_request` still precedes the first read and the first write |
+| `test_sane_ops` | 52 passed | unchanged |
+| `test_sane_calibration_cache` | 6 passed | unchanged |
+| `tools/release_check.py --allow-dirty` (backend found via `SANE_BACKENDS_DIR`) | FULL VERIFICATION PASSED: 814 passed, 0 skipped | every suite, every test, the backend group included |
+
+Not done: hardware. The next step is the run named in issue #70 item 4
+(scanimage: load, opening 1 and 4, eject, with the slide holder) on the
+owner's unit and on the contributor's, on a build the owner names after
+reviewing this. Until then the backend's slide path is OFFLINE VERIFIED
+only, and `sane/wp3-package/` stays at v9.
