@@ -18,6 +18,12 @@ one exists; "offline" means implemented and tested without the scanner.
   up with pictures reading correctly, so README, ROADMAP and the test
   log now say "the branded or shiny side (the front) up toward the
   holder's open face" (issue #70).
+- **Faster dust removal and TIFF writing, same output.** `remove_dust`
+  builds the fill plan once for all channels and reads the summed-area
+  tables only at the masked pixels; `write_tiff16` streams the pixel
+  block instead of joining a copy; `align_channels` copies once. Pixels
+  and written bytes are identical to before (offline suite
+  `test_postscan_perf`, compared against a frozen copy of the old code).
 
 ## v0.2.12 — Shiny Side Slides — 2026-11-08
 
