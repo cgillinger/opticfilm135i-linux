@@ -371,13 +371,14 @@ default) that makes `frame` mean opening 1-4, `frame_geometry()` and
 `feedl_for_frame()` taking the holder, and the slide-only travel bound
 (FEEDL + wire travel inside the ceiling) checked before anything is
 sent: written and offline-verified 2026-11-09 against a built backend
-(see CHANGELOG, Unreleased), not run on hardware. (3) The crop stays
+(see CHANGELOG, Unreleased), merged (PR #87) and run on the owner's
+unit (Test 125). (3) The crop stays
 out: the backend delivers the whole overscan window for a slide as for a
 strip (submission limitation 2); one sentence for the merge request and
 the man page, not written yet. (4) Hardware: scanimage runs with the
-slide holder (load, opening 1 and 4, eject) on the owner's unit and on
-the contributor's, on a build the owner names once (2) is reviewed; not
-done. (5) The contributor's two held patches (logging, load-guidance
+slide holder (load, opening 1 and 4, eject): the owner's unit done
+2026-11-09 at 600 dpi on master `c77c4fb` (Test 125, FEEDL as tabled, no
+poll timeouts); the contributor's unit pending. (5) The contributor's two held patches (logging, load-guidance
 text, PR #84, draft): rebased onto the v9 tip and held; review notes in
 the PR thread. Limitation 9 of the submission ("strip holder only") is
 rewritten only after (4).
@@ -431,7 +432,8 @@ rewritten only after (4).
   units (Tests 121–124; see the C section); open: the lateral crop, more
   mounts. In the SANE backend the slide ledger is in (PR #86,
   2026-11-09) and the `holder` option with the slide travel bound is
-  written and offline-verified (2026-11-09), hardware run pending (see
+  written, offline-verified and run on the owner's unit (2026-11-09,
+  Test 125; the second unit pending, see
   "C2 in the SANE backend" in the C section). History: the strip holder's six
   apertures are measured and the driver reaches and scans all six
   positions on hardware — transport, scan and PARK verified across

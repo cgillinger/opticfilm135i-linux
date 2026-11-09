@@ -9276,8 +9276,50 @@ warnings. `make -C testsuite/backend/genesys check`: PASS 1/1.
 | `test_sane_calibration_cache` | 6 passed | unchanged |
 | `tools/release_check.py --allow-dirty` (backend found via `SANE_BACKENDS_DIR`) | FULL VERIFICATION PASSED: 814 passed, 0 skipped | every suite, every test, the backend group included |
 
-Not done: hardware. The next step is the run named in issue #70 item 4
-(scanimage: load, opening 1 and 4, eject, with the slide holder) on the
-owner's unit and on the contributor's, on a build the owner names after
-reviewing this. Until then the backend's slide path is OFFLINE VERIFIED
-only, and `sane/wp3-package/` stays at v9.
+Not done here: hardware. The owner's unit ran it the same evening
+(Test 125, below); the contributor's run is pending. `sane/wp3-package/`
+stays at v9.
+
+## 2026-11-09 — Test 125: the SANE backend's slide path on hardware (owner's unit) — `scanimage --holder slide`, load, opening 1 (the owner's slide) and opening 4 (empty) at 600 dpi, eject: FEEDL 6236 and 59471 as tabled, no poll timeouts, both openings whole inside the window
+
+Owner's unit, the backend built from master `c77c4fb` (PR #87 merged)
+on sane-backends `1d47d7c` with the integration patch, installed with
+`tools/sane_install.sh install` (status afterwards: installed library
+identical to the build). `scanimage -A` lists `--holder strip|slide
+[strip]` before `--frame`. Scanner cold (`reg 0x01 = 0x00`), the
+magazine loose in the well, the owner's one mounted slide (Tests 84/85,
+124) in opening 1, openings 2-4 empty. Every step from a real terminal
+with `SANE_DEBUG_GENESYS=4`.
+
+A false start first: `scanimage -L` found no genesys device and the
+driver's `status` could not read EP 0x83 (`Resource busy`); the
+interface was claimed by the Windows VM. Released from the VM, nothing
+power-cycled; `status` then read `reg 0x01 = 0x00` again and the run
+below followed.
+
+| step | command | result |
+|---|---|---|
+| load | `scanimage -n --load-film` | cold start, jog, `unknown -> released`; magazine out and in, edge seen after ~4.4 s, `released -> loaded` (`reg 0x101 = 0xdc`) |
+| opening 1 | `scanimage --holder slide --frame 1 --resolution 600 --format tiff` | `positioning to slide opening 1 (FEEDL 6236)`, budget 4842 ms, POSITION done in 1372 ms; scan pass 10 301 760 raw bytes; PARK 3900 ms |
+| opening 4 | same, `--frame 4` | `positioning to slide opening 4 (FEEDL 59471)`, budget 42 707 ms, POSITION done in 12 062 ms; line register 1960, 1960 raw lines, 10 301 760 bytes; PARK 14 588 ms |
+| eject | `scanimage -n --eject-film` | eject poll 937 ms, `ejected` |
+
+Both FEEDL values are the `DPI600_SLIDES` entries; opening 4 is the
+binding case of the slide travel bound (FEEDL + wire travel 71 231,
+259 steps inside FEEDL_CEILING 71 490). No poll timeouts, no
+exceptions; the only other log lines are the known harmless
+"Cannot open calibration for writing" at `sane_close` and the PARK
+read-backs that differ from the capture (`captured 0x00`), the same in
+both scans. No abnormal sound reported.
+
+Images (876 x 976, RGB16, the whole overscan window, no crop in the
+backend, submission limitation 2), looked at on screen: opening 1 shows
+the whole slide, the mount's aperture with mount on every side and a
+margin beyond it; opening 4 shows the empty aperture as a lit rectangle
+with all four edges inside the window. Transport only: no crop, no
+colour judgement.
+
+Verdict: the backend's slide path (issue #70, v10 item 2) is
+HARDWARE-VERIFIED on one unit at 600 dpi, openings 1 and 4. Not run:
+openings 2-3, the other dual profiles (3600 IR, 1200, 2400, 7200), the
+contributor's unit (item 4, the build named in issue #70).
