@@ -38,8 +38,8 @@ one exists; "offline" means implemented and tested without the scanner.
   FEEDL_CEILING (opening 4 ends 175-311 steps inside it). Merged
   2026-11-09; nothing read the tables yet at that point.
 - **SANE backend: the `holder` option and the slide travel bound
-  (issue #70 step 2 of the v10 list, offline only, not run on
-  hardware).** A new string option `holder` (`strip`, the default, or
+  (issue #70 step 2 of the v10 list, PR #87; run on the owner's unit,
+  Test 125: load, openings 1 and 4 at 600 dpi, eject).** A new string option `holder` (`strip`, the default, or
   `slide`) in the Film group, right before `frame`. With `slide`, `frame`
   means the opening (its range swaps to 1-4 and a higher frame is pulled
   down to 4, with RELOAD_OPTIONS), and the backend positions and sizes
