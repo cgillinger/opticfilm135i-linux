@@ -9242,7 +9242,8 @@ environment, not on the change; green after installing it. Merged as
 `e41f2e9`. Not done: the eye check on real frames from the owner's unit
 (the output is claimed and tested byte-identical, so this is a
 confirmation, not a condition), and real-frame identity at sensitivities
-other than 1.0, covered by the synthetic tests only.
+other than 1.0, covered by the synthetic tests only. The eye check was
+done on 2026-11-10 (Test 126, below).
 
 ## 2026-11-09 — Offline check: the SANE backend's `holder` option and the slide travel bound (issue #70, v10 item 2) against a built backend — option plumbing, session geometry from `slides[]`, refusals before any write; not run on hardware
 
@@ -9323,3 +9324,24 @@ Verdict: the backend's slide path (issue #70, v10 item 2) is
 HARDWARE-VERIFIED on one unit at 600 dpi, openings 1 and 4. Not run:
 openings 2-3, the other dual profiles (3600 IR, 1200, 2400, 7200), the
 contributor's unit (item 4, the build named in issue #70).
+
+## 2026-11-10 — Test 126: eye check after PR #83 (owner's unit) — one 135 colour frame at 3600 dpi dual (IR, dust removal on), master `4efb5bc`: whole frame, no banding, planes aligned, no patchy fills; accepted by the owner
+
+Owner's unit, master `4efb5bc` (PR #83 merged). Scanner cold
+(`reg 0x01 = 0x00`); `status && load`: cold_init with the loader sensor
+set ("no re-seating"), jog and load at the captured status words
+(`f855`, `f455`, `dc55`). Then
+`scan --frame 1 --ir --positive --rotate 90`: FEEDL 6538, 670 chunks,
+10720 wire lines, aperture coverage VERIFIED from IR (margins lead
+0.640 mm, trail 0.876 mm), 5184 x 5122 aperture-registered output.
+Diag: `warmup_attempts=1`, `poll_timeouts=0`, `cr_mismatches=11`,
+`no_clean` false. The two best-effort 0.3 s setup polls at session
+start timed out as in earlier logs.
+
+Eye check by the owner (image rotated a further 90 degrees offline for
+viewing): whole frame, no banding, planes aligned, dust removed with no
+patchy fills. The visible margin on the trailing side (the inter-frame
+gap) is the designed overscan, not a change from PR #83.
+
+Verdict: PR #83 confirmed on a real frame from the owner's unit. Not
+done: other dpi and sensitivities on hardware (covered offline only).
