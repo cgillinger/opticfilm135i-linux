@@ -1,4 +1,4 @@
-From b0b69e1214dda03ffb2cdfcf7c644857818f105d Mon Sep 17 00:00:00 2001
+From 37cdbbc1b0898a5224b47ecfa5dd1dc5f972835f Mon Sep 17 00:00:00 2001
 From: bearyjd <28201062+bearyjd@users.noreply.github.com>
 Date: Sat, 7 Nov 2026 16:23:22 -0500
 Subject: [PATCH 9/9] genesys: GL126, tell the operator when to take the

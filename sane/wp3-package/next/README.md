@@ -4,12 +4,12 @@ Prepared offline, no hardware, nothing sent to the SANE merge request. Base: the
 
 | file | what |
 |---|---|
-| `0008-genesys-GL126-log-what-the-magazine-load-saw-when-a-.patch` | Logging only. The same code as my logging patch 0001 from the issue #50 gist (byte-identical diff), cherry-picked onto the v9 tip. |
+| `0008-genesys-GL126-log-what-the-magazine-load-saw-when-a-.patch` | Logging only: the `DBG` lines and the `RunResult` `timed_out` record, in `gl126.cpp`, `gl126_ops.cpp` and `gl126_ops.h` (3 files). No offline-mock hooks and no tests: the mock additions and the probe are held back until something in the tree uses them. |
 | `0009-genesys-GL126-tell-the-operator-when-to-take-the-mag.patch` | Text only: one extra `DBG` line when the edge wait starts, a "Next step" sentence in the failure message, and a `FILM MAGAZINE (GL126)` section in `doc/sane-genesys.man`. The `genesys.desc` comment change from my branch is left out because you did not ask for it. |
 
 ## What the changed lines are
 
-0008: `gl126.cpp`: `#include <cstdio>`, the "edge seen" `DBG` line also shows the reg 0x101 value already held in `status`, the post-settle line prints values the code already reads, and `log_failed_magazine_run()` / `log_load_reg32()` only format records the run had already stored (log text). `gl126_ops.cpp` (three sites) and `gl126_ops.h`: `out.timed_out = PollRecord{...}` is assigned just before the existing timeout throw, plus the `timed_out` member (in-memory bookkeeping). `test_scanner_interface.*` and `test_usb_device.*`: the offline mock only (a reply hook and a transfer log that stay off unless a test turns them on).
+0008: `gl126.cpp`: `#include <cstdio>`, the "edge seen" `DBG` line also shows the reg 0x101 value already held in `status`, the post-settle line prints values the code already reads, and `log_failed_magazine_run()` / `log_load_reg32()` only format records the run had already stored (log text). `gl126_ops.cpp` (three sites) and `gl126_ops.h`: `out.timed_out = PollRecord{...}` is assigned just before the existing timeout throw, plus the `timed_out` member (in-memory bookkeeping). The change is log text and in-memory bookkeeping only; it is not exercised by a test in this series.
 
 0009: log text, message text and the man page section, as above.
 
@@ -22,9 +22,13 @@ No `sanei_usb` call, register read or write, sleep or timing constant is added, 
 
 ## Verified on the v9 tip with both patches (offline)
 
-- `./autogen.sh && ./configure --sysconfdir=/etc && make -j8 -C lib && make -j8 -C sanei && make -j8 -C backend libsane-genesys.la`: exit 0, 0 compiler warnings (the notes in the log are autoconf/automake output).
+Built in a fresh clone: v9 tip `18bea9b32`, then `git am` of the new 0008 and 0009 (the 0009 patch is unchanged apart from its `From` hash line).
+
+- `./autogen.sh && ./configure --sysconfdir=/etc BACKENDS=genesys --disable-locking --without-gphoto2 --without-v4l && make -j8 -C lib && make -j8 -C sanei && make -j8 -C backend libsane-genesys.la`: exit 0, 0 compiler warnings.
 - `make -C testsuite/backend/genesys check`: PASS 1/1.
-- `tests/test_sane_open_params.py` 7 passed, `tests/test_sane_calibration_cache.py` 6 passed, `tests/test_sane_magazine.py` 42 passed, with the repository tests unchanged.
+- Repository tests against that build (`SANE_BACKENDS_DIR` pointing at the clone), repository tests at `e41f2e9` (the last commit before the holder option, which the v9 series does not have): `tests/test_sane_magazine.py` 42 passed, `tests/test_sane_open_params.py` 7 passed.
+- Repository tests at `4efb5bc` (current master): `tests/test_sane_calibration_cache.py` 6 passed, `tests/test_sane_install.py` 21 passed. `test_sane_magazine.py` 41 passed, 2 failed and `test_sane_open_params.py` 7 passed, 1 failed, because master's tests exercise the holder option (`slide_holder`, repo commit `e14cf9e`), which is not in the v9 series or in these patches; I did not run those two files on the v9 tip without 0008 and 0009.
+- No test in this series covers 0008: it is log text and in-memory bookkeeping only.
 
 ## One wording decision
 
