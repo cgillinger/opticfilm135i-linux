@@ -28,6 +28,7 @@ Built in a fresh clone: v9 tip `18bea9b32`, then `git am` of the new 0008 and 00
 - `make -C testsuite/backend/genesys check`: PASS 1/1.
 - Repository tests against that build (`SANE_BACKENDS_DIR` pointing at the clone), repository tests at `e41f2e9` (the last commit before the holder option, which the v9 series does not have): `tests/test_sane_magazine.py` 42 passed, `tests/test_sane_open_params.py` 7 passed.
 - Repository tests at `4efb5bc` (current master): `tests/test_sane_calibration_cache.py` 6 passed, `tests/test_sane_install.py` 21 passed. `test_sane_magazine.py` 41 passed, 2 failed and `test_sane_open_params.py` 7 passed, 1 failed, because master's tests exercise the holder option (`slide_holder`, repo commit `e14cf9e`), which is not in the v9 series or in these patches; I did not run those two files on the v9 tip without 0008 and 0009.
+- How those were run: from a checkout of the repository at the named commit, `SANE_BACKENDS_DIR=<path to the sane-backends clone with the series applied and libsane-genesys built> python3 -m pytest -q tests/test_sane_magazine.py tests/test_sane_open_params.py tests/test_sane_calibration_cache.py tests/test_sane_install.py`.
 - No test in this series covers 0008: it is log text and in-memory bookkeeping only.
 
 ## One wording decision
