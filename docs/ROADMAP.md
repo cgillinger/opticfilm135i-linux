@@ -378,7 +378,9 @@ strip (submission limitation 2); one sentence for the merge request and
 the man page, not written yet. (4) Hardware: scanimage runs with the
 slide holder (load, opening 1 and 4, eject): the owner's unit done
 2026-11-09 at 600 dpi on master `c77c4fb` (Test 125, FEEDL as tabled, no
-poll timeouts); the contributor's unit pending. (5) The contributor's two held patches (logging, load-guidance
+poll timeouts); the contributor's unit done 2026-11-15 on master
+`4efb5bc` (test log, external report; same FEEDL values, no poll
+timeouts). (5) The contributor's two held patches (logging, load-guidance
 text, PR #84, draft): rebased onto the v9 tip and held; review notes in
 the PR thread. Limitation 9 of the submission ("strip holder only") is
 rewritten only after (4).

@@ -9345,3 +9345,38 @@ gap) is the designed overscan, not a change from PR #83.
 
 Verdict: PR #83 confirmed on a real frame from the owner's unit. Not
 done: other dpi and sensitivities on hardware (covered offline only).
+
+## 2026-11-15 — External report (issue #70): the SANE backend's slide path on the second unit — load, opening 1 and opening 4 at 600 dpi, eject: FEEDL 6236 and 59471 as tabled, both passes complete, no poll timeouts
+
+Not run by the owner. Reported by bearyjd on issue #70 (comment of
+2026-11-15, 22:19Z) with log excerpts; this entry is the owner's side
+reading that comment. Hardware: bearyjd's unit, the slide holder with
+cardboard mounts in openings 1–3, opening 4 empty. Build: master
+`4efb5bc` on sane-backends `1d47d7c` with the integration patch, the
+same backend code as Test 125; run through `LD_LIBRARY_PATH` and
+`SANE_CONFIG_DIR` (the install route is blocked on his immutable
+desktop), scanner cold, `SANE_DEBUG_GENESYS=4`.
+
+| step | result |
+|---|---|
+| load | cold start, jog, `unknown -> released`; edge seen after ~5.3 s, `released -> loaded` (`reg 0x101 = 0xdc`) |
+| opening 1 | `positioning to slide opening 1 (FEEDL 6236)`, budget 4842 ms; scan pass 1960 lines, 10 301 760 raw bytes; PARK 3957 ms |
+| opening 4 | `positioning to slide opening 4 (FEEDL 59471)`, budget 42 707 ms; scan pass 1960 lines, 10 301 760 raw bytes; PARK 14 645 ms |
+| eject | eject poll 939 ms, `ejected` |
+
+The same FEEDL values, budgets, line counts and byte counts as Test 125
+on the owner's unit; PARK within 60 ms of it. No poll timeouts.
+
+One line Test 125 did not have: at the start of opening 1,
+`sane_start_impl: got exception: Incorrect std::array size to
+deserialize` while reading the calibration cache file, written on
+2026-11-06 by an older build on his side. Harmless: GL126 always
+calibrates and never restores the cache, the exception is caught in
+`sane_start`, the scan carried on, and the file was rewritten after
+opening 1 (opening 4 had no such line). Nothing serialized into the
+cache file changed in `sane/` between 2026-11-06 and `4efb5bc`, so the
+old file was most likely written by a different build.
+
+Verdict: the backend's slide path (issue #70, v10 item 4) has run on
+both units at 600 dpi, openings 1 and 4. Not run: openings 2–3, the
+other dual profiles.

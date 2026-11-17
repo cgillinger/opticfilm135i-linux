@@ -6,6 +6,12 @@ one exists; "offline" means implemented and tested without the scanner.
 
 ## Unreleased
 
+- **External report, the SANE slide path on the second unit (test log,
+  2026-11-15).** bearyjd ran the `holder` option build (master `4efb5bc`)
+  with mounted slides: load, openings 1 and 4 at 600 dpi, eject; FEEDL
+  6236 and 59471 as tabled, both passes complete, no poll timeouts. A
+  stale calibration cache file from an older build gave one harmless
+  read error (GL126 never restores the cache).
 - **External report, slides on the second unit (test log, 2026-11-08).**
   Two trays of cardboard mounts through the released slide path: seven
   of seven occupied openings verified (margins 2.94–3.64 mm), the empty
